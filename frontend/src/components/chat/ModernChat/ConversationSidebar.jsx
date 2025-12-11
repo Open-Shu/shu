@@ -1,0 +1,292 @@
+import React from 'react';
+import {
+  Box,
+  Button,
+  Chip,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemText,
+  Paper,
+  Skeleton,
+  Tooltip,
+  Typography,
+  TextField,
+  InputAdornment,
+} from '@mui/material';
+import {
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Lock as LockIcon,
+  Storage as KnowledgeBaseIcon,
+} from '@mui/icons-material';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { alpha, useTheme } from '@mui/material/styles';
+import ClearIcon from '@mui/icons-material/Clear';
+
+const ConversationSidebar = React.memo(function ConversationSidebar({
+  conversations,
+  loadingConversations,
+  selectedConversationId,
+  onSelectConversation,
+  onCreateConversation,
+  createConversationDisabled,
+  showNoModelsNote,
+  onRenameConversation,
+  onDeleteConversation,
+  branding,
+  chatStyles,
+  searchValue,
+  onSearchChange,
+  searchFeedback,
+}) {
+  const theme = useTheme();
+
+  return (
+    <Paper
+      sx={{
+        width: 300,
+        minWidth: 300,
+        maxWidth: 300,
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: 0,
+        borderRight: 1,
+        borderColor: 'divider',
+      }}
+    >
+      <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Button
+          fullWidth
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={onCreateConversation}
+          disabled={createConversationDisabled}
+        >
+          New Chat
+        </Button>
+        {showNoModelsNote && (
+          <Typography variant="caption" color="text.secondary">
+            No model configurations available.
+          </Typography>
+        )}
+        <TextField
+          value={searchValue || ''}
+          onChange={(event) => onSearchChange?.(event.target.value)}
+          size="small"
+          label="Search summaries"
+          placeholder="Enter keywords"
+          variant="outlined"
+          autoComplete="off"
+          InputProps={{
+            endAdornment: (searchValue && searchValue.length > 0)
+              ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    edge="end"
+                    onClick={() => onSearchChange?.('')}
+                    aria-label="Clear summary search"
+                    sx={{ mr: -0.5 }}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              )
+              : null
+          }}
+        />
+        {searchFeedback ? (
+          <Typography variant="caption" color="text.secondary">
+            {searchFeedback}
+          </Typography>
+        ) : null}
+      </Box>
+
+      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+        {loadingConversations ? (
+          <Box sx={{ p: 2 }}>
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} variant="rectangular" height={60} sx={{ mb: 1 }} />
+            ))}
+          </Box>
+        ) : (
+          <List dense>
+            {conversations.map((conversation) => (
+              <Box
+                key={conversation.id}
+                sx={{
+                  position: 'relative',
+                  borderRadius: 1,
+                  mb: 1,
+                  '&:hover .conversation-action-button': {
+                    opacity: 1,
+                  },
+                }}
+              >
+                <Tooltip
+                  title={(
+                    <Box sx={{ maxWidth: 360, p: 0.5 }}>
+                      {conversation.summary_text ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {conversation.summary_text}
+                        </ReactMarkdown>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">No summary yet</Typography>
+                      )}
+                    </Box>
+                  )}
+                  placement="right"
+                  arrow
+                  disableHoverListener={!conversation.summary_text}
+                >
+                  <ListItemButton
+                    selected={selectedConversationId === conversation.id}
+                    onClick={() => onSelectConversation(conversation)}
+                    sx={{
+                      borderRadius: 1,
+                      pr: 7,
+                      border: `1px solid ${chatStyles.conversationBorderColor}`,
+                      color: selectedConversationId === conversation.id
+                        ? chatStyles.conversationSelectedText
+                        : theme.palette.text.primary,
+                      '&.Mui-selected': {
+                        bgcolor: chatStyles.conversationSelectedBg,
+                        color: chatStyles.conversationSelectedText,
+                        '&:hover': {
+                          bgcolor: chatStyles.conversationSelectedBg,
+                        },
+                      },
+                      '&:hover': {
+                        bgcolor: chatStyles.conversationHoverBg,
+                      },
+                    }}
+                  >
+                    <ListItemText
+                      primary={conversation.title}
+                      secondary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: selectedConversationId === conversation.id
+                                ? alpha(chatStyles.conversationSelectedText, 0.85)
+                                : theme.palette.text.secondary,
+                              fontWeight: 500,
+                            }}
+                          >
+                            {conversation.model_configuration?.name}
+                          </Typography>
+                          {conversation.model_configuration?.knowledge_bases?.length > 0 && (
+                            <KnowledgeBaseIcon
+                              sx={{
+                                fontSize: 12,
+                                color: selectedConversationId === conversation.id
+                                  ? theme.palette.secondary.main
+                                  : theme.palette.primary.main,
+                              }}
+                            />
+                          )}
+                          {conversation?.meta?.title_locked && (
+                            <Chip size="small" icon={<LockIcon sx={{ fontSize: 12 }} />} label="Locked" variant="outlined" />
+                          )}
+                        </Box>
+                      }
+                      primaryTypographyProps={{
+                        sx: {
+                          color: selectedConversationId === conversation.id
+                            ? chatStyles.conversationSelectedText
+                            : theme.palette.text.primary,
+                          fontWeight: 600,
+                        },
+                      }}
+                    />
+                  </ListItemButton>
+                </Tooltip>
+
+                <IconButton
+                  className="conversation-action-button"
+                  aria-label="Rename conversation"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRenameConversation(conversation);
+                  }}
+                  sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    right: 40,
+                    transform: 'translateY(-50%)',
+                    opacity: 0,
+                    transition: 'opacity 0.2s',
+                    color: theme.palette.text.secondary,
+                    '&:hover': {
+                      bgcolor: alpha(theme.palette.primary.main, 0.12),
+                    },
+                    width: 24,
+                    height: 24,
+                  }}
+                  size="small"
+                >
+                  <EditIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+
+                <IconButton
+                  className="conversation-action-button"
+                  aria-label="Delete conversation"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteConversation(conversation);
+                  }}
+                  sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    right: 8,
+                    transform: 'translateY(-50%)',
+                    opacity: 0,
+                    transition: 'opacity 0.2s',
+                    color: theme.palette.error.main,
+                    '&:hover': {
+                      bgcolor: alpha(theme.palette.error.main, 0.12),
+                    },
+                    width: 24,
+                    height: 24,
+                  }}
+                  size="small"
+                >
+                  <DeleteIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Box>
+            ))}
+          </List>
+        )}
+      </Box>
+
+      <Box
+        sx={{
+          mt: 'auto',
+          p: 2,
+          backgroundColor: alpha(branding.primaryMain, 0.0),
+          borderTop: `1px solid ${alpha(branding.primaryMain, 0.0)}`,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <img
+          src={branding.logoUrl}
+          alt={branding.appDisplayName}
+          style={{
+            height: '60px',
+            width: 'auto',
+            maxWidth: '100%',
+          }}
+        />
+      </Box>
+    </Paper>
+  );
+});
+
+export default ConversationSidebar;

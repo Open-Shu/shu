@@ -1,0 +1,171 @@
+services:
+  # Shu RAG Backend API
+  shu-api:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-api
+    env_file: ../../.env
+    environment:
+      # External PostgreSQL connection - update these values for your database
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=INFO
+      - SHU_LOG_FORMAT=text
+      - SHU_API_HOST=0.0.0.0
+      - SHU_API_PORT=8000
+      - SHU_ENVIRONMENT=production
+      - SHU_APP_VERSION=0.0.5
+      - PYTHONPATH=/app/src
+    ports:
+      - "8000:8000"
+    volumes:
+      - shu-plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/liveness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      shu-postgres:
+        condition: service_healthy
+      shu-db-migrate:
+        condition: service_completed_successfully
+
+  # Shu RAG Backend API (Development)
+  shu-api-dev:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-api-dev
+    env_file: ../../.env
+    environment:
+      # External PostgreSQL connection - update these values for your database
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=DEBUG
+      - SHU_LOG_FORMAT=text
+      - SHU_API_HOST=0.0.0.0
+      - SHU_API_PORT=8000
+      - SHU_ENVIRONMENT=development
+      - SHU_APP_VERSION=0.0.5-dev      
+      - PYTHONPATH=/app/src
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../backend/src:/app/src
+      - ../../backend/alembic:/app/alembic
+      - ../../backend/alembic.ini:/app/alembic.ini
+      - ../../backend/scripts:/app/scripts
+      - ../../plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - dev
+    command: ["python", "-m", "uvicorn", "shu.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      shu-postgres:
+        condition: service_healthy
+      shu-db-migrate:
+        condition: service_completed_successfully
+
+  # Shu Postgres
+  shu-postgres:
+    image: ankane/pgvector
+    environment:
+      POSTGRES_USER: shu
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: shu
+    ports:
+      - "5432:5432"
+    volumes:
+      - shu-postgres-data:/var/lib/postgresql/data
+      - ../../init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - shu-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shu -d shu"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-off job to ensure pgvector extension and run Alembic migrations
+  shu-db-migrate:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-db-migrate
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - PYTHONPATH=/app/src
+    volumes:
+      - ../../backend/scripts:/app/scripts
+      - ../../backend/migrations:/app/migrations
+    networks:
+      - shu-network
+    depends_on:
+      shu-postgres:
+        condition: service_healthy
+    restart: "no"
+    command: ["python", "scripts/db_migrate.py"]
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: shu-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - shu-network
+    restart: unless-stopped
+
+  # Shu React Admin frontend (static build served by Nginx)
+  shu-frontend:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/frontend/Dockerfile
+      args:
+        # Use host-exposed API URL; React runs in the browser, not inside the Docker network
+        REACT_APP_API_BASE_URL: http://localhost:8000
+    container_name: shu-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - frontend
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: shu-nginx
+    depends_on:
+      - shu-api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../../nginx.conf:/etc/nginx/nginx.conf
+      - ../../ssl:/etc/nginx/ssl
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - proxy
+
+networks:
+  shu-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  shu-postgres-data:
+  shu-plugins:

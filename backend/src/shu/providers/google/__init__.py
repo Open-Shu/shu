@@ -1,0 +1,2 @@
+# Google provider adapter package
+

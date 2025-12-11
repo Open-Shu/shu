@@ -1,0 +1,26 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+.DS_Store
+
+# Node/Yarn/PNPM artifacts
+node_modules
+frontend/node_modules
+frontend/build
+
+# Python build/virtualenv artifacts
+backend/.venv
+backend/.mypy_cache
+
+# Local data and logs
+logs
+data
+*.log
+
+# Other large or transient assets
+*.tgz
+*.tar.gz
+dist
+build

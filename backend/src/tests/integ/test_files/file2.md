@@ -1,0 +1,3 @@
+# The second file
+
+Of course we need some content here too...

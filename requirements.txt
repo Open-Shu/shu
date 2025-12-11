@@ -1,0 +1,85 @@
+# FastAPI and web server
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.20
+
+# Database
+sqlalchemy==2.0.41
+alembic==1.16.4
+psycopg2-binary==2.9.10
+pgvector==0.4.1 # Vector database support
+
+# Pydantic for data validation
+pydantic==2.11.7
+pydantic-settings==2.10.1
+jsonschema==4.25.1
+
+# Authentication and security
+python-jose[cryptography]==3.5.0
+
+bcrypt==4.3.0
+
+# Google Drive integration
+google-auth==2.40.3
+google-auth-oauthlib==1.2.2
+google-auth-httplib2==0.2.0
+google-api-python-client==2.176.0
+
+# Text processing and embeddings
+sentence-transformers==5.0.0
+torch==2.7.1
+transformers==4.53.2
+numpy==2.2.6
+
+# Document processing
+PyPDF2==3.0.1
+pymupdf==1.26.3  # Better PDF text extraction
+pdfplumber==0.11.7  # Alternative PDF text extraction
+python-docx==1.2.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+
+# Async and background tasks
+asyncio==3.4.3
+celery==5.5.3  # For future background task enhancement
+redis==6.2.0  # For caching and task queuing
+asyncpg==0.30.0
+
+# Logging and monitoring
+structlog==25.4.0
+prometheus-client==0.22.1
+psutil==7.0.0  # For system monitoring
+
+# Testing (Custom Framework)
+pytest==8.3.3  # For pytest-based unit tests
+pytest-asyncio==0.24.0  # Async support for pytest unit tests
+httpx==0.28.1  # For HTTP client in integration tests
+
+# HTTP client
+requests==2.32.4  # For HTTP requests in tests and utilities
+
+# Development tools
+# black==25.1.0
+# isort==6.0.1
+# flake8==7.3.0
+# mypy==1.16.1
+
+# Utilities
+python-dotenv==1.1.1
+click==8.2.1
+rich==14.0.0  # For better CLI output
+greenlet==3.2.3
+jmespath==1.0.1
+
+# OCR dependencies for image-based PDF text extraction
+pytesseract==0.3.13  # OCR engine wrapper (fallback)
+Pillow==11.3.0  # Image processing for OCR
+opencv-python==4.12.0.88  # Advanced image preprocessing for OCR
+
+# Primary OCR engine - PaddleOCR (best for legal documents and tables)
+#paddlepaddle==3.1.0  # PaddleOCR backend
+#paddleocr==3.1.0  # Advanced OCR with layout analysis
+
+# Optional advanced OCR engines (install as needed)
+easyocr==1.7.2  # Deep learning OCR with better accuracy
+# textract>=1.6.5  # Temporarily disabled due to metadata issues

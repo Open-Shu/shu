@@ -1,0 +1,39 @@
+# =============================================================================
+# Notify Deploy Repository
+# =============================================================================
+# Triggers when a semver tag (v1.2.3) is pushed to this repo.
+# Sends a repository_dispatch event to the deployment repo to kick off builds.
+#
+# REQUIRED CONFIGURATION:
+#   Repository variable (Settings → Secrets and variables → Actions → Variables):
+#     DEPLOY_REPO - The org/repo path to your deployment repository
+#                   Example: openshu/shu-deploy
+#
+#   Repository secret:
+#     DEPLOY_REPO_PAT - A Personal Access Token with 'repo' scope that has
+#                       write access to your deployment repository.
+# =============================================================================
+
+name: Notify Deploy Repo
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  trigger-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deployment build workflow
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DEPLOY_REPO_PAT }}
+          repository: ${{ vars.DEPLOY_REPO }}
+          event-type: app-release
+          client-payload: |
+            {
+              "version": "${{ github.ref_name }}",
+              "sha": "${{ github.sha }}"
+            }
+

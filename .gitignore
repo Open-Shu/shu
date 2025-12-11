@@ -1,0 +1,257 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# hide dot-folders unless explicitly included
+.*/
+!.github/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and Editor files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+# Test framework cache (removed - using custom framework)
+# .pytest_cache/
+.coverage
+htmlcov/
+.cache
+nosetests.xml
+tests/testing.log
+coverage.xml
+*.cover
+
+# Project specific
+data/
+data/attachments
+docs/tasks/
+docs/epics/
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.dmypy.json
+dmypy.json 
+
+# ===== REACT/FRONTEND PATTERNS =====
+
+# Dependencies
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+
+# Production builds
+frontend/build/
+frontend/dist/
+frontend/out/
+
+# Testing
+frontend/coverage/
+frontend/.nyc_output
+
+# Runtime data
+frontend/pids
+frontend/*.pid
+frontend/*.seed
+frontend/*.pid.lock
+
+# Coverage directory used by tools like istanbul
+frontend/.nyc_output
+
+# Dependency directories
+frontend/jspm_packages/
+
+# Optional npm cache directory
+frontend/.npm
+
+# Optional eslint cache
+frontend/.eslintcache
+
+# Optional REPL history
+frontend/.node_repl_history
+
+# Output of 'npm pack'
+frontend/*.tgz
+
+# Yarn Integrity file
+frontend/.yarn-integrity
+
+# dotenv environment variables file
+frontend/.env
+frontend/.env.test
+frontend/.env.production
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# parcel-bundler cache (https://parceljs.org/)
+frontend/.cache
+frontend/.parcel-cache
+
+# next.js build output
+frontend/.next
+
+# nuxt.js build output
+frontend/.nuxt
+
+# Serverless directories
+frontend/.serverless
+
+# TernJS port file
+frontend/.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+frontend/.vscode-test
+
+# yarn v2
+frontend/.yarn/cache
+frontend/.yarn/unplugged
+frontend/.yarn/build-state.yml
+frontend/.yarn/install-state.gz
+frontend/.pnp.*
+
+# ===== GENERAL FRONTEND PATTERNS =====
+
+# Logs
+frontend/logs
+frontend/*.log
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/lerna-debug.log*
+
+# OS generated files
+frontend/.DS_Store
+frontend/.DS_Store?
+frontend/_*
+frontend/.Spotlight-V100
+frontend/.Trashes
+frontend/ehthumbs.db
+frontend/Thumbs.db
+
+# IDE files
+frontend/.vscode/
+frontend/.idea/
+frontend/*.swp
+frontend/*.swo
+frontend/*~
+
+# Temporary folders
+frontend/tmp/
+frontend/temp/
+
+# ===== REACT SPECIFIC =====
+
+# React development server
+frontend/.react-devtools
+
+# React error overlay
+frontend/.react-error-overlay
+
+# React hot reload
+frontend/.react-hot-reload
+
+# ===== TESTING =====
+
+# Jest
+frontend/jest_*
+frontend/coverage/
+
+# Cypress
+frontend/cypress/videos/
+frontend/cypress/screenshots/
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+
+# ===== BUNDLERS =====
+
+# Webpack
+frontend/webpack-stats.json
+
+# Rollup
+frontend/rollup-stats.json
+
+# ===== TYPE SCRIPT =====
+
+# TypeScript cache
+frontend/.tsbuildinfo
+
+# ===== STORYBOOK =====
+
+frontend/storybook-static/
+
+# ===== DOCUMENTATION =====
+
+frontend/docs/build/
+
+# ===== DEPLOYMENT =====
+
+frontend/.vercel
+frontend/.netlify
+frontend/.surge.sh
+
+# ===== Sensitive files =====
+*.pem
+*.p12
+*.key
+*.crt
+client_secret*.json
