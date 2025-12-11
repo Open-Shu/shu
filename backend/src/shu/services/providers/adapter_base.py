@@ -74,13 +74,13 @@ class ProviderCapabilities:
         return {k: v for k, v in capabilities.items() if v.get("value")}
 
     @classmethod
-    def from_request_dict(cls, dict):
+    def from_request_dict(cls, request_dict):
         return ProviderCapabilities(
-            streaming=dict.get("streaming", {}).get("value", False),
-            tools=dict.get("tools", {}).get("value", False),
-            vision=dict.get("vision", {}).get("value", False)
+            streaming=request_dict.get("streaming", {}).get("value", False),
+            tools=request_dict.get("tools", {}).get("value", False),
+            vision=request_dict.get("vision", {}).get("value", False)
         )
-    
+
 
 @dataclass
 class ToolCallInstructions:

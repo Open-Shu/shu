@@ -10,13 +10,12 @@ logger = get_logger(__name__)
 
 
 class GenericCompletionsAdapter(CompletionsAdapter):
-    """Adapter for Ollama's OpenAI-compatible chat completions endpoint."""
+    """Generic adapter for all providers that are OpenAI completions compatible."""
 
     def get_provider_information(self) -> ProviderInformation:
         return ProviderInformation(key="generic_completions", display_name="Generic Completions")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        # Ollama supports streaming; tool calling support varies, keep disabled by default.
         return ProviderCapabilities(streaming=True, tools=True, vision=False)
 
     def get_api_base_url(self) -> str:
