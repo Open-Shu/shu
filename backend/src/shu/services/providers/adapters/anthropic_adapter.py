@@ -383,7 +383,7 @@ class AnthropicAdapter(BaseProviderAdapter):
                 ],
             ),
 
-            # TODO: Currently broken, needs fixing
+            # TODO: Currently broken. Opus 4.5 requires us to send thinking segments back to the provider for follow-ups. We need to fix this before we can support the thinking settings.
             # Extended thinking (Claude 4 / thinking models)
             # "thinking": ObjectParameter(
             #     label="Thinking (Extended reasoning)",
