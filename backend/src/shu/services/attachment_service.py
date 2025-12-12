@@ -1,6 +1,7 @@
 """
 AttachmentService handles chat attachments: saving files, extracting text, and persistence.
 """
+import base64
 import os
 import uuid
 import mimetypes
@@ -96,6 +97,7 @@ class AttachmentService:
             mime_type=mime_type,
             file_type=ext,
             file_size=file_size,
+            raw_base64=base64.b64encode(file_bytes).decode('utf-8'),
             extracted_text=text or None,
             extracted_text_length=len(text) if text else 0,
             extraction_method=meta.get("method"),
