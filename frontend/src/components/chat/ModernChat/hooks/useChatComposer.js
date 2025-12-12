@@ -68,9 +68,6 @@ const useChatComposer = ({
 
         if (data?.attachment_id) {
           setPendingAttachments((prev) => [...prev, { id: data.attachment_id, name: file.name }]);
-          if (typeof data.extracted_text_length === 'number' && data.extracted_text_length === 0) {
-            setError('No text detected for scanned PDFs. Run external OCR and try again.');
-          }
         }
         event.target.value = '';
       } catch (error) {

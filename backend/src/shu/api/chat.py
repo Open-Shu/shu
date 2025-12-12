@@ -6,12 +6,15 @@ messages, and LLM interactions.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status, UploadFile, File
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List, Optional, Union, Literal
 from pydantic import BaseModel, Field
 import logging
 import json
+import base64
 from datetime import datetime, timezone
 
 from .dependencies import get_db
@@ -26,7 +29,8 @@ from ..services.chat_service import ChatService
 from ..services.chat_streaming import ProviderResponseEvent
 from ..services.attachment_service import AttachmentService
 from ..auth.models import User
-from ..models.llm_provider import Message
+from ..models.llm_provider import Message, Conversation
+from ..models.attachment import Attachment
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -246,6 +250,75 @@ async def upload_attachment(
     except Exception as e:
         logger.error(f"Attachment upload failed: {e}")
         return create_error_response(code="ATTACHMENT_UPLOAD_FAILED", message=str(e), status_code=500)
+
+
+@router.get(
+    "/attachments/{attachment_id}/view",
+    summary="View attachment",
+    description="Retrieve attachment content for viewing or download.",
+)
+async def view_attachment(
+    attachment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return raw attachment content with appropriate Content-Type."""
+
+    # Fetch non-expired attachment
+    now = datetime.now(timezone.utc)
+    stmt = select(Attachment).where(
+        Attachment.id == attachment_id,
+        (Attachment.expires_at.is_(None)) | (Attachment.expires_at > now)
+    )
+    result = await db.execute(stmt)
+    attachment = result.scalar_one_or_none()
+
+    if not attachment:
+        return create_error_response(
+            code="ATTACHMENT_NOT_FOUND",
+            message=f"Attachment '{attachment_id}' not found",
+            status_code=404
+        )
+
+    # Verify ownership via conversation
+    conv_stmt = select(Conversation).where(Conversation.id == attachment.conversation_id)
+    conv_result = await db.execute(conv_stmt)
+    conversation = conv_result.scalar_one_or_none()
+
+    if not conversation or conversation.user_id != current_user.id:
+        return create_error_response(
+            code="UNAUTHORIZED",
+            message="You do not have access to this attachment",
+            status_code=403
+        )
+
+
+    # Check if raw_base64 is available
+    if not attachment.raw_base64:
+        return create_error_response(
+            code="ATTACHMENT_CONTENT_UNAVAILABLE",
+            message="Attachment content is not available",
+            status_code=404
+        )
+
+    # Decode and return
+    try:
+        content = base64.b64decode(attachment.raw_base64)
+    except Exception as e:
+        logger.error(f"Failed to decode attachment {attachment_id}: {e}")
+        return create_error_response(
+            code="ATTACHMENT_DECODE_ERROR",
+            message="Failed to decode attachment content",
+            status_code=500
+        )
+
+    return Response(
+        content=content,
+        media_type=attachment.mime_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{attachment.original_filename}"'
+        }
+    )
 
 # Conversation endpoints
 @router.post(
