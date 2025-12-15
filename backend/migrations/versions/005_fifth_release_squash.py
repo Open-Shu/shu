@@ -156,25 +156,25 @@ def upgrade() -> None:
         )
     else:
         # Table exists - handle case where DB was stamped from r005_0002 (before scope column)
-        # Refresh inspector to get current plugin_storage columns
-        inspector = sa.inspect(conn)
+        # or a partial run that added scope but didn't complete index recreation.
+        # Use uq_plugin_storage_system_scope_key as the completion marker since it's created last.
+        if not _index_exists(conn, "uq_plugin_storage_system_scope_key"):
+            # Refresh inspector to get current plugin_storage columns
+            inspector = sa.inspect(conn)
 
-        if not _column_exists(inspector, "plugin_storage", "scope"):
-            # r005_0002 state: table exists but scope column missing
-            # Need to add scope column and recreate indexes/constraints with scope
-
-            # Drop old indexes/constraints that don't include scope
+            # Drop old indexes/constraints that don't include scope (may or may not exist)
             if _index_exists(conn, "ix_plugin_storage_lookup"):
                 op.drop_index("ix_plugin_storage_lookup", table_name="plugin_storage")
             conn.execute(sa.text(
                 "ALTER TABLE plugin_storage DROP CONSTRAINT IF EXISTS uq_plugin_storage_scope_key"
             ))
 
-            # Add scope column
-            op.add_column(
-                "plugin_storage",
-                sa.Column("scope", sa.String(10), nullable=False, server_default="user"),
-            )
+            # Add scope column if missing (r005_0002 state)
+            if not _column_exists(inspector, "plugin_storage", "scope"):
+                op.add_column(
+                    "plugin_storage",
+                    sa.Column("scope", sa.String(10), nullable=False, server_default="user"),
+                )
 
             # Recreate indexes/constraints with scope
             op.create_index(
@@ -187,17 +187,16 @@ def upgrade() -> None:
                 "plugin_storage",
                 ["scope", "user_id", "plugin_name", "namespace", "key"],
             )
-            # Partial unique index for system-scoped entries
-            if not _index_exists(conn, "uq_plugin_storage_system_scope_key"):
-                op.execute(
-                    sa.text(
-                        """
-                        CREATE UNIQUE INDEX uq_plugin_storage_system_scope_key
-                        ON plugin_storage (plugin_name, namespace, key)
-                        WHERE scope = 'system'
-                        """
-                    )
+            # Partial unique index for system-scoped entries (completion marker)
+            op.execute(
+                sa.text(
+                    """
+                    CREATE UNIQUE INDEX uq_plugin_storage_system_scope_key
+                    ON plugin_storage (plugin_name, namespace, key)
+                    WHERE scope = 'system'
+                    """
                 )
+            )
 
     # ========================================================================
     # Part 3: Migrate data from agent_memory to plugin_storage
@@ -282,6 +281,8 @@ def upgrade() -> None:
     )
 
     # Migrate deprecated columns to config JSON before dropping
+    # Refresh inspector to get current llm_providers columns
+    inspector = sa.inspect(conn)
     deprecated_columns = {"api_endpoint", "supports_streaming", "supports_functions", "supports_vision"}
     existing_columns = {col["name"] for col in inspector.get_columns("llm_providers")}
     columns_to_migrate = deprecated_columns & existing_columns
@@ -343,10 +344,15 @@ def downgrade() -> None:
     # ========================================================================
     # Part 4 reverse: Restore deprecated llm_providers columns
     # ========================================================================
-    op.add_column("llm_providers", sa.Column("supports_vision", sa.Boolean(), nullable=True))
-    op.add_column("llm_providers", sa.Column("supports_functions", sa.Boolean(), nullable=True))
-    op.add_column("llm_providers", sa.Column("supports_streaming", sa.Boolean(), nullable=True))
-    op.add_column("llm_providers", sa.Column("api_endpoint", sa.Text(), nullable=True))
+    deprecated_columns = [
+        ("supports_vision", sa.Boolean()),
+        ("supports_functions", sa.Boolean()),
+        ("supports_streaming", sa.Boolean()),
+        ("api_endpoint", sa.Text()),
+    ]
+    for col_name, col_type in deprecated_columns:
+        if not _column_exists(inspector, "llm_providers", col_name):
+            op.add_column("llm_providers", sa.Column(col_name, col_type, nullable=True))
 
     # Migrate data back from config JSON to columns
     result = conn.execute(sa.text("SELECT id, config FROM llm_providers"))
@@ -387,7 +393,7 @@ def downgrade() -> None:
     # ========================================================================
     # Part 3 reverse: Migrate data back to agent_memory
     # ========================================================================
-    # Migrate storage and cursor entries back
+    # Migrate storage and cursor entries back (ON CONFLICT for idempotency)
     conn.execute(sa.text("""
         INSERT INTO agent_memory (id, user_id, agent_key, key, value, created_at, updated_at)
         SELECT
@@ -400,6 +406,7 @@ def downgrade() -> None:
             updated_at
         FROM plugin_storage
         WHERE namespace IN ('storage', 'cursor')
+        ON CONFLICT (id) DO NOTHING
     """))
 
     # Migrate secret entries back (both tool_secret and plugin_secret patterns)
@@ -415,16 +422,20 @@ def downgrade() -> None:
             updated_at
         FROM plugin_storage
         WHERE namespace = 'secret'
+        ON CONFLICT (id) DO NOTHING
     """))
 
     # ========================================================================
     # Part 2 reverse: Drop plugin_storage table
     # ========================================================================
-    op.drop_table("plugin_storage")
+    if _table_exists(conn, "plugin_storage"):
+        op.drop_table("plugin_storage")
 
     # ========================================================================
     # Part 1 reverse: Restore llm_provider_type_definitions columns
     # ========================================================================
+    # Refresh inspector for llm_provider_type_definitions checks
+    inspector = sa.inspect(conn)
     for col, coltype in (
         ("base_url_template", sa.Text()),
         ("endpoints", sa.JSON()),

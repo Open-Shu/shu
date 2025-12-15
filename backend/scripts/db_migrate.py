@@ -120,14 +120,23 @@ def resolve_orphaned_revision(cfg: alembic.config.Config, url: str) -> None:
             f"[db_migrate] Orphaned revision {current_rev} was replaced by {squash_rev}",
             flush=True
         )
-        print(
-            f"[db_migrate] Stamping to {down_rev} so upgrade head runs the idempotent squash migration",
-            flush=True
-        )
-        # Stamp to down_revision so `upgrade head` runs the squash migration
-        # The squash migration is idempotent and handles partial states
-        alembic.command.stamp(cfg, down_rev, purge=True)
-        print(f"[db_migrate] Stamped database to {down_rev}", flush=True)
+        # Handle edge case where squash replaces base migrations (down_revision is None)
+        if down_rev is None:
+            print(
+                f"[db_migrate] Squash migration has no down_revision, stamping directly to {squash_rev}",
+                flush=True
+            )
+            alembic.command.stamp(cfg, squash_rev, purge=True)
+            print(f"[db_migrate] Stamped database to {squash_rev}", flush=True)
+        else:
+            print(
+                f"[db_migrate] Stamping to {down_rev} so upgrade head runs the idempotent squash migration",
+                flush=True
+            )
+            # Stamp to down_revision so `upgrade head` runs the squash migration
+            # The squash migration is idempotent and handles partial states
+            alembic.command.stamp(cfg, down_rev, purge=True)
+            print(f"[db_migrate] Stamped database to {down_rev}", flush=True)
     else:
         print(
             f"[db_migrate] WARNING: Current revision {current_rev} is unknown and not in any replaces list",
