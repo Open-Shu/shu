@@ -32,9 +32,6 @@ class Attachment(BaseModel):
     extracted_text = Column(Text, nullable=True)
     extracted_text_length = Column(Integer, nullable=True)
 
-    # Raw file content (base64-encoded)
-    raw_base64 = Column(Text, nullable=True)
-
     # Extraction metadata
     extraction_method = Column(String(50), nullable=True)
     extraction_engine = Column(String(50), nullable=True)
@@ -60,4 +57,3 @@ class MessageAttachment(BaseModel):
     __table_args__ = (
         UniqueConstraint('message_id', 'attachment_id', name='uq_message_attachment'),
     )
-

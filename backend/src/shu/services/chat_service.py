@@ -46,7 +46,6 @@ class PreparedTurnContext:
     user_message: Message
     conversation_messages: List[Message]
     knowledge_base_id: Optional[str]
-    attachment_ids: Optional[List[str]]
 
 
 @dataclass
@@ -102,14 +101,12 @@ class ChatService:
         conversation: Conversation,
         user_message: str,
         knowledge_base_id: Optional[str],
-        attachment_ids: Optional[List[str]]
     ) -> PreparedTurnContext:
         """Insert the user message and assemble shared context for an ensemble turn."""
         user_msg = await self.add_message(
             conversation_id=conversation.id,
             role="user",
             content=user_message,
-            attachment_ids=attachment_ids,
         )
 
         # Capture message history after inserting the user turn so all ensemble variants
@@ -124,7 +121,6 @@ class ChatService:
             user_message=user_msg,
             conversation_messages=conversation_messages,
             knowledge_base_id=knowledge_base_id,
-            attachment_ids=attachment_ids,
         )
 
     async def _resolve_ensemble_configurations(
@@ -197,7 +193,6 @@ class ChatService:
             model=model,
             knowledge_base_id=turn_context.knowledge_base_id,
             rag_rewrite_mode=rag_rewrite_mode,
-            attachment_ids=turn_context.attachment_ids,
             conversation_messages=turn_context.conversation_messages,
             model_configuration_override=model_configuration,
             recent_messages_limit=recent_messages_limit,
@@ -495,7 +490,6 @@ class ChatService:
         content: str,
         model_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        attachment_ids: Optional[List[str]] = None,
         parent_message_id: Optional[str] = None,
         variant_index: Optional[int] = None,
         message_id: Optional[str] = None,
@@ -509,7 +503,6 @@ class ChatService:
             content: Message content
             model_id: Optional model ID for assistant messages
             metadata: Optional message metadata
-            attachment_ids: Optional list of attachment IDs to link
 
         Returns:
             Created message
@@ -575,19 +568,6 @@ class ChatService:
         self.db_session.add(message)
         # Ensure INSERT happens to satisfy FK for message_attachments
         await self.db_session.flush()
-
-        # Link attachments if provided
-        if attachment_ids:
-            from ..models.attachment import MessageAttachment, Attachment
-            # Validate attachment ownership and conversation
-            q = select(Attachment).where(Attachment.id.in_(attachment_ids))
-            res = await self.db_session.execute(q)
-            att_list = res.scalars().all()
-            for att in att_list:
-                if att.conversation_id != conversation_id:
-                    raise ValidationError("Attachment does not belong to this conversation")
-                link = MessageAttachment(message_id=message.id, attachment_id=att.id)
-                self.db_session.add(link)
 
         # Update conversation timestamp
         conversation.updated_at = datetime.now(timezone.utc)
@@ -689,7 +669,6 @@ class ChatService:
         knowledge_base_id: Optional[str] = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
         client_temp_id: Optional[str] = None,
-        attachment_ids: Optional[List[str]] = None,
         ensemble_model_configuration_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """
@@ -745,7 +724,6 @@ class ChatService:
             conversation=conversation,
             user_message=user_message,
             knowledge_base_id=knowledge_base_id,
-            attachment_ids=attachment_ids,
         )
 
         model_configurations = await self._resolve_ensemble_configurations(
@@ -887,10 +865,6 @@ class ChatService:
         history_messages = all_msgs[:history_end]
         preceding_user_message = all_msgs[preceding_user_idx] if preceding_user_idx is not None else None
         preceding_user_content = preceding_user_message.content if preceding_user_message else ""
-        preceding_attachment_ids = [
-            a.id for a in (preceding_user_message.attachments or [])
-        ] if preceding_user_message else None
-
         # Resolve provider/model via model configuration or cached model reference
         provider_id, model = await self._resolve_conversation_model(conversation)
 
@@ -901,7 +875,6 @@ class ChatService:
             model=model,
             knowledge_base_id=None,
             rag_rewrite_mode=rag_rewrite_mode,
-            attachment_ids=preceding_attachment_ids,
             conversation_messages=history_messages,
         )
 

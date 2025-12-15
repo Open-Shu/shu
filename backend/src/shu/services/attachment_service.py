@@ -1,7 +1,6 @@
 """
 AttachmentService handles chat attachments: saving files, extracting text, and persistence.
 """
-import base64
 import os
 import uuid
 import mimetypes
@@ -9,10 +8,11 @@ from pathlib import Path
 from typing import Any, Tuple, Dict
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from ..core.config import get_settings_instance
-from ..models.attachment import Attachment
+from ..models.attachment import Attachment, MessageAttachment
 from ..processors.text_extractor import TextExtractor
 
 
@@ -97,7 +97,6 @@ class AttachmentService:
             mime_type=mime_type,
             file_type=ext,
             file_size=file_size,
-            raw_base64=base64.b64encode(file_bytes).decode('utf-8'),
             extracted_text=text or None,
             extracted_text_length=len(text) if text else 0,
             extraction_method=meta.get("method"),
@@ -121,3 +120,20 @@ class AttachmentService:
         result = await self.db.execute(stmt)
         attachments = [a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id]
         return attachments
+
+    async def get_conversation_attachments_with_links(
+        self,
+        conversation_id: str,
+        user_id: str
+    ) -> list[tuple[str, Attachment]]:
+        """Fetch (message_id, attachment) pairs for a conversation owned by the user."""
+        stmt = (
+            select(MessageAttachment.message_id, Attachment)
+            .join(Attachment, Attachment.id == MessageAttachment.attachment_id)
+            .where(
+                Attachment.conversation_id == conversation_id,
+                Attachment.user_id == user_id,
+            )
+        )
+        result = await self.db.execute(stmt)
+        return result.all()

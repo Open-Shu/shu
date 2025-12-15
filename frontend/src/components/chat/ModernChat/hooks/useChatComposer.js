@@ -30,10 +30,6 @@ const useChatComposer = ({
   const [inputMessage, setInputMessage] = useState('');
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [plusAnchorEl, setPlusAnchorEl] = useState(null);
-  const pendingAttachmentIds = useMemo(
-    () => pendingAttachments.map((attachment) => attachment.id),
-    [pendingAttachments]
-  );
 
   const latestUserMessageContent = useMemo(
     () => getLatestUserMessageContent(messages),
@@ -189,7 +185,6 @@ const useChatComposer = ({
 
     const payload = {
       message: userMessage,
-      attachment_ids: pendingAttachmentIds,
       rag_rewrite_mode: ragRewriteMode,
       client_temp_id: userTempId,
     };
@@ -219,7 +214,6 @@ const useChatComposer = ({
     messages,
     automationSettings.firstUserRename,
     pendingAttachments,
-    pendingAttachmentIds,
     selectedPlugin,
     runAutoRename,
     clearFreshConversation,

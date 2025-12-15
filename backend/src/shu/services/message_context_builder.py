@@ -3,6 +3,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from shu.llm.service import LLMService
 from shu.services.prompt_service import PromptService
@@ -80,7 +81,6 @@ class MessageContextBuilder:
         model: LLMModel,
         knowledge_base_id: Optional[str] = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
-        attachment_ids: Optional[List[str]] = None,
         conversation_messages: Optional[List[Message]] = None,
         model_configuration_override: Optional[ModelConfiguration] = None,
         recent_messages_limit: Optional[int] = None,
@@ -107,6 +107,7 @@ class MessageContextBuilder:
                 limit=50,
             )
         recent_messages = collapse_assistant_variants(recent_messages_raw)
+        await self._attach_attachments_to_messages(conversation, recent_messages)
 
         rag_sections, all_source_metadata = await self._get_rag_sections(
             conversation=conversation,
@@ -131,10 +132,6 @@ class MessageContextBuilder:
             if msg.role in ["user", "assistant"]:
                 messages.append({"role": msg.role, "content": msg.content})
 
-        attachments_section = await self._get_attachment_section(conversation, attachment_ids)
-        if attachments_section and messages:
-            messages[-1]["content"] += "\n\n" + attachments_section
-
         effective_max_tokens = self.context_preferences_resolver.resolve_max_context_tokens(
             active_model_config=active_model_config,
         )
@@ -147,6 +144,36 @@ class MessageContextBuilder:
         )
 
         return messages, all_source_metadata
+
+    async def _attach_attachments_to_messages(
+        self,
+        conversation: Conversation,
+        messages: List[Message],
+    ) -> None:
+        """Load all conversation attachments and assign them to their messages."""
+        if not messages:
+            return
+        try:
+            from .attachment_service import AttachmentService
+
+            att_service = AttachmentService(self.db_session)
+            rows = await att_service.get_conversation_attachments_with_links(conversation.id, conversation.user_id)
+            if not rows:
+                return
+
+            msg_by_id = {m.id: m for m in messages if getattr(m, "id", None)}
+            msg_to_atts: Dict[str, List[Any]] = {}
+            for msg_id, att in rows:
+                if msg_id:
+                    msg_to_atts.setdefault(msg_id, []).append(att)
+
+            for msg_id, att_list in msg_to_atts.items():
+                msg = msg_by_id.get(msg_id)
+                if not msg:
+                    continue
+                msg.attachments = att_list
+        except Exception as e:
+            logger.warning(f"Failed to attach conversation attachments to messages: {e}")
 
     async def _get_base_system_prompt(
         self,
@@ -223,45 +250,6 @@ class MessageContextBuilder:
             )
         except Exception as e:
             logger.warning(f"Failed to include morning briefing context: {e}")
-            return None
-
-    async def _get_attachment_section(
-        self,
-        conversation: Conversation,
-        attachment_ids: Optional[List[str]],
-    ) -> Optional[str]:
-        if not attachment_ids:
-            return None
-        try:
-            from .attachment_service import AttachmentService
-
-            att_service = AttachmentService(self.db_session)
-            attachments = await att_service.get_attachments_by_ids(conversation.id, conversation.user_id, attachment_ids)
-            if not attachments:
-                return None
-
-            settings = self.config_manager.settings
-            per_file = getattr(settings, 'chat_attachment_max_chars_per_file', 5000)
-            total_cap = getattr(settings, 'chat_attachment_max_total_chars', 15000)
-            added = 0
-            parts: List[str] = []
-            for att in attachments:
-                if not getattr(att, 'extracted_text', None):
-                    continue
-                snippet = att.extracted_text[:per_file]
-                remaining = max(0, total_cap - added)
-                snippet = snippet[:remaining]
-                if not snippet:
-                    break
-                parts.append(f"Attachment: {att.original_filename}\n---\n{snippet}")
-                added += len(snippet)
-                if added >= total_cap:
-                    break
-            if not parts:
-                return None
-            return "Attachments:\n\n" + "\n\n".join(parts)
-        except Exception as e:
-            logger.warning(f"Failed to include attachments in context: {e}")
             return None
 
     async def _get_rag_sections(

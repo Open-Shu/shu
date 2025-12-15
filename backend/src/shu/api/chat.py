@@ -14,8 +14,8 @@ from typing import Dict, Any, List, Optional, Union, Literal
 from pydantic import BaseModel, Field
 import logging
 import json
-import base64
 from datetime import datetime, timezone
+from pathlib import Path as PathlibPath
 
 from .dependencies import get_db
 from ..auth.rbac import get_current_user
@@ -77,7 +77,6 @@ class MessageCreate(BaseModel):
     content: str = Field(..., description="Message content")
     model_id: Optional[str] = Field(None, description="Model ID for assistant messages")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Message metadata")
-    attachment_ids: Optional[List[str]] = Field(None, description="Uploaded attachment IDs to associate with this message")
 
 
 class MessageAttachmentInfo(BaseModel):
@@ -176,7 +175,6 @@ class SendMessageRequest(BaseModel):
         None,
         description="Client-generated temp id for optimistic user placeholder replacement"
     )
-    attachment_ids: Optional[List[str]] = Field(None, description="Attachment IDs to include as context and link to this user message")
     ensemble_model_configuration_ids: Optional[List[str]] = Field(
         None,
         description="Optional additional model configuration IDs to execute alongside the conversation default"
@@ -293,22 +291,23 @@ async def view_attachment(
         )
 
 
-    # Check if raw_base64 is available
-    if not attachment.raw_base64:
+    # Read from disk using storage_path
+    storage_path = getattr(attachment, "storage_path", None)
+    path = PathlibPath(storage_path) if storage_path else None
+    if not path or not path.exists() or not path.is_file():
         return create_error_response(
             code="ATTACHMENT_CONTENT_UNAVAILABLE",
             message="Attachment content is not available",
             status_code=404
         )
 
-    # Decode and return
     try:
-        content = base64.b64decode(attachment.raw_base64)
+        content = path.read_bytes()
     except Exception as e:
-        logger.error(f"Failed to decode attachment {attachment_id}: {e}")
+        logger.error(f"Failed to read attachment {attachment_id} from disk: {e}")
         return create_error_response(
-            code="ATTACHMENT_DECODE_ERROR",
-            message="Failed to decode attachment content",
+            code="ATTACHMENT_READ_ERROR",
+            message="Failed to read attachment content",
             status_code=500
         )
 
@@ -733,7 +732,6 @@ async def add_message(
             content=message_data.content,
             model_id=message_data.model_id,
             metadata=message_data.metadata,
-            attachment_ids=message_data.attachment_ids,
         )
 
         # Build response manually to avoid SQLAlchemy relationship issues
@@ -820,7 +818,6 @@ async def send_message(
                     knowledge_base_id=request_data.knowledge_base_id,
                     rag_rewrite_mode=request_data.rag_rewrite_mode,
                     client_temp_id=getattr(request_data, "client_temp_id", None),
-                    attachment_ids=request_data.attachment_ids,
                     ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
                 ):
                     payload = event.to_dict()
