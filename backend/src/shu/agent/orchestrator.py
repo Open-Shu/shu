@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from shu.services.chat_types import ChatContext
 
 from shu.services.message_context_builder import MessageContextBuilder
 
@@ -474,7 +475,7 @@ class MorningBriefingOrchestrator:
         try:
             logger.info("Morning Briefing LLM call", extra={"model": resolved_model_name, "via_model_config": True, "stream": True})
             # Stream from provider, but buffer to a final string for current API shape
-            stream_gen = await client.chat_completion(messages=messages, model=resolved_model_name, stream=True)
+            stream_gen = await client.chat_completion(messages=ChatContext.from_dicts(messages), model=resolved_model_name, stream=True)
             final_content: Optional[str] = None
             async for event in stream_gen:
                 if event.type == "final_message":

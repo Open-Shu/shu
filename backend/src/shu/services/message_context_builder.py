@@ -3,7 +3,6 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from shu.llm.service import LLMService
 from shu.services.prompt_service import PromptService
@@ -13,6 +12,7 @@ from ..auth.models import User
 from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager
 from ..models.llm_provider import Conversation, LLMModel, Message
+from .chat_types import ChatContext, ChatMessage
 from ..models.model_configuration import ModelConfiguration
 from ..models.prompt import EntityType
 from ..schemas.query import QueryRequest, RagRewriteMode
@@ -84,10 +84,8 @@ class MessageContextBuilder:
         conversation_messages: Optional[List[Message]] = None,
         model_configuration_override: Optional[ModelConfiguration] = None,
         recent_messages_limit: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, str]], List[Dict]]:
-        """
-        Build message context using model configuration with conditional RAG + attachments.
-        """
+    ) -> Tuple[ChatContext, List[Dict]]:
+        """Build message context using model configuration with conditional RAG + attachments."""
         system_sections: List[str] = []
         active_model_config = model_configuration_override or getattr(conversation, "model_configuration", None)
 
@@ -107,7 +105,7 @@ class MessageContextBuilder:
                 limit=50,
             )
         recent_messages = collapse_assistant_variants(recent_messages_raw)
-        await self._attach_attachments_to_messages(conversation, recent_messages)
+        recent_chat_messages = await self._hydrate_chat_messages(conversation, recent_messages)
 
         rag_sections, all_source_metadata = await self._get_rag_sections(
             conversation=conversation,
@@ -124,42 +122,39 @@ class MessageContextBuilder:
 
         combined_system = "\n\n".join([s for s in system_sections if s and s.strip()])
 
-        messages: List[Dict[str, str]] = []
-        if combined_system:
-            messages.append({"role": "system", "content": combined_system})
-
-        for msg in recent_messages:
+        chat_messages: List[ChatMessage] = []
+        for msg in recent_chat_messages:
             if msg.role in ["user", "assistant"]:
-                messages.append({"role": msg.role, "content": msg.content})
+                chat_messages.append(msg)
 
         effective_max_tokens = self.context_preferences_resolver.resolve_max_context_tokens(
             active_model_config=active_model_config,
         )
 
-        messages = await self.context_window_manager.manage_context_window(
-            messages,
+        chat_messages = await self.context_window_manager.manage_context_window(
+            chat_messages,
             conversation=conversation,
             max_tokens=effective_max_tokens,
             recent_message_limit_override=recent_messages_limit,
         )
 
-        return messages, all_source_metadata
+        return ChatContext(system_prompt=combined_system, messages=chat_messages), all_source_metadata
 
-    async def _attach_attachments_to_messages(
+    async def _hydrate_chat_messages(
         self,
         conversation: Conversation,
         messages: List[Message],
-    ) -> None:
-        """Load all conversation attachments and assign them to their messages."""
+    ) -> List[ChatMessage]:
+        """Load conversation attachments and return ChatMessage objects with attachments."""
         if not messages:
-            return
+            return []
         try:
             from .attachment_service import AttachmentService
 
             att_service = AttachmentService(self.db_session)
             rows = await att_service.get_conversation_attachments_with_links(conversation.id, conversation.user_id)
             if not rows:
-                return
+                return [ChatMessage.from_message(m, []) for m in messages]
 
             msg_by_id = {m.id: m for m in messages if getattr(m, "id", None)}
             msg_to_atts: Dict[str, List[Any]] = {}
@@ -167,13 +162,14 @@ class MessageContextBuilder:
                 if msg_id:
                     msg_to_atts.setdefault(msg_id, []).append(att)
 
-            for msg_id, att_list in msg_to_atts.items():
-                msg = msg_by_id.get(msg_id)
-                if not msg:
-                    continue
-                msg.attachments = att_list
+            chat_messages: List[ChatMessage] = []
+            for m in messages:
+                atts = msg_to_atts.get(getattr(m, "id", ""), [])
+                chat_messages.append(ChatMessage.from_message(m, atts))
+            return chat_messages
         except Exception as e:
             logger.warning(f"Failed to attach conversation attachments to messages: {e}")
+            return [ChatMessage.from_message(m, []) for m in messages]
 
     async def _get_base_system_prompt(
         self,

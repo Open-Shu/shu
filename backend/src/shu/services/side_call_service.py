@@ -9,7 +9,7 @@ import logging
 import time
 import re
 import json
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Tuple
 from decimal import Decimal
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from ..services.model_configuration_service import ModelConfigurationService
 from ..llm.service import LLMService
 from ..core.config import ConfigurationManager
 from ..core.exceptions import LLMProviderError
+from ..services.chat_types import ChatContext
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class SideCallService:
                     response_time_ms=int((time.time() - start_time) * 1000),
                 )
 
-            messages = await self._build_sequence_messages(
+            system_prompt, messages = await self._build_sequence_messages(
                 sequence=message_sequence,
                 system_prompt=system_prompt,
                 model_config=model_config,
@@ -109,9 +110,11 @@ class SideCallService:
             # Find the model
             model = await self._find_model_for_config(model_config)
 
-            # Prepare parameters
+
+            chat_ctx = ChatContext.from_dicts(messages, system_prompt)
+
             llm_params = {
-                "messages": messages,
+                "messages": chat_ctx,
                 "model": model.model_name,
                 "stream": False,
                 "model_overrides": model_config.parameter_overrides or None,
@@ -499,7 +502,7 @@ class SideCallService:
         sequence: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
         model_config: Optional[ModelConfiguration] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> Tuple[str, List[Dict[str, str]]]:
         """Normalize and redact message sequences provided directly by callers.
 
         Includes a system prompt if provided; otherwise falls back to the
@@ -510,9 +513,9 @@ class SideCallService:
 
         # Add system message: explicit prompt first, else model default prompt
         if system_prompt and system_prompt.strip():
-            messages.append({"role": "system", "content": system_prompt.strip()})
+            system_prompt = system_prompt.strip()
         elif model_config and getattr(model_config, "prompt", None) and getattr(model_config.prompt, "content", None):
-            messages.append({"role": "system", "content": model_config.prompt.content})
+            system_prompt = model_config.prompt.content
 
         for entry in sequence:
             role = entry.get("role")
@@ -522,7 +525,7 @@ class SideCallService:
             redacted = await self.redact_sensitive_content(str(content))
             messages.append({"role": role, "content": redacted})
 
-        return messages
+        return system_prompt, messages
 
     async def _record_usage(
         self,

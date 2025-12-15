@@ -30,6 +30,7 @@ from ..services.prompt_service import PromptService
 from ..services.context_window_manager import ContextWindowManager
 from ..services.context_preferences_resolver import ContextPreferencesResolver
 from ..services.message_context_builder import MessageContextBuilder
+from ..services.chat_types import ChatContext
 from ..services.message_utils import serialize_message_for_sse
 from .conversation_lock_service import acquire_conversation_lock, release_conversation_lock
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
@@ -55,7 +56,7 @@ class ModelExecutionInputs:
     model_configuration: ModelConfiguration
     provider_id: str
     model: LLMModel
-    context_messages: List[Dict[str, str]]
+    context_messages: ChatContext
     source_metadata: List[Dict]
     knowledge_base_id: Optional[str]
 
@@ -186,7 +187,7 @@ class ChatService:
         if not model or not model.is_active:
             raise LLMProviderError(f"Model '{model_name}' is not active for provider '{provider_id}'")
 
-        messages, source_metadata = await self.message_context_builder.build_message_context(
+        chat_context, source_metadata = await self.message_context_builder.build_message_context(
             conversation=base_conversation,
             user_message=turn_context.user_message.content,
             current_user=current_user,
@@ -202,7 +203,7 @@ class ChatService:
             model_configuration=model_configuration,
             provider_id=provider_id,
             model=model,
-            context_messages=messages,
+            context_messages=chat_context,
             source_metadata=source_metadata,
             knowledge_base_id=turn_context.knowledge_base_id,
         )
@@ -868,7 +869,7 @@ class ChatService:
         # Resolve provider/model via model configuration or cached model reference
         provider_id, model = await self._resolve_conversation_model(conversation)
 
-        context_messages, source_metadata = await self.message_context_builder.build_message_context(
+        chat_context, source_metadata = await self.message_context_builder.build_message_context(
             conversation=conversation,
             user_message=preceding_user_content,
             current_user=current_user,
@@ -887,7 +888,7 @@ class ChatService:
                 model_configuration=conversation.model_configuration,
                 provider_id=provider_id,
                 model=model,
-                context_messages=context_messages,
+                context_messages=chat_context,
                 source_metadata=source_metadata,
                 knowledge_base_id=None,
             )
