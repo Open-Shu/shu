@@ -90,11 +90,12 @@ def _get_known_revisions(script_dir: ScriptDirectory) -> Set[str]:
 
 
 def resolve_orphaned_revision(cfg: alembic.config.Config, url: str) -> None:
-    """Check if DB has an orphaned revision and stamp to the squash if needed.
+    """Check if DB has an orphaned revision and stamp to the squash's down_revision.
 
     When migrations are squashed and the original files deleted, Alembic can't
     find the old revision ID. This function detects that case and stamps the
-    database to the squash migration that replaced it.
+    database to the down_revision of the squash migration, so that `upgrade head`
+    will run the squash migration (which is idempotent and handles partial states).
     """
     current_rev = _get_current_revision(url)
     if not current_rev:
@@ -113,13 +114,20 @@ def resolve_orphaned_revision(cfg: alembic.config.Config, url: str) -> None:
 
     if current_rev in replaces_map:
         squash_rev = replaces_map[current_rev]
+        squash_script = script_dir.get_revision(squash_rev)
+        down_rev = squash_script.down_revision
         print(
-            f"[db_migrate] Orphaned revision {current_rev} was replaced by {squash_rev}, stamping...",
+            f"[db_migrate] Orphaned revision {current_rev} was replaced by {squash_rev}",
             flush=True
         )
-        # Use purge=True to ignore the unknown current revision and force-set the new one
-        alembic.command.stamp(cfg, squash_rev, purge=True)
-        print(f"[db_migrate] Stamped database to {squash_rev}", flush=True)
+        print(
+            f"[db_migrate] Stamping to {down_rev} so upgrade head runs the idempotent squash migration",
+            flush=True
+        )
+        # Stamp to down_revision so `upgrade head` runs the squash migration
+        # The squash migration is idempotent and handles partial states
+        alembic.command.stamp(cfg, down_rev, purge=True)
+        print(f"[db_migrate] Stamped database to {down_rev}", flush=True)
     else:
         print(
             f"[db_migrate] WARNING: Current revision {current_rev} is unknown and not in any replaces list",
