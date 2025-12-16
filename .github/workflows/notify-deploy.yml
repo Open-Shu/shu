@@ -7,7 +7,7 @@
 # REQUIRED CONFIGURATION:
 #   Repository variable (Settings → Secrets and variables → Actions → Variables):
 #     DEPLOY_REPO - The org/repo path to your deployment repository
-#                   Example: openshu/shu-deploy
+#                   Example: open-shu/shu-deploy
 #
 #   Repository secret:
 #     DEPLOY_REPO_PAT - A Personal Access Token with 'repo' scope that has

@@ -20,7 +20,7 @@ By submitting a contribution, you agree to the [Contributor License Agreement](C
 
 ```bash
 # Clone the repository
-git clone https://github.com/openshu/shu.git
+git clone https://github.com/open-shu/shu.git
 cd shu
 
 # Copy environment template
