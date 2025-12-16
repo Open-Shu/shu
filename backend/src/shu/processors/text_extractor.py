@@ -226,7 +226,7 @@ class TextExtractor:
 
         if file_ext not in self.supported_formats:
             # Log as warning instead of error for unsupported formats
-            logger.warning(f"Unsupported file format: {file_ext}", extra={
+            logger.warning(f"Unsupported file format for text extraction: {file_ext}", extra={
                 "file_path": file_path,
                 "supported_formats": list(self.supported_formats.keys())
             })

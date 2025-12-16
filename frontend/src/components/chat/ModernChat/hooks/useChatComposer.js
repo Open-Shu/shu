@@ -199,6 +199,11 @@ const useChatComposer = ({
       payload.ensemble_model_configuration_ids = ensembleIds;
     }
 
+    // Include attachment IDs to link to this message
+    if (pendingAttachments.length > 0) {
+      payload.attachment_ids = pendingAttachments.map((att) => att.id);
+    }
+
     const defaultVariantIndex = totalVariants - 1; // backend appends conversation config last
     const primaryPlaceholderId = placeholderIds[defaultVariantIndex];
     handleStreamingResponse(conversationId, payload, {

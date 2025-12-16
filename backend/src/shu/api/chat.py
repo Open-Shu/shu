@@ -179,6 +179,10 @@ class SendMessageRequest(BaseModel):
         None,
         description="Optional additional model configuration IDs to execute alongside the conversation default"
     )
+    attachment_ids: Optional[List[str]] = Field(
+        None,
+        description="List of attachment IDs to include with this message"
+    )
 
     class Config:
         extra = 'forbid'
@@ -819,6 +823,7 @@ async def send_message(
                     rag_rewrite_mode=request_data.rag_rewrite_mode,
                     client_temp_id=getattr(request_data, "client_temp_id", None),
                     ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
+                    attachment_ids=request_data.attachment_ids,
                 ):
                     payload = event.to_dict()
                     yield f"data: {json.dumps(payload)}\n\n"

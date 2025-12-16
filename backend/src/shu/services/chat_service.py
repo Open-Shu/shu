@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models.llm_provider import Conversation, Message, LLMModel
+from ..models.attachment import MessageAttachment
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from ..models.llm_provider import LLMProvider
@@ -102,12 +103,14 @@ class ChatService:
         conversation: Conversation,
         user_message: str,
         knowledge_base_id: Optional[str],
+        attachment_ids: Optional[List[str]] = None,
     ) -> PreparedTurnContext:
         """Insert the user message and assemble shared context for an ensemble turn."""
         user_msg = await self.add_message(
             conversation_id=conversation.id,
             role="user",
             content=user_message,
+            attachment_ids=attachment_ids,
         )
 
         # Capture message history after inserting the user turn so all ensemble variants
@@ -494,6 +497,7 @@ class ChatService:
         parent_message_id: Optional[str] = None,
         variant_index: Optional[int] = None,
         message_id: Optional[str] = None,
+        attachment_ids: Optional[List[str]] = None,
     ) -> Message:
         """
         Add a message to a conversation.
@@ -569,6 +573,16 @@ class ChatService:
         self.db_session.add(message)
         # Ensure INSERT happens to satisfy FK for message_attachments
         await self.db_session.flush()
+
+        # Create MessageAttachment links if attachment_ids provided
+        if attachment_ids:
+            for att_id in attachment_ids:
+                link = MessageAttachment(
+                    id=str(uuid.uuid4()),
+                    message_id=message.id,
+                    attachment_id=att_id,
+                )
+                self.db_session.add(link)
 
         # Update conversation timestamp
         conversation.updated_at = datetime.now(timezone.utc)
@@ -671,6 +685,7 @@ class ChatService:
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
         client_temp_id: Optional[str] = None,
         ensemble_model_configuration_ids: Optional[List[str]] = None,
+        attachment_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """
         Send a message and get LLM response using the conversation model or an ensemble.
@@ -725,6 +740,7 @@ class ChatService:
             conversation=conversation,
             user_message=user_message,
             knowledge_base_id=knowledge_base_id,
+            attachment_ids=attachment_ids,
         )
 
         model_configurations = await self._resolve_ensemble_configurations(
