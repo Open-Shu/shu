@@ -17,6 +17,8 @@ from ..adapter_base import (
     ProviderInformation,
     ProviderToolCallEventResult,
     ToolCallInstructions,
+    ChatContext,
+    ChatMessage,
 )
 
 logger = get_logger(__name__)
@@ -96,11 +98,12 @@ class CompletionsAdapter(BaseProviderAdapter):
                 else:
                     existing_function[key] += value
     
-    def _transform_function_messages(self, messages):
-        return {
-            "role": "assistant",
-            "tool_calls": messages
-        }
+    def _transform_function_messages(self, messages) -> ChatMessage:
+        return ChatMessage.build(
+            role="assistant",
+            content="",  # Content is empty when tool_calls are present
+            metadata={"tool_calls": messages},
+        )
 
     def _extract_usage(self, path: str, chunk):
         usage = jmespath.search(path, chunk) or {}
@@ -161,11 +164,11 @@ class CompletionsAdapter(BaseProviderAdapter):
 
         tool_calls = list(map(self._tool_call_to_instructions, self._function_call_messages.values()))
         result_messages = [
-            {
-                "role": "tool",
-                "tool_call_id": call.get("id", ""),
-                "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
-            }
+            ChatMessage.build(
+                role="tool",
+                metadata={"tool_call_id": call.get("id", "")},
+                content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+            )
             for call, tool_call in zip(self._function_call_messages.values(), tool_calls)
         ]
 
@@ -202,18 +205,19 @@ class CompletionsAdapter(BaseProviderAdapter):
         
         tool_calls = list(map(self._tool_call_to_instructions, function_call_messages))
         result_messages = [
-            {
-                "role": "tool",
-                "tool_call_id": call.get("id", ""),
-                "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
-            }
+            ChatMessage.build(
+                role="tool",
+                metadata={"tool_call_id": call.get("id", "")},
+                content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+            )
             for call, tool_call in zip(function_call_messages, tool_calls)
         ]
 
+        additional_messages = [self._transform_function_messages(function_call_messages)] + result_messages
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=[self._transform_function_messages(function_call_messages)] + result_messages,
+                additional_messages=additional_messages,
                 content="",
             )
         ] + final_messages
@@ -257,9 +261,36 @@ class CompletionsAdapter(BaseProviderAdapter):
         if res:
             payload["tools"] = payload.get("tools", []) + res
         return payload
+    
+    def process_message_records(self, message: ChatMessage):
+        """Convert ChatMessage to OpenAI completions API message format."""
+        role = getattr(message, "role", "")
+        content = getattr(message, "content", "")
+        metadata = getattr(message, "metadata", {}) or {}
+        
+        res: Dict[str, Any] = {
+            "role": role,
+        }
+        
+        # Handle assistant messages with tool_calls
+        tool_calls = metadata.get("tool_calls")
+        if role == "assistant" and tool_calls:
+            res["tool_calls"] = tool_calls
+            # Only include content if it's non-empty
+            if content:
+                res["content"] = content
+        else:
+            res["content"] = content
+        
+        # Add tool_call_id for tool result messages
+        tool_call_id = metadata.get("tool_call_id")
+        if tool_call_id:
+            res["tool_call_id"] = tool_call_id
+        
+        return res
 
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
-        payload["messages"] = messages
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload["messages"] = self._flatten_chat_context(messages, self.process_message_records)
         return payload
 
     async def inject_model_parameter(self, model_value: str, payload: Dict[str, Any]) -> Dict[str, Any]:

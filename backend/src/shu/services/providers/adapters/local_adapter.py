@@ -1,5 +1,5 @@
 from typing import Any, Dict, List
-from shu.services.providers.adapter_base import BaseProviderAdapter, ProviderCapabilities, ProviderEventResult, ProviderInformation, register_adapter
+from shu.services.providers.adapter_base import BaseProviderAdapter, ProviderCapabilities, ProviderEventResult, ProviderInformation, register_adapter, ChatContext
 
 
 class LocalAdapter(BaseProviderAdapter):
@@ -39,8 +39,8 @@ class LocalAdapter(BaseProviderAdapter):
             "tools": {"type": "array"}
         }
     
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
-        payload["messages"] = messages
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload["messages"] = self._flatten_chat_context(messages)
         return payload
     
     async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:

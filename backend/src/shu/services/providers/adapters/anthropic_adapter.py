@@ -27,6 +27,8 @@ from ..adapter_base import (
     ProviderFinalEventResult,
     ProviderToolCallEventResult,
     ToolCallInstructions,
+    ChatContext,
+    ChatMessage,
 )
 from shu.models.plugin_execution import CallableTool
 
@@ -41,19 +43,24 @@ class AnthropicAdapter(BaseProviderAdapter):
         self._stream_content: List[str] = []
         self._stream_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-    async def _build_assistant_and_result_messages(self, assistant_blocks: List[Dict[str, Any]], tool_blocks: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]):
-        assistant_message = {"role": "assistant", "content": assistant_blocks} if assistant_blocks else None
-        result_messages = [
-            {
-                "role": "user",
-                "content": [
+    async def _build_assistant_and_result_messages(
+        self,
+        assistant_blocks: List[Dict[str, Any]],
+        tool_blocks: List[Dict[str, Any]],
+        tool_calls: list[ToolCallInstructions],
+    ) -> tuple[Optional[ChatMessage], List[ChatMessage]]:
+        assistant_message = ChatMessage.build(role="assistant", content=assistant_blocks) if assistant_blocks else None
+        result_messages: List[ChatMessage] = [
+            ChatMessage.build(
+                role="user",
+                content=[
                     {
                         "type": "tool_result",
                         "tool_use_id": block.get("id", ""),
                         "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
                     }
                 ],
-            }
+            )
             for block, tool_call in zip(tool_blocks, tool_calls)
         ]
         return assistant_message, result_messages
@@ -442,22 +449,14 @@ class AnthropicAdapter(BaseProviderAdapter):
             ),
         }
     
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
-        system_messages: List[str] = []
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         formatted_messages: List[Dict[str, Any]] = []
 
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role == "system":
-                if isinstance(content, str):
-                    system_messages.append(content)
-                continue
+        for msg in messages.messages:
+            formatted_messages.append({"role": getattr(msg, "role", ""), "content": getattr(msg, "content", "")})
 
-            formatted_messages.append({"role": role, "content": content})
-
-        if system_messages:
-            payload["system"] = "\n\n".join(system_messages)
+        if messages.system_prompt:
+            payload["system"] = messages.system_prompt
 
         payload["messages"] = formatted_messages
         return payload
@@ -633,7 +632,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             tool_calls,
         )
 
-        additional_messages = []
+        additional_messages: List[ChatMessage] = []
         if assistant_message:
             additional_messages.append(assistant_message)
         additional_messages.extend(result_messages)

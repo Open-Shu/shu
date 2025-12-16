@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import json
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cryptography.fernet import Fernet
@@ -21,6 +21,7 @@ from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
 from shu.core.exceptions import LLMConfigurationError
 from shu.models.llm_provider import LLMProvider
+from shu.services.chat_types import ChatContext, ChatMessage
 
 logger = get_logger(__name__)
 
@@ -98,7 +99,7 @@ class ProviderEventResult:
 @dataclass(kw_only=True)
 class ProviderToolCallEventResult(ProviderEventResult):
     tool_calls: List[ToolCallInstructions]
-    additional_messages: List[Dict[str, Any]]
+    additional_messages: List[ChatMessage]
     content: Optional[Any]
     type: str = "function_call"
 
@@ -188,6 +189,19 @@ class BaseProviderAdapter:
             k: first.get(k, 0) + second.get(k, 0)
             for k in set(first) | set(second)
         }
+
+    def _flatten_chat_context(
+            self,
+            ctx: ChatContext,
+            message_modifier: Callable = lambda x: {"role": getattr(x, "role", ""), "content": getattr(x, "content", "")}
+        ) -> List[Dict[str, Any]]:
+        """Convert ChatContext into a provider-agnostic list of role/content dicts."""
+        messages: List[Dict[str, Any]] = []
+        if ctx.system_prompt:
+            messages.append({"role": "system", "content": ctx.system_prompt})
+        for m in ctx.messages:
+            messages.append(message_modifier(m))
+        return messages
 
     def _update_usage(self,  input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int, total_tokens: int):
         usage_dict = self._get_usage(
@@ -296,7 +310,7 @@ class BaseProviderAdapter:
     async def finalize_provider_events(self) -> List[ProviderEventResult]:
         return []
     
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise NotImplementedError("Function set_messages_in_payload is not implemented.")
     
     async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:

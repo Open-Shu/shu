@@ -27,6 +27,27 @@ class ChatMessage:
             metadata=getattr(message, "message_metadata", None),
         )
 
+    @classmethod
+    def build(
+        cls,
+        role: str,
+        content: Union[str, List[Dict[str, Any]], None],
+        *,
+        id: Optional[str] = None,
+        created_at: Optional[Any] = None,
+        attachments: Optional[List[Attachment]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> "ChatMessage":
+        """Convenience constructor with sensible defaults."""
+        return cls(
+            id=id,
+            role=role,
+            content=content,
+            created_at=created_at,
+            attachments=list(attachments or []),
+            metadata=metadata,
+        )
+
 
 @dataclass
 class ChatContext:

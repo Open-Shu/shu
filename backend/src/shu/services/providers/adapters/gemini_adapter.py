@@ -18,6 +18,8 @@ from ..adapter_base import (
     ProviderFinalEventResult,
     ProviderToolCallEventResult,
     ToolCallInstructions,
+    ChatContext,
+    ChatMessage,
 )
 from shu.models.plugin_execution import CallableTool
 
@@ -32,15 +34,17 @@ class GeminiAdapter(BaseProviderAdapter):
         self._stream_content: List[str] = []
         self._stream_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-    async def _build_assistant_and_result_messages(self, sorted_tool_calls: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]):
-        assistant_message = {"role": "assistant", "content": "", "tool_calls": sorted_tool_calls} if sorted_tool_calls else None
+    async def _build_assistant_and_result_messages(self, sorted_tool_calls: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]) -> tuple[Optional[ChatMessage], List[ChatMessage]]:
+        assistant_message = ChatMessage.build(role="assistant", content=sorted_tool_calls) if sorted_tool_calls else None
         result_messages = [
-            {
-                "role": "tool",
-                "tool_call_id": raw.get("id", ""),
-                "name": (raw.get("function") or {}).get("name", ""),
-                "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
-            }
+            ChatMessage.build(
+                role="tool",
+                metadata={
+                    "tool_call_id": raw.get("id", ""),
+                    "name": (raw.get("function") or {}).get("name", "")
+                },
+                content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+            )
             for raw, tool_call in zip(sorted_tool_calls, tool_calls)
         ]
         return assistant_message, result_messages
@@ -254,8 +258,10 @@ class GeminiAdapter(BaseProviderAdapter):
             ),
         }
     
-    def _build_tool_result_part(self, msg: Dict[str, str]):
-        raw_content = msg.get("content")
+    def _build_tool_result_part(self, msg: ChatMessage):
+        """Build Gemini functionResponse part from a ChatMessage with role='tool'."""
+        raw_content = getattr(msg, "content", "")
+        metadata = getattr(msg, "metadata", {}) or {}
         response_obj: Dict[str, Any]
         if isinstance(raw_content, dict):
             response_obj = raw_content
@@ -267,7 +273,7 @@ class GeminiAdapter(BaseProviderAdapter):
         parts = [
             {
                 "functionResponse": {
-                    "name": msg.get("name") or "",
+                    "name": metadata.get("name") or "",
                     "response": response_obj if isinstance(response_obj, dict) else {},
                 }
             }
@@ -297,37 +303,44 @@ class GeminiAdapter(BaseProviderAdapter):
             part["thoughtSignature"] = thought_signature
         return part
 
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         system_parts: List[Dict[str, Any]] = []
         contents: List[Dict[str, Any]] = []
 
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            tool_calls = msg.get("tool_calls") or []
-
-            if role == "system":
-                if isinstance(content, str):
-                    system_parts.append({"text": content})
-                continue
-
+        for msg in messages.messages:
+            role = getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
             parts: List[Dict[str, Any]] = []
 
+            # Handle tool result messages - these need special Gemini formatting
             if role == "tool":
                 role, parts = self._build_tool_result_part(msg)
             else:
                 if isinstance(content, str) and content:
                     parts.append({"text": content})
                 elif isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            parts.append({"text": part.get("text", "")})
+                    # Check if content is a list of tool calls (assistant message with function calls)
+                    is_tool_calls = all(
+                        isinstance(part, dict) and ("function" in part or "id" in part)
+                        for part in content
+                    )
+                    if is_tool_calls and role in ("assistant", "model"):
+                        # Convert tool calls to Gemini functionCall parts
+                        for tc in content:
+                            parts.append(self._build_tool_request_part(tc))
+                    else:
+                        # Regular content parts
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                parts.append({"text": part.get("text", "")})
 
-                if role in ("assistant", "model") and tool_calls:
-                    for tc in tool_calls:
-                        parts.append(self._build_tool_request_part(tc))
+            if not parts:
+                continue
 
             contents.append({"role": "user" if role == "user" else "model" if role in ("assistant", "model") else role, "parts": parts})
+
+        if messages.system_prompt:
+            system_parts.append({"text": messages.system_prompt})
 
         if system_parts:
             payload["system_instruction"] = {"parts": system_parts}
@@ -540,7 +553,7 @@ class GeminiAdapter(BaseProviderAdapter):
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=[assistant_message] + result_messages,
+                additional_messages=[m for m in [assistant_message] + result_messages if m],
                 content="",
             )
         ] + final_event
@@ -575,10 +588,7 @@ class GeminiAdapter(BaseProviderAdapter):
 
         events: List[ProviderEventResult] = []
         if tool_calls:
-            additional_messages = []
-            if assistant_message:
-                additional_messages.append(assistant_message)
-            additional_messages.extend(result_messages)
+            additional_messages = [m for m in [assistant_message] + result_messages if m]
             events.append(
                 ProviderToolCallEventResult(
                     tool_calls=tool_calls,
