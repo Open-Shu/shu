@@ -86,6 +86,26 @@ DocumentProfile {
 
 This profile is stored alongside the document and its chunks, creating multiple retrieval surfaces.
 
+### 2.1.1 Chunk Profiling
+
+In addition to document-level profiling, each chunk receives lightweight metadata:
+
+```
+ChunkProfile {
+  summary: string            // One-line description of chunk content
+  keywords: string[]         // Specific extractable terms (names, numbers, dates)
+  topics: string[]           // Conceptual categories the chunk relates to
+}
+```
+
+**Keywords** are specific, extractable terms from the chunk: "Q3", "$2.5M", "Sarah Chen", "API rate limit".
+
+**Topics** are conceptual categories: "budget planning", "quarterly review", "authentication".
+
+Chunk profiles serve two purposes:
+1. **Fast filtering**: Keyword/topic matching (O(log n) via index) can eliminate 90% of chunks before expensive vector search
+2. **LLM-scannable index**: An agentic retriever can scan chunk summaries to navigate top-down from document to relevant chunks without loading full content
+
 ### 2.2 Capability Manifests
 
 A document's *capability* is the set of user questions for which the document contains sufficient evidence to support a satisfactory answer. Rather than leaving this implicit in embeddings, Shu RAG makes it explicit through capability manifests.
@@ -398,12 +418,14 @@ This creates a learning system where retrieval improves the underlying index.
 
 ### 6.1 Ingestion Cost
 
-Document profiling requires LLM inference at ingestion time. Cost considerations:
+Document and chunk profiling require LLM inference at ingestion time. Cost considerations:
 
 - **Amortization**: Profiling cost is paid once; retrieval benefits accrue over document lifetime
 - **Tiered profiling**: High-value documents (contracts, reports) get full profiling; low-value (notifications) get minimal
 - **Incremental updates**: For documents that change, only regenerate affected profile components
 - **Async processing**: Profiling runs in background; documents are immediately searchable via chunks
+- **Chunk batching**: Chunk profiling can batch multiple chunks per LLM call to reduce API overhead
+- **Proportional cost**: Chunk profiling adds N LLM calls per document (batched), where N scales with document size
 
 ### 6.2 Storage Requirements
 
@@ -412,14 +434,29 @@ Additional storage per document:
 | Component | Approximate Size |
 |-----------|-----------------|
 | Synopsis (text) | 500-1000 chars |
-| Synopsis embedding | 1536 floats (6KB) |
+| Synopsis embedding | 384 floats (1.5KB) |
 | Capability manifest | 200-500 chars JSON |
-| Synthesized questions (10) | 10 * (100 chars + 6KB embedding) = 61KB |
+| Synthesized queries (10) | 10 * (100 chars + 1.5KB embedding) = 16KB |
 | Relational context | 500-2000 chars JSON |
 
-Total overhead: ~70-100KB per document, plus ~6KB per synthesized question.
+Additional storage per chunk:
 
-For 100,000 documents with 10 questions each: ~7GB additional storage. Manageable.
+| Component | Approximate Size |
+|-----------|-----------------|
+| Summary (text) | 100-200 chars |
+| Keywords (JSONB) | 100-500 chars |
+| Topics (JSONB) | 100-300 chars |
+
+Document overhead: ~20-25KB per document, plus ~1.5KB per synthesized query.
+Chunk overhead: ~0.5-1KB per chunk.
+
+For 100,000 documents with 10 queries each and 50 chunks per document:
+- Document profiles: ~25KB * 100K = 2.5GB
+- Query embeddings: 1.5KB * 10 * 100K = 1.5GB
+- Chunk profiles: 0.75KB * 50 * 100K = 3.75GB
+- Total: ~8GB additional storage. Manageable.
+
+Note: Using 384-dimension embeddings (MiniLM) instead of 1536 (OpenAI) significantly reduces storage.
 
 ### 6.3 Query Latency
 
@@ -535,5 +572,5 @@ These innovations are complementary and can be adopted incrementally. Together, 
 ---
 
 *Document Status: Draft for review*
-*Last Updated: 2025-12-01*
+*Last Updated: 2025-12-16*
 
