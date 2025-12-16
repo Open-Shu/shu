@@ -7,6 +7,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 5
+    env:
+      # Minimal env vars required for Settings() to initialize without failing validation.
+      # This URL only needs to be syntactically valid for unit tests; CI does not touch the DB.
+      SHU_DATABASE_URL: postgresql://test:test@localhost:5432/shu_test
 
     steps:
     - uses: actions/checkout@v4
