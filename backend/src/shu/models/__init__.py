@@ -9,7 +9,23 @@ from .base import Base
 from .knowledge_base import KnowledgeBase
 
 from .prompt import Prompt, PromptAssignment, EntityType
-from .document import Document, DocumentChunk, DocumentQuery
+from .document import (
+    Document,
+    DocumentChunk,
+    DocumentQuery,
+    DocumentParticipant,
+    DocumentProject,
+    # Entity type constants
+    ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_ORGANIZATION,
+    ENTITY_TYPE_EMAIL_ADDRESS,
+    # Participant role constants
+    ROLE_AUTHOR,
+    ROLE_RECIPIENT,
+    ROLE_MENTIONED,
+    ROLE_DECISION_MAKER,
+    ROLE_SUBJECT,
+)
 from .llm_provider import LLMProvider, LLMModel, LLMUsage, Conversation, Message
 from .attachment import Attachment, MessageAttachment
 from .model_configuration import ModelConfiguration
@@ -39,6 +55,18 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentQuery",
+    "DocumentParticipant",
+    "DocumentProject",
+    # Entity type constants
+    "ENTITY_TYPE_PERSON",
+    "ENTITY_TYPE_ORGANIZATION",
+    "ENTITY_TYPE_EMAIL_ADDRESS",
+    # Participant role constants
+    "ROLE_AUTHOR",
+    "ROLE_RECIPIENT",
+    "ROLE_MENTIONED",
+    "ROLE_DECISION_MAKER",
+    "ROLE_SUBJECT",
     "LLMProvider",
     "LLMModel",
     "LLMUsage",

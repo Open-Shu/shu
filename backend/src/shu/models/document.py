@@ -25,7 +25,7 @@ class CapabilityManifest:
     """Structure for document capability manifest JSONB field.
 
     Fields:
-        answers_questions_about: list[str]  # Topics the document can answer about
+        answers_questions_about: list[str]  # Topics the document can inform about
         provides_information_type: list[str]  # e.g., "facts", "opinions", "decisions"
         authority_level: str  # e.g., "primary", "secondary", "commentary"
         completeness: str  # e.g., "complete", "partial", "reference"
@@ -102,10 +102,16 @@ class Document(BaseModel):
     # Profiling status: pending, in_progress, complete, failed
     profiling_status = Column(String(20), nullable=True, default="pending")
 
+    # Shu RAG Relational Context (SHU-355)
+    # Denormalized summary of participants and projects for query-time access
+    relational_context = Column(JSONB, nullable=True)
+
     # Relationships
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
     queries = relationship("DocumentQuery", back_populates="document", cascade="all, delete-orphan")
+    participants = relationship("DocumentParticipant", back_populates="document", cascade="all, delete-orphan")
+    projects = relationship("DocumentProject", back_populates="document", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, title='{self.title}', kb_id='{self.knowledge_base_id}')>"
@@ -118,12 +124,14 @@ class Document(BaseModel):
             "processing_status": self.processing_status,
             "processed_at": self.processed_at.isoformat() if self.processed_at else None,
             "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
-            # Profile fields
+            # Profile fields (SHU-342)
             "synopsis": self.synopsis,
             "document_type": self.document_type,
             "capability_manifest": self.capability_manifest,
             "profiling_status": self.profiling_status,
             "has_synopsis_embedding": self.synopsis_embedding is not None,
+            # Relational context (SHU-355)
+            "relational_context": self.relational_context,
         })
         return base_dict
     
@@ -401,4 +409,162 @@ class DocumentQuery(BaseModel):
             knowledge_base_id=knowledge_base_id,
             query_text=query_text,
             query_embedding=query_embedding,
+        )
+
+
+# Entity type constants (SHU-355)
+ENTITY_TYPE_PERSON = "person"
+ENTITY_TYPE_ORGANIZATION = "organization"
+ENTITY_TYPE_EMAIL_ADDRESS = "email_address"
+
+# Participant role constants (SHU-355)
+ROLE_AUTHOR = "author"
+ROLE_RECIPIENT = "recipient"
+ROLE_MENTIONED = "mentioned"
+ROLE_DECISION_MAKER = "decision_maker"
+ROLE_SUBJECT = "subject"
+
+
+class DocumentParticipant(BaseModel):
+    """
+    Document participant entity (Shu RAG Relational Context).
+
+    Tracks people, organizations, and email addresses mentioned in or
+    associated with a document. Used for relational boost scoring.
+
+    Entity types:
+    - person: Named individual (may require resolution)
+    - organization: Company, team, or group
+    - email_address: Unique email identifier (no resolution needed)
+    """
+
+    __tablename__ = "document_participants"
+
+    # Foreign keys (knowledge_base_id denormalized for query efficiency)
+    document_id = Column(
+        String,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Entity identification
+    entity_id = Column(String(36), nullable=True, index=True)  # For future resolution
+    entity_type = Column(String(50), nullable=False)  # person, organization, email_address
+    entity_name = Column(String(255), nullable=False)
+
+    # Role in document
+    role = Column(String(50), nullable=False)  # author, recipient, mentioned, decision_maker, subject
+
+    # Extraction confidence
+    confidence = Column(Float, nullable=True)
+
+    # Relationships
+    document = relationship("Document", back_populates="participants")
+    knowledge_base = relationship("KnowledgeBase")
+
+    def __repr__(self) -> str:
+        return f"<DocumentParticipant(id={self.id}, entity='{self.entity_name}', role='{self.role}')>"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "entity_id": self.entity_id,
+            "entity_type": self.entity_type,
+            "entity_name": self.entity_name,
+            "role": self.role,
+            "confidence": self.confidence,
+        })
+        return base_dict
+
+    @classmethod
+    def create_for_document(
+        cls,
+        document_id: str,
+        knowledge_base_id: str,
+        entity_type: str,
+        entity_name: str,
+        role: str,
+        confidence: Optional[float] = None,
+        entity_id: Optional[str] = None,
+    ) -> "DocumentParticipant":
+        """Create a participant record for a document."""
+        return cls(
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            entity_id=entity_id,
+            entity_type=entity_type,
+            entity_name=entity_name,
+            role=role,
+            confidence=confidence,
+        )
+
+
+class DocumentProject(BaseModel):
+    """
+    Document project association (Shu RAG Relational Context).
+
+    Tracks projects, initiatives, or topics associated with a document.
+    Used for relational boost scoring based on user's active projects.
+    """
+
+    __tablename__ = "document_projects"
+
+    # Foreign keys (knowledge_base_id denormalized for query efficiency)
+    document_id = Column(
+        String,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Project identification
+    project_name = Column(String(255), nullable=False, index=True)
+
+    # How strongly the document relates to this project (0.0 - 1.0)
+    association_strength = Column(Float, nullable=True)
+
+    # Relationships
+    document = relationship("Document", back_populates="projects")
+    knowledge_base = relationship("KnowledgeBase")
+
+    def __repr__(self) -> str:
+        return f"<DocumentProject(id={self.id}, project='{self.project_name}')>"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "project_name": self.project_name,
+            "association_strength": self.association_strength,
+        })
+        return base_dict
+
+    @classmethod
+    def create_for_document(
+        cls,
+        document_id: str,
+        knowledge_base_id: str,
+        project_name: str,
+        association_strength: Optional[float] = None,
+    ) -> "DocumentProject":
+        """Create a project association for a document."""
+        return cls(
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            project_name=project_name,
+            association_strength=association_strength,
         )

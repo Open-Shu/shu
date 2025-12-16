@@ -1,14 +1,22 @@
-"""Migration r006_0001: Document Profile Schema
+"""Migration r006_0001: Document and Relational Schema
 
-This migration adds the schema for Shu RAG document profiling (SHU-342).
+This migration adds the schema for Shu RAG document profiling (SHU-342) and
+relational context (SHU-355).
 
-Changes:
+SHU-342 Changes:
 - Adds synopsis, synopsis_embedding, document_type, capability_manifest, profiling_status
   columns to the documents table
 - Adds summary, keywords, topics columns to the document_chunks table
 - Creates document_queries table for synthesized queries
 - Adds vector indexes for synopsis_embedding and query_embedding
 - Adds GIN indexes for capability_manifest, keywords, and topics JSONB columns
+
+SHU-355 Changes:
+- Adds relational_context JSONB column to the documents table
+- Creates document_participants table for entity tracking
+- Creates document_projects table for project associations
+- Adds indexes for entity_id, entity_type, and project_name lookups
+- Adds unique constraints to prevent duplicate entries
 """
 
 from alembic import op
@@ -77,6 +85,10 @@ def upgrade() -> None:
             ),
         )
 
+    # SHU-355: Add relational_context column
+    if not _column_exists("documents", "relational_context"):
+        op.add_column("documents", sa.Column("relational_context", JSONB(), nullable=True))
+
     # ========================================================================
     # Part 2: Add columns to document_chunks table
     # ========================================================================
@@ -117,7 +129,78 @@ def upgrade() -> None:
         )
 
     # ========================================================================
-    # Part 4: Create indexes
+    # Part 4: Create document_participants table (SHU-355)
+    # ========================================================================
+    if not _table_exists("document_participants"):
+        op.create_table(
+            "document_participants",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column(
+                "document_id",
+                sa.String(36),
+                sa.ForeignKey("documents.id", ondelete="CASCADE"),
+                nullable=False,
+                index=True,
+            ),
+            sa.Column(
+                "knowledge_base_id",
+                sa.String(36),
+                sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+                nullable=False,
+                index=True,
+            ),
+            sa.Column("entity_id", sa.String(36), nullable=True, index=True),
+            sa.Column("entity_type", sa.String(50), nullable=False),
+            sa.Column("entity_name", sa.String(255), nullable=False),
+            sa.Column("role", sa.String(50), nullable=False),
+            sa.Column("confidence", sa.Float(), nullable=True),
+            sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
+            sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
+            sa.UniqueConstraint(
+                "document_id", "entity_name", "role",
+                name="uq_document_participants_doc_entity_role"
+            ),
+        )
+        # Index on entity_type for filtering
+        op.create_index(
+            "ix_document_participants_entity_type",
+            "document_participants",
+            ["entity_type"],
+        )
+
+    # ========================================================================
+    # Part 5: Create document_projects table (SHU-355)
+    # ========================================================================
+    if not _table_exists("document_projects"):
+        op.create_table(
+            "document_projects",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column(
+                "document_id",
+                sa.String(36),
+                sa.ForeignKey("documents.id", ondelete="CASCADE"),
+                nullable=False,
+                index=True,
+            ),
+            sa.Column(
+                "knowledge_base_id",
+                sa.String(36),
+                sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+                nullable=False,
+                index=True,
+            ),
+            sa.Column("project_name", sa.String(255), nullable=False, index=True),
+            sa.Column("association_strength", sa.Float(), nullable=True),
+            sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
+            sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
+            sa.UniqueConstraint(
+                "document_id", "project_name",
+                name="uq_document_projects_doc_project"
+            ),
+        )
+
+    # ========================================================================
+    # Part 6: Create indexes
     # ========================================================================
     # Vector index for synopsis_embedding (ivfflat for approximate nearest neighbor)
     if not _index_exists("documents", "ix_documents_synopsis_embedding"):
@@ -166,14 +249,29 @@ def upgrade() -> None:
             """
         )
 
+    # GIN index for relational_context (SHU-355)
+    if not _index_exists("documents", "ix_documents_relational_context"):
+        op.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_documents_relational_context
+            ON documents USING gin (relational_context)
+            """
+        )
+
 
 def downgrade() -> None:
-    # Drop indexes first
+    # Drop SHU-355 tables first (reverse order of creation)
+    op.drop_table("document_projects")
+    op.drop_table("document_participants")
+
+    # Drop SHU-342 indexes
+    op.execute("DROP INDEX IF EXISTS ix_documents_relational_context")
     op.execute("DROP INDEX IF EXISTS ix_document_chunks_topics")
     op.execute("DROP INDEX IF EXISTS ix_document_chunks_keywords")
     op.execute("DROP INDEX IF EXISTS ix_documents_capability_manifest")
     op.execute("DROP INDEX IF EXISTS ix_document_queries_query_embedding")
     op.execute("DROP INDEX IF EXISTS ix_documents_synopsis_embedding")
+    op.execute("DROP INDEX IF EXISTS ix_document_participants_entity_type")
 
     # Drop document_queries table
     op.drop_table("document_queries")
@@ -183,10 +281,10 @@ def downgrade() -> None:
     op.drop_column("document_chunks", "keywords")
     op.drop_column("document_chunks", "summary")
 
-    # Drop columns from documents
+    # Drop columns from documents (SHU-355 + SHU-342)
+    op.drop_column("documents", "relational_context")
     op.drop_column("documents", "profiling_status")
     op.drop_column("documents", "capability_manifest")
     op.drop_column("documents", "document_type")
     op.drop_column("documents", "synopsis_embedding")
     op.drop_column("documents", "synopsis")
-
