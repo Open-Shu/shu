@@ -1,4 +1,4 @@
-name: Integ Tests
+name: Unit Tests
 
 on: [push]
 
