@@ -9,7 +9,7 @@ from .base import Base
 from .knowledge_base import KnowledgeBase
 
 from .prompt import Prompt, PromptAssignment, EntityType
-from .document import Document, DocumentChunk
+from .document import Document, DocumentChunk, DocumentQuery
 from .llm_provider import LLMProvider, LLMModel, LLMUsage, Conversation, Message
 from .attachment import Attachment, MessageAttachment
 from .model_configuration import ModelConfiguration
@@ -38,6 +38,7 @@ __all__ = [
     "EntityType",
     "Document",
     "DocumentChunk",
+    "DocumentQuery",
     "LLMProvider",
     "LLMModel",
     "LLMUsage",

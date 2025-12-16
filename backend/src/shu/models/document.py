@@ -6,7 +6,7 @@ document metadata, content, and vector embeddings.
 """
 
 from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Float, JSON
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import TIMESTAMP, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import ARRAY
 from datetime import datetime, timezone
@@ -18,6 +18,20 @@ except ImportError:
     Vector = lambda dim: Text
 
 from .base import BaseModel
+
+
+# Type definitions for capability manifest structure
+class CapabilityManifest:
+    """Structure for document capability manifest JSONB field.
+
+    Fields:
+        answers_questions_about: list[str]  # Topics the document can answer about
+        provides_information_type: list[str]  # e.g., "facts", "opinions", "decisions"
+        authority_level: str  # e.g., "primary", "secondary", "commentary"
+        completeness: str  # e.g., "complete", "partial", "reference"
+        question_domains: list[str]  # e.g., "who", "what", "when", "why", "how"
+    """
+    pass  # Used for documentation; actual data stored as JSONB dict
 
 
 class Document(BaseModel):
@@ -73,10 +87,25 @@ class Document(BaseModel):
     word_count = Column(Integer, nullable=True)
     character_count = Column(Integer, nullable=True)
     chunk_count = Column(Integer, default=0, nullable=False)
-    
+
+    # Shu RAG Document Profile (SHU-342)
+    # Synopsis: One-paragraph summary for document-level retrieval
+    synopsis = Column(Text, nullable=True)
+    synopsis_embedding = Column(Vector(384), nullable=True)
+
+    # Document type classification (narrative, transactional, technical, conversational)
+    document_type = Column(String(50), nullable=True)
+
+    # Capability manifest: what questions/queries this document can satisfy
+    capability_manifest = Column(JSONB, nullable=True)
+
+    # Profiling status: pending, in_progress, complete, failed
+    profiling_status = Column(String(20), nullable=True, default="pending")
+
     # Relationships
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    queries = relationship("DocumentQuery", back_populates="document", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, title='{self.title}', kb_id='{self.knowledge_base_id}')>"
@@ -89,6 +118,12 @@ class Document(BaseModel):
             "processing_status": self.processing_status,
             "processed_at": self.processed_at.isoformat() if self.processed_at else None,
             "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
+            # Profile fields
+            "synopsis": self.synopsis,
+            "document_type": self.document_type,
+            "capability_manifest": self.capability_manifest,
+            "profiling_status": self.profiling_status,
+            "has_synopsis_embedding": self.synopsis_embedding is not None,
         })
         return base_dict
     
@@ -119,6 +154,39 @@ class Document(BaseModel):
         self.word_count = word_count
         self.character_count = character_count
         self.chunk_count = chunk_count
+
+    # Profiling status helpers
+    @property
+    def is_profiled(self) -> bool:
+        """Check if document has been profiled successfully."""
+        return self.profiling_status == "complete"
+
+    @property
+    def profiling_failed(self) -> bool:
+        """Check if document profiling failed."""
+        return self.profiling_status == "failed"
+
+    def mark_profiling_started(self) -> None:
+        """Mark document as currently being profiled."""
+        self.profiling_status = "in_progress"
+
+    def mark_profiling_complete(
+        self,
+        synopsis: str,
+        document_type: str,
+        capability_manifest: Dict[str, Any],
+        synopsis_embedding: Optional[List[float]] = None,
+    ) -> None:
+        """Mark document profiling as complete with profile data."""
+        self.synopsis = synopsis
+        self.document_type = document_type
+        self.capability_manifest = capability_manifest
+        self.synopsis_embedding = synopsis_embedding
+        self.profiling_status = "complete"
+
+    def mark_profiling_failed(self) -> None:
+        """Mark document profiling as failed."""
+        self.profiling_status = "failed"
 
 
 class DocumentChunk(BaseModel):
@@ -157,7 +225,15 @@ class DocumentChunk(BaseModel):
     
     # Chunk metadata
     chunk_metadata = Column(JSON, nullable=True)  # Flexible metadata storage for chunk-specific data
-    
+
+    # Shu RAG Chunk Profile (SHU-342)
+    # Summary: One-line description of chunk content for LLM-scannable index
+    summary = Column(Text, nullable=True)
+    # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
+    keywords = Column(JSONB, nullable=True)
+    # Topics: Conceptual categories the chunk relates to (broader themes, domains)
+    topics = Column(JSONB, nullable=True)
+
     # Relationships
     document = relationship("Document", back_populates="chunks")
     knowledge_base = relationship("KnowledgeBase")
@@ -175,6 +251,10 @@ class DocumentChunk(BaseModel):
             "chunk_index": self.chunk_index,
             "has_embedding": self.embedding is not None,
             "embedding_created_at": self.embedding_created_at.isoformat() if self.embedding_created_at else None,
+            # Profile fields
+            "summary": self.summary,
+            "keywords": self.keywords,
+            "topics": self.topics,
         })
         # Don't include the actual embedding vector in the dict (too large)
         return base_dict
@@ -189,7 +269,23 @@ class DocumentChunk(BaseModel):
         self.embedding = embedding
         self.embedding_model = model_name
         self.embedding_created_at = datetime.now(timezone.utc)
-    
+
+    def set_profile(
+        self,
+        summary: str,
+        keywords: List[str],
+        topics: List[str],
+    ) -> None:
+        """Set the chunk profile data."""
+        self.summary = summary
+        self.keywords = keywords
+        self.topics = topics
+
+    @property
+    def is_profiled(self) -> bool:
+        """Check if chunk has been profiled (has summary)."""
+        return self.summary is not None
+
     def get_preview(self, max_chars: int = 100) -> str:
         """Get a preview of the chunk content."""
         if len(self.content) <= max_chars:
@@ -226,4 +322,83 @@ class DocumentChunk(BaseModel):
             start_char=start_char,
             end_char=end_char,
         )
-        return chunk 
+        return chunk
+
+
+class DocumentQuery(BaseModel):
+    """
+    Synthesized query for a document (Shu RAG).
+
+    Stores hypothetical queries that a document can answer. These are generated
+    during document profiling and enable query-match retrieval, where user queries
+    are matched against synthesized queries rather than document content.
+
+    Query types include:
+    - Interrogative: "What is the Q3 marketing budget?"
+    - Imperative: "Show quarterly revenue breakdown"
+    - Declarative: "Q3 marketing budget figures"
+    """
+
+    __tablename__ = "document_queries"
+
+    # Foreign keys (knowledge_base_id denormalized for query efficiency)
+    document_id = Column(
+        String,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Query content
+    query_text = Column(Text, nullable=False)
+
+    # Vector embedding for similarity search (384 dimensions for MiniLM)
+    query_embedding = Column(Vector(384), nullable=True)
+
+    # Relationships
+    document = relationship("Document", back_populates="queries")
+    knowledge_base = relationship("KnowledgeBase")
+
+    def __repr__(self) -> str:
+        preview = self.query_text[:50] + "..." if len(self.query_text) > 50 else self.query_text
+        return f"<DocumentQuery(id={self.id}, doc_id='{self.document_id}', query='{preview}')>"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "query_text": self.query_text,
+            "has_embedding": self.query_embedding is not None,
+        })
+        return base_dict
+
+    @property
+    def has_embedding(self) -> bool:
+        """Check if query has an embedding."""
+        return self.query_embedding is not None
+
+    def set_embedding(self, embedding: List[float]) -> None:
+        """Set the embedding vector for this query."""
+        self.query_embedding = embedding
+
+    @classmethod
+    def create_for_document(
+        cls,
+        document_id: str,
+        knowledge_base_id: str,
+        query_text: str,
+        query_embedding: Optional[List[float]] = None,
+    ) -> "DocumentQuery":
+        """Create a synthesized query for a document."""
+        return cls(
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            query_text=query_text,
+            query_embedding=query_embedding,
+        )
