@@ -139,14 +139,14 @@ class GeminiAdapter(BaseProviderAdapter):
                 description="Built-in tools the model is allowed to use.",
                 options=[
                     Option(
-                        value={"type": "code_execution"},
+                        value={"code_execution": {}},
                         label="Code Execution",
                         help=(
                             "Allow the model to write and run code using Gemini's code execution tool."
                         ),
                     ),
                     Option(
-                        value={"type": "google_search_retrieval"},
+                        value={"google_search": {}},
                         label="Google Search Retrieval",
                         help=(
                             "Allow the model to use Google Search-style retrieval for up-to-date or long-tail information."
