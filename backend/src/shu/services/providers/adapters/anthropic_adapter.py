@@ -86,7 +86,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         return ProviderInformation(key="anthropic", display_name="Anthropic")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
 
     def get_api_base_url(self) -> str:
         return "https://api.anthropic.com/v1"
@@ -448,12 +448,78 @@ class AnthropicAdapter(BaseProviderAdapter):
                 default="auto",
             ),
         }
-    
+
+    def _build_anthropic_content_block(
+        self,
+        block_type: str,
+        source_type: str,
+        media_type: str,
+        data: str,
+        title: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Build an Anthropic content block (image or document) with consistent structure."""
+        block: Dict[str, Any] = {
+            "type": block_type,
+            "source": {
+                "type": source_type,
+                "media_type": media_type,
+                "data": data
+            }
+        }
+        if title:
+            block["title"] = title
+        return block
+
+    def _format_attachments_for_content(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments into Anthropic API content parts."""
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            if self._is_image_attachment(att):
+                b64_data = self._read_attachment_base64(att)
+                if b64_data:
+                    # https://platform.claude.com/docs/en/api/messages/create
+                    parts.append(self._build_anthropic_content_block(
+                        "image", "base64", att.mime_type, b64_data
+                    ))
+            else:
+                b64_data = self._read_attachment_base64(att)
+                # https://platform.claude.com/docs/en/api/messages/create
+                # Anthropic really only supports PDF and plain, so when it isn't PDF, we'll just use what we extracted
+                if b64_data and att.mime_type == "application/pdf":
+                    parts.append(self._build_anthropic_content_block(
+                        "document", "base64", "application/pdf", b64_data, att.original_filename
+                    ))
+                elif att.extracted_text:
+                    parts.append(self._build_anthropic_content_block(
+                        "document", "text", "text/plain", att.extracted_text, att.original_filename
+                    ))
+        
+        return parts
+
     async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         formatted_messages: List[Dict[str, Any]] = []
 
         for msg in messages.messages:
-            formatted_messages.append({"role": getattr(msg, "role", ""), "content": getattr(msg, "content", "")})
+            role = getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+            attachments = getattr(msg, "attachments", []) or []
+            
+            # Handle user messages with attachments (multimodal)
+            if role == "user" and attachments:
+                content_parts: List[Dict[str, Any]] = []
+                # Add text content first
+                if isinstance(content, str) and content:
+                    content_parts.append({"type": "text", "text": content})
+                elif isinstance(content, list):
+                    content_parts.extend(content)
+                
+                # Add formatted attachments
+                content_parts.extend(self._format_attachments_for_content(attachments))
+                
+                formatted_messages.append({"role": role, "content": content_parts if content_parts else content})
+            else:
+                formatted_messages.append({"role": role, "content": content})
 
         if messages.system_prompt:
             payload["system"] = messages.system_prompt

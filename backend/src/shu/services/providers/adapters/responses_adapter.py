@@ -36,7 +36,11 @@ class ResponsesAdapter(BaseProviderAdapter):
         raise NotImplementedError("Function get_provider_information is not implemented.")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """OpenAI Responses API supports native file uploads."""
+        return True
 
     def get_api_base_url(self) -> str:
         raise NotImplementedError("Function get_api_base_url is not implemented.")
@@ -89,6 +93,40 @@ class ResponsesAdapter(BaseProviderAdapter):
             usage.get("output_tokens_details", {}).get("reasoning_tokens", 0),
             usage.get("total_tokens", 0),
         )
+
+    def _format_responses_attachments(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments for OpenAI Responses API.
+        
+        Uses type: input_text, type: input_image, and type: input_file formats.
+        """
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            if self._is_image_attachment(att):
+                data_uri = self._attachment_to_data_uri(att)
+                if data_uri:
+                    parts.append({
+                        "type": "input_image",
+                        "image_url": data_uri
+                    })
+            elif self.supports_native_documents():
+                b64_data = self._read_attachment_base64(att)
+                if b64_data:
+                    parts.append({
+                        "type": "input_file",
+                        "filename": att.original_filename,
+                        "file_data": f"data:{att.mime_type};base64,{b64_data}",
+                    })
+                else:
+                    fallback = self._attachment_to_input_text_fallback(att)
+                    if fallback:
+                        parts.append(fallback)
+            else:
+                fallback = self._attachment_to_input_text_fallback(att)
+                if fallback:
+                    parts.append(fallback)
+        
+        return parts
 
     async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:
         incomplete_response = jmespath.search("type=='response.incomplete' && response.incomplete_details.reason", chunk)
@@ -265,6 +303,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         metadata = getattr(message, "metadata", {}) or {}
         content = getattr(message, "content", "")
         role = getattr(message, "role", "")
+        attachments = getattr(message, "attachments", []) or []
         
         # Handle function_call_output messages - these are special API objects
         if metadata.get("type") == "function_call_output":
@@ -278,6 +317,20 @@ class ResponsesAdapter(BaseProviderAdapter):
         if metadata.get("type") in ("reasoning", "function_call") and isinstance(content, dict):
             return content
         
+        # Handle user messages with attachments (multimodal)
+        if role == "user" and attachments:
+            content_parts: List[Dict[str, Any]] = []
+            # Add text content first
+            if isinstance(content, str) and content:
+                content_parts.append({"type": "input_text", "text": content})
+            elif isinstance(content, list):
+                content_parts.extend(content)
+
+            # Add formatted attachments
+            content_parts.extend(self._format_responses_attachments(attachments))
+            
+            return {"role": role, "content": content_parts if content_parts else content}
+
         # Standard role/content message
         return {"role": role, "content": content}
 

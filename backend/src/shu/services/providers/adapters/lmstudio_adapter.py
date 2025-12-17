@@ -3,13 +3,13 @@ from typing import Any, Dict
 from shu.core.logging import get_logger
 
 from ..adapter_base import ProviderCapabilities, ProviderInformation, register_adapter
-from .responses_adapter import ResponsesAdapter
+from .completions_adapter import CompletionsAdapter
 from ..parameter_definitions import IntegerParameter, NumberParameter
 
 logger = get_logger(__name__)
 
 
-class LMStudioAdapter(ResponsesAdapter):
+class LMStudioAdapter(CompletionsAdapter):
     """Adapter for LM Studio's OpenAI-compatible Responses API."""
 
     def get_provider_information(self) -> ProviderInformation:
@@ -17,7 +17,11 @@ class LMStudioAdapter(ResponsesAdapter):
 
     def get_capabilities(self) -> ProviderCapabilities:
         # LM Studio advertises streaming + tool-calling parity with OpenAI Responses.
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """LM Studio does not support native file uploads."""
+        return False
 
     def get_api_base_url(self) -> str:
         # Default local server; overrideable via provider config if needed.

@@ -66,7 +66,11 @@ class GeminiAdapter(BaseProviderAdapter):
         return ProviderInformation(key="gemini", display_name="Gemini")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """Gemini supports documents via inlineData with any mimeType."""
+        return True
 
     def get_api_base_url(self) -> str:
         return "https://generativelanguage.googleapis.com/v1beta"
@@ -143,14 +147,14 @@ class GeminiAdapter(BaseProviderAdapter):
                 description="Built-in tools the model is allowed to use.",
                 options=[
                     Option(
-                        value={"type": "code_execution"},
+                        value={"code_execution": {}},
                         label="Code Execution",
                         help=(
                             "Allow the model to write and run code using Gemini's code execution tool."
                         ),
                     ),
                     Option(
-                        value={"type": "google_search_retrieval"},
+                        value={"google_search": {}},
                         label="Google Search Retrieval",
                         help=(
                             "Allow the model to use Google Search-style retrieval for up-to-date or long-tail information."
@@ -303,6 +307,33 @@ class GeminiAdapter(BaseProviderAdapter):
             part["thoughtSignature"] = thought_signature
         return part
 
+    def _format_attachments_for_parts(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments into Gemini API parts.
+        
+        Gemini uses inlineData format for both images and documents.
+        The format is the same regardless of file type.
+        """
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            # Gemini uses inlineData format for all file types
+            b64_data = self._read_attachment_base64(att)
+            if b64_data:
+                parts.append({
+                    "inlineData": {
+                        "mimeType": att.mime_type,
+                        "data": b64_data
+                    }
+                })
+            else:
+                # Fallback if file read fails - use base class text format
+                fallback = self._attachment_to_text_fallback(att)
+                if fallback:
+                    # Convert from OpenAI format to Gemini format
+                    parts.append({"text": fallback.get("text", "")})
+        
+        return parts
+
     async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         system_parts: List[Dict[str, Any]] = []
         contents: List[Dict[str, Any]] = []
@@ -310,6 +341,7 @@ class GeminiAdapter(BaseProviderAdapter):
         for msg in messages.messages:
             role = getattr(msg, "role", "")
             content = getattr(msg, "content", "")
+            attachments = getattr(msg, "attachments", []) or []
             parts: List[Dict[str, Any]] = []
 
             # Handle tool result messages - these need special Gemini formatting
@@ -333,6 +365,10 @@ class GeminiAdapter(BaseProviderAdapter):
                         for part in content:
                             if isinstance(part, dict) and part.get("type") == "text":
                                 parts.append({"text": part.get("text", "")})
+
+                # Add attachments for user messages
+                if role == "user" and attachments:
+                    parts.extend(self._format_attachments_for_parts(attachments))
 
             if not parts:
                 continue

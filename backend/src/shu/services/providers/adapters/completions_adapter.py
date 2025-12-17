@@ -39,8 +39,12 @@ class CompletionsAdapter(BaseProviderAdapter):
         raise NotImplementedError("Function get_provider_information is not implemented.")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        # Most OpenAI-compatible chat providers support streaming; tool support is provider-specific but allowed here.
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        # Most OpenAI-compatible chat providers support streaming, tools, and vision.
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """OpenAI Completions API supports native file uploads with base64 data."""
+        return True
 
     def get_api_base_url(self) -> str:
         raise NotImplementedError("Function get_api_base_url is not implemented.")
@@ -116,6 +120,44 @@ class CompletionsAdapter(BaseProviderAdapter):
             usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0),
             usage.get("total_tokens", 0),
         )
+
+    def _format_completions_attachments(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments for OpenAI Completions API.
+        
+        Uses type: text, type: image_url, and type: file formats.
+        """
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            if self._is_image_attachment(att):
+                data_uri = self._attachment_to_data_uri(att)
+                if data_uri:
+                    # https://platform.openai.com/docs/guides/images-vision?api-mode=chat
+                    parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": data_uri}
+                    })
+            elif self.supports_native_documents():
+                data_uri = self._attachment_to_data_uri(att)
+                if data_uri:
+                    # https://platform.openai.com/docs/guides/pdf-files?api-mode=chat#uploading-files
+                    parts.append({
+                        "type": "file",
+                        "file": {
+                            "filename": att.original_filename,
+                            "file_data": data_uri,
+                        }
+                    })
+                else:
+                    fallback = self._attachment_to_text_fallback(att)
+                    if fallback:
+                        parts.append(fallback)
+            else:
+                fallback = self._attachment_to_text_fallback(att)
+                if fallback:
+                    parts.append(fallback)
+
+        return parts
 
     def get_finish_reason_path(self):
         return "(object == 'chat.completion' || object == 'chat.completion.chunk') && choices[*].finish_reason | [0]"
@@ -261,12 +303,13 @@ class CompletionsAdapter(BaseProviderAdapter):
         if res:
             payload["tools"] = payload.get("tools", []) + res
         return payload
-    
+
     def process_message_records(self, message: ChatMessage):
         """Convert ChatMessage to OpenAI completions API message format."""
         role = getattr(message, "role", "")
         content = getattr(message, "content", "")
         metadata = getattr(message, "metadata", {}) or {}
+        attachments = getattr(message, "attachments", []) or []
         
         res: Dict[str, Any] = {
             "role": role,
@@ -279,6 +322,18 @@ class CompletionsAdapter(BaseProviderAdapter):
             # Only include content if it's non-empty
             if content:
                 res["content"] = content
+        # Handle user messages with attachments (multimodal)
+        elif role == "user" and attachments:
+            content_parts: List[Dict[str, Any]] = []
+            # Add text content first
+            if isinstance(content, str) and content:
+                content_parts.append({"type": "text", "text": content})
+            elif isinstance(content, list):
+                content_parts.extend(content)
+
+            content_parts.extend(self._format_completions_attachments(attachments))
+            
+            res["content"] = content_parts if content_parts else content
         else:
             res["content"] = content
         

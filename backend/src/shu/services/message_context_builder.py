@@ -20,6 +20,7 @@ from .context_preferences_resolver import ContextPreferencesResolver
 from .context_window_manager import ContextWindowManager
 from .message_utils import collapse_assistant_variants
 from .rag_query_processing import execute_rag_queries
+from .providers.adapter_base import get_adapter_from_provider
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,13 @@ class MessageContextBuilder:
                 limit=50,
             )
         recent_messages = collapse_assistant_variants(recent_messages_raw)
-        recent_chat_messages = await self._hydrate_chat_messages(conversation, recent_messages)
+
+        # Check if vision is enabled (Adapter Capability AND Model Config Override)
+        vision_enabled = await self._is_vision_enabled(model, active_model_config)
+
+        recent_chat_messages = await self._hydrate_chat_messages(
+            conversation, recent_messages, vision_enabled=vision_enabled
+        )
 
         rag_sections, all_source_metadata = await self._get_rag_sections(
             conversation=conversation,
@@ -144,8 +151,15 @@ class MessageContextBuilder:
         self,
         conversation: Conversation,
         messages: List[Message],
+        vision_enabled: bool = True,
     ) -> List[ChatMessage]:
-        """Load conversation attachments and return ChatMessage objects with attachments."""
+        """Load conversation attachments and return ChatMessage objects with attachments.
+        
+        Args:
+            conversation: The conversation to load attachments for
+            messages: List of messages to hydrate
+            vision_enabled: If False, image attachments are filtered out
+        """
         if not messages:
             return []
         try:
@@ -160,6 +174,9 @@ class MessageContextBuilder:
             msg_to_atts: Dict[str, List[Any]] = {}
             for msg_id, att in rows:
                 if msg_id:
+                    # Filter out image attachments if vision is disabled
+                    if not vision_enabled and att.mime_type and att.mime_type.startswith("image/"):
+                        continue
                     msg_to_atts.setdefault(msg_id, []).append(att)
 
             chat_messages: List[ChatMessage] = []
@@ -416,6 +433,36 @@ class MessageContextBuilder:
                     sections.append(f"Context:\n{rag_content}")
 
         return sections, all_source_metadata
+
+    async def _is_vision_enabled(self, model: LLMModel, model_config: Optional[ModelConfiguration] = None) -> bool:
+        """Check if vision is enabled for the model/configuration.
+        
+        Defaults to False if not explicitly supported.
+        Checks:
+        1. Provider capabilities (including configuration overrides)
+        2. Model Configuration functionalities (models must explicitly opt-in via 'supports_vision')
+        """
+        try:
+            provider = await self.llm_service.get_provider_by_id(model.provider_id)
+            if not provider:
+                return False
+
+            adapter = get_adapter_from_provider(self.db_session, provider)
+            caps = adapter.get_field_with_override("get_capabilities")
+            vision_supported_by_provider = caps.get("vision", {}).get("value", False)
+            
+            if not vision_supported_by_provider:
+                return False
+
+            if model_config:
+                funcs = getattr(model_config, "functionalities", {}) or {}
+                return funcs.get("supports_vision", False)
+            
+            return False
+
+        except Exception as e:
+            logger.debug(f"Failed to check vision capability: {e}")
+            return False
 
     def _append_rag_diagnostic(self, key: str, value: Any) -> None:
         target = self.diagnostics_target
