@@ -7,7 +7,6 @@ GIT_SHA        := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown
 VERSION        := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0-dev)
 BUILD_TIMESTAMP:= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 DB_RELEASE     := $(shell ls -1 backend/alembic/versions 2>/dev/null | grep -E '^[0-9]{3}_.+\.py$$' | cut -d _ -f1 | sort | tail -n1)
-LOCAL_BUILDX_BUILDER ?= desktop-linux
 
 .PHONY: build-api build-fe build-runner build-all
 
@@ -43,17 +42,12 @@ build-runner:
 build-all: build-api build-fe build-runner
 
 # Docker Compose build targets
+# Note: Docker Compose v2 uses buildx by default, no explicit builder management needed
 compose-build:
-	@builder=$(LOCAL_BUILDX_BUILDER); \
-	docker buildx use $$builder >/dev/null 2>&1 || builder=default; \
-	docker buildx use $$builder >/dev/null 2>&1 || true; \
-	BUILDX_BUILDER=$$builder docker compose -f $(COMPOSE_FILE) --profile frontend build shu-api shu-frontend shu-db-migrate
+	docker compose -f $(COMPOSE_FILE) --profile frontend build shu-api shu-frontend shu-db-migrate
 
 compose-build-dev:
-	@builder=$(LOCAL_BUILDX_BUILDER); \
-	docker buildx use $$builder >/dev/null 2>&1 || builder=default; \
-	docker buildx use $$builder >/dev/null 2>&1 || true; \
-	BUILDX_BUILDER=$$builder docker compose -f $(COMPOSE_FILE) --profile frontend --profile dev build shu-api-dev shu-frontend shu-db-migrate
+	docker compose -f $(COMPOSE_FILE) --profile frontend --profile dev build shu-api-dev shu-frontend shu-db-migrate
 
 
 # Docker Compose targets
