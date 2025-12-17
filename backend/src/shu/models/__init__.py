@@ -15,11 +15,16 @@ from .document import (
     DocumentQuery,
     DocumentParticipant,
     DocumentProject,
-    # Entity type constants
+    # Enums (preferred)
+    ParticipantEntityType,
+    ParticipantRole,
+    # TypedDicts for JSONB structures
+    CapabilityManifest,
+    RelationalContext,
+    # Backward-compatible constants
     ENTITY_TYPE_PERSON,
     ENTITY_TYPE_ORGANIZATION,
     ENTITY_TYPE_EMAIL_ADDRESS,
-    # Participant role constants
     ROLE_AUTHOR,
     ROLE_RECIPIENT,
     ROLE_MENTIONED,
@@ -57,11 +62,16 @@ __all__ = [
     "DocumentQuery",
     "DocumentParticipant",
     "DocumentProject",
-    # Entity type constants
+    # Enums (preferred for new code)
+    "ParticipantEntityType",
+    "ParticipantRole",
+    # TypedDicts for JSONB structures
+    "CapabilityManifest",
+    "RelationalContext",
+    # Backward-compatible constants
     "ENTITY_TYPE_PERSON",
     "ENTITY_TYPE_ORGANIZATION",
     "ENTITY_TYPE_EMAIL_ADDRESS",
-    # Participant role constants
     "ROLE_AUTHOR",
     "ROLE_RECIPIENT",
     "ROLE_MENTIONED",

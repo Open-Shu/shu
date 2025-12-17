@@ -23,6 +23,15 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 
+from migrations.helpers import (
+    column_exists,
+    table_exists,
+    index_exists,
+    drop_column_if_exists,
+    drop_table_if_exists,
+    add_column_if_not_exists,
+)
+
 # Optional pgvector
 try:
     from pgvector.sqlalchemy import Vector  # type: ignore
@@ -40,71 +49,33 @@ def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
-    # Helper to check if column exists
-    def _column_exists(table_name: str, column_name: str) -> bool:
-        try:
-            return any(col["name"] == column_name for col in inspector.get_columns(table_name))
-        except Exception:
-            return False
-
-    # Helper to check if table exists
-    def _table_exists(table_name: str) -> bool:
-        return table_name in inspector.get_table_names()
-
-    # Helper to check if index exists
-    def _index_exists(table_name: str, index_name: str) -> bool:
-        try:
-            indexes = inspector.get_indexes(table_name)
-            return any(idx["name"] == index_name for idx in indexes)
-        except Exception:
-            return False
-
     # ========================================================================
     # Part 1: Add columns to documents table
     # ========================================================================
-    if not _column_exists("documents", "synopsis"):
-        op.add_column("documents", sa.Column("synopsis", sa.Text(), nullable=True))
-
-    if not _column_exists("documents", "synopsis_embedding"):
-        op.add_column("documents", sa.Column("synopsis_embedding", Vector(384), nullable=True))
-
-    if not _column_exists("documents", "document_type"):
-        op.add_column("documents", sa.Column("document_type", sa.String(50), nullable=True))
-
-    if not _column_exists("documents", "capability_manifest"):
-        op.add_column("documents", sa.Column("capability_manifest", JSONB(), nullable=True))
-
-    if not _column_exists("documents", "profiling_status"):
-        op.add_column(
-            "documents",
-            sa.Column(
-                "profiling_status",
-                sa.String(20),
-                nullable=True,
-                server_default="pending",
-            ),
-        )
+    add_column_if_not_exists(inspector, "documents", sa.Column("synopsis", sa.Text(), nullable=True))
+    add_column_if_not_exists(inspector, "documents", sa.Column("synopsis_embedding", Vector(384), nullable=True))
+    add_column_if_not_exists(inspector, "documents", sa.Column("document_type", sa.String(50), nullable=True))
+    add_column_if_not_exists(inspector, "documents", sa.Column("capability_manifest", JSONB(), nullable=True))
+    add_column_if_not_exists(
+        inspector, "documents",
+        sa.Column("profiling_status", sa.String(20), nullable=True, server_default="pending"),
+    )
+    add_column_if_not_exists(inspector, "documents", sa.Column("profiling_error", sa.Text(), nullable=True))
 
     # SHU-355: Add relational_context column
-    if not _column_exists("documents", "relational_context"):
-        op.add_column("documents", sa.Column("relational_context", JSONB(), nullable=True))
+    add_column_if_not_exists(inspector, "documents", sa.Column("relational_context", JSONB(), nullable=True))
 
     # ========================================================================
     # Part 2: Add columns to document_chunks table
     # ========================================================================
-    if not _column_exists("document_chunks", "summary"):
-        op.add_column("document_chunks", sa.Column("summary", sa.Text(), nullable=True))
-
-    if not _column_exists("document_chunks", "keywords"):
-        op.add_column("document_chunks", sa.Column("keywords", JSONB(), nullable=True))
-
-    if not _column_exists("document_chunks", "topics"):
-        op.add_column("document_chunks", sa.Column("topics", JSONB(), nullable=True))
+    add_column_if_not_exists(inspector, "document_chunks", sa.Column("summary", sa.Text(), nullable=True))
+    add_column_if_not_exists(inspector, "document_chunks", sa.Column("keywords", JSONB(), nullable=True))
+    add_column_if_not_exists(inspector, "document_chunks", sa.Column("topics", JSONB(), nullable=True))
 
     # ========================================================================
     # Part 3: Create document_queries table
     # ========================================================================
-    if not _table_exists("document_queries"):
+    if not table_exists(inspector, "document_queries"):
         op.create_table(
             "document_queries",
             sa.Column("id", sa.String(36), primary_key=True),
@@ -131,7 +102,7 @@ def upgrade() -> None:
     # ========================================================================
     # Part 4: Create document_participants table (SHU-355)
     # ========================================================================
-    if not _table_exists("document_participants"):
+    if not table_exists(inspector, "document_participants"):
         op.create_table(
             "document_participants",
             sa.Column("id", sa.String(36), primary_key=True),
@@ -151,7 +122,7 @@ def upgrade() -> None:
             ),
             sa.Column("entity_id", sa.String(36), nullable=True, index=True),
             sa.Column("entity_type", sa.String(50), nullable=False),
-            sa.Column("entity_name", sa.String(255), nullable=False),
+            sa.Column("entity_name", sa.String(255), nullable=False, index=True),
             sa.Column("role", sa.String(50), nullable=False),
             sa.Column("confidence", sa.Float(), nullable=True),
             sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
@@ -171,7 +142,7 @@ def upgrade() -> None:
     # ========================================================================
     # Part 5: Create document_projects table (SHU-355)
     # ========================================================================
-    if not _table_exists("document_projects"):
+    if not table_exists(inspector, "document_projects"):
         op.create_table(
             "document_projects",
             sa.Column("id", sa.String(36), primary_key=True),
@@ -203,7 +174,7 @@ def upgrade() -> None:
     # Part 6: Create indexes
     # ========================================================================
     # Vector index for synopsis_embedding (ivfflat for approximate nearest neighbor)
-    if not _index_exists("documents", "ix_documents_synopsis_embedding"):
+    if not index_exists(inspector, "documents", "ix_documents_synopsis_embedding"):
         # Create ivfflat index - requires sufficient rows for clustering
         # Using cosine distance operator class
         op.execute(
@@ -215,7 +186,7 @@ def upgrade() -> None:
         )
 
     # Vector index for query_embedding
-    if not _index_exists("document_queries", "ix_document_queries_query_embedding"):
+    if not index_exists(inspector, "document_queries", "ix_document_queries_query_embedding"):
         op.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_document_queries_query_embedding
@@ -225,7 +196,7 @@ def upgrade() -> None:
         )
 
     # GIN indexes for JSONB columns (enable efficient containment queries)
-    if not _index_exists("documents", "ix_documents_capability_manifest"):
+    if not index_exists(inspector, "documents", "ix_documents_capability_manifest"):
         op.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_documents_capability_manifest
@@ -233,7 +204,7 @@ def upgrade() -> None:
             """
         )
 
-    if not _index_exists("document_chunks", "ix_document_chunks_keywords"):
+    if not index_exists(inspector, "document_chunks", "ix_document_chunks_keywords"):
         op.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_document_chunks_keywords
@@ -241,7 +212,7 @@ def upgrade() -> None:
             """
         )
 
-    if not _index_exists("document_chunks", "ix_document_chunks_topics"):
+    if not index_exists(inspector, "document_chunks", "ix_document_chunks_topics"):
         op.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_document_chunks_topics
@@ -250,7 +221,7 @@ def upgrade() -> None:
         )
 
     # GIN index for relational_context (SHU-355)
-    if not _index_exists("documents", "ix_documents_relational_context"):
+    if not index_exists(inspector, "documents", "ix_documents_relational_context"):
         op.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_documents_relational_context
@@ -260,11 +231,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Drop SHU-355 tables first (reverse order of creation)
-    op.drop_table("document_projects")
-    op.drop_table("document_participants")
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
 
-    # Drop SHU-342 indexes
+    # Drop indexes first (IF EXISTS handles idempotency)
     op.execute("DROP INDEX IF EXISTS ix_documents_relational_context")
     op.execute("DROP INDEX IF EXISTS ix_document_chunks_topics")
     op.execute("DROP INDEX IF EXISTS ix_document_chunks_keywords")
@@ -272,19 +242,25 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_document_queries_query_embedding")
     op.execute("DROP INDEX IF EXISTS ix_documents_synopsis_embedding")
     op.execute("DROP INDEX IF EXISTS ix_document_participants_entity_type")
+    op.execute("DROP INDEX IF EXISTS ix_document_participants_entity_name")
+
+    # Drop SHU-355 tables (reverse order of creation)
+    drop_table_if_exists(inspector, "document_projects")
+    drop_table_if_exists(inspector, "document_participants")
 
     # Drop document_queries table
-    op.drop_table("document_queries")
+    drop_table_if_exists(inspector, "document_queries")
 
     # Drop columns from document_chunks
-    op.drop_column("document_chunks", "topics")
-    op.drop_column("document_chunks", "keywords")
-    op.drop_column("document_chunks", "summary")
+    drop_column_if_exists(inspector, "document_chunks", "topics")
+    drop_column_if_exists(inspector, "document_chunks", "keywords")
+    drop_column_if_exists(inspector, "document_chunks", "summary")
 
     # Drop columns from documents (SHU-355 + SHU-342)
-    op.drop_column("documents", "relational_context")
-    op.drop_column("documents", "profiling_status")
-    op.drop_column("documents", "capability_manifest")
-    op.drop_column("documents", "document_type")
-    op.drop_column("documents", "synopsis_embedding")
-    op.drop_column("documents", "synopsis")
+    drop_column_if_exists(inspector, "documents", "relational_context")
+    drop_column_if_exists(inspector, "documents", "profiling_error")
+    drop_column_if_exists(inspector, "documents", "profiling_status")
+    drop_column_if_exists(inspector, "documents", "capability_manifest")
+    drop_column_if_exists(inspector, "documents", "document_type")
+    drop_column_if_exists(inspector, "documents", "synopsis_embedding")
+    drop_column_if_exists(inspector, "documents", "synopsis")

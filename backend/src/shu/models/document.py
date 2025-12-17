@@ -10,7 +10,9 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import ARRAY
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Dict, Any, Optional, List
+from typing_extensions import TypedDict
 try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
@@ -20,18 +22,30 @@ except ImportError:
 from .base import BaseModel
 
 
-# Type definitions for capability manifest structure
-class CapabilityManifest:
+# Type definitions for capability manifest structure (SHU-342)
+class CapabilityManifest(TypedDict, total=False):
     """Structure for document capability manifest JSONB field.
 
-    Fields:
-        answers_questions_about: list[str]  # Topics the document can inform about
-        provides_information_type: list[str]  # e.g., "facts", "opinions", "decisions"
-        authority_level: str  # e.g., "primary", "secondary", "commentary"
-        completeness: str  # e.g., "complete", "partial", "reference"
-        question_domains: list[str]  # e.g., "who", "what", "when", "why", "how"
+    All fields are optional (total=False) since manifests may be partial.
     """
-    pass  # Used for documentation; actual data stored as JSONB dict
+    answers_questions_about: List[str]  # Topics the document can inform about
+    provides_information_type: List[str]  # e.g., "facts", "opinions", "decisions"
+    authority_level: str  # e.g., "primary", "secondary", "commentary"
+    completeness: str  # e.g., "complete", "partial", "reference"
+    question_domains: List[str]  # e.g., "who", "what", "when", "why", "how"
+
+
+# Type definitions for relational context structure (SHU-355)
+class RelationalContext(TypedDict, total=False):
+    """Structure for document relational context JSONB field.
+
+    Denormalized summary of participants and projects for query-time access.
+    """
+    participant_count: int
+    primary_participants: List[str]  # Top entity names
+    project_associations: List[str]  # Top project names
+    temporal_scope: Dict[str, str]  # start_date, end_date if detectable
+    interaction_signals: List[str]  # e.g., "meeting", "decision", "request"
 
 
 class Document(BaseModel):
@@ -101,6 +115,7 @@ class Document(BaseModel):
 
     # Profiling status: pending, in_progress, complete, failed
     profiling_status = Column(String(20), nullable=True, default="pending")
+    profiling_error = Column(Text, nullable=True)
 
     # Shu RAG Relational Context (SHU-355)
     # Denormalized summary of participants and projects for query-time access
@@ -129,6 +144,7 @@ class Document(BaseModel):
             "document_type": self.document_type,
             "capability_manifest": self.capability_manifest,
             "profiling_status": self.profiling_status,
+            "profiling_error": self.profiling_error,
             "has_synopsis_embedding": self.synopsis_embedding is not None,
             # Relational context (SHU-355)
             "relational_context": self.relational_context,
@@ -191,10 +207,12 @@ class Document(BaseModel):
         self.capability_manifest = capability_manifest
         self.synopsis_embedding = synopsis_embedding
         self.profiling_status = "complete"
+        self.profiling_error = None  # Clear any previous error
 
-    def mark_profiling_failed(self) -> None:
-        """Mark document profiling as failed."""
+    def mark_profiling_failed(self, error_message: Optional[str] = None) -> None:
+        """Mark document profiling as failed with optional error message."""
         self.profiling_status = "failed"
+        self.profiling_error = error_message
 
 
 class DocumentChunk(BaseModel):
@@ -301,13 +319,25 @@ class DocumentChunk(BaseModel):
         return self.content[:max_chars] + "..."
     
     def calculate_similarity_score(self, query_embedding: List[float]) -> float:
-        """Calculate cosine similarity with query embedding."""
-        if not self.embedding:
+        """Calculate cosine similarity with query embedding.
+
+        Note: In production, similarity search is done at the database level
+        with pgvector for efficiency. This method exists for testing and
+        fallback scenarios.
+        """
+        if not self.embedding or not query_embedding:
             return 0.0
-        
-        # This would typically be done at the database level with pgvector
-        # For now, return a placeholder
-        return 0.0
+
+        # Simple cosine similarity calculation
+        import math
+        dot_product = sum(a * b for a, b in zip(self.embedding, query_embedding))
+        magnitude_a = math.sqrt(sum(a * a for a in self.embedding))
+        magnitude_b = math.sqrt(sum(b * b for b in query_embedding))
+
+        if magnitude_a == 0 or magnitude_b == 0:
+            return 0.0
+
+        return dot_product / (magnitude_a * magnitude_b)
     
     @classmethod
     def create_from_text(
@@ -412,17 +442,33 @@ class DocumentQuery(BaseModel):
         )
 
 
-# Entity type constants (SHU-355)
-ENTITY_TYPE_PERSON = "person"
-ENTITY_TYPE_ORGANIZATION = "organization"
-ENTITY_TYPE_EMAIL_ADDRESS = "email_address"
+# Entity type enum (SHU-355)
+class ParticipantEntityType(str, Enum):
+    """Entity types for document participants."""
+    PERSON = "person"
+    ORGANIZATION = "organization"
+    EMAIL_ADDRESS = "email_address"
 
-# Participant role constants (SHU-355)
-ROLE_AUTHOR = "author"
-ROLE_RECIPIENT = "recipient"
-ROLE_MENTIONED = "mentioned"
-ROLE_DECISION_MAKER = "decision_maker"
-ROLE_SUBJECT = "subject"
+
+# Participant role enum (SHU-355)
+class ParticipantRole(str, Enum):
+    """Roles that entities can have in a document."""
+    AUTHOR = "author"
+    RECIPIENT = "recipient"
+    MENTIONED = "mentioned"
+    DECISION_MAKER = "decision_maker"
+    SUBJECT = "subject"
+
+
+# Backward-compatible constants (use enums for new code)
+ENTITY_TYPE_PERSON = ParticipantEntityType.PERSON.value
+ENTITY_TYPE_ORGANIZATION = ParticipantEntityType.ORGANIZATION.value
+ENTITY_TYPE_EMAIL_ADDRESS = ParticipantEntityType.EMAIL_ADDRESS.value
+ROLE_AUTHOR = ParticipantRole.AUTHOR.value
+ROLE_RECIPIENT = ParticipantRole.RECIPIENT.value
+ROLE_MENTIONED = ParticipantRole.MENTIONED.value
+ROLE_DECISION_MAKER = ParticipantRole.DECISION_MAKER.value
+ROLE_SUBJECT = ParticipantRole.SUBJECT.value
 
 
 class DocumentParticipant(BaseModel):
@@ -457,7 +503,7 @@ class DocumentParticipant(BaseModel):
     # Entity identification
     entity_id = Column(String(36), nullable=True, index=True)  # For future resolution
     entity_type = Column(String(50), nullable=False)  # person, organization, email_address
-    entity_name = Column(String(255), nullable=False)
+    entity_name = Column(String(255), nullable=False, index=True)
 
     # Role in document
     role = Column(String(50), nullable=False)  # author, recipient, mentioned, decision_maker, subject
