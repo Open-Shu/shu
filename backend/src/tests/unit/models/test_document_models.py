@@ -376,6 +376,17 @@ class TestDocumentQuery:
         assert "..." in repr_str
         assert len(repr_str) < 150  # Should be truncated
 
+    def test_repr_handles_none_query_text(self):
+        """Test __repr__ doesn't crash when query_text is None."""
+        query = DocumentQuery()
+        query.id = "query-123"
+        query.document_id = "doc-456"
+        # query_text not set - should not crash
+
+        repr_str = repr(query)
+        assert "<not set>" in repr_str
+        assert "query-123" in repr_str
+
 
 class TestDocumentParticipant:
     """Tests for DocumentParticipant model (SHU-355)."""

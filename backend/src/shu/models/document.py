@@ -418,7 +418,10 @@ class DocumentQuery(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
-        preview = self.query_text[:50] + "..." if len(self.query_text) > 50 else self.query_text
+        if self.query_text:
+            preview = self.query_text[:50] + "..." if len(self.query_text) > 50 else self.query_text
+        else:
+            preview = "<not set>"
         return f"<DocumentQuery(id={self.id}, doc_id='{self.document_id}', query='{preview}')>"
 
     def to_dict(self) -> Dict[str, Any]:
