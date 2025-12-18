@@ -294,10 +294,52 @@ async def view_attachment(
         )
 
 
-    # Read from disk using storage_path
+    # Read from disk using storage_path with path traversal protection
     storage_path = getattr(attachment, "storage_path", None)
-    path = PathlibPath(storage_path) if storage_path else None
-    if not path or not path.exists() or not path.is_file():
+    if not storage_path:
+        return create_error_response(
+            code="ATTACHMENT_CONTENT_UNAVAILABLE",
+            message="Attachment content is not available",
+            status_code=404
+        )
+
+    path = PathlibPath(storage_path)
+
+    # Resolve to absolute path and verify it stays within the configured storage directory
+    # This prevents path traversal attacks via tampered attachment records
+    try:
+        resolved_path = path.resolve(strict=True)  # strict=True raises if path doesn't exist
+    except (OSError, ValueError):
+        return create_error_response(
+            code="ATTACHMENT_CONTENT_UNAVAILABLE",
+            message="Attachment content is not available",
+            status_code=404
+        )
+
+    # Get the configured attachment storage directory and resolve it
+    storage_dir = PathlibPath(settings.chat_attachment_storage_dir).resolve()
+
+    # Verify the resolved path is within the storage directory (prevents symlink escapes)
+    try:
+        resolved_path.relative_to(storage_dir)
+    except ValueError:
+        logger.warning(f"Path traversal attempt blocked for attachment {attachment_id}: {resolved_path}")
+        return create_error_response(
+            code="ATTACHMENT_CONTENT_UNAVAILABLE",
+            message="Attachment content is not available",
+            status_code=404
+        )
+
+    # Reject symlinks as an additional security measure
+    if path.is_symlink():
+        logger.warning(f"Symlink access blocked for attachment {attachment_id}")
+        return create_error_response(
+            code="ATTACHMENT_CONTENT_UNAVAILABLE",
+            message="Attachment content is not available",
+            status_code=404
+        )
+
+    if not resolved_path.is_file():
         return create_error_response(
             code="ATTACHMENT_CONTENT_UNAVAILABLE",
             message="Attachment content is not available",

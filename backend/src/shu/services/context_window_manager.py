@@ -91,8 +91,11 @@ class ContextWindowManager:
             # TODO: The side caller should do this, rather than a random configured provider.
             summary = await self._summarize_conversation_history(older_messages)
             if summary:
+                # Use 'user' role instead of 'system' to avoid adapter compatibility issues.
+                # Adapters like Anthropic/Gemini expect system content via ChatContext.system_prompt,
+                # not as messages in the array. Prefixing clearly marks this as context.
                 managed_messages.append(
-                    ChatMessage(id=None, role="system", content=f"Previous conversation summary: {summary}", created_at=None, attachments=[], metadata=None)
+                    ChatMessage(id=None, role="user", content=f"[Previous conversation summary]: {summary}", created_at=None, attachments=[], metadata={"is_context_summary": True})
                 )
 
         managed_messages.extend(recent_messages)
