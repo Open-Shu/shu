@@ -9,7 +9,28 @@ from .base import Base
 from .knowledge_base import KnowledgeBase
 
 from .prompt import Prompt, PromptAssignment, EntityType
-from .document import Document, DocumentChunk
+from .document import (
+    Document,
+    DocumentChunk,
+    DocumentQuery,
+    DocumentParticipant,
+    DocumentProject,
+    # Enums (preferred)
+    ParticipantEntityType,
+    ParticipantRole,
+    # TypedDicts for JSONB structures
+    CapabilityManifest,
+    RelationalContext,
+    # Backward-compatible constants
+    ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_ORGANIZATION,
+    ENTITY_TYPE_EMAIL_ADDRESS,
+    ROLE_AUTHOR,
+    ROLE_RECIPIENT,
+    ROLE_MENTIONED,
+    ROLE_DECISION_MAKER,
+    ROLE_SUBJECT,
+)
 from .llm_provider import LLMProvider, LLMModel, LLMUsage, Conversation, Message
 from .attachment import Attachment, MessageAttachment
 from .model_configuration import ModelConfiguration
@@ -38,6 +59,24 @@ __all__ = [
     "EntityType",
     "Document",
     "DocumentChunk",
+    "DocumentQuery",
+    "DocumentParticipant",
+    "DocumentProject",
+    # Enums (preferred for new code)
+    "ParticipantEntityType",
+    "ParticipantRole",
+    # TypedDicts for JSONB structures
+    "CapabilityManifest",
+    "RelationalContext",
+    # Backward-compatible constants
+    "ENTITY_TYPE_PERSON",
+    "ENTITY_TYPE_ORGANIZATION",
+    "ENTITY_TYPE_EMAIL_ADDRESS",
+    "ROLE_AUTHOR",
+    "ROLE_RECIPIENT",
+    "ROLE_MENTIONED",
+    "ROLE_DECISION_MAKER",
+    "ROLE_SUBJECT",
     "LLMProvider",
     "LLMModel",
     "LLMUsage",

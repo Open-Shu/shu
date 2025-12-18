@@ -6,11 +6,13 @@ document metadata, content, and vector embeddings.
 """
 
 from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Float, JSON
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import TIMESTAMP, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import ARRAY
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Dict, Any, Optional, List
+from typing_extensions import TypedDict
 try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
@@ -18,6 +20,32 @@ except ImportError:
     Vector = lambda dim: Text
 
 from .base import BaseModel
+
+
+# Type definitions for capability manifest structure (SHU-342)
+class CapabilityManifest(TypedDict, total=False):
+    """Structure for document capability manifest JSONB field.
+
+    All fields are optional (total=False) since manifests may be partial.
+    """
+    answers_questions_about: List[str]  # Topics the document can inform about
+    provides_information_type: List[str]  # e.g., "facts", "opinions", "decisions"
+    authority_level: str  # e.g., "primary", "secondary", "commentary"
+    completeness: str  # e.g., "complete", "partial", "reference"
+    question_domains: List[str]  # e.g., "who", "what", "when", "why", "how"
+
+
+# Type definitions for relational context structure (SHU-355)
+class RelationalContext(TypedDict, total=False):
+    """Structure for document relational context JSONB field.
+
+    Denormalized summary of participants and projects for query-time access.
+    """
+    participant_count: int
+    primary_participants: List[str]  # Top entity names
+    project_associations: List[str]  # Top project names
+    temporal_scope: Dict[str, str]  # start_date, end_date if detectable
+    interaction_signals: List[str]  # e.g., "meeting", "decision", "request"
 
 
 class Document(BaseModel):
@@ -73,10 +101,32 @@ class Document(BaseModel):
     word_count = Column(Integer, nullable=True)
     character_count = Column(Integer, nullable=True)
     chunk_count = Column(Integer, default=0, nullable=False)
-    
+
+    # Shu RAG Document Profile (SHU-342)
+    # Synopsis: One-paragraph summary for document-level retrieval
+    synopsis = Column(Text, nullable=True)
+    synopsis_embedding = Column(Vector(384), nullable=True)
+
+    # Document type classification (narrative, transactional, technical, conversational)
+    document_type = Column(String(50), nullable=True)
+
+    # Capability manifest: what questions/queries this document can satisfy
+    capability_manifest = Column(JSONB, nullable=True)
+
+    # Profiling status: pending, in_progress, complete, failed
+    profiling_status = Column(String(20), nullable=True, default="pending")
+    profiling_error = Column(Text, nullable=True)
+
+    # Shu RAG Relational Context (SHU-355)
+    # Denormalized summary of participants and projects for query-time access
+    relational_context = Column(JSONB, nullable=True)
+
     # Relationships
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    queries = relationship("DocumentQuery", back_populates="document", cascade="all, delete-orphan")
+    participants = relationship("DocumentParticipant", back_populates="document", cascade="all, delete-orphan")
+    projects = relationship("DocumentProject", back_populates="document", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, title='{self.title}', kb_id='{self.knowledge_base_id}')>"
@@ -89,6 +139,15 @@ class Document(BaseModel):
             "processing_status": self.processing_status,
             "processed_at": self.processed_at.isoformat() if self.processed_at else None,
             "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
+            # Profile fields (SHU-342)
+            "synopsis": self.synopsis,
+            "document_type": self.document_type,
+            "capability_manifest": self.capability_manifest,
+            "profiling_status": self.profiling_status,
+            "profiling_error": self.profiling_error,
+            "has_synopsis_embedding": self.synopsis_embedding is not None,
+            # Relational context (SHU-355)
+            "relational_context": self.relational_context,
         })
         return base_dict
     
@@ -119,6 +178,41 @@ class Document(BaseModel):
         self.word_count = word_count
         self.character_count = character_count
         self.chunk_count = chunk_count
+
+    # Profiling status helpers
+    @property
+    def is_profiled(self) -> bool:
+        """Check if document has been profiled successfully."""
+        return self.profiling_status == "complete"
+
+    @property
+    def profiling_failed(self) -> bool:
+        """Check if document profiling failed."""
+        return self.profiling_status == "failed"
+
+    def mark_profiling_started(self) -> None:
+        """Mark document as currently being profiled."""
+        self.profiling_status = "in_progress"
+
+    def mark_profiling_complete(
+        self,
+        synopsis: str,
+        document_type: str,
+        capability_manifest: Dict[str, Any],
+        synopsis_embedding: Optional[List[float]] = None,
+    ) -> None:
+        """Mark document profiling as complete with profile data."""
+        self.synopsis = synopsis
+        self.document_type = document_type
+        self.capability_manifest = capability_manifest
+        self.synopsis_embedding = synopsis_embedding
+        self.profiling_status = "complete"
+        self.profiling_error = None  # Clear any previous error
+
+    def mark_profiling_failed(self, error_message: Optional[str] = None) -> None:
+        """Mark document profiling as failed with optional error message."""
+        self.profiling_status = "failed"
+        self.profiling_error = error_message
 
 
 class DocumentChunk(BaseModel):
@@ -157,7 +251,15 @@ class DocumentChunk(BaseModel):
     
     # Chunk metadata
     chunk_metadata = Column(JSON, nullable=True)  # Flexible metadata storage for chunk-specific data
-    
+
+    # Shu RAG Chunk Profile (SHU-342)
+    # Summary: One-line description of chunk content for LLM-scannable index
+    summary = Column(Text, nullable=True)
+    # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
+    keywords = Column(JSONB, nullable=True)
+    # Topics: Conceptual categories the chunk relates to (broader themes, domains)
+    topics = Column(JSONB, nullable=True)
+
     # Relationships
     document = relationship("Document", back_populates="chunks")
     knowledge_base = relationship("KnowledgeBase")
@@ -175,6 +277,10 @@ class DocumentChunk(BaseModel):
             "chunk_index": self.chunk_index,
             "has_embedding": self.embedding is not None,
             "embedding_created_at": self.embedding_created_at.isoformat() if self.embedding_created_at else None,
+            # Profile fields
+            "summary": self.summary,
+            "keywords": self.keywords,
+            "topics": self.topics,
         })
         # Don't include the actual embedding vector in the dict (too large)
         return base_dict
@@ -189,7 +295,23 @@ class DocumentChunk(BaseModel):
         self.embedding = embedding
         self.embedding_model = model_name
         self.embedding_created_at = datetime.now(timezone.utc)
-    
+
+    def set_profile(
+        self,
+        summary: str,
+        keywords: List[str],
+        topics: List[str],
+    ) -> None:
+        """Set the chunk profile data."""
+        self.summary = summary
+        self.keywords = keywords
+        self.topics = topics
+
+    @property
+    def is_profiled(self) -> bool:
+        """Check if chunk has been profiled (has summary)."""
+        return self.summary is not None
+
     def get_preview(self, max_chars: int = 100) -> str:
         """Get a preview of the chunk content."""
         if len(self.content) <= max_chars:
@@ -197,13 +319,39 @@ class DocumentChunk(BaseModel):
         return self.content[:max_chars] + "..."
     
     def calculate_similarity_score(self, query_embedding: List[float]) -> float:
-        """Calculate cosine similarity with query embedding."""
-        if not self.embedding:
+        """Calculate cosine similarity with query embedding.
+
+        Note: In production, similarity search is done at the database level
+        with pgvector for efficiency. This method exists for testing and
+        fallback scenarios.
+
+        Raises:
+            ValueError: If embedding dimensions don't match (likely due to
+                embedding model change in configuration).
+        """
+        if not self.embedding or not query_embedding:
             return 0.0
-        
-        # This would typically be done at the database level with pgvector
-        # For now, return a placeholder
-        return 0.0
+
+        # Validate dimension match - mismatched dimensions indicate embedding
+        # model configuration change, which would produce incorrect results
+        if len(self.embedding) != len(query_embedding):
+            raise ValueError(
+                f"Embedding dimension mismatch: chunk has {len(self.embedding)} dimensions, "
+                f"query has {len(query_embedding)} dimensions. This usually indicates the "
+                "embedding model was changed after documents were indexed. Re-index the "
+                "knowledge base to fix this."
+            )
+
+        # Simple cosine similarity calculation
+        import math
+        dot_product = sum(a * b for a, b in zip(self.embedding, query_embedding))
+        magnitude_a = math.sqrt(sum(a * a for a in self.embedding))
+        magnitude_b = math.sqrt(sum(b * b for b in query_embedding))
+
+        if magnitude_a == 0 or magnitude_b == 0:
+            return 0.0
+
+        return dot_product / (magnitude_a * magnitude_b)
     
     @classmethod
     def create_from_text(
@@ -226,4 +374,260 @@ class DocumentChunk(BaseModel):
             start_char=start_char,
             end_char=end_char,
         )
-        return chunk 
+        return chunk
+
+
+class DocumentQuery(BaseModel):
+    """
+    Synthesized query for a document (Shu RAG).
+
+    Stores hypothetical queries that a document can answer. These are generated
+    during document profiling and enable query-match retrieval, where user queries
+    are matched against synthesized queries rather than document content.
+
+    Query types include:
+    - Interrogative: "What is the Q3 marketing budget?"
+    - Imperative: "Show quarterly revenue breakdown"
+    - Declarative: "Q3 marketing budget figures"
+    """
+
+    __tablename__ = "document_queries"
+
+    # Foreign keys (knowledge_base_id denormalized for query efficiency)
+    document_id = Column(
+        String,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Query content
+    query_text = Column(Text, nullable=False)
+
+    # Vector embedding for similarity search (384 dimensions for MiniLM)
+    query_embedding = Column(Vector(384), nullable=True)
+
+    # Relationships
+    document = relationship("Document", back_populates="queries")
+    knowledge_base = relationship("KnowledgeBase")
+
+    def __repr__(self) -> str:
+        if self.query_text:
+            preview = self.query_text[:50] + "..." if len(self.query_text) > 50 else self.query_text
+        else:
+            preview = "<not set>"
+        return f"<DocumentQuery(id={self.id}, doc_id='{self.document_id}', query='{preview}')>"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "query_text": self.query_text,
+            "has_embedding": self.query_embedding is not None,
+        })
+        return base_dict
+
+    @property
+    def has_embedding(self) -> bool:
+        """Check if query has an embedding."""
+        return self.query_embedding is not None
+
+    def set_embedding(self, embedding: List[float]) -> None:
+        """Set the embedding vector for this query."""
+        self.query_embedding = embedding
+
+    @classmethod
+    def create_for_document(
+        cls,
+        document_id: str,
+        knowledge_base_id: str,
+        query_text: str,
+        query_embedding: Optional[List[float]] = None,
+    ) -> "DocumentQuery":
+        """Create a synthesized query for a document."""
+        return cls(
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            query_text=query_text,
+            query_embedding=query_embedding,
+        )
+
+
+# Entity type enum (SHU-355)
+class ParticipantEntityType(str, Enum):
+    """Entity types for document participants."""
+    PERSON = "person"
+    ORGANIZATION = "organization"
+    EMAIL_ADDRESS = "email_address"
+
+
+# Participant role enum (SHU-355)
+class ParticipantRole(str, Enum):
+    """Roles that entities can have in a document."""
+    AUTHOR = "author"
+    RECIPIENT = "recipient"
+    MENTIONED = "mentioned"
+    DECISION_MAKER = "decision_maker"
+    SUBJECT = "subject"
+
+
+# Backward-compatible constants (use enums for new code)
+ENTITY_TYPE_PERSON = ParticipantEntityType.PERSON.value
+ENTITY_TYPE_ORGANIZATION = ParticipantEntityType.ORGANIZATION.value
+ENTITY_TYPE_EMAIL_ADDRESS = ParticipantEntityType.EMAIL_ADDRESS.value
+ROLE_AUTHOR = ParticipantRole.AUTHOR.value
+ROLE_RECIPIENT = ParticipantRole.RECIPIENT.value
+ROLE_MENTIONED = ParticipantRole.MENTIONED.value
+ROLE_DECISION_MAKER = ParticipantRole.DECISION_MAKER.value
+ROLE_SUBJECT = ParticipantRole.SUBJECT.value
+
+
+class DocumentParticipant(BaseModel):
+    """
+    Document participant entity (Shu RAG Relational Context).
+
+    Tracks people, organizations, and email addresses mentioned in or
+    associated with a document. Used for relational boost scoring.
+
+    Entity types:
+    - person: Named individual (may require resolution)
+    - organization: Company, team, or group
+    - email_address: Unique email identifier (no resolution needed)
+    """
+
+    __tablename__ = "document_participants"
+
+    # Foreign keys (knowledge_base_id denormalized for query efficiency)
+    document_id = Column(
+        String,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Entity identification
+    entity_id = Column(String(36), nullable=True, index=True)  # For future resolution
+    entity_type = Column(String(50), nullable=False)  # person, organization, email_address
+    entity_name = Column(String(255), nullable=False, index=True)
+
+    # Role in document
+    role = Column(String(50), nullable=False)  # author, recipient, mentioned, decision_maker, subject
+
+    # Extraction confidence
+    confidence = Column(Float, nullable=True)
+
+    # Relationships
+    document = relationship("Document", back_populates="participants")
+    knowledge_base = relationship("KnowledgeBase")
+
+    def __repr__(self) -> str:
+        return f"<DocumentParticipant(id={self.id}, entity='{self.entity_name}', role='{self.role}')>"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "entity_id": self.entity_id,
+            "entity_type": self.entity_type,
+            "entity_name": self.entity_name,
+            "role": self.role,
+            "confidence": self.confidence,
+        })
+        return base_dict
+
+    @classmethod
+    def create_for_document(
+        cls,
+        document_id: str,
+        knowledge_base_id: str,
+        entity_type: str,
+        entity_name: str,
+        role: str,
+        confidence: Optional[float] = None,
+        entity_id: Optional[str] = None,
+    ) -> "DocumentParticipant":
+        """Create a participant record for a document."""
+        return cls(
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            entity_id=entity_id,
+            entity_type=entity_type,
+            entity_name=entity_name,
+            role=role,
+            confidence=confidence,
+        )
+
+
+class DocumentProject(BaseModel):
+    """
+    Document project association (Shu RAG Relational Context).
+
+    Tracks projects, initiatives, or topics associated with a document.
+    Used for relational boost scoring based on user's active projects.
+    """
+
+    __tablename__ = "document_projects"
+
+    # Foreign keys (knowledge_base_id denormalized for query efficiency)
+    document_id = Column(
+        String,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Project identification
+    project_name = Column(String(255), nullable=False, index=True)
+
+    # How strongly the document relates to this project (0.0 - 1.0)
+    association_strength = Column(Float, nullable=True)
+
+    # Relationships
+    document = relationship("Document", back_populates="projects")
+    knowledge_base = relationship("KnowledgeBase")
+
+    def __repr__(self) -> str:
+        return f"<DocumentProject(id={self.id}, project='{self.project_name}')>"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "project_name": self.project_name,
+            "association_strength": self.association_strength,
+        })
+        return base_dict
+
+    @classmethod
+    def create_for_document(
+        cls,
+        document_id: str,
+        knowledge_base_id: str,
+        project_name: str,
+        association_strength: Optional[float] = None,
+    ) -> "DocumentProject":
+        """Create a project association for a document."""
+        return cls(
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            project_name=project_name,
+            association_strength=association_strength,
+        )

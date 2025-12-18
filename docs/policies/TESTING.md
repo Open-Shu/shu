@@ -1,27 +1,84 @@
 # Shu Testing System
 
-**Framework**: Custom Integration Test Framework
-**Last Updated**: 2025-08-26
-
-> **Non-negotiable**: Do **not** add standalone `pytest` modules or unit-test harnesses. Extend the custom integration framework (existing async suites under `tests/`) or add inline verification scripts that respect this design. Any new pytest file will be rejected during review.
+**Framework**: Custom Integration Test Framework + Pytest Unit Tests
+**Last Updated**: 2025-12-17
 
 ## Executive Summary
 
-Shu uses a **custom integration test framework** that addresses async event loop conflicts from pytest-asyncio. The framework is currently functional for the covered integration testing scenarios.
+Shu uses a **custom integration test framework** for API/database integration tests, and **pytest** for isolated unit tests. The integration framework addresses async event loop conflicts from pytest-asyncio. This dual approach allows fast unit testing without database dependencies while maintaining robust integration coverage.
 
-Known Issues (testing system):
+## Unit Tests vs Integration Tests
+
+| Aspect | Unit Tests | Integration Tests |
+|--------|------------|-------------------|
+| Framework | pytest | Custom async framework |
+| Location | `backend/src/tests/unit/` | `backend/src/tests/integ/` |
+| Database | No | Yes (PostgreSQL) |
+| API Server | No | Yes |
+| Speed | Fast (~ms per test) | Slower (~100ms per test) |
+| Purpose | Test pure logic, models, utilities | Test API workflows end-to-end |
+| Run Command | `python -m pytest backend/src/tests/unit` | `python -m tests.integ.run_all_integration_tests` |
+
+### When to Use Unit Tests (pytest)
+
+Unit tests are appropriate for:
+- **SQLAlchemy models**: Testing model instantiation, helper methods, computed properties
+- **Pure functions**: Data transformations, validation logic, utility functions
+- **Schemas and serialization**: Pydantic model validation, to_dict/from_dict methods
+- **Business logic**: Calculations, state machines, decision logic without DB dependencies
+- **Enums and constants**: Verifying enum values, backward compatibility
+
+Unit tests should NOT:
+- Require a running database
+- Require a running API server
+- Test API endpoints directly
+- Use async/await (use integration tests for async code)
+
+### When to Use Integration Tests (custom framework)
+
+Integration tests are appropriate for:
+- **API endpoints**: Full request/response cycles
+- **Database operations**: CRUD, transactions, relationships
+- **Authentication flows**: JWT, sessions, RBAC
+- **Async workflows**: Background jobs, event handling
+- **End-to-end scenarios**: Multi-step user workflows
+
+### Unit Test Guidelines
+
+1. **Location**: Place tests in `backend/src/tests/unit/<module>/test_<name>.py`
+2. **No fixtures required**: Unit tests should not need database or client fixtures
+3. **Fast**: Each test should complete in milliseconds
+4. **Isolated**: Tests should not depend on each other or external state
+5. **Model imports**: Import models after `conftest.py` sets up the path and registers all SQLAlchemy models
+
+Example unit test:
+```python
+# backend/src/tests/unit/models/test_document_models.py
+from shu.models import Document, DocumentChunk
+
+class TestDocument:
+    def test_is_processed_property(self):
+        doc = Document()
+        doc.status = "pending"
+        assert doc.is_processed is False
+
+        doc.status = "processed"
+        assert doc.is_processed is True
+```
+
+### Known Issues (testing system)
 - No dedicated security vulnerability testing suite; limited edge-case coverage
 - Negative tests rely on developers explicitly logging expected errors
 - Some suite docs list outdated test counts; use `python -m tests.integ.run_all_integration_tests --list-suites` as the source of truth
 
-### **Capabilities**
+### Integration Test Capabilities
 - Functional reliability for implemented scenarios
 - Performance: sub-200ms per suite typical
 - Integration testing: API + database workflows for happy path scenarios, envelope-aware assertions required
 - Extensible architecture: framework supports adding new test suites
 - CLI interface: individual tests, patterns, suites, discovery functionality
 
-### **Known Limitations**
+### Integration Test Limitations
 - No security vulnerability testing; limited edge case coverage
 - Tests must log expected error output for negative cases (see below)
 - All tests must validate response envelopes (data or error)
@@ -275,33 +332,32 @@ tests/
 └── README.md                         # Complete technical documentation
 ```
 
-## Migration Status
+## Framework History
 
-### Migration Summary
+### Original Migration (2024)
 
-The migration away from pytest to the custom integration/unit framework described in this document has been completed for the files listed below. This section describes the state at the time of migration; any new pytest usage introduced later should be documented separately.
+The original migration moved integration tests from pytest to a custom async framework to avoid pytest-asyncio event loop conflicts. Integration tests that required database/API access were migrated:
+- **LLM Provider Tests** – `test_llm_providers.py` → `test_llm_integration.py`
+- **Authentication Tests** – `test_authentication.py` → `test_auth_integration.py`
+- **RBAC Tests** – `test_rbac_enforcement.py` → `test_rbac_integration.py`
+- **Configuration Tests** – `test_configuration.py` → `test_config_integration.py`
 
-#### Successfully Migrated and Deleted
-- **LLM Provider Tests** – `test_llm_providers.py` → `test_llm_integration.py` (original pytest file deleted)
-- **Authentication Tests** – `test_authentication.py` → `test_auth_integration.py` (original pytest file deleted)
-- **RBAC Tests** – `test_rbac_enforcement.py` → `test_rbac_integration.py` (original pytest file deleted)
-- **Configuration Tests** – `test_configuration.py` → `test_config_integration.py` (original pytest file deleted)
-- **LLM Unit Tests** – `test_llm_unit.py` → `test_llm_unit_migrated.py` (original pytest file deleted)
-- **API Key Tests** – `test_api_key_*.py` → `test_api_key_unit.py` (original pytest files deleted)
+### Current State (2025)
 
-#### pytest Infrastructure Removed
-- **Configuration Files** – `pytest.ini`, `tests/pytest.ini`, `tests/conftest.py` (removed from the repo)
-- **Dependencies** – pytest packages removed from `requirements.txt` at the time of migration
-- **Cache Directories** – `.pytest_cache` directories removed
-- **Complex Test Files** – Remaining pytest-based test files removed
+The testing system now has two components:
 
-#### Framework Implementation State
-- **Custom Integration Framework** – Implemented with auto-discovery (`run_all_integration_tests.py` and `BaseIntegrationTestSuite`)
-- **Custom Unit Test Framework** – Implemented for business logic tests
-- **Master Test Runner** – Provides a unified interface for all test types
-- **Documentation** – This file and `tests/README.md` describe the framework for developers and AI assistants
+1. **Custom Integration Framework** (`tests/integ/`)
+   - Used for async API/database integration tests
+   - Auto-discovery via `run_all_integration_tests.py`
+   - Based on `BaseIntegrationTestSuite`
 
-**Migration Result (snapshot)**: At the time this section was last edited, all known pytest infrastructure had been removed. Re-run a repository-wide search for `pytest` if you suspect new usage has been introduced.
+2. **Pytest Unit Tests** (`tests/unit/`)
+   - Used for fast, isolated unit tests
+   - No database or API dependencies
+   - Standard pytest with `conftest.py` for model registration
+   - Run via `python -m pytest backend/src/tests/unit`
+
+This dual approach provides the best of both worlds: pytest's excellent test discovery and assertion introspection for unit tests, while maintaining the custom framework's event loop control for integration tests.
 
 ## Benefits Over Previous System
 
@@ -329,10 +385,9 @@ These notes describe why the custom integration framework was introduced and wha
 
 ## Conclusion
 
-The Shu custom integration test framework exists to replace the previous pytest-asyncio setup with a single-loop, integration-focused runner. It currently:
+Shu uses a dual testing approach:
 
-- Runs integration tests against the application stack and database rather than heavy mocking.
-- Avoids the specific async event loop issues we previously saw with pytest-asyncio.
-- Provides a straightforward pattern for adding new suites.
+1. **Integration tests** (custom framework) for API/database workflows
+2. **Unit tests** (pytest) for fast, isolated logic tests
 
-All pytest files have been removed. Dedicated security vulnerability testing still needs to be added before any production deployment.
+The custom integration framework avoids pytest-asyncio event loop conflicts while pytest provides excellent ergonomics for synchronous unit tests. Dedicated security vulnerability testing still needs to be added before any production deployment.
