@@ -714,7 +714,7 @@ class UnifiedLLMClient:
 
             test_model = self.provider.models[0].model_name
 
-            response = await self.chat_completion(
+            response: List[ProviderEventResult] = await self.chat_completion(
                 messages=test_messages,
                 model=test_model,
                 stream=False,
@@ -722,7 +722,14 @@ class UnifiedLLMClient:
                 llm_params=None
             )
 
-            return isinstance(response, ProviderStreamEvent) and response.content is not None
+            # Non-streaming returns List[ProviderEventResult]
+            if isinstance(response, list) and len(response) > 0:
+                # Check if any event indicates success (has content)
+                return any(
+                    hasattr(evt, 'content') and evt.content is not None
+                    for evt in response
+                )
+            return False
 
         except Exception as e:
             logger.error(f"Connection validation failed for provider {self.provider.name}: {e}")
