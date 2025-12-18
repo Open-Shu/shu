@@ -358,6 +358,9 @@ export const chatAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  viewAttachment: (attachmentId) => api.get(`/chat/attachments/${attachmentId}/view`, {
+    responseType: 'blob',
+  }),
 };
 
 // Model Configuration API endpoints

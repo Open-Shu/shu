@@ -13,6 +13,7 @@ import {
     Download as DownloadIcon,
     OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
+import { chatAPI } from '../../../services/api';
 
 /**
  * AttachmentPreviewDialog - Shows attachment content in a modal dialog.
@@ -45,20 +46,14 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
             setLoading(true);
             setError(null);
             try {
-                const token = localStorage.getItem('shu_token');
-                const response = await fetch(`/api/v1/chat/attachments/${attachment.id}/view`, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch attachment: ${response.status}`);
-                }
-                const blob = await response.blob();
+                const response = await chatAPI.viewAttachment(attachment.id);
+                const blob = response.data;
                 const url = URL.createObjectURL(blob);
                 setBlobUrl(url);
                 setContent({ blob, url });
             } catch (err) {
                 console.error('Error fetching attachment:', err);
-                setError(err.message);
+                setError(err.response?.status ? `Failed to fetch attachment: ${err.response.status}` : err.message);
             } finally {
                 setLoading(false);
             }
