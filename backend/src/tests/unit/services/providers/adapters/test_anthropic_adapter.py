@@ -12,6 +12,7 @@ from shu.services.providers.adapter_base import (
     ProviderToolCallEventResult,
     ToolCallInstructions,
 )
+from shu.services.chat_types import ChatContext
 from shu.services.providers.adapters.anthropic_adapter import AnthropicAdapter
 
 from shared import (
@@ -83,21 +84,17 @@ def _evaluate_tool_call_events(tool_event):
 
     # Assistant message with tool_use (text may or may not be present), followed by tool_result.
     assert len(tool_event.additional_messages) == 2
-    assert tool_event.additional_messages[0] == {
-        "role": "assistant",
-        "content": [
+    assert tool_event.additional_messages[0].role == "assistant"
+    assert tool_event.additional_messages[0].content == [
             {"type": "text", "text": "This is the first part.\nThis is the second part."},
             {"type": "tool_use", "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA", "name": "gmail_digest__list", "input": {"op": "digest"}}
         ]
-    }
 
     result_msg = tool_event.additional_messages[1]
-    assert result_msg == {
-        "role": "user",
-        "content": [
+    assert result_msg.role == "user"
+    assert result_msg.content == [
             {"type": "tool_result", "tool_use_id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA", "content": json.dumps(FAKE_PLUGIN_RESULT)}
         ]
-    }
 
 
 def test_provider_settings(anthropic_adapter):
@@ -109,7 +106,7 @@ def test_provider_settings(anthropic_adapter):
     capabilities = anthropic_adapter.get_capabilities()
     assert capabilities.streaming == True
     assert capabilities.tools == True
-    assert capabilities.vision == False
+    assert capabilities.vision == True
 
     assert anthropic_adapter.get_api_base_url() == "https://api.anthropic.com/v1"
     assert anthropic_adapter.get_chat_endpoint() == "/messages"
@@ -185,10 +182,10 @@ async def test_completion_flow(anthropic_adapter, patch_plugin_calls):
 @pytest.mark.asyncio
 async def test_inject_functions(anthropic_adapter):
     payload = {"field": "value"}
-    messages = [
-        {"role": "system", "content": "system prompt"},
-        {"role": "user", "content": "content"},
-    ]
+    messages = ChatContext.from_dicts(
+        [{"role": "user", "content": "content"}],
+        system_prompt="system prompt"
+    )
 
     payload = await anthropic_adapter.inject_streaming_parameter(True, payload)
     payload = await anthropic_adapter.set_messages_in_payload(messages, payload)

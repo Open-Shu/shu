@@ -23,6 +23,7 @@ from shu.services.providers.adapter_base import (
     ProviderToolCallEventResult,
     ToolCallInstructions,
 )
+from shu.services.chat_types import ChatContext
 from shu.services.providers.adapters.completions_adapter import CompletionsAdapter
 
 
@@ -79,9 +80,8 @@ def _evaluate_tool_call_events(tool_event):
         "preview": True,
     }
     assert len(tool_event.additional_messages) == 2
-    assert tool_event.additional_messages[0] == {
-        "role": "assistant",
-        "tool_calls": [{
+    assert tool_event.additional_messages[0].role == "assistant"
+    assert tool_event.additional_messages[0].metadata["tool_calls"] == [{
             "id": COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0].get("choices", [])[0].get("delta", {}).get("tool_calls", [])[0].get("id"),
             "type": "function",
             "function": {
@@ -89,19 +89,17 @@ def _evaluate_tool_call_events(tool_event):
                 "arguments": '{"op":"list","since_hours":3360,"query_filter":"in:inbox is:unread","max_results":50,"preview":true}',
             },
     }]
-    }
-    assert tool_event.additional_messages[1] == {
-        "role": "tool",
-        "tool_call_id": COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0].get("choices", [])[0].get("delta", {}).get("tool_calls", [])[0].get("id"),
-        "content": json.dumps(FAKE_PLUGIN_RESULT),
-    }
+
+    assert tool_event.additional_messages[1].role == "tool"
+    assert tool_event.additional_messages[1].metadata["tool_call_id"] == COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0].get("choices", [])[0].get("delta", {}).get("tool_calls", [])[0].get("id")
+    assert tool_event.additional_messages[1].content == json.dumps(FAKE_PLUGIN_RESULT)
 
 
 def test_provider_defaults(completions_adapter):
     capabilities = completions_adapter.get_capabilities()
     assert capabilities.streaming is True
     assert capabilities.tools is True
-    assert capabilities.vision is False
+    assert capabilities.vision is True
 
     assert completions_adapter.get_chat_endpoint() == "/chat/completions"
     assert completions_adapter.get_models_endpoint() == "/models"
@@ -182,7 +180,7 @@ async def test_completion_flow(completions_adapter, patch_plugin_calls):
 @pytest.mark.asyncio
 async def test_inject_functions(completions_adapter):
     payload = {"field": "value"}
-    messages = [{"role": "user", "message": "content"}]
+    messages = ChatContext.from_dicts([{"role": "user", "content": "content"}], "system prompt")
 
     payload = await completions_adapter.inject_model_parameter("model_name", payload)
     payload = await completions_adapter.inject_streaming_parameter(True, payload)
@@ -194,7 +192,10 @@ async def test_inject_functions(completions_adapter):
         "model": "model_name",
         "stream": True,
         "stream_options": {"include_usage": True},
-        "messages": messages,
+        "messages": [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "content"}
+        ],
         "tools": [
             {
                 "type": "function",

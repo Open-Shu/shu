@@ -40,7 +40,7 @@ def test_provider_settings(ollama_adapter):
     capabilities = ollama_adapter.get_capabilities()
     assert capabilities.streaming is True
     assert capabilities.tools is True
-    assert capabilities.vision is False
+    assert capabilities.vision is True
 
     assert ollama_adapter.get_api_base_url() == "http://localhost:11434/v1"
     assert ollama_adapter.get_chat_endpoint() == "/chat/completions"

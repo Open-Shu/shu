@@ -40,7 +40,7 @@ def test_defaults(adapter):
     caps = adapter.get_capabilities()
     assert caps.streaming is True
     assert caps.tools is True
-    assert caps.vision is False
+    assert caps.vision is True
     assert adapter.get_chat_endpoint() == "/chat/completions"
     assert adapter.get_models_endpoint() == "/models"
     assert adapter.get_model_information_path() == "data[*].{id: id, name: id}"

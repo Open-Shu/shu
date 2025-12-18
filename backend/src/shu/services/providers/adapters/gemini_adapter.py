@@ -351,20 +351,16 @@ class GeminiAdapter(BaseProviderAdapter):
                 if isinstance(content, str) and content:
                     parts.append({"text": content})
                 elif isinstance(content, list):
-                    # Check if content is a list of tool calls (assistant message with function calls)
-                    is_tool_calls = all(
-                        isinstance(part, dict) and ("function" in part or "id" in part)
-                        for part in content
-                    )
-                    if is_tool_calls and role in ("assistant", "model"):
-                        # Convert tool calls to Gemini functionCall parts
-                        for tc in content:
-                            parts.append(self._build_tool_request_part(tc))
-                    else:
-                        # Regular content parts
-                        for part in content:
-                            if isinstance(part, dict) and part.get("type") == "text":
-                                parts.append({"text": part.get("text", "")})
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text" or "text" in part:
+                                text = part.get("text", "")
+                                if text:
+                                    parts.append({"text": text})
+                            elif "function" in part or "id" in part:
+                                # Tool call
+                                if role in ("assistant", "model"):
+                                    parts.append(self._build_tool_request_part(part))
 
                 # Add attachments for user messages
                 if role == "user" and attachments:
