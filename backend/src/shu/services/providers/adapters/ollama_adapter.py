@@ -17,7 +17,11 @@ class OllamaAdapter(CompletionsAdapter):
 
     def get_capabilities(self) -> ProviderCapabilities:
         # Ollama supports streaming; tool calling support varies, keep disabled by default.
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """Ollama does not support native file uploads."""
+        return False
 
     def get_api_base_url(self) -> str:
         return "http://localhost:11434/v1"

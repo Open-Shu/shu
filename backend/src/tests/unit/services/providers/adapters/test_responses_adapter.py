@@ -11,8 +11,10 @@ from shu.services.providers.adapter_base import (
     ProviderFinalEventResult,
     ProviderReasoningDeltaEventResult,
     ProviderToolCallEventResult,
+    ProviderToolCallEventResult,
     ToolCallInstructions,
 )
+from shu.services.chat_types import ChatContext
 from shu.services.providers.adapters.responses_adapter import ResponsesAdapter
 
 from shared import (
@@ -80,13 +82,13 @@ def _evaluate_tool_call_events(tool_event):
         "max_results": 1,
         "preview": False,
     }
-    assert tool_event.additional_messages[0] == OPENAI_ACTIONABLE_REASONING_ITEM.get("item")
-    assert tool_event.additional_messages[1] == OPENAI_ACTIONABLE_FUNCTION_CALL.get("item")
-    assert tool_event.additional_messages[2] == {
+    assert tool_event.additional_messages[0].content == OPENAI_ACTIONABLE_REASONING_ITEM.get("item")
+    assert tool_event.additional_messages[1].content == OPENAI_ACTIONABLE_FUNCTION_CALL.get("item")
+    assert tool_event.additional_messages[2].metadata == {
         "type": "function_call_output",
         "call_id": OPENAI_ACTIONABLE_FUNCTION_CALL.get("item", {}).get("call_id", ""),
-        "output": json.dumps(FAKE_PLUGIN_RESULT),
     }
+    assert tool_event.additional_messages[2].content == str(json.dumps(FAKE_PLUGIN_RESULT))
 
 
 def test_provider_defaults(responses_adapter):
@@ -94,7 +96,7 @@ def test_provider_defaults(responses_adapter):
     capabilities = responses_adapter.get_capabilities()
     assert capabilities.streaming is True
     assert capabilities.tools is True
-    assert capabilities.vision is False
+    assert capabilities.vision is True
 
     assert responses_adapter.get_chat_endpoint() == "/responses"
     assert responses_adapter.get_models_endpoint() == "/models"
@@ -196,7 +198,7 @@ async def test_completion_flow(responses_adapter, patch_plugin_calls):
 @pytest.mark.asyncio
 async def test_inject_functions(responses_adapter):
     payload = {"field": "value"}
-    messages = [{"role": "user", "message": "content"}]
+    messages = ChatContext.from_dicts([{"role": "user", "content": "content"}], "system prompt")
 
     payload = await responses_adapter.inject_model_parameter("model_name", payload)
     payload = await responses_adapter.inject_streaming_parameter(True, payload)
@@ -207,7 +209,10 @@ async def test_inject_functions(responses_adapter):
         "field": "value",
         "model": "model_name",
         "stream": True,
-        "input": messages,
+        "input": [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "content"},
+        ],
         "tools": [
             {
                 "type": "function",

@@ -20,6 +20,7 @@ from shu.llm.client import UnifiedLLMClient
 
 from ..models.llm_provider import LLMProvider
 from ..services.message_utils import serialize_message_for_sse
+from ..services.chat_types import ChatContext, ChatMessage
 
 if TYPE_CHECKING:  # pragma: no cover
     from .chat_service import ChatService, ModelExecutionInputs
@@ -126,7 +127,7 @@ class EnsembleStreamingHelper:
         self,
         *,
         client: UnifiedLLMClient,
-        messages: List[Dict[str, Any]],
+        messages: ChatContext,
         inputs: "ModelExecutionInputs",
         model_snapshot: Dict[str, Any],
         model_display_name: Optional[str],
@@ -134,10 +135,10 @@ class EnsembleStreamingHelper:
         queue: asyncio.Queue,
         variant_index: int,
         tools_enabled: bool,
-    ) -> tuple[Optional[ProviderResponseEvent], Optional[List[Dict[str, Any]]]]:
+    ) -> tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
 
         final_message_event: Optional[ProviderFinalEventResult] = None
-        followup_messages: Optional[List[Dict[str, Any]]] = None
+        followup_messages: Optional[List[ChatMessage]] = None
         llm_params = None
 
         async for stream_event in await client.chat_completion(
@@ -248,7 +249,7 @@ class EnsembleStreamingHelper:
                     if final_message_event and final_message_event.content and not additional_messages:
                         break
                     if additional_messages:
-                        call_messages += additional_messages
+                        call_messages.messages += additional_messages
 
                 if final_message_event is None:
                     # This should not happen now that _stream_response raises exceptions,

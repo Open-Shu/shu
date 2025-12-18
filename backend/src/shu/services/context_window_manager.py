@@ -2,6 +2,7 @@ import logging
 from typing import Callable, Dict, List, Optional
 
 from shu.models.llm_provider import Conversation
+from .chat_types import ChatContext, ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +38,39 @@ class ContextWindowManager:
 
     async def manage_context_window(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[ChatMessage],
         *,
         conversation: Conversation,
         max_tokens: int,
-        preserve_system: bool = True,
         recent_message_limit_override: Optional[int] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> List[ChatMessage]:
         """
         Apply pruning/summarization to the message list.
         """
 
-        conversation_id = conversation.id
-        user_id = conversation.user_id
+        def get_content_text(msg) -> str:
+            """Extract text from message content, handling multimodal formats."""
+            content = getattr(msg, "content", "")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                # Multimodal content - extract text from text parts
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif "text" in part:
+                            text_parts.append(part.get("text", ""))
+                return " ".join(text_parts)
+            return ""
 
         def estimate_tokens(text: str) -> int:
             if self._token_estimator_override:
                 return self._token_estimator_override(text)
-            return len(text.split()) * 1.3
+            return int(len(text.split()) * 1.3)
 
-        total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages)
+        total_tokens = sum(estimate_tokens(get_content_text(msg)) for msg in messages)
         if total_tokens <= max_tokens:
             return messages
 
@@ -66,28 +80,27 @@ class ContextWindowManager:
             max_tokens,
         )
 
-        system_messages = [msg for msg in messages if msg.get("role") == "system"]
-        conversation_messages = [msg for msg in messages if msg.get("role") != "system"]
-
         limit = recent_message_limit_override or self.recent_message_limit
         limit = max(1, limit)
-        recent_messages = conversation_messages[-limit:]
-        older_messages = conversation_messages[:-limit]
+        recent_messages = messages[-limit:]
+        older_messages = messages[:-limit]
 
-        managed_messages: List[Dict[str, str]] = []
-        if preserve_system:
-            managed_messages.extend(system_messages)
+        managed_messages: List[ChatMessage] = []
 
         if older_messages:
+            # TODO: The side caller should do this, rather than a random configured provider.
             summary = await self._summarize_conversation_history(older_messages)
             if summary:
+                # Use 'user' role instead of 'system' to avoid adapter compatibility issues.
+                # Adapters like Anthropic/Gemini expect system content via ChatContext.system_prompt,
+                # not as messages in the array. Prefixing clearly marks this as context.
                 managed_messages.append(
-                    {"role": "system", "content": f"Previous conversation summary: {summary}"}
+                    ChatMessage(id=None, role="user", content=f"[Previous conversation summary]: {summary}", created_at=None, attachments=[], metadata={"is_context_summary": True})
                 )
 
         managed_messages.extend(recent_messages)
 
-        final_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in managed_messages)
+        final_tokens = sum(estimate_tokens(get_content_text(msg)) for msg in managed_messages)
         logger.info(
             "Context window managed: %s -> %s tokens",
             total_tokens,
@@ -98,7 +111,7 @@ class ContextWindowManager:
 
     async def _summarize_conversation_history(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[ChatMessage],
     ) -> Optional[str]:
         if not messages:
             return None
@@ -106,7 +119,7 @@ class ContextWindowManager:
         try:
             conversation_text = "\n".join(
                 [
-                    f"{msg['role'].title()}: {msg['content']}"
+                    f"{getattr(msg, 'role', '').title()}: {getattr(msg, 'content', '')}"
                     for msg in messages
                 ]
             )
@@ -140,7 +153,7 @@ class ContextWindowManager:
             }
 
             responses = await client.chat_completion(
-                messages=[{"role": "user", "content": summary_prompt}],
+                messages=ChatContext.from_dicts([{"role": "user", "content": summary_prompt}]),
                 model=model.model_name,
                 stream=False,
                 model_overrides=None,

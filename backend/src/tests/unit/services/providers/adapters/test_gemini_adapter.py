@@ -12,6 +12,7 @@ from shu.services.providers.adapter_base import (
     ProviderToolCallEventResult,
     ToolCallInstructions,
 )
+from shu.services.chat_types import ChatContext
 from shu.services.providers.adapters.gemini_adapter import GeminiAdapter
 
 from shared import (
@@ -78,10 +79,8 @@ def _evaluate_tool_call_events(tool_event):
     assert len(tool_event.additional_messages) == 2
 
     assistant_msg = tool_event.additional_messages[0]
-    assert assistant_msg == {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [
+    assert assistant_msg.role == "assistant"
+    assert assistant_msg.content == [
             {
                 "function": {
                     "name": "gmail_digest__list",
@@ -89,16 +88,13 @@ def _evaluate_tool_call_events(tool_event):
                     "thoughtSignature": "signature1",
                 },
             }
-        ],
-    }
+        ]
 
     result_msg = tool_event.additional_messages[1]
-    assert result_msg == {
-        "role": "tool",
-        "tool_call_id": "",
-        "name": "gmail_digest__list",
-        "content": json.dumps(FAKE_PLUGIN_RESULT),
-    }
+    assert result_msg.role == "tool"
+    assert result_msg.metadata["tool_call_id"] == ""
+    assert result_msg.metadata["name"] == "gmail_digest__list"
+    assert result_msg.content == json.dumps(FAKE_PLUGIN_RESULT)
 
 
 def test_provider_settings(gemini_adapter):
@@ -110,7 +106,7 @@ def test_provider_settings(gemini_adapter):
     capabilities = gemini_adapter.get_capabilities()
     assert capabilities.streaming == True
     assert capabilities.tools == True
-    assert capabilities.vision == False
+    assert capabilities.vision == True
 
     assert gemini_adapter.get_api_base_url() == "https://generativelanguage.googleapis.com/v1beta"
     assert gemini_adapter.get_chat_endpoint() == "/{model}:{operation}"
@@ -193,12 +189,11 @@ async def test_completion_flow(gemini_adapter, patch_plugin_calls):
 async def test_inject_functions(gemini_adapter):
     payload = {"field": "value"}
     messages = [
-        {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "content"},
         {
             "role": "assistant",
-            "content": [{"type": "text", "text": "thinking"}],
-            "tool_calls": [
+            "content": [
+                {"type": "text", "text": "thinking"},
                 {
                     "function": {
                         "name": "gmail_digest__list",
@@ -209,16 +204,18 @@ async def test_inject_functions(gemini_adapter):
                     "id": "call_1",
                 }
             ],
+            "tool_calls": [],
         },
         {
             "role": "tool",
-            "name": "gmail_digest__list",
+            "metadata": {"name": "gmail_digest__list"},
             "content": json.dumps(FAKE_PLUGIN_RESULT),
         },
     ]
+    chat_context = ChatContext.from_dicts(messages, system_prompt="system prompt")
 
     payload = await gemini_adapter.inject_streaming_parameter(True, payload)
-    payload = await gemini_adapter.set_messages_in_payload(messages, payload)
+    payload = await gemini_adapter.set_messages_in_payload(chat_context, payload)
     payload = await gemini_adapter.inject_tool_payload(TOOLS, payload)
 
     expected_payload = {

@@ -12,6 +12,7 @@ from ..auth.models import User
 from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager
 from ..models.llm_provider import Conversation, LLMModel, Message
+from .chat_types import ChatContext, ChatMessage
 from ..models.model_configuration import ModelConfiguration
 from ..models.prompt import EntityType
 from ..schemas.query import QueryRequest, RagRewriteMode
@@ -19,6 +20,7 @@ from .context_preferences_resolver import ContextPreferencesResolver
 from .context_window_manager import ContextWindowManager
 from .message_utils import collapse_assistant_variants
 from .rag_query_processing import execute_rag_queries
+from .providers.adapter_base import get_adapter_from_provider
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +82,11 @@ class MessageContextBuilder:
         model: LLMModel,
         knowledge_base_id: Optional[str] = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
-        attachment_ids: Optional[List[str]] = None,
         conversation_messages: Optional[List[Message]] = None,
         model_configuration_override: Optional[ModelConfiguration] = None,
         recent_messages_limit: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, str]], List[Dict]]:
-        """
-        Build message context using model configuration with conditional RAG + attachments.
-        """
+    ) -> Tuple[ChatContext, List[Dict]]:
+        """Build message context using model configuration with conditional RAG + attachments."""
         system_sections: List[str] = []
         active_model_config = model_configuration_override or getattr(conversation, "model_configuration", None)
 
@@ -108,6 +107,13 @@ class MessageContextBuilder:
             )
         recent_messages = collapse_assistant_variants(recent_messages_raw)
 
+        # Check if vision is enabled (Adapter Capability AND Model Config Override)
+        vision_enabled = await self._is_vision_enabled(model, active_model_config)
+
+        recent_chat_messages = await self._hydrate_chat_messages(
+            conversation, recent_messages, vision_enabled=vision_enabled
+        )
+
         rag_sections, all_source_metadata = await self._get_rag_sections(
             conversation=conversation,
             user_message=user_message,
@@ -123,30 +129,64 @@ class MessageContextBuilder:
 
         combined_system = "\n\n".join([s for s in system_sections if s and s.strip()])
 
-        messages: List[Dict[str, str]] = []
-        if combined_system:
-            messages.append({"role": "system", "content": combined_system})
-
-        for msg in recent_messages:
+        chat_messages: List[ChatMessage] = []
+        for msg in recent_chat_messages:
             if msg.role in ["user", "assistant"]:
-                messages.append({"role": msg.role, "content": msg.content})
-
-        attachments_section = await self._get_attachment_section(conversation, attachment_ids)
-        if attachments_section and messages:
-            messages[-1]["content"] += "\n\n" + attachments_section
+                chat_messages.append(msg)
 
         effective_max_tokens = self.context_preferences_resolver.resolve_max_context_tokens(
             active_model_config=active_model_config,
         )
 
-        messages = await self.context_window_manager.manage_context_window(
-            messages,
+        chat_messages = await self.context_window_manager.manage_context_window(
+            chat_messages,
             conversation=conversation,
             max_tokens=effective_max_tokens,
             recent_message_limit_override=recent_messages_limit,
         )
 
-        return messages, all_source_metadata
+        return ChatContext(system_prompt=combined_system, messages=chat_messages), all_source_metadata
+
+    async def _hydrate_chat_messages(
+        self,
+        conversation: Conversation,
+        messages: List[Message],
+        vision_enabled: bool = True,
+    ) -> List[ChatMessage]:
+        """Load conversation attachments and return ChatMessage objects with attachments.
+        
+        Args:
+            conversation: The conversation to load attachments for
+            messages: List of messages to hydrate
+            vision_enabled: If False, image attachments are filtered out
+        """
+        if not messages:
+            return []
+        try:
+            from .attachment_service import AttachmentService
+
+            att_service = AttachmentService(self.db_session)
+            rows = await att_service.get_conversation_attachments_with_links(conversation.id, conversation.user_id)
+            if not rows:
+                return [ChatMessage.from_message(m, []) for m in messages]
+
+            msg_by_id = {m.id: m for m in messages if getattr(m, "id", None)}
+            msg_to_atts: Dict[str, List[Any]] = {}
+            for msg_id, att in rows:
+                if msg_id:
+                    # Filter out image attachments if vision is disabled
+                    if not vision_enabled and att.mime_type and att.mime_type.startswith("image/"):
+                        continue
+                    msg_to_atts.setdefault(msg_id, []).append(att)
+
+            chat_messages: List[ChatMessage] = []
+            for m in messages:
+                atts = msg_to_atts.get(getattr(m, "id", ""), [])
+                chat_messages.append(ChatMessage.from_message(m, atts))
+            return chat_messages
+        except Exception as e:
+            logger.warning(f"Failed to attach conversation attachments to messages: {e}")
+            return [ChatMessage.from_message(m, []) for m in messages]
 
     async def _get_base_system_prompt(
         self,
@@ -223,45 +263,6 @@ class MessageContextBuilder:
             )
         except Exception as e:
             logger.warning(f"Failed to include morning briefing context: {e}")
-            return None
-
-    async def _get_attachment_section(
-        self,
-        conversation: Conversation,
-        attachment_ids: Optional[List[str]],
-    ) -> Optional[str]:
-        if not attachment_ids:
-            return None
-        try:
-            from .attachment_service import AttachmentService
-
-            att_service = AttachmentService(self.db_session)
-            attachments = await att_service.get_attachments_by_ids(conversation.id, conversation.user_id, attachment_ids)
-            if not attachments:
-                return None
-
-            settings = self.config_manager.settings
-            per_file = getattr(settings, 'chat_attachment_max_chars_per_file', 5000)
-            total_cap = getattr(settings, 'chat_attachment_max_total_chars', 15000)
-            added = 0
-            parts: List[str] = []
-            for att in attachments:
-                if not getattr(att, 'extracted_text', None):
-                    continue
-                snippet = att.extracted_text[:per_file]
-                remaining = max(0, total_cap - added)
-                snippet = snippet[:remaining]
-                if not snippet:
-                    break
-                parts.append(f"Attachment: {att.original_filename}\n---\n{snippet}")
-                added += len(snippet)
-                if added >= total_cap:
-                    break
-            if not parts:
-                return None
-            return "Attachments:\n\n" + "\n\n".join(parts)
-        except Exception as e:
-            logger.warning(f"Failed to include attachments in context: {e}")
             return None
 
     async def _get_rag_sections(
@@ -432,6 +433,36 @@ class MessageContextBuilder:
                     sections.append(f"Context:\n{rag_content}")
 
         return sections, all_source_metadata
+
+    async def _is_vision_enabled(self, model: LLMModel, model_config: Optional[ModelConfiguration] = None) -> bool:
+        """Check if vision is enabled for the model/configuration.
+        
+        Defaults to False if not explicitly supported.
+        Checks:
+        1. Provider capabilities (including configuration overrides)
+        2. Model Configuration functionalities (models must explicitly opt-in via 'supports_vision')
+        """
+        try:
+            provider = await self.llm_service.get_provider_by_id(model.provider_id)
+            if not provider:
+                return False
+
+            adapter = get_adapter_from_provider(self.db_session, provider)
+            caps = adapter.get_field_with_override("get_capabilities")
+            vision_supported_by_provider = caps.get("vision", {}).get("value", False)
+            
+            if not vision_supported_by_provider:
+                return False
+
+            if model_config:
+                funcs = getattr(model_config, "functionalities", {}) or {}
+                return funcs.get("supports_vision", False)
+            
+            return False
+
+        except Exception as e:
+            logger.debug(f"Failed to check vision capability: {e}")
+            return False
 
     def _append_rag_diagnostic(self, key: str, value: Any) -> None:
         target = self.diagnostics_target

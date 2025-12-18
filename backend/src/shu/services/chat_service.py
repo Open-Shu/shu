@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models.llm_provider import Conversation, Message, LLMModel
+from ..models.attachment import Attachment, MessageAttachment
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from ..models.llm_provider import LLMProvider
@@ -30,6 +31,7 @@ from ..services.prompt_service import PromptService
 from ..services.context_window_manager import ContextWindowManager
 from ..services.context_preferences_resolver import ContextPreferencesResolver
 from ..services.message_context_builder import MessageContextBuilder
+from ..services.chat_types import ChatContext
 from ..services.message_utils import serialize_message_for_sse
 from .conversation_lock_service import acquire_conversation_lock, release_conversation_lock
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
@@ -46,7 +48,6 @@ class PreparedTurnContext:
     user_message: Message
     conversation_messages: List[Message]
     knowledge_base_id: Optional[str]
-    attachment_ids: Optional[List[str]]
 
 
 @dataclass
@@ -56,7 +57,7 @@ class ModelExecutionInputs:
     model_configuration: ModelConfiguration
     provider_id: str
     model: LLMModel
-    context_messages: List[Dict[str, str]]
+    context_messages: ChatContext
     source_metadata: List[Dict]
     knowledge_base_id: Optional[str]
 
@@ -102,7 +103,7 @@ class ChatService:
         conversation: Conversation,
         user_message: str,
         knowledge_base_id: Optional[str],
-        attachment_ids: Optional[List[str]]
+        attachment_ids: Optional[List[str]] = None,
     ) -> PreparedTurnContext:
         """Insert the user message and assemble shared context for an ensemble turn."""
         user_msg = await self.add_message(
@@ -124,7 +125,6 @@ class ChatService:
             user_message=user_msg,
             conversation_messages=conversation_messages,
             knowledge_base_id=knowledge_base_id,
-            attachment_ids=attachment_ids,
         )
 
     async def _resolve_ensemble_configurations(
@@ -190,14 +190,13 @@ class ChatService:
         if not model or not model.is_active:
             raise LLMProviderError(f"Model '{model_name}' is not active for provider '{provider_id}'")
 
-        messages, source_metadata = await self.message_context_builder.build_message_context(
+        chat_context, source_metadata = await self.message_context_builder.build_message_context(
             conversation=base_conversation,
             user_message=turn_context.user_message.content,
             current_user=current_user,
             model=model,
             knowledge_base_id=turn_context.knowledge_base_id,
             rag_rewrite_mode=rag_rewrite_mode,
-            attachment_ids=turn_context.attachment_ids,
             conversation_messages=turn_context.conversation_messages,
             model_configuration_override=model_configuration,
             recent_messages_limit=recent_messages_limit,
@@ -207,7 +206,7 @@ class ChatService:
             model_configuration=model_configuration,
             provider_id=provider_id,
             model=model,
-            context_messages=messages,
+            context_messages=chat_context,
             source_metadata=source_metadata,
             knowledge_base_id=turn_context.knowledge_base_id,
         )
@@ -488,6 +487,47 @@ class ChatService:
         logger.info(f"Deleted conversation '{conversation.title}'")
         return True
 
+    async def _link_attachments_to_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+        attachment_ids: List[str],
+    ) -> None:
+        """Validate and link attachments to a message.
+
+        Args:
+            conversation_id: ID of the conversation the message belongs to
+            message_id: ID of the message to link attachments to
+            attachment_ids: List of attachment IDs to link
+
+        Raises:
+            ValidationError: If any attachment does not belong to the conversation
+        """
+        if not attachment_ids:
+            return
+
+        # TODO: We shuold probably drop the `conversation_id` column on the attachments, if we identify it by message. For now, we just evaluate that there is parity.
+
+        # Validate attachment ownership and conversation membership
+        q = select(Attachment).where(Attachment.id.in_(attachment_ids))
+        res = await self.db_session.execute(q)
+        att_list = res.scalars().all()
+
+        validated_ids = set()
+        for att in att_list:
+            if att.conversation_id != conversation_id:
+                raise ValidationError("Attachment does not belong to this conversation")
+            validated_ids.add(att.id)
+
+        # Create MessageAttachment links for validated attachments
+        for att_id in validated_ids:
+            link = MessageAttachment(
+                id=str(uuid.uuid4()),
+                message_id=message_id,
+                attachment_id=att_id,
+            )
+            self.db_session.add(link)
+
     async def add_message(
         self,
         conversation_id: str,
@@ -495,10 +535,10 @@ class ChatService:
         content: str,
         model_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        attachment_ids: Optional[List[str]] = None,
         parent_message_id: Optional[str] = None,
         variant_index: Optional[int] = None,
         message_id: Optional[str] = None,
+        attachment_ids: Optional[List[str]] = None,
     ) -> Message:
         """
         Add a message to a conversation.
@@ -509,7 +549,6 @@ class ChatService:
             content: Message content
             model_id: Optional model ID for assistant messages
             metadata: Optional message metadata
-            attachment_ids: Optional list of attachment IDs to link
 
         Returns:
             Created message
@@ -576,18 +615,13 @@ class ChatService:
         # Ensure INSERT happens to satisfy FK for message_attachments
         await self.db_session.flush()
 
-        # Link attachments if provided
+        # Link validated attachments to this message
         if attachment_ids:
-            from ..models.attachment import MessageAttachment, Attachment
-            # Validate attachment ownership and conversation
-            q = select(Attachment).where(Attachment.id.in_(attachment_ids))
-            res = await self.db_session.execute(q)
-            att_list = res.scalars().all()
-            for att in att_list:
-                if att.conversation_id != conversation_id:
-                    raise ValidationError("Attachment does not belong to this conversation")
-                link = MessageAttachment(message_id=message.id, attachment_id=att.id)
-                self.db_session.add(link)
+            await self._link_attachments_to_message(
+                conversation_id=conversation_id,
+                message_id=message.id,
+                attachment_ids=attachment_ids,
+            )
 
         # Update conversation timestamp
         conversation.updated_at = datetime.now(timezone.utc)
@@ -689,8 +723,8 @@ class ChatService:
         knowledge_base_id: Optional[str] = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
         client_temp_id: Optional[str] = None,
-        attachment_ids: Optional[List[str]] = None,
         ensemble_model_configuration_ids: Optional[List[str]] = None,
+        attachment_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """
         Send a message and get LLM response using the conversation model or an ensemble.
@@ -887,21 +921,16 @@ class ChatService:
         history_messages = all_msgs[:history_end]
         preceding_user_message = all_msgs[preceding_user_idx] if preceding_user_idx is not None else None
         preceding_user_content = preceding_user_message.content if preceding_user_message else ""
-        preceding_attachment_ids = [
-            a.id for a in (preceding_user_message.attachments or [])
-        ] if preceding_user_message else None
-
         # Resolve provider/model via model configuration or cached model reference
         provider_id, model = await self._resolve_conversation_model(conversation)
 
-        context_messages, source_metadata = await self.message_context_builder.build_message_context(
+        chat_context, source_metadata = await self.message_context_builder.build_message_context(
             conversation=conversation,
             user_message=preceding_user_content,
             current_user=current_user,
             model=model,
             knowledge_base_id=None,
             rag_rewrite_mode=rag_rewrite_mode,
-            attachment_ids=preceding_attachment_ids,
             conversation_messages=history_messages,
         )
 
@@ -914,7 +943,7 @@ class ChatService:
                 model_configuration=conversation.model_configuration,
                 provider_id=provider_id,
                 model=model,
-                context_messages=context_messages,
+                context_messages=chat_context,
                 source_metadata=source_metadata,
                 knowledge_base_id=None,
             )

@@ -22,6 +22,7 @@ from shu.services.providers.events import ProviderStreamEvent
 from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, ProviderToolCallEventResult, get_adapter_from_provider
 
 from ..models.llm_provider import LLMProvider
+from ..services.chat_types import ChatContext, ChatMessage
 from ..core.exceptions import (
     LLMProviderError, LLMConfigurationError, LLMRateLimitError,
     LLMTimeoutError, LLMAuthenticationError
@@ -167,7 +168,7 @@ class UnifiedLLMClient:
 
     async def chat_completion(
         self,
-        messages: List[Dict[str, str]],
+        messages: ChatContext,
         model: str,
         stream: bool = False,
         model_overrides: Optional[Dict[str, Any]] = None,
@@ -177,10 +178,10 @@ class UnifiedLLMClient:
         tools_enabled: bool = False,
     ) -> Union[List[ProviderEventResult], AsyncGenerator[ProviderEventResult, None]]:
         """
-        Universal chat completion - works across OpenAI-compatible providers.
+        Universal chat completion - works across providers.
 
         Args:
-            messages: List of message dictionaries with 'role' and 'content'
+            messages: ChatContext containing system prompt and ChatMessages
             model: Model name to use
             stream: Whether to stream the response
             temperature: Response creativity (0.0 to 2.0)
@@ -701,7 +702,10 @@ class UnifiedLLMClient:
                 pass  # Fall back to chat completion test
 
             # Fallback: Try a simple completion to test the connection
-            test_messages = [{"role": "user", "content": "Hello"}]
+            test_messages = ChatContext(
+                system_prompt=None,
+                messages=[ChatMessage(id=None, role="user", content="Hello", created_at=None, attachments=[], metadata=None)]
+            )
 
             # Use the first available model for testing
             if not self.provider.models:
@@ -710,7 +714,7 @@ class UnifiedLLMClient:
 
             test_model = self.provider.models[0].model_name
 
-            response = await self.chat_completion(
+            response: List[ProviderEventResult] = await self.chat_completion(
                 messages=test_messages,
                 model=test_model,
                 stream=False,
@@ -718,7 +722,14 @@ class UnifiedLLMClient:
                 llm_params=None
             )
 
-            return isinstance(response, ProviderStreamEvent) and response.content is not None
+            # Non-streaming returns List[ProviderEventResult]
+            if isinstance(response, list) and len(response) > 0:
+                # Check if any event indicates success (has content)
+                return any(
+                    hasattr(evt, 'content') and evt.content is not None
+                    for evt in response
+                )
+            return False
 
         except Exception as e:
             logger.error(f"Connection validation failed for provider {self.provider.name}: {e}")

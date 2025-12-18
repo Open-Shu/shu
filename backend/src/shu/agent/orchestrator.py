@@ -2,11 +2,12 @@
 Orchestrator v0 for Morning Briefing: sequential plugin runs then a single LLM synthesis.
 """
 from __future__ import annotations
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from shu.services.chat_types import ChatContext
 
 from shu.services.message_context_builder import MessageContextBuilder
 
@@ -107,15 +108,14 @@ class MorningBriefingOrchestrator:
             model=None,  # TODO: Fix this, we probably missed adding the model, but morning briefings needs an overhaul anyway.
             knowledge_base_id=None,
             rag_rewrite_mode=RagRewriteMode.RAW_QUERY,
-            attachment_ids=None,
             conversation_messages=[]
         )
 
         # Compose final messages by appending plugin summaries and a synthesis instruction
-        llm_messages = self._compose_prompt_with_base(base_messages, run_result)
+        system_prompt, llm_messages = self._compose_prompt_with_base(base_messages, run_result)
 
         # Call LLM using the provider/model from the model configuration; fall back server-side if needed
-        llm_output = await self._call_llm_with_model_config(llm_messages, model_config)
+        llm_output = await self._call_llm_with_model_config(system_prompt, llm_messages, model_config)
 
         return {
             "agent_key": agent_key,
@@ -319,8 +319,18 @@ class MorningBriefingOrchestrator:
             return f"Collected {count} Google Chat messages"
         return f"{plugin_name} completed"
 
-    def _compose_prompt_with_base(self, base_messages: List[Dict[str, str]], run_result: Dict[str, Any]) -> List[Dict[str, str]]:
-        messages = list(base_messages or [])
+    def _compose_prompt_with_base(self, base_context: ChatContext, run_result: Dict[str, Any]) -> Tuple[Optional[str], List[Dict[str, str]]]:
+
+        # TODO: This works for now, but as part of experiences, we should change this code to support the new `ChatContext` format.
+
+        # Extract system prompt separately - it should NOT be in the messages array
+        system_prompt = base_context.system_prompt
+        
+        # Convert ChatContext messages to list of message dicts
+        messages: List[Dict[str, str]] = []
+        for msg in base_context.messages:
+            messages.append({"role": msg.role, "content": msg.content or ""})
+        
         artifacts = run_result.get("artifacts", {})
         runner_messages = run_result.get("messages", [])
 
@@ -438,9 +448,9 @@ class MorningBriefingOrchestrator:
         if detail_blocks:
             content += "\n\nContext Details:\n" + "\n\n".join(detail_blocks)
         messages.append({"role": "user", "content": content})
-        return messages
+        return system_prompt, messages
 
-    async def _call_llm_with_model_config(self, messages: List[Dict[str, str]], model_config) -> str:
+    async def _call_llm_with_model_config(self, system_prompt: Optional[str], messages: List[Dict[str, str]], model_config) -> str:
         """
         Use provider/model from Model Configuration; if that fails, apply server-side fallback.
         Now uses server-side streaming to reduce header-wait time and avoid 30s read timeouts.
@@ -474,7 +484,7 @@ class MorningBriefingOrchestrator:
         try:
             logger.info("Morning Briefing LLM call", extra={"model": resolved_model_name, "via_model_config": True, "stream": True})
             # Stream from provider, but buffer to a final string for current API shape
-            stream_gen = await client.chat_completion(messages=messages, model=resolved_model_name, stream=True)
+            stream_gen = await client.chat_completion(messages=ChatContext.from_dicts(messages, system_prompt), model=resolved_model_name, stream=True)
             final_content: Optional[str] = None
             async for event in stream_gen:
                 if event.type == "final_message":

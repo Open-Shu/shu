@@ -41,10 +41,10 @@ def test_provider_settings(lmstudio_adapter):
     capabilities = lmstudio_adapter.get_capabilities()
     assert capabilities.streaming is True
     assert capabilities.tools is True
-    assert capabilities.vision is False
+    assert capabilities.vision is True
 
     assert lmstudio_adapter.get_api_base_url() == "http://localhost:1234/v1"
-    assert lmstudio_adapter.get_chat_endpoint() == "/responses"
+    assert lmstudio_adapter.get_chat_endpoint() == "/chat/completions"
     assert lmstudio_adapter.get_models_endpoint() == "/models"
     assert lmstudio_adapter.get_model_information_path() == "data[*].{id: id, name: id}"
 

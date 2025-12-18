@@ -57,4 +57,3 @@ class MessageAttachment(BaseModel):
     __table_args__ = (
         UniqueConstraint('message_id', 'attachment_id', name='uq_message_attachment'),
     )
-

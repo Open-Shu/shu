@@ -18,7 +18,11 @@ class XAIAdapter(ResponsesAdapter):
         return ProviderInformation(key="xai", display_name="xAI")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        # Not supported at the moment: https://docs.x.ai/docs/api-reference#create-new-response
+        return False
 
     def get_api_base_url(self) -> str:
         return "https://api.x.ai/v1"

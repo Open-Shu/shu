@@ -18,6 +18,8 @@ from ..adapter_base import (
     ProviderInformation,
     ProviderToolCallEventResult,
     ToolCallInstructions,
+    ChatContext,
+    ChatMessage,
 )
 
 
@@ -34,7 +36,11 @@ class ResponsesAdapter(BaseProviderAdapter):
         raise NotImplementedError("Function get_provider_information is not implemented.")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """OpenAI Responses API supports native file uploads."""
+        return True
 
     def get_api_base_url(self) -> str:
         raise NotImplementedError("Function get_api_base_url is not implemented.")
@@ -88,6 +94,40 @@ class ResponsesAdapter(BaseProviderAdapter):
             usage.get("total_tokens", 0),
         )
 
+    def _format_responses_attachments(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments for OpenAI Responses API.
+        
+        Uses type: input_text, type: input_image, and type: input_file formats.
+        """
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            if self._is_image_attachment(att):
+                data_uri = self._attachment_to_data_uri(att)
+                if data_uri:
+                    parts.append({
+                        "type": "input_image",
+                        "image_url": data_uri
+                    })
+            elif self.supports_native_documents():
+                b64_data = self._read_attachment_base64(att)
+                if b64_data:
+                    parts.append({
+                        "type": "input_file",
+                        "filename": att.original_filename,
+                        "file_data": f"data:{att.mime_type};base64,{b64_data}",
+                    })
+                else:
+                    fallback = self._attachment_to_input_text_fallback(att)
+                    if fallback:
+                        parts.append(fallback)
+            else:
+                fallback = self._attachment_to_input_text_fallback(att)
+                if fallback:
+                    parts.append(fallback)
+        
+        return parts
+
     async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:
         incomplete_response = jmespath.search("type=='response.incomplete' && response.incomplete_details.reason", chunk)
         if incomplete_response:
@@ -134,19 +174,33 @@ class ResponsesAdapter(BaseProviderAdapter):
         function_call_messages = self.function_call_messages
         tool_calls = list(map(self._get_function_call_arguments_from_response, self.function_call_messages))
         result_messages = [
-            {
-                "type": "function_call_output",
-                "call_id": function_call_message.get("call_id", ""),
-                "output": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
-            }
+            ChatMessage.build(
+                role="tool",
+                content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+                metadata={
+                    "type": "function_call_output",
+                    "call_id": function_call_message.get("call_id", ""),
+                },
+            )
             for function_call_message, tool_call in zip(self.function_call_messages, tool_calls)
         ]
         self.function_call_reasoning_messages = []
         self.function_call_messages = []
+        additional_messages = [
+            ChatMessage.build(
+                role=msg.get("role", "") or "assistant",
+                content=msg,
+                id=msg.get("id"),
+                created_at=msg.get("created_at"),
+                attachments=[],
+                metadata={"type": msg.get("type")},
+            )
+            for msg in (function_call_reasoning_messages + function_call_messages)
+        ] + result_messages
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=function_call_reasoning_messages + function_call_messages + result_messages,
+                additional_messages=additional_messages,
                 content="",
             )
         ]
@@ -175,18 +229,32 @@ class ResponsesAdapter(BaseProviderAdapter):
         function_call_reasoning_messages = jmespath.search("output[?type=='reasoning']", data) or []
         tool_calls = list(map(self._get_function_call_arguments_from_response, function_call_messages))
         result_messages = [
-            {
-                "type": "function_call_output",
-                "call_id": function_call_message.get("call_id", ""),
-                "output": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
-            }
+            ChatMessage.build(
+                role="tool",
+                content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+                metadata={
+                    "type": "function_call_output",
+                    "call_id": function_call_message.get("call_id", ""),
+                },
+            )
             for function_call_message, tool_call in zip(function_call_messages, tool_calls)
         ]
 
+        additional_messages = [
+            ChatMessage.build(
+                role=msg.get("role", "") or "assistant",
+                content=msg,
+                id=msg.get("id"),
+                created_at=msg.get("created_at"),
+                attachments=[],
+                metadata={"type": msg.get("type")},
+            )
+            for msg in (function_call_reasoning_messages + function_call_messages)
+        ] + result_messages
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=function_call_reasoning_messages + function_call_messages + result_messages,
+                additional_messages=additional_messages,
                 content="",
             )
         ] + final_messages
@@ -230,8 +298,49 @@ class ResponsesAdapter(BaseProviderAdapter):
         payload["tools"] = payload.get("tools", []) + res
         return payload
 
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
-        payload["input"] = messages
+    def _process_message_for_responses_api(self, message: ChatMessage) -> Dict[str, Any]:
+        """Convert ChatMessage to Responses API format, handling special message types."""
+        metadata = getattr(message, "metadata", {}) or {}
+        content = getattr(message, "content", "")
+        role = getattr(message, "role", "")
+        attachments = getattr(message, "attachments", []) or []
+        
+        # Handle function_call_output messages - these are special API objects
+        if metadata.get("type") == "function_call_output":
+            return {
+                "type": "function_call_output",
+                "call_id": metadata.get("call_id", ""),
+                "output": content if isinstance(content, str) else str(content),
+            }
+        
+        # Handle reasoning and function_call messages - pass through as-is
+        if metadata.get("type") in ("reasoning", "function_call") and isinstance(content, dict):
+            return content
+        
+        # Handle user messages with attachments (multimodal)
+        if role == "user" and attachments:
+            content_parts: List[Dict[str, Any]] = []
+            # Add text content first
+            if isinstance(content, str) and content:
+                content_parts.append({"type": "input_text", "text": content})
+            elif isinstance(content, list):
+                content_parts.extend(content)
+
+            # Add formatted attachments
+            content_parts.extend(self._format_responses_attachments(attachments))
+            
+            return {"role": role, "content": content_parts if content_parts else content}
+
+        # Standard role/content message
+        return {"role": role, "content": content}
+
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
+        result: List[Dict[str, Any]] = []
+        if messages.system_prompt:
+            result.append({"role": "system", "content": messages.system_prompt})
+        for m in messages.messages:
+            result.append(self._process_message_for_responses_api(m))
+        payload["input"] = result
         return payload
 
     async def inject_model_parameter(self, model_value: str, payload: Dict[str, Any]) -> Dict[str, Any]:

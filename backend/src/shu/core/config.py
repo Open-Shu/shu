@@ -172,7 +172,7 @@ class Settings(BaseSettings):
 
     # Chat attachments
     chat_attachment_max_size: int = Field(20 * 1024 * 1024, alias="SHU_CHAT_ATTACHMENT_MAX_SIZE")  # 20MB
-    chat_attachment_allowed_types: List[str] = Field(default_factory=lambda: ["pdf", "docx", "txt", "md"], alias="SHU_CHAT_ATTACHMENT_ALLOWED_TYPES")
+    chat_attachment_allowed_types: List[str] = Field(default_factory=lambda: ["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "gif", "webp"], alias="SHU_CHAT_ATTACHMENT_ALLOWED_TYPES")
     chat_attachment_ttl_days: int = Field(14, alias="SHU_CHAT_ATTACHMENT_TTL_DAYS")
     chat_attachment_storage_dir: str = Field("./data/attachments", alias="SHU_CHAT_ATTACHMENT_STORAGE_DIR")
     chat_ensemble_max_models: int = Field(3, alias="SHU_CHAT_ENSEMBLE_MAX_MODELS")

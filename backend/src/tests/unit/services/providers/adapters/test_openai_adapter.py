@@ -41,7 +41,7 @@ def test_provider_settings(openai_adapter):
     capabilities = openai_adapter.get_capabilities()
     assert capabilities.streaming == True
     assert capabilities.tools == True
-    assert (capabilities.vision == False)  # OpenAI supports vision, but our provider currently doesn't
+    assert capabilities.vision == True
 
     assert openai_adapter.get_api_base_url() == "https://api.openai.com/v1"
     assert openai_adapter.get_chat_endpoint() == "/responses"

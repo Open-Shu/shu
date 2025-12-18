@@ -27,6 +27,8 @@ from ..adapter_base import (
     ProviderFinalEventResult,
     ProviderToolCallEventResult,
     ToolCallInstructions,
+    ChatContext,
+    ChatMessage,
 )
 from shu.models.plugin_execution import CallableTool
 
@@ -41,19 +43,24 @@ class AnthropicAdapter(BaseProviderAdapter):
         self._stream_content: List[str] = []
         self._stream_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-    async def _build_assistant_and_result_messages(self, assistant_blocks: List[Dict[str, Any]], tool_blocks: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]):
-        assistant_message = {"role": "assistant", "content": assistant_blocks} if assistant_blocks else None
-        result_messages = [
-            {
-                "role": "user",
-                "content": [
+    async def _build_assistant_and_result_messages(
+        self,
+        assistant_blocks: List[Dict[str, Any]],
+        tool_blocks: List[Dict[str, Any]],
+        tool_calls: list[ToolCallInstructions],
+    ) -> tuple[Optional[ChatMessage], List[ChatMessage]]:
+        assistant_message = ChatMessage.build(role="assistant", content=assistant_blocks) if assistant_blocks else None
+        result_messages: List[ChatMessage] = [
+            ChatMessage.build(
+                role="user",
+                content=[
                     {
                         "type": "tool_result",
                         "tool_use_id": block.get("id", ""),
                         "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
                     }
                 ],
-            }
+            )
             for block, tool_call in zip(tool_blocks, tool_calls)
         ]
         return assistant_message, result_messages
@@ -79,7 +86,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         return ProviderInformation(key="anthropic", display_name="Anthropic")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
 
     def get_api_base_url(self) -> str:
         return "https://api.anthropic.com/v1"
@@ -441,23 +448,81 @@ class AnthropicAdapter(BaseProviderAdapter):
                 default="auto",
             ),
         }
-    
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
-        system_messages: List[str] = []
+
+    def _build_anthropic_content_block(
+        self,
+        block_type: str,
+        source_type: str,
+        media_type: str,
+        data: str,
+        title: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Build an Anthropic content block (image or document) with consistent structure."""
+        block: Dict[str, Any] = {
+            "type": block_type,
+            "source": {
+                "type": source_type,
+                "media_type": media_type,
+                "data": data
+            }
+        }
+        if title:
+            block["title"] = title
+        return block
+
+    def _format_attachments_for_content(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments into Anthropic API content parts."""
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            if self._is_image_attachment(att):
+                b64_data = self._read_attachment_base64(att)
+                if b64_data:
+                    # https://platform.claude.com/docs/en/api/messages/create
+                    parts.append(self._build_anthropic_content_block(
+                        "image", "base64", att.mime_type, b64_data
+                    ))
+            else:
+                b64_data = self._read_attachment_base64(att)
+                # https://platform.claude.com/docs/en/api/messages/create
+                # Anthropic really only supports PDF and plain, so when it isn't PDF, we'll just use what we extracted
+                if b64_data and att.mime_type == "application/pdf":
+                    parts.append(self._build_anthropic_content_block(
+                        "document", "base64", "application/pdf", b64_data, att.original_filename
+                    ))
+                elif att.extracted_text:
+                    parts.append(self._build_anthropic_content_block(
+                        "document", "text", "text/plain", att.extracted_text, att.original_filename
+                    ))
+        
+        return parts
+
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         formatted_messages: List[Dict[str, Any]] = []
 
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role == "system":
-                if isinstance(content, str):
-                    system_messages.append(content)
-                continue
+        for msg in messages.messages:
+            role = getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+            attachments = getattr(msg, "attachments", []) or []
+            
+            # Handle user messages with attachments (multimodal)
+            if role == "user" and attachments:
+                content_parts: List[Dict[str, Any]] = []
+                # Add text content first
+                if isinstance(content, str) and content:
+                    content_parts.append({"type": "text", "text": content})
+                elif isinstance(content, list):
+                    content_parts.extend(content)
+                
+                # Add formatted attachments
+                content_parts.extend(self._format_attachments_for_content(attachments))
+                
+                formatted_messages.append({"role": role, "content": content_parts if content_parts else content})
+            else:
+                formatted_messages.append({"role": role, "content": content})
 
-            formatted_messages.append({"role": role, "content": content})
-
-        if system_messages:
-            payload["system"] = "\n\n".join(system_messages)
+        if messages.system_prompt:
+            payload["system"] = messages.system_prompt
 
         payload["messages"] = formatted_messages
         return payload
@@ -633,7 +698,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             tool_calls,
         )
 
-        additional_messages = []
+        additional_messages: List[ChatMessage] = []
         if assistant_message:
             additional_messages.append(assistant_message)
         additional_messages.extend(result_messages)

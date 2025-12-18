@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import base64
 import json
-from typing import Any, Dict, List, Optional, Tuple, Type
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cryptography.fernet import Fernet
@@ -21,6 +23,8 @@ from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
 from shu.core.exceptions import LLMConfigurationError
 from shu.models.llm_provider import LLMProvider
+from shu.models.attachment import Attachment
+from shu.services.chat_types import ChatContext, ChatMessage
 
 logger = get_logger(__name__)
 
@@ -98,7 +102,7 @@ class ProviderEventResult:
 @dataclass(kw_only=True)
 class ProviderToolCallEventResult(ProviderEventResult):
     tool_calls: List[ToolCallInstructions]
-    additional_messages: List[Dict[str, Any]]
+    additional_messages: List[ChatMessage]
     content: Optional[Any]
     type: str = "function_call"
 
@@ -188,6 +192,104 @@ class BaseProviderAdapter:
             k: first.get(k, 0) + second.get(k, 0)
             for k in set(first) | set(second)
         }
+
+    def _flatten_chat_context(
+            self,
+            ctx: ChatContext,
+            message_modifier: Callable = lambda x: {"role": getattr(x, "role", ""), "content": getattr(x, "content", "")}
+        ) -> List[Dict[str, Any]]:
+        """Convert ChatContext into a provider-agnostic list of role/content dicts."""
+        messages: List[Dict[str, Any]] = []
+        if ctx.system_prompt:
+            messages.append({"role": "system", "content": ctx.system_prompt})
+        for m in ctx.messages:
+            messages.append(message_modifier(m))
+        return messages
+
+    def _read_attachment_base64(self, attachment: Attachment) -> Optional[str]:
+        """Read attachment content from disk and return as base64 string.
+        
+        Validates that the path is within the configured attachment storage directory
+        to prevent arbitrary file reads via tampered attachment records.
+        """
+        if not attachment.storage_path:
+            return None
+        try:
+            path = Path(attachment.storage_path)
+            
+            # Resolve to absolute path - use strict=False since we check existence separately
+            try:
+                resolved_path = path.resolve()
+            except (OSError, ValueError):
+                logger.warning(f"Invalid attachment path: {attachment.storage_path}")
+                return None
+            
+            if not resolved_path.exists():
+                logger.warning(f"Attachment file not found: {attachment.storage_path}")
+                return None
+            
+            # Validate path is within the configured attachment storage directory
+            storage_dir = Path(self.settings.chat_attachment_storage_dir).resolve()
+            try:
+                resolved_path.relative_to(storage_dir)
+            except ValueError:
+                logger.warning(f"Path traversal blocked for attachment {attachment.id}: {resolved_path}")
+                return None
+            
+            # Reject symlinks
+            if path.is_symlink():
+                logger.warning(f"Symlink access blocked for attachment {attachment.id}")
+                return None
+            
+            content = resolved_path.read_bytes()
+            return base64.b64encode(content).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Failed to read attachment {attachment.id}: {e}")
+            return None
+
+    def _is_image_attachment(self, attachment: Attachment) -> bool:
+        """Check if an attachment is an image based on mime type."""
+        return attachment.mime_type.startswith("image/") if attachment.mime_type else False
+
+    def _attachment_to_data_uri(self, attachment: Attachment) -> Optional[str]:
+        """Convert attachment to data URI format (data:mime;base64,...)."""
+        b64 = self._read_attachment_base64(attachment)
+        if not b64:
+            return None
+        return f"data:{attachment.mime_type};base64,{b64}"
+
+    def _attachment_to_text_fallback(self, attachment: Attachment) -> Optional[Dict[str, Any]]:
+        """Convert attachment to text fallback format using extracted_text (Completions API format).
+        
+        Returns None if no extracted_text is available.
+        Used when native document support is disabled or file read fails.
+        """
+        if not attachment.extracted_text:
+            return None
+        return {
+            "type": "text",
+            "text": f"[Attached: {attachment.original_filename}]\n{attachment.extracted_text}"
+        }
+
+    def _attachment_to_input_text_fallback(self, attachment: Attachment) -> Optional[Dict[str, Any]]:
+        """Convert attachment to input_text fallback format (Responses API format).
+        
+        Returns None if no extracted_text is available.
+        """
+        if not attachment.extracted_text:
+            return None
+        return {
+            "type": "input_text",
+            "text": f"[Attached: {attachment.original_filename}]\n{attachment.extracted_text}"
+        }
+    
+    def supports_native_documents(self) -> bool:
+        """Return True if provider supports native document uploads (PDFs, etc).
+        
+        Override in child adapters that support native document formats.
+        When False, non-image attachments fall back to extracted_text.
+        """
+        return False
 
     def _update_usage(self,  input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int, total_tokens: int):
         usage_dict = self._get_usage(
@@ -296,7 +398,7 @@ class BaseProviderAdapter:
     async def finalize_provider_events(self) -> List[ProviderEventResult]:
         return []
     
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise NotImplementedError("Function set_messages_in_payload is not implemented.")
     
     async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:

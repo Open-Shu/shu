@@ -33,6 +33,10 @@ class PerplexityAdapter(CompletionsAdapter):
     def get_capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(streaming=True, tools=False, vision=False)
 
+    def supports_native_documents(self) -> bool:
+        """Perplexity API does not support native document uploads."""
+        return False
+
     def get_api_base_url(self) -> str:
         return "https://api.perplexity.ai"
 

@@ -18,6 +18,8 @@ from ..adapter_base import (
     ProviderFinalEventResult,
     ProviderToolCallEventResult,
     ToolCallInstructions,
+    ChatContext,
+    ChatMessage,
 )
 from shu.models.plugin_execution import CallableTool
 
@@ -32,15 +34,17 @@ class GeminiAdapter(BaseProviderAdapter):
         self._stream_content: List[str] = []
         self._stream_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-    async def _build_assistant_and_result_messages(self, sorted_tool_calls: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]):
-        assistant_message = {"role": "assistant", "content": "", "tool_calls": sorted_tool_calls} if sorted_tool_calls else None
+    async def _build_assistant_and_result_messages(self, sorted_tool_calls: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]) -> tuple[Optional[ChatMessage], List[ChatMessage]]:
+        assistant_message = ChatMessage.build(role="assistant", content=sorted_tool_calls) if sorted_tool_calls else None
         result_messages = [
-            {
-                "role": "tool",
-                "tool_call_id": raw.get("id", ""),
-                "name": (raw.get("function") or {}).get("name", ""),
-                "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
-            }
+            ChatMessage.build(
+                role="tool",
+                metadata={
+                    "tool_call_id": raw.get("id", ""),
+                    "name": (raw.get("function") or {}).get("name", "")
+                },
+                content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+            )
             for raw, tool_call in zip(sorted_tool_calls, tool_calls)
         ]
         return assistant_message, result_messages
@@ -62,7 +66,11 @@ class GeminiAdapter(BaseProviderAdapter):
         return ProviderInformation(key="gemini", display_name="Gemini")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
+
+    def supports_native_documents(self) -> bool:
+        """Gemini supports documents via inlineData with any mimeType."""
+        return True
 
     def get_api_base_url(self) -> str:
         return "https://generativelanguage.googleapis.com/v1beta"
@@ -254,8 +262,10 @@ class GeminiAdapter(BaseProviderAdapter):
             ),
         }
     
-    def _build_tool_result_part(self, msg: Dict[str, str]):
-        raw_content = msg.get("content")
+    def _build_tool_result_part(self, msg: ChatMessage):
+        """Build Gemini functionResponse part from a ChatMessage with role='tool'."""
+        raw_content = getattr(msg, "content", "")
+        metadata = getattr(msg, "metadata", {}) or {}
         response_obj: Dict[str, Any]
         if isinstance(raw_content, dict):
             response_obj = raw_content
@@ -267,7 +277,7 @@ class GeminiAdapter(BaseProviderAdapter):
         parts = [
             {
                 "functionResponse": {
-                    "name": msg.get("name") or "",
+                    "name": metadata.get("name") or "",
                     "response": response_obj if isinstance(response_obj, dict) else {},
                 }
             }
@@ -297,22 +307,44 @@ class GeminiAdapter(BaseProviderAdapter):
             part["thoughtSignature"] = thought_signature
         return part
 
-    async def set_messages_in_payload(self, messages: List[Dict[str, str]], payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_attachments_for_parts(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+        """Format attachments into Gemini API parts.
+        
+        Gemini uses inlineData format for both images and documents.
+        The format is the same regardless of file type.
+        """
+        parts: List[Dict[str, Any]] = []
+        
+        for att in attachments:
+            # Gemini uses inlineData format for all file types
+            b64_data = self._read_attachment_base64(att)
+            if b64_data:
+                parts.append({
+                    "inlineData": {
+                        "mimeType": att.mime_type,
+                        "data": b64_data
+                    }
+                })
+            else:
+                # Fallback if file read fails - use base class text format
+                fallback = self._attachment_to_text_fallback(att)
+                if fallback:
+                    # Convert from OpenAI format to Gemini format
+                    parts.append({"text": fallback.get("text", "")})
+        
+        return parts
+
+    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
         system_parts: List[Dict[str, Any]] = []
         contents: List[Dict[str, Any]] = []
 
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            tool_calls = msg.get("tool_calls") or []
-
-            if role == "system":
-                if isinstance(content, str):
-                    system_parts.append({"text": content})
-                continue
-
+        for msg in messages.messages:
+            role = getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+            attachments = getattr(msg, "attachments", []) or []
             parts: List[Dict[str, Any]] = []
 
+            # Handle tool result messages - these need special Gemini formatting
             if role == "tool":
                 role, parts = self._build_tool_result_part(msg)
             else:
@@ -320,14 +352,27 @@ class GeminiAdapter(BaseProviderAdapter):
                     parts.append({"text": content})
                 elif isinstance(content, list):
                     for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            parts.append({"text": part.get("text", "")})
+                        if isinstance(part, dict):
+                            if part.get("type") == "text" or "text" in part:
+                                text = part.get("text", "")
+                                if text:
+                                    parts.append({"text": text})
+                            elif "function" in part or "id" in part:
+                                # Tool call
+                                if role in ("assistant", "model"):
+                                    parts.append(self._build_tool_request_part(part))
 
-                if role in ("assistant", "model") and tool_calls:
-                    for tc in tool_calls:
-                        parts.append(self._build_tool_request_part(tc))
+                # Add attachments for user messages
+                if role == "user" and attachments:
+                    parts.extend(self._format_attachments_for_parts(attachments))
+
+            if not parts:
+                continue
 
             contents.append({"role": "user" if role == "user" else "model" if role in ("assistant", "model") else role, "parts": parts})
+
+        if messages.system_prompt:
+            system_parts.append({"text": messages.system_prompt})
 
         if system_parts:
             payload["system_instruction"] = {"parts": system_parts}
@@ -540,7 +585,7 @@ class GeminiAdapter(BaseProviderAdapter):
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=[assistant_message] + result_messages,
+                additional_messages=[m for m in [assistant_message] + result_messages if m],
                 content="",
             )
         ] + final_event
@@ -575,10 +620,7 @@ class GeminiAdapter(BaseProviderAdapter):
 
         events: List[ProviderEventResult] = []
         if tool_calls:
-            additional_messages = []
-            if assistant_message:
-                additional_messages.append(assistant_message)
-            additional_messages.extend(result_messages)
+            additional_messages = [m for m in [assistant_message] + result_messages if m]
             events.append(
                 ProviderToolCallEventResult(
                     tool_calls=tool_calls,

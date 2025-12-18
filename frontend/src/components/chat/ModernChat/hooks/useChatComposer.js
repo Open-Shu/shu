@@ -30,10 +30,6 @@ const useChatComposer = ({
   const [inputMessage, setInputMessage] = useState('');
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [plusAnchorEl, setPlusAnchorEl] = useState(null);
-  const pendingAttachmentIds = useMemo(
-    () => pendingAttachments.map((attachment) => attachment.id),
-    [pendingAttachments]
-  );
 
   const latestUserMessageContent = useMemo(
     () => getLatestUserMessageContent(messages),
@@ -68,9 +64,6 @@ const useChatComposer = ({
 
         if (data?.attachment_id) {
           setPendingAttachments((prev) => [...prev, { id: data.attachment_id, name: file.name }]);
-          if (typeof data.extracted_text_length === 'number' && data.extracted_text_length === 0) {
-            setError('No text detected for scanned PDFs. Run external OCR and try again.');
-          }
         }
         event.target.value = '';
       } catch (error) {
@@ -192,7 +185,6 @@ const useChatComposer = ({
 
     const payload = {
       message: userMessage,
-      attachment_ids: pendingAttachmentIds,
       rag_rewrite_mode: ragRewriteMode,
       client_temp_id: userTempId,
     };
@@ -205,6 +197,11 @@ const useChatComposer = ({
 
     if (ensembleIds.length > 0) {
       payload.ensemble_model_configuration_ids = ensembleIds;
+    }
+
+    // Include attachment IDs to link to this message
+    if (pendingAttachments.length > 0) {
+      payload.attachment_ids = pendingAttachments.map((att) => att.id);
     }
 
     const defaultVariantIndex = totalVariants - 1; // backend appends conversation config last
@@ -222,7 +219,6 @@ const useChatComposer = ({
     messages,
     automationSettings.firstUserRename,
     pendingAttachments,
-    pendingAttachmentIds,
     selectedPlugin,
     runAutoRename,
     clearFreshConversation,

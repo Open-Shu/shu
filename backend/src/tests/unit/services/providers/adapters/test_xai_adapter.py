@@ -41,7 +41,7 @@ def test_provider_settings(xai_adapter):
     capabilities = xai_adapter.get_capabilities()
     assert capabilities.streaming is True
     assert capabilities.tools is True
-    assert capabilities.vision is False
+    assert capabilities.vision is True
 
     assert xai_adapter.get_api_base_url() == "https://api.x.ai/v1"
     assert xai_adapter.get_chat_endpoint() == "/responses"

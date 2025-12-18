@@ -16,10 +16,10 @@ class GenericCompletionsAdapter(CompletionsAdapter):
         return ProviderInformation(key="generic_completions", display_name="Generic Completions")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(streaming=True, tools=True, vision=False)
+        return ProviderCapabilities(streaming=True, tools=True, vision=True)
 
     def get_api_base_url(self) -> str:
-        return "http://localhost:11434/v1"
+        return "https://api.example.com/v1"
 
     def get_authorization_header(self) -> Dict[str, Any]:
         return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
