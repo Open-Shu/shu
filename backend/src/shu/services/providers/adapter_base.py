@@ -207,15 +207,41 @@ class BaseProviderAdapter:
         return messages
 
     def _read_attachment_base64(self, attachment: Attachment) -> Optional[str]:
-        """Read attachment content from disk and return as base64 string."""
+        """Read attachment content from disk and return as base64 string.
+        
+        Validates that the path is within the configured attachment storage directory
+        to prevent arbitrary file reads via tampered attachment records.
+        """
         if not attachment.storage_path:
             return None
         try:
             path = Path(attachment.storage_path)
-            if not path.exists():
+            
+            # Resolve to absolute path - use strict=False since we check existence separately
+            try:
+                resolved_path = path.resolve()
+            except (OSError, ValueError):
+                logger.warning(f"Invalid attachment path: {attachment.storage_path}")
+                return None
+            
+            if not resolved_path.exists():
                 logger.warning(f"Attachment file not found: {attachment.storage_path}")
                 return None
-            content = path.read_bytes()
+            
+            # Validate path is within the configured attachment storage directory
+            storage_dir = Path(self.settings.chat_attachment_storage_dir).resolve()
+            try:
+                resolved_path.relative_to(storage_dir)
+            except ValueError:
+                logger.warning(f"Path traversal blocked for attachment {attachment.id}: {resolved_path}")
+                return None
+            
+            # Reject symlinks
+            if path.is_symlink():
+                logger.warning(f"Symlink access blocked for attachment {attachment.id}")
+                return None
+            
+            content = resolved_path.read_bytes()
             return base64.b64encode(content).decode('utf-8')
         except Exception as e:
             logger.error(f"Failed to read attachment {attachment.id}: {e}")

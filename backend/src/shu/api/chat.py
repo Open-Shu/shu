@@ -347,7 +347,7 @@ async def view_attachment(
         )
 
     try:
-        content = path.read_bytes()
+        content = resolved_path.read_bytes()
     except Exception as e:
         logger.error(f"Failed to read attachment {attachment_id} from disk: {e}")
         return create_error_response(

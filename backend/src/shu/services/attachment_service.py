@@ -4,6 +4,8 @@ AttachmentService handles chat attachments: saving files, extracting text, and p
 import os
 import uuid
 import mimetypes
+import datetime as dt
+
 from pathlib import Path
 from typing import Any, Tuple, Dict
 
@@ -44,6 +46,35 @@ class AttachmentService:
                 "duration": None,
                 "details": {"error": str(ex)},
             }
+        
+    def _sanitize_filename(self, filename: str, fallback_ext: str = "") -> str:
+        """Sanitize a filename to prevent header injection, path traversal, etc.
+        
+        Keeps only alphanumeric characters, dots, underscores, hyphens, and spaces.
+        Ensures the result is a valid, non-empty filename with preserved extension.
+        
+        Args:
+            filename: The original filename to sanitize
+            fallback_ext: Extension to use if filename becomes invalid (without leading dot)
+        
+        Returns:
+            A sanitized filename safe for storage and HTTP headers
+        """
+        raw_name = Path(filename).name
+        sanitized = "".join(
+            c for c in raw_name
+            if c.isalnum() or c in "._- "
+        ).strip()
+        
+        # Ensure we have a valid filename
+        if not sanitized or sanitized.startswith("."):
+            sanitized = f"attachment.{fallback_ext}" if fallback_ext else "attachment"
+        
+        # Ensure extension is preserved
+        if fallback_ext and not sanitized.lower().endswith(f".{fallback_ext}"):
+            sanitized = f"{sanitized}.{fallback_ext}"
+        
+        return sanitized
 
     async def save_upload(
         self,
@@ -64,19 +95,22 @@ class AttachmentService:
         if ext not in allowed:
             raise ValueError(f"Unsupported file type: {ext}")
 
+        # Sanitize filename
+        sanitized_name = self._sanitize_filename(filename, fallback_ext=ext)
+
         # Enforce size limit
         max_size = self.settings.chat_attachment_max_size
         if len(file_bytes) > max_size:
             raise ValueError(f"File too large: {len(file_bytes)} > {max_size}")
 
-        # Determine MIME
+        # Determine MIME (use original filename for accurate detection)
         mime_type, _ = mimetypes.guess_type(filename)
         mime_type = mime_type or "application/octet-stream"
 
         # Save to storage
         att_id = str(uuid.uuid4())
         storage_dir = Path(self.settings.chat_attachment_storage_dir)
-        storage_path = storage_dir / f"{att_id}_{Path(filename).name}"
+        storage_path = storage_dir / f"{att_id}_{sanitized_name}"
         with open(storage_path, "wb") as f:
             f.write(file_bytes)
         file_size = storage_path.stat().st_size
@@ -92,7 +126,7 @@ class AttachmentService:
             id=att_id,
             conversation_id=conversation_id,
             user_id=user_id,
-            original_filename=Path(filename).name,
+            original_filename=sanitized_name,
             storage_path=str(storage_path),
             mime_type=mime_type,
             file_type=ext,
@@ -126,13 +160,20 @@ class AttachmentService:
         conversation_id: str,
         user_id: str
     ) -> list[tuple[str, Attachment]]:
-        """Fetch (message_id, attachment) pairs for a conversation owned by the user."""
+        """Fetch (message_id, attachment) pairs for a conversation owned by the user.
+        
+        Excludes expired attachments (expires_at in the past).
+        """
+        now = dt.datetime.now(dt.timezone.utc)
+        
         stmt = (
             select(MessageAttachment.message_id, Attachment)
             .join(Attachment, Attachment.id == MessageAttachment.attachment_id)
             .where(
                 Attachment.conversation_id == conversation_id,
                 Attachment.user_id == user_id,
+                # Exclude expired attachments
+                (Attachment.expires_at.is_(None)) | (Attachment.expires_at > now),
             )
         )
         result = await self.db.execute(stmt)
