@@ -423,8 +423,8 @@ async def test_model_configuration(
             model_used=f"{config.llm_provider.name}/{config.model_name}",
             prompt_applied=config.prompt is not None,
             knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
-            response_time_ms=150,
-            token_usage={"input_tokens": 25, "output_tokens": 15},
+            response_time_ms=None,
+            token_usage={"input_tokens": 0, "output_tokens": 0},
             metadata={}
         )
 

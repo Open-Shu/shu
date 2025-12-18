@@ -769,9 +769,6 @@ const ModelConfigurations = () => {
                   <Typography variant="body2" sx={{ mb: 1 }}>
                     <strong>Knowledge Bases:</strong> {testResults[selectedConfig.id].knowledge_bases_used?.join(', ') || 'None'}
                   </Typography>
-                  <Typography variant="body2">
-                    <strong>Response Time:</strong> {testResults[selectedConfig.id].response_time_ms}ms
-                  </Typography>
                 </Box>
               ) : (
                 <Alert severity="error">

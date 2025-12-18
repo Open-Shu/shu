@@ -188,7 +188,7 @@ redis-cli ping  # Should return "PONG"
 
    ```bash
    # Backend health
-   curl http://localhost:8000/api/v1/health
+   curl http://localhost:8000/api/v1/health/liveness
 
    # Frontend (if started)
    open http://localhost:3000
@@ -473,7 +473,7 @@ python -m tests.integ.run_all_integration_tests
 ### Run Specific Test Categories
 ```bash
 # Health checks
-curl http://localhost:8000/api/v1/health
+curl http://localhost:8000/api/v1/health/liveness
 
 # Knowledge base operations
 curl http://localhost:8000/api/v1/knowledge-bases
@@ -588,7 +588,7 @@ By contributing to Shu, you agree to the terms of the [Contributor License Agree
 ## Support
 
 - **API Documentation**: http://localhost:8000/docs
-- **Health Checks**: http://localhost:8000/api/v1/health
+- **Health Checks**: http://localhost:8000/api/v1/health/liveness
 - **React Admin Panel**: http://localhost:3000
 - **Configuration Guide**: [CONFIGURATION.md](./docs/policies/CONFIGURATION.md)
 - **Testing Guide**: [TESTING.md](./docs/policies/TESTING.md)

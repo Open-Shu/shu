@@ -143,6 +143,30 @@ services:
     profiles:
       - frontend
 
+  # Shu React Admin frontend (Development with hot-reload)
+  shu-frontend-dev:
+    image: node:20-alpine
+    container_name: shu-frontend-dev
+    working_dir: /app
+    environment:
+      - REACT_APP_API_BASE_URL=http://localhost:8000
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../../frontend/src:/app/src
+      - ../../frontend/public:/app/public
+      - ../../frontend/package.json:/app/package.json
+      - ../../frontend/package-lock.json:/app/package-lock.json
+      - frontend-node-modules:/app/node_modules
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - dev
+    command: sh -c "npm install && npm start"
+
   # Nginx reverse proxy (optional)
   nginx:
     image: nginx:alpine
@@ -169,3 +193,4 @@ volumes:
   redis_data:
   shu-postgres-data:
   shu-plugins:
+  frontend-node-modules:
