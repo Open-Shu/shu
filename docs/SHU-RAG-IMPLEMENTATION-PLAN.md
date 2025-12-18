@@ -2,7 +2,7 @@
 
 **Status**: Active
 **Created**: 2025-12-02
-**Updated**: 2025-12-02
+**Updated**: 2025-12-16
 **Source**: [SHU-RAG-WHITEPAPER.md](./whitepapers/SHU-RAG-WHITEPAPER.md)
 **Epic**: [SHU-339 - Shu RAG Intelligent Retrieval](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/EPIC.md)
 
@@ -67,29 +67,31 @@ individual task files under `tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/`.
 
 ### Phase 0: Schema Foundation
 
-- Establish database schemas for document profiles, synthesized questions, and
+- Establish database schemas for document profiles, chunk profiles, synthesized queries, and
   relational context without changing ingestion behavior.
-- Primary tasks: SHU-342 Document Profile Schema, SHU-355 Relational Context
+- Primary tasks: SHU-342 Document Profile Schema (includes chunk schema), SHU-355 Relational Context
   Schema.
 
-### Phase 1: Document Profiling
+### Phase 1: Document and Chunk Profiling
 
-- Generate document profiles (synopsis, document type, capability manifest) at
-  ingestion time while keeping traditional RAG behavior unchanged.
-- Primary tasks: SHU-343 Document Profiling Service, SHU-344 Ingestion
+- Generate document profiles (synopsis, document type, capability manifest) and chunk profiles
+  (summary, keywords, topics) at ingestion time while keeping traditional RAG behavior unchanged.
+- Chunk profiling enables fast keyword/topic filtering before vector search and provides an
+  LLM-scannable index for agentic retrieval.
+- Primary tasks: SHU-343 Document and Chunk Profiling Service, SHU-344 Ingestion
   Pipeline Integration, SHU-359 Synopsis Embedding.
 
-### Phase 2: Question Synthesis
+### Phase 2: Query Synthesis
 
-- Generate hypothetical questions per document, embed them, and enable
-  question-match retrieval as an additional surface.
-- Primary tasks: SHU-353 Question Synthesis Service, SHU-351 Question
-  Embedding and Storage, SHU-352 Question-Match Retrieval Surface.
+- Generate hypothetical queries per document (questions, imperatives, declarative searches),
+  embed them, and enable query-match retrieval as an additional surface.
+- Primary tasks: SHU-353 Query Synthesis Service, SHU-351 Query
+  Embedding and Storage, SHU-352 Query-Match Retrieval Surface.
 
 ### Phase 3: Multi-Surface Retrieval
 
 - Implement query classification, multi-surface routing, manifest-based
-  filtering, and score fusion across questions, synopses, manifests, and
+  filtering, keyword pre-filtering, and score fusion across queries, synopses, manifests, and
   chunks.
 - Primary tasks: SHU-350 Query Classification Service, SHU-348 Multi-Surface
   Query Router, SHU-358 Score Fusion Service, SHU-347 Manifest-Based
@@ -218,7 +220,8 @@ PROFILING_ASYNC: bool = True  # Background processing
 
 - Ingestion: Profiling runs async; no blocking
 - Query: Target <100ms additional latency over standard RAG
-- Storage: ~70-100KB overhead per document (acceptable)
+- Storage: ~25KB overhead per document + ~1KB per chunk + ~1.5KB per synthesized query
+- For 100K documents with 50 chunks and 10 queries each: ~8GB additional storage
 
 ### 5.4 Configuration-Driven
 
@@ -268,14 +271,14 @@ All tasks are documented under [tasks/SHU-339-SHU-RAG-Intelligent-Retrieval](./t
 
 | # | Jira | Name | Phase | Effort | Task File |
 |---|------|------|-------|--------|-----------|
-| 1 | SHU-342 | Document Profile Schema | 0 | 2-3 days | [SHU-342-Document-Profile-Schema.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-342-Document-Profile-Schema.md) |
+| 1 | SHU-342 | Document Profile Schema (incl. chunk) | 0 | 2-3 days | [SHU-342-Document-Profile-Schema.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-342-Document-Profile-Schema.md) |
 | 2 | SHU-355 | Relational Context Schema | 0 | 2-3 days | [SHU-355-Relational-Context-Schema.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-355-Relational-Context-Schema.md) |
-| 3 | SHU-343 | Document Profiling Service | 1 | 3-4 days | [SHU-343-Document-Profiling-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-343-Document-Profiling-Service.md) |
+| 3 | SHU-343 | Document and Chunk Profiling Service | 1 | 4-5 days | [SHU-343-Document-Profiling-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-343-Document-Profiling-Service.md) |
 | 4 | SHU-344 | Ingestion Pipeline Integration | 1 | 2-3 days | [SHU-344-Ingestion-Pipeline-Integration.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-344-Ingestion-Pipeline-Integration.md) |
 | 5 | SHU-359 | Synopsis Embedding | 1 | 1-2 days | [SHU-359-Synopsis-Embedding.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-359-Synopsis-Embedding.md) |
-| 6 | SHU-353 | Question Synthesis Service | 2 | 3-4 days | [SHU-353-Question-Synthesis-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-353-Question-Synthesis-Service.md) |
-| 7 | SHU-351 | Question Embedding and Storage | 2 | 2-3 days | [SHU-351-Question-Embedding-and-Storage.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-351-Question-Embedding-and-Storage.md) |
-| 8 | SHU-352 | Question-Match Retrieval Surface | 2 | 2-3 days | [SHU-352-Question-Match-Retrieval-Surface.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-352-Question-Match-Retrieval-Surface.md) |
+| 6 | SHU-353 | Query Synthesis Service | 2 | 3-4 days | [SHU-353-Question-Synthesis-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-353-Question-Synthesis-Service.md) |
+| 7 | SHU-351 | Query Embedding and Storage | 2 | 2-3 days | [SHU-351-Question-Embedding-and-Storage.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-351-Question-Embedding-and-Storage.md) |
+| 8 | SHU-352 | Query-Match Retrieval Surface | 2 | 2-3 days | [SHU-352-Question-Match-Retrieval-Surface.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-352-Question-Match-Retrieval-Surface.md) |
 | 9 | SHU-350 | Query Classification Service | 3 | 2-3 days | [SHU-350-Query-Classification-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-350-Query-Classification-Service.md) |
 | 10 | SHU-348 | Multi-Surface Query Router | 3 | 2-3 days | [SHU-348-Multi-Surface-Query-Router.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-348-Multi-Surface-Query-Router.md) |
 | 11 | SHU-358 | Score Fusion Service | 3 | 2-3 days | [SHU-358-Score-Fusion-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-358-Score-Fusion-Service.md) |
@@ -289,7 +292,9 @@ All tasks are documented under [tasks/SHU-339-SHU-RAG-Intelligent-Retrieval](./t
 | 19 | SHU-346 | Iterative Refinement Logic | 5 | 3-4 days | [SHU-346-Iterative-Refinement-Logic.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-346-Iterative-Refinement-Logic.md) |
 | 20 | SHU-356 | Retrieval Feedback Loop | 5 | 2-3 days | [SHU-356-Retrieval-Feedback-Loop.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-356-Retrieval-Feedback-Loop.md) |
 
-**Total Estimated Effort**: 45-60 days (not including SHU-15/SHU-18 dependencies)
+**Total Estimated Effort**: 47-63 days (not including SHU-15/SHU-18 dependencies)
+
+Note: Phase 1 effort increased to account for chunk profiling alongside document profiling.
 
 ---
 
@@ -310,6 +315,6 @@ The following questions have been resolved:
 ---
 
 *Document Status: Active*
-*Last Updated: 2025-12-02*
+*Last Updated: 2025-12-16*
 
 

@@ -36,3 +36,30 @@ def mock_settings():
     mock.chat_attachment_ttl_days = 14
     mock.llm_encryption_key = None
     return mock
+
+# Register all SQLAlchemy models to ensure relationship resolution works.
+# This is needed because SQLAlchemy resolves all relationships when any model is instantiated.
+# Import all models directly rather than using registry which may be incomplete.
+try:
+    # Core models
+    from shu.models import (  # noqa: F401
+        Base, KnowledgeBase, Prompt, PromptAssignment,
+        Document, DocumentChunk, DocumentQuery, DocumentParticipant, DocumentProject,
+        LLMProvider, LLMModel, LLMUsage, Conversation, Message,
+        ModelConfiguration, ModelConfigurationKBPrompt, UserPreferences,
+        ProviderIdentity, ProviderCredential,
+        UserGroup, UserGroupMembership, KnowledgeBasePermission,
+        PluginDefinition, AgentMemory, PluginStorage,
+        SystemSetting,
+    )
+    # Additional models not in __all__
+    from shu.models.provider_type_definition import ProviderTypeDefinition  # noqa: F401
+    from shu.models.plugin_execution import PluginExecution  # noqa: F401
+    from shu.models.plugin_feed import PluginFeed  # noqa: F401
+    from shu.models.plugin_subscription import PluginSubscription  # noqa: F401
+    from shu.models.attachment import Attachment, MessageAttachment  # noqa: F401
+    # User model (required for relationships)
+    from shu.auth.models import User  # noqa: F401
+except ImportError as e:
+    import warnings
+    warnings.warn(f"Could not import all models for SQLAlchemy registry: {e}")
