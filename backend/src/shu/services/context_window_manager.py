@@ -48,12 +48,29 @@ class ContextWindowManager:
         Apply pruning/summarization to the message list.
         """
 
+        def get_content_text(msg) -> str:
+            """Extract text from message content, handling multimodal formats."""
+            content = getattr(msg, "content", "")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                # Multimodal content - extract text from text parts
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif "text" in part:
+                            text_parts.append(part.get("text", ""))
+                return " ".join(text_parts)
+            return ""
+
         def estimate_tokens(text: str) -> int:
             if self._token_estimator_override:
                 return self._token_estimator_override(text)
-            return len(text.split()) * 1.3
+            return int(len(text.split()) * 1.3)
 
-        total_tokens = sum(estimate_tokens(getattr(msg, "content", "")) for msg in messages)
+        total_tokens = sum(estimate_tokens(get_content_text(msg)) for msg in messages)
         if total_tokens <= max_tokens:
             return messages
 
@@ -80,7 +97,7 @@ class ContextWindowManager:
 
         managed_messages.extend(recent_messages)
 
-        final_tokens = sum(estimate_tokens(getattr(msg, "content", "")) for msg in managed_messages)
+        final_tokens = sum(estimate_tokens(get_content_text(msg)) for msg in managed_messages)
         logger.info(
             "Context window managed: %s -> %s tokens",
             total_tokens,

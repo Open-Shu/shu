@@ -10,13 +10,13 @@ logger = get_logger(__name__)
 
 
 class LMStudioAdapter(CompletionsAdapter):
-    """Adapter for LM Studio's OpenAI-compatible Responses API."""
+    """Adapter for LM Studio's OpenAI-compatible Completions API."""
 
     def get_provider_information(self) -> ProviderInformation:
         return ProviderInformation(key="lm_studio", display_name="LM Studio")
 
     def get_capabilities(self) -> ProviderCapabilities:
-        # LM Studio advertises streaming + tool-calling parity with OpenAI Responses.
+        # LM Studio supports streaming and tool-calling compatible with OpenAI Completions.
         return ProviderCapabilities(streaming=True, tools=True, vision=True)
 
     def supports_native_documents(self) -> bool:

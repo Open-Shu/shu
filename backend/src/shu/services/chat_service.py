@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models.llm_provider import Conversation, Message, LLMModel
-from ..models.attachment import MessageAttachment
+from ..models.attachment import Attachment, MessageAttachment
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from ..models.llm_provider import LLMProvider
@@ -487,6 +487,47 @@ class ChatService:
         logger.info(f"Deleted conversation '{conversation.title}'")
         return True
 
+    async def _link_attachments_to_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+        attachment_ids: List[str],
+    ) -> None:
+        """Validate and link attachments to a message.
+
+        Args:
+            conversation_id: ID of the conversation the message belongs to
+            message_id: ID of the message to link attachments to
+            attachment_ids: List of attachment IDs to link
+
+        Raises:
+            ValidationError: If any attachment does not belong to the conversation
+        """
+        if not attachment_ids:
+            return
+
+        # TODO: We shuold probably drop the `conversation_id` column on the attachments, if we identify it by message. For now, we just evaluate that there is parity.
+
+        # Validate attachment ownership and conversation membership
+        q = select(Attachment).where(Attachment.id.in_(attachment_ids))
+        res = await self.db_session.execute(q)
+        att_list = res.scalars().all()
+
+        validated_ids = set()
+        for att in att_list:
+            if att.conversation_id != conversation_id:
+                raise ValidationError("Attachment does not belong to this conversation")
+            validated_ids.add(att.id)
+
+        # Create MessageAttachment links for validated attachments
+        for att_id in validated_ids:
+            link = MessageAttachment(
+                id=str(uuid.uuid4()),
+                message_id=message_id,
+                attachment_id=att_id,
+            )
+            self.db_session.add(link)
+
     async def add_message(
         self,
         conversation_id: str,
@@ -574,15 +615,13 @@ class ChatService:
         # Ensure INSERT happens to satisfy FK for message_attachments
         await self.db_session.flush()
 
-        # Create MessageAttachment links if attachment_ids provided
+        # Link validated attachments to this message
         if attachment_ids:
-            for att_id in attachment_ids:
-                link = MessageAttachment(
-                    id=str(uuid.uuid4()),
-                    message_id=message.id,
-                    attachment_id=att_id,
-                )
-                self.db_session.add(link)
+            await self._link_attachments_to_message(
+                conversation_id=conversation_id,
+                message_id=message.id,
+                attachment_ids=attachment_ids,
+            )
 
         # Update conversation timestamp
         conversation.updated_at = datetime.now(timezone.utc)

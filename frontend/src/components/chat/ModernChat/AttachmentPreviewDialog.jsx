@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -23,13 +23,19 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [blobUrl, setBlobUrl] = useState(null);
+    const blobUrlRef = useRef(null);
+
+    // Keep ref in sync with state for cleanup
+    useEffect(() => {
+        blobUrlRef.current = blobUrl;
+    }, [blobUrl]);
 
     useEffect(() => {
         if (!open || !attachment) {
             setContent(null);
             setError(null);
-            if (blobUrl) {
-                URL.revokeObjectURL(blobUrl);
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
                 setBlobUrl(null);
             }
             return;
@@ -61,8 +67,8 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
         fetchAttachment();
 
         return () => {
-            if (blobUrl) {
-                URL.revokeObjectURL(blobUrl);
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
             }
         };
     }, [open, attachment?.id]);
