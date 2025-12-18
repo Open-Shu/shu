@@ -275,6 +275,22 @@ class TestDocumentChunk:
         score = chunk.calculate_similarity_score(query)
         assert score == pytest.approx(0.0, rel=1e-6)
 
+    def test_calculate_similarity_score_dimension_mismatch(self):
+        """Test that dimension mismatch raises ValueError."""
+        chunk = DocumentChunk()
+        chunk.content = "Test"
+        chunk.char_count = 4
+        chunk.embedding = [1.0, 0.0, 0.0]  # 3 dimensions
+
+        # Query with different dimensions should raise
+        query = [1.0, 0.0]  # 2 dimensions
+        with pytest.raises(ValueError) as exc_info:
+            chunk.calculate_similarity_score(query)
+
+        assert "dimension mismatch" in str(exc_info.value).lower()
+        assert "3" in str(exc_info.value)
+        assert "2" in str(exc_info.value)
+
     def test_to_dict_includes_profile_fields(self):
         """Test that to_dict includes chunk profile fields."""
         chunk = DocumentChunk()

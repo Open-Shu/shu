@@ -58,7 +58,7 @@ def upgrade() -> None:
     add_column_if_not_exists(inspector, "documents", sa.Column("capability_manifest", JSONB(), nullable=True))
     add_column_if_not_exists(
         inspector, "documents",
-        sa.Column("profiling_status", sa.String(20), nullable=True, server_default="pending"),
+        sa.Column("profiling_status", sa.String(20), nullable=True, server_default="'pending'"),
     )
     add_column_if_not_exists(inspector, "documents", sa.Column("profiling_error", sa.Text(), nullable=True))
 
@@ -173,27 +173,33 @@ def upgrade() -> None:
     # ========================================================================
     # Part 6: Create indexes
     # ========================================================================
-    # Vector index for synopsis_embedding (ivfflat for approximate nearest neighbor)
-    if not index_exists(inspector, "documents", "ix_documents_synopsis_embedding"):
-        # Create ivfflat index - requires sufficient rows for clustering
-        # Using cosine distance operator class
-        op.execute(
-            """
-            CREATE INDEX IF NOT EXISTS ix_documents_synopsis_embedding
-            ON documents USING ivfflat (synopsis_embedding vector_cosine_ops)
-            WITH (lists = 100)
-            """
-        )
+    # Check if pgvector extension is available before creating vector indexes
+    pgvector_available = conn.execute(
+        sa.text("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+    ).scalar()
 
-    # Vector index for query_embedding
-    if not index_exists(inspector, "document_queries", "ix_document_queries_query_embedding"):
-        op.execute(
-            """
-            CREATE INDEX IF NOT EXISTS ix_document_queries_query_embedding
-            ON document_queries USING ivfflat (query_embedding vector_cosine_ops)
-            WITH (lists = 100)
-            """
-        )
+    if pgvector_available:
+        # Vector index for synopsis_embedding (ivfflat for approximate nearest neighbor)
+        if not index_exists(inspector, "documents", "ix_documents_synopsis_embedding"):
+            # Create ivfflat index - requires sufficient rows for clustering
+            # Using cosine distance operator class
+            op.execute(
+                """
+                CREATE INDEX IF NOT EXISTS ix_documents_synopsis_embedding
+                ON documents USING ivfflat (synopsis_embedding vector_cosine_ops)
+                WITH (lists = 100)
+                """
+            )
+
+        # Vector index for query_embedding
+        if not index_exists(inspector, "document_queries", "ix_document_queries_query_embedding"):
+            op.execute(
+                """
+                CREATE INDEX IF NOT EXISTS ix_document_queries_query_embedding
+                ON document_queries USING ivfflat (query_embedding vector_cosine_ops)
+                WITH (lists = 100)
+                """
+            )
 
     # GIN indexes for JSONB columns (enable efficient containment queries)
     if not index_exists(inspector, "documents", "ix_documents_capability_manifest"):

@@ -324,9 +324,23 @@ class DocumentChunk(BaseModel):
         Note: In production, similarity search is done at the database level
         with pgvector for efficiency. This method exists for testing and
         fallback scenarios.
+
+        Raises:
+            ValueError: If embedding dimensions don't match (likely due to
+                embedding model change in configuration).
         """
         if not self.embedding or not query_embedding:
             return 0.0
+
+        # Validate dimension match - mismatched dimensions indicate embedding
+        # model configuration change, which would produce incorrect results
+        if len(self.embedding) != len(query_embedding):
+            raise ValueError(
+                f"Embedding dimension mismatch: chunk has {len(self.embedding)} dimensions, "
+                f"query has {len(query_embedding)} dimensions. This usually indicates the "
+                "embedding model was changed after documents were indexed. Re-index the "
+                "knowledge base to fix this."
+            )
 
         # Simple cosine similarity calculation
         import math
