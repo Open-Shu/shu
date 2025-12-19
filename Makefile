@@ -47,7 +47,7 @@ compose-build:
 	docker compose -f $(COMPOSE_FILE) --profile frontend build shu-api shu-frontend shu-db-migrate
 
 compose-build-dev:
-	docker compose -f $(COMPOSE_FILE) --profile frontend --profile dev build shu-api-dev shu-frontend shu-db-migrate
+	docker compose -f $(COMPOSE_FILE) --profile dev build shu-api-dev shu-db-migrate
 
 
 # Docker Compose targets
@@ -68,7 +68,7 @@ up-dev:
 	docker compose -f $(COMPOSE_FILE) --profile dev up -d shu-api-dev shu-postgres shu-db-migrate redis
 
 up-full-dev:
-	docker compose -f $(COMPOSE_FILE) --profile dev --profile frontend up -d shu-api-dev shu-postgres shu-db-migrate redis shu-frontend
+	docker compose -f $(COMPOSE_FILE) --profile dev up -d shu-api-dev shu-postgres shu-db-migrate redis shu-frontend-dev
 
 down:
 	docker compose -f $(COMPOSE_FILE) down --remove-orphans || true

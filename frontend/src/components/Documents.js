@@ -76,7 +76,7 @@ const SearchFilter = memo(function SearchFilter({searchQuery, setSearchQuery, fi
           fullWidth
           variant="outlined"
           startIcon={<RefreshIcon />}
-          onClick={fetchDocuments}
+          onClick={() => fetchDocuments()}
         >
           Refresh
         </Button>
