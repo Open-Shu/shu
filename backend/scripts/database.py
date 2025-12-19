@@ -32,10 +32,13 @@ from pathlib import Path
 from typing import Dict, Optional, Set
 from urllib.parse import urlparse, urlunparse
 
+import re
+
 import alembic.command
 import alembic.config
 from alembic.script import ScriptDirectory
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
 # Project paths
@@ -80,6 +83,26 @@ def _get_database_name(url: str) -> str:
     """Extract database name from URL."""
     parsed = urlparse(url)
     return parsed.path.lstrip("/")
+
+
+def _validate_identifier(name: str) -> bool:
+    """Validate that a string is a safe PostgreSQL identifier.
+
+    Rejects names that could cause issues with identifier quoting:
+    - Empty names
+    - Names with null bytes
+    - Names longer than 63 characters (PostgreSQL limit)
+    """
+    if not name:
+        return False
+    if len(name) > 63:
+        return False
+    if "\x00" in name:
+        return False
+    # Allow alphanumeric, underscore, and hyphen (common for db names like shu_test)
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_-]*$", name):
+        return False
+    return True
 
 
 # =============================================================================
@@ -133,14 +156,18 @@ def ensure_extensions(url: str) -> bool:
 
 
 def execute_init_sql(url: str) -> bool:
-    """Execute init-db.sql to set up extensions, functions, and configuration."""
+    """Execute init-db.sql to set up extensions, functions, and configuration.
+
+    Uses a transaction so the setup is all-or-nothing. If any statement fails,
+    the entire init is rolled back to avoid leaving the DB in a partial state.
+    """
     if not INIT_SQL_PATH.is_file():
         print(f"{LOG_PREFIX} Warning: init-db.sql not found at {INIT_SQL_PATH}", file=sys.stderr)
         print(f"{LOG_PREFIX} Falling back to manual extension setup...", flush=True)
         return ensure_extensions(url)
 
     print(f"{LOG_PREFIX} Executing init-db.sql...", flush=True)
-    conn = _connect(url)
+    conn = _connect(url, autocommit=False)  # Use transaction for all-or-nothing
     try:
         with open(INIT_SQL_PATH, "r") as f:
             sql_content = f.read()
@@ -148,10 +175,13 @@ def execute_init_sql(url: str) -> bool:
         with conn.cursor() as cur:
             cur.execute(sql_content)
 
+        conn.commit()
         print(f"{LOG_PREFIX} init-db.sql executed successfully", flush=True)
         return True
     except psycopg2.Error as e:
+        conn.rollback()
         print(f"{LOG_PREFIX} Error executing init-db.sql: {e}", file=sys.stderr)
+        print(f"{LOG_PREFIX} Transaction rolled back - database unchanged", file=sys.stderr)
         return False
     finally:
         conn.close()
@@ -380,6 +410,13 @@ def cmd_reset(url: str, force: bool = False) -> bool:
 
 def cmd_create_db(url: str, db_name: str) -> bool:
     """Create a new database."""
+    # Validate identifier to prevent SQL injection
+    if not _validate_identifier(db_name):
+        print(f"{LOG_PREFIX} Error: Invalid database name '{db_name}'", file=sys.stderr)
+        print(f"{LOG_PREFIX} Names must start with a letter or underscore, contain only", file=sys.stderr)
+        print(f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars", file=sys.stderr)
+        return False
+
     admin_url = _get_admin_url(url)
 
     print(f"{LOG_PREFIX} Creating database '{db_name}'...", flush=True)
@@ -393,9 +430,8 @@ def cmd_create_db(url: str, db_name: str) -> bool:
                 print(f"{LOG_PREFIX} Database '{db_name}' already exists", flush=True)
                 return True
 
-            # Create the database
-            # Note: Can't use parameterized query for CREATE DATABASE
-            cur.execute(f'CREATE DATABASE "{db_name}"')
+            # Create the database using safe identifier quoting
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
             print(f"{LOG_PREFIX} Database '{db_name}' created successfully", flush=True)
             return True
     except psycopg2.Error as e:
@@ -412,6 +448,13 @@ def cmd_create_db(url: str, db_name: str) -> bool:
 
 def cmd_cleanup(url: str, db_name: str, force: bool = False) -> bool:
     """Drop a database."""
+    # Validate identifier to prevent SQL injection
+    if not _validate_identifier(db_name):
+        print(f"{LOG_PREFIX} Error: Invalid database name '{db_name}'", file=sys.stderr)
+        print(f"{LOG_PREFIX} Names must start with a letter or underscore, contain only", file=sys.stderr)
+        print(f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars", file=sys.stderr)
+        return False
+
     admin_url = _get_admin_url(url)
 
     if not force:
@@ -436,8 +479,8 @@ def cmd_cleanup(url: str, db_name: str, force: bool = False) -> bool:
                 (db_name,),
             )
 
-            # Drop the database
-            cur.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
+            # Drop the database using safe identifier quoting
+            cur.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(db_name)))
             print(f"{LOG_PREFIX} Database '{db_name}' dropped successfully", flush=True)
             return True
     except psycopg2.Error as e:
