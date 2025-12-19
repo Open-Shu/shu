@@ -1,6 +1,4 @@
-
-
-
+import { useState } from 'react';
 import {
   Box,
   Toolbar,
@@ -11,9 +9,11 @@ import {
   ListItemIcon,
   ListItemText,
   ListItemButton,
-  Divider
+  Divider,
+  IconButton,
+  useMediaQuery,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
   Dashboard as DashboardIcon,
   Storage as KnowledgeBasesIcon,
@@ -30,6 +30,7 @@ import {
   Extension as ExtensionIcon,
   Schedule as ScheduleIcon,
   Palette as BrandingIcon,
+  Menu as MenuIcon,
 } from '@mui/icons-material';
 
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -43,12 +44,25 @@ const DRAWER_WIDTH = 280;
 const AdminLayout = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   const { branding, theme: appTheme } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
   const logoUrl = getBrandingLogoUrl(branding);
   const primaryMain = appTheme.palette.primary.main;
 
+  const handleDrawerToggle = () => {
+    setMobileOpen(!mobileOpen);
+  };
 
+  const handleNavigation = (path) => {
+    navigate(path);
+    if (isMobile) {
+      setMobileOpen(false);
+    }
+  };
 
   const adminMenuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/admin/dashboard' },
@@ -56,7 +70,7 @@ const AdminLayout = ({ children }) => {
     { text: 'Knowledge Bases', icon: <KnowledgeBasesIcon />, path: '/admin/knowledge-bases' },
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
     { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
-    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },    
+    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
     { text: 'Query Tester', icon: <QueryTesterIcon />, path: '/admin/query-tester' },
     { text: 'LLM Tester', icon: <LLMTesterIcon />, path: '/admin/llm-tester' },
     { text: 'Health Monitor', icon: <HealthIcon />, path: '/admin/health' },
@@ -75,41 +89,15 @@ const AdminLayout = ({ children }) => {
 
   const isActive = (path) => location.pathname === path;
 
-  return (
-    <Box sx={{ display: 'flex' }}>
-      {/* Shared TopBar */}
-      <TopBar
-        sectionTitle="Admin Panel"
-        sectionIcon={<AdminIcon />}
-        leftOffset={DRAWER_WIDTH + 16}
-        appBarPosition="fixed"
-        fixedOverDrawer
-        showAdminLink={false}
-      />
+  const drawerContent = (
+    <>
+      <Toolbar />
+      <Divider />
 
-      {/* Sidebar */}
-      <Drawer
-        sx={{
-          width: DRAWER_WIDTH,
-          flexShrink: 0,
-          '& .MuiDrawer-paper': {
-            width: DRAWER_WIDTH,
-            boxSizing: 'border-box',
-            height: '100vh', // Full viewport height
-            display: 'flex',
-            flexDirection: 'column',
-          },
-        }}
-        variant="permanent"
-        anchor="left"
-      >
-        <Toolbar />
-        <Divider />
-
-        {/* Scrollable Menu Content */}
-        <Box sx={{ flex: 1, overflow: 'auto' }}>
-          {/* Power User Features */}
-          <List>
+      {/* Scrollable Menu Content */}
+      <Box sx={{ flex: 1, overflow: 'auto' }}>
+        {/* Power User Features */}
+        <List>
           <ListItem>
             <Typography
               variant="overline"
@@ -127,7 +115,7 @@ const AdminLayout = ({ children }) => {
             <ListItemButton
               key={item.text}
               selected={isActive(item.path)}
-              onClick={() => navigate(item.path)}
+              onClick={() => handleNavigation(item.path)}
             >
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
@@ -156,7 +144,7 @@ const AdminLayout = ({ children }) => {
             <ListItemButton
               key={item.text}
               selected={isActive(item.path)}
-              onClick={() => navigate(item.path)}
+              onClick={() => handleNavigation(item.path)}
             >
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
@@ -181,38 +169,104 @@ const AdminLayout = ({ children }) => {
             <ListItemButton
               key={item.text}
               selected={isActive(item.path)}
-              onClick={() => navigate(item.path)}
+              onClick={() => handleNavigation(item.path)}
             >
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
           ))}
         </List>
-        </Box>
+      </Box>
 
-        {/* Branding Logo at Bottom - Full Width */}
-        <Box
+      {/* Branding Logo at Bottom - Full Width */}
+      <Box
+        sx={{
+          mt: 'auto',
+          p: 2,
+          backgroundColor: alpha(primaryMain, 0.00),
+          borderTop: `1px solid ${alpha(primaryMain, 0.1)}`,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}
+      >
+        <img
+          src={logoUrl}
+          alt={appDisplayName}
+          style={{
+            height: '60px',
+            width: 'auto',
+            maxWidth: '100%'
+          }}
+        />
+      </Box>
+    </>
+  );
+
+  return (
+    <Box sx={{ display: 'flex' }}>
+      {/* Shared TopBar */}
+      <TopBar
+        sectionTitle={isMobile ? undefined : "Admin Panel"}
+        sectionIcon={<AdminIcon />}
+        leftOffset={isMobile ? 56 : DRAWER_WIDTH + 16}
+        appBarPosition="fixed"
+        fixedOverDrawer
+        showAdminLink={false}
+        hamburgerButton={isMobile ? (
+          <IconButton
+            color="inherit"
+            aria-label="open drawer"
+            edge="start"
+            onClick={handleDrawerToggle}
+            sx={{ mr: 1 }}
+          >
+            <MenuIcon />
+          </IconButton>
+        ) : null}
+      />
+
+      {/* Desktop Sidebar */}
+      {!isMobile && (
+        <Drawer
           sx={{
-            mt: 'auto', // Push to bottom
-            p: 2,
-            backgroundColor: alpha(primaryMain, 0.00),
-            borderTop: `1px solid ${alpha(primaryMain, 0.1)}`,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center'
+            width: DRAWER_WIDTH,
+            flexShrink: 0,
+            '& .MuiDrawer-paper': {
+              width: DRAWER_WIDTH,
+              boxSizing: 'border-box',
+              height: '100vh',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          }}
+          variant="permanent"
+          anchor="left"
+        >
+          {drawerContent}
+        </Drawer>
+      )}
+
+      {/* Mobile Sidebar */}
+      {isMobile && (
+        <Drawer
+          variant="temporary"
+          open={mobileOpen}
+          onClose={handleDrawerToggle}
+          ModalProps={{ keepMounted: true }}
+          sx={{
+            '& .MuiDrawer-paper': {
+              width: DRAWER_WIDTH,
+              boxSizing: 'border-box',
+              height: '100vh',
+              display: 'flex',
+              flexDirection: 'column',
+            },
           }}
         >
-          <img
-            src={logoUrl}
-            alt={appDisplayName}
-            style={{
-              height: '60px', // Fixed height for normal proportions
-              width: 'auto', // Maintain aspect ratio
-              maxWidth: '100%' // Don't exceed container width
-            }}
-          />
-        </Box>
-      </Drawer>
+          {drawerContent}
+        </Drawer>
+      )}
 
       {/* Main Content */}
       <Box
@@ -220,7 +274,7 @@ const AdminLayout = ({ children }) => {
         sx={{
           flexGrow: 1,
           bgcolor: 'background.default',
-          p: 3
+          p: { xs: 1.5, sm: 3 },
         }}
       >
         <Toolbar />

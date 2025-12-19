@@ -15,6 +15,7 @@ import {
 import { buildUserPreferencesPayload } from '../utils/userPreferences';
 
 import { useAuth } from '../hooks/useAuth';
+import { useMobileSidebar } from '../contexts/MobileSidebarContext';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import useAutomationSettings from '../hooks/useAutomationSettings';
 import { getBrandingAppName, getBrandingLogoUrl, RAG_REWRITE_OPTIONS } from '../utils/constants';
@@ -59,7 +60,7 @@ const ModernChat = () => {
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const isPinnedToBottomRef = useRef(true);
-  const clearEnsembleModeRef = useRef(() => {});
+  const clearEnsembleModeRef = useRef(() => { });
   const {
     markFreshConversation,
     clearFreshConversation,
@@ -96,6 +97,9 @@ const ModernChat = () => {
     openDocumentPreview,
     closeDocumentPreview,
   } = useChatUiState();
+
+  // Mobile sidebar state from context (shared with TopBar in UserLayout)
+  const { isOpen: mobileSidebarOpen, close: closeMobileSidebar, toggle: toggleMobileSidebar } = useMobileSidebar();
 
   useEffect(() => {
     selectedConversationRef.current = selectedConversation;
@@ -200,10 +204,10 @@ const ModernChat = () => {
       model_name: mc.model_name,
       provider: mc.llm_provider
         ? {
-            id: mc.llm_provider.id,
-            name: mc.llm_provider.name,
-            provider_type: mc.llm_provider.provider_type,
-          }
+          id: mc.llm_provider.id,
+          name: mc.llm_provider.name,
+          provider_type: mc.llm_provider.provider_type,
+        }
         : undefined,
     };
   }, [selectedConversation]);
@@ -243,7 +247,7 @@ const ModernChat = () => {
       if (stored && RAG_REWRITE_OPTIONS.some(opt => opt.value === stored)) {
         return stored;
       }
-    } catch (_) {}
+    } catch (_) { }
     return 'raw_query';
   });
 
@@ -426,7 +430,7 @@ const ModernChat = () => {
   const handleCopyMessage = useCallback((content) => {
     if (!content) return;
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(content).catch(() => {});
+      navigator.clipboard.writeText(content).catch(() => { });
     }
   }, []);
 
@@ -985,7 +989,8 @@ const ModernChat = () => {
     setStreamingConversationId(null);
     setStreamingStarted(false);
     syncConversationParam(conversation?.id || null);
-  }, [syncConversationParam]);
+    closeMobileSidebar();
+  }, [syncConversationParam, closeMobileSidebar]);
 
   const handleSummarySearchChange = useCallback((value) => {
     setSummarySearchInput(value);
@@ -1201,6 +1206,9 @@ const ModernChat = () => {
       getSelectedConfig={getSelectedConfig}
       handleCreateConversation={handleCreateConversation}
       createConversationButtonDisabled={createConversationDisabled}
+      mobileSidebarOpen={mobileSidebarOpen}
+      onCloseMobileSidebar={closeMobileSidebar}
+      onToggleMobileSidebar={toggleMobileSidebar}
     />
   );
 };

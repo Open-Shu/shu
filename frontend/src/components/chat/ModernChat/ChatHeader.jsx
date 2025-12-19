@@ -38,6 +38,7 @@ const ChatHeader = React.memo(function ChatHeader({
   disableModelSelect,
   onOpenSettings,
   sideCallWarning,
+  isMobile = false,
 }) {
   if (!conversation) {
     return null;
@@ -45,97 +46,131 @@ const ChatHeader = React.memo(function ChatHeader({
 
   return (
     <>
-      <Paper sx={{ p: 2, borderRadius: 0, borderBottom: 1, borderColor: 'divider' }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
-          <Box sx={{ minWidth: 0 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography
-                variant="h6"
-                noWrap
-                sx={isAutoRenaming ? { animation: `${titlePulse} 1.2s ease-in-out infinite` } : undefined}
-              >
-                {conversation.title}
-              </Typography>
-              {isAutoRenaming && (
-                <CircularProgress size={14} sx={{ ml: 0.5 }} />
-              )}
-              <Tooltip title="View summary" arrow>
-                <IconButton size="small" onClick={onOpenSummary} aria-label="View summary">
-                  <DescriptionIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Menu" arrow>
-                <IconButton size="small" onClick={onOpenAutomationMenu} aria-label="Menu">
-                  <MoreVertIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              {sideCallWarning && (
-                <Tooltip
-                  title={sideCallWarning}
-                  arrow
+      <Paper sx={{ p: { xs: 1, sm: 2 }, borderRadius: 0, borderBottom: 1, borderColor: 'divider' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: { xs: 1, sm: 2 } }}>
+          <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Typography
+                  variant="h6"
+                  noWrap
+                  sx={{
+                    ...(isAutoRenaming ? { animation: `${titlePulse} 1.2s ease-in-out infinite` } : undefined),
+                    fontSize: { xs: '1rem', sm: '1.25rem' },
+                  }}
                 >
-                  <IconButton
-                    size="small"
-                    color="warning"
-                    aria-label="Side-caller configuration warning"
+                  {conversation.title}
+                </Typography>
+                {isAutoRenaming && (
+                  <CircularProgress size={14} sx={{ ml: 0.5 }} />
+                )}
+                {!isMobile && (
+                  <>
+                    <Tooltip title="View summary" arrow>
+                      <IconButton size="small" onClick={onOpenSummary} aria-label="View summary">
+                        <DescriptionIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Menu" arrow>
+                      <IconButton size="small" onClick={onOpenAutomationMenu} aria-label="Menu">
+                        <MoreVertIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </>
+                )}
+                {sideCallWarning && (
+                  <Tooltip
+                    title={sideCallWarning}
+                    arrow
                   >
-                    <WarningIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              )}
-            </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
-              {conversation.model_configuration?.knowledge_bases?.length > 0 && (
-                <Chip
-                  size="small"
-                  icon={<KnowledgeBaseIcon />}
-                  label={`${conversation.model_configuration.knowledge_bases.length} KB`}
-                  color="secondary"
-                  variant="outlined"
-                />
-              )}
-              {Boolean(conversation?.meta?.title_locked) && (
-                <Chip size="small" color="default" variant="outlined" icon={<LockIcon sx={{ fontSize: 14 }} />} label="Auto-rename locked" />
+                    <IconButton
+                      size="small"
+                      color="warning"
+                      aria-label="Side-caller configuration warning"
+                    >
+                      <WarningIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Box>
+              {!isMobile && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
+                  {conversation.model_configuration?.knowledge_bases?.length > 0 && (
+                    <Chip
+                      size="small"
+                      icon={<KnowledgeBaseIcon />}
+                      label={`${conversation.model_configuration.knowledge_bases.length} KB`}
+                      color="secondary"
+                      variant="outlined"
+                    />
+                  )}
+                  {Boolean(conversation?.meta?.title_locked) && (
+                    <Chip size="small" color="default" variant="outlined" icon={<LockIcon sx={{ fontSize: 14 }} />} label="Auto-rename locked" />
+                  )}
+                </Box>
               )}
             </Box>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <FormControl size="small" sx={{ minWidth: 220 }}>
-              <InputLabel>Model</InputLabel>
-              <Select
-                value={selectedModelConfig || ''}
-                label="Model"
-                onChange={onModelChange}
-                disabled={disableModelSelect}
-                displayEmpty
-              >
-                <MenuItem value="" disabled>
-                  <Typography variant="body2" color="text.secondary">
-                    Select a model
-                  </Typography>
-                </MenuItem>
-                {availableModelConfigs.map((config) => (
-                  <MenuItem key={config.id} value={config.id}>
-                    <Box>
-                      <Typography variant="body2" noWrap>{config.name}</Typography>
-                      <Typography variant="caption" color="text.secondary" noWrap>
-                        {(config.llm_provider?.name || 'Provider')} • {config.model_name}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
+            {/* Mobile: show overflow menu button instead of full model selector */}
+            {isMobile ? (
+              <>
+                <Tooltip title="Menu" arrow>
+                  <IconButton size="small" onClick={onOpenAutomationMenu} aria-label="Menu">
+                    <MoreVertIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Chat settings" arrow>
+                  <IconButton
+                    onClick={onOpenSettings}
+                    color="default"
+                    size="small"
+                    aria-label="Chat settings"
+                  >
+                    <SettingsIcon />
+                  </IconButton>
+                </Tooltip>
+              </>
+            ) : (
+              <>
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel>Model</InputLabel>
+                  <Select
+                    value={selectedModelConfig || ''}
+                    label="Model"
+                    onChange={onModelChange}
+                    disabled={disableModelSelect}
+                    displayEmpty
+                  >
+                    <MenuItem value="" disabled>
+                      <Typography variant="body2" color="text.secondary">
+                        Select a model
                       </Typography>
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Tooltip title="Chat settings" arrow>
-              <IconButton
-                onClick={onOpenSettings}
-                color="default"
-                size="small"
-                aria-label="Chat settings"
-              >
-                <SettingsIcon />
-              </IconButton>
-            </Tooltip>
+                    </MenuItem>
+                    {availableModelConfigs.map((config) => (
+                      <MenuItem key={config.id} value={config.id}>
+                        <Box>
+                          <Typography variant="body2" noWrap>{config.name}</Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap>
+                            {(config.llm_provider?.name || 'Provider')} • {config.model_name}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <Tooltip title="Chat settings" arrow>
+                  <IconButton
+                    onClick={onOpenSettings}
+                    color="default"
+                    size="small"
+                    aria-label="Chat settings"
+                  >
+                    <SettingsIcon />
+                  </IconButton>
+                </Tooltip>
+              </>
+            )}
           </Box>
         </Box>
       </Paper>

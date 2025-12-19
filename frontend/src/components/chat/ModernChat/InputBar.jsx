@@ -42,6 +42,7 @@ const InputBar = React.memo(function InputBar({
   ensembleModeLabel,
   onClearEnsembleMode,
   ensembleMenuDisabled,
+  isMobile = false,
 }) {
   return (
     <>
@@ -69,7 +70,7 @@ const InputBar = React.memo(function InputBar({
         </Box>
       )}
 
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 }, alignItems: 'center' }}>
         <input
           type="file"
           ref={fileInputRef}
@@ -84,9 +85,10 @@ const InputBar = React.memo(function InputBar({
               border: 1,
               borderColor: 'divider',
               bgcolor: 'background.paper',
-              width: 36,
-              height: 36,
+              width: { xs: 40, sm: 36 },
+              height: { xs: 40, sm: 36 },
               borderRadius: '50%',
+              flexShrink: 0,
             }}
             aria-label="Open actions menu"
           >
@@ -149,16 +151,52 @@ const InputBar = React.memo(function InputBar({
           onChange={onInputChange}
           onKeyDown={onKeyDown}
           inputRef={inputRef}
+          size={isMobile ? 'small' : 'medium'}
+          sx={{
+            '& .MuiInputBase-root': {
+              minHeight: { xs: 40, sm: 'auto' },
+            },
+          }}
         />
-        <Button
-          variant="contained"
-          endIcon={<SendIcon />}
-          onClick={onSend}
-          disabled={sendDisabled || !inputMessage.trim()}
-          sx={{ minWidth: 100 }}
-        >
-          Send
-        </Button>
+        {/* On mobile: icon-only send button. On desktop: full button with text */}
+        {isMobile ? (
+          <Tooltip title="Send">
+            <span>
+              <IconButton
+                color="primary"
+                onClick={onSend}
+                disabled={sendDisabled || !inputMessage.trim()}
+                sx={{
+                  bgcolor: 'primary.main',
+                  color: 'primary.contrastText',
+                  width: 44,
+                  height: 44,
+                  flexShrink: 0,
+                  '&:hover': {
+                    bgcolor: 'primary.dark',
+                  },
+                  '&.Mui-disabled': {
+                    bgcolor: 'action.disabledBackground',
+                    color: 'action.disabled',
+                  },
+                }}
+                aria-label="Send message"
+              >
+                <SendIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : (
+          <Button
+            variant="contained"
+            endIcon={<SendIcon />}
+            onClick={onSend}
+            disabled={sendDisabled || !inputMessage.trim()}
+            sx={{ minWidth: 100, flexShrink: 0 }}
+          >
+            Send
+          </Button>
+        )}
       </Box>
     </>
   );

@@ -32,6 +32,7 @@ import useVersion from '../../hooks/useVersion';
  * - appBarPosition?: 'fixed' | 'static' (default 'fixed')
  * - fixedOverDrawer?: boolean (if true, zIndex above drawer)
  * - showAdminLink?: boolean (if true, include Admin Panel link)
+ * - hamburgerButton?: ReactNode (optional hamburger menu button for mobile)
  */
 const TopBar = ({
   sectionTitle,
@@ -40,6 +41,7 @@ const TopBar = ({
   appBarPosition = 'fixed',
   fixedOverDrawer = false,
   showAdminLink = false,
+  hamburgerButton = null,
 }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -70,8 +72,10 @@ const TopBar = ({
         ...(fixedOverDrawer ? { zIndex: (theme) => theme.zIndex.drawer + 1 } : {}),
       }}
     >
-      <Toolbar sx={{ position: 'relative' }}>
-        {/* Left: Brand link to chat */}
+      <Toolbar sx={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        {/* Optional hamburger menu for mobile */}
+        {hamburgerButton}
+        {/* Left: Brand link to chat – shrinkable on tiny screens */}
         <Box
           component={RouterLink}
           to="/chat"
@@ -81,11 +85,14 @@ const TopBar = ({
             mr: 2,
             textDecoration: 'none',
             color: 'inherit',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            flexShrink: 1,
+            minWidth: 0,
+            overflow: 'hidden',
           }}
         >
           <img src={faviconUrl} alt={appDisplayName} style={{ height: 48, width: 'auto', marginRight: 8 }} />
-          <Typography variant="h2" sx={{ fontWeight: 600, color: '#000000ff' }}>{appDisplayName || ''}</Typography>
+          <Typography variant="h2" sx={{ fontWeight: 600, color: '#000000ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{appDisplayName || ''}</Typography>
         </Box>
 
         {/* Optional section title aligned with content start */}
