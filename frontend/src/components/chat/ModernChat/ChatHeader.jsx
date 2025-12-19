@@ -112,22 +112,17 @@ const ChatHeader = React.memo(function ChatHeader({
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
-            {/* Mobile: show overflow menu button instead of full model selector */}
+            {/* Mobile: show overflow menu button and summary button */}
             {isMobile ? (
               <>
+                <Tooltip title="View summary" arrow>
+                  <IconButton size="small" onClick={onOpenSummary} aria-label="View summary">
+                    <DescriptionIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
                 <Tooltip title="Menu" arrow>
                   <IconButton size="small" onClick={onOpenAutomationMenu} aria-label="Menu">
                     <MoreVertIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Chat settings" arrow>
-                  <IconButton
-                    onClick={onOpenSettings}
-                    color="default"
-                    size="small"
-                    aria-label="Chat settings"
-                  >
-                    <SettingsIcon />
                   </IconButton>
                 </Tooltip>
               </>

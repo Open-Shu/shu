@@ -1,11 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-const MobileSidebarContext = createContext({
-    isOpen: false,
-    open: () => { },
-    close: () => { },
-    toggle: () => { },
-});
+const MobileSidebarContext = createContext(null);
 
 export const MobileSidebarProvider = ({ children }) => {
     const [isOpen, setIsOpen] = useState(false);
