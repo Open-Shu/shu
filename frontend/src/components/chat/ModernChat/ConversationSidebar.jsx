@@ -41,20 +41,19 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
   searchValue,
   onSearchChange,
   searchFeedback,
+  isMobile = false,
 }) {
   const theme = useTheme();
 
   return (
     <Paper
       sx={{
-        width: 300,
-        minWidth: 300,
-        maxWidth: 300,
-        flexShrink: 0,
+        width: '100%',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         borderRadius: 0,
-        borderRight: 1,
+        borderRight: isMobile ? 0 : 1,
         borderColor: 'divider',
       }}
     >
@@ -65,6 +64,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
           startIcon={<AddIcon />}
           onClick={onCreateConversation}
           disabled={createConversationDisabled}
+          sx={{ minHeight: 44 }}
         >
           New Chat
         </Button>
@@ -125,6 +125,12 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   '&:hover .conversation-action-button': {
                     opacity: 1,
                   },
+                  // On mobile, always show action buttons for easier touch access
+                  ...(isMobile && {
+                    '& .conversation-action-button': {
+                      opacity: 0.7,
+                    },
+                  }),
                 }}
               >
                 <Tooltip
@@ -142,6 +148,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   placement="right"
                   arrow
                   disableHoverListener={!conversation.summary_text}
+                  // Disable tooltip on mobile (not useful for touch)
+                  disableTouchListener={isMobile}
                 >
                   <ListItemButton
                     selected={selectedConversationId === conversation.id}
@@ -149,6 +157,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     sx={{
                       borderRadius: 1,
                       pr: 7,
+                      minHeight: 56,
                       border: `1px solid ${chatStyles.conversationBorderColor}`,
                       color: selectedConversationId === conversation.id
                         ? chatStyles.conversationSelectedText
@@ -225,8 +234,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     '&:hover': {
                       bgcolor: alpha(theme.palette.primary.main, 0.12),
                     },
-                    width: 24,
-                    height: 24,
+                    width: 28,
+                    height: 28,
                   }}
                   size="small"
                 >
@@ -251,8 +260,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     '&:hover': {
                       bgcolor: alpha(theme.palette.error.main, 0.12),
                     },
-                    width: 24,
-                    height: 24,
+                    width: 28,
+                    height: 28,
                   }}
                   size="small"
                 >
