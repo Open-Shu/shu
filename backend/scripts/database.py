@@ -540,7 +540,10 @@ def cmd_reset(
             cur.execute("DROP SCHEMA public CASCADE")
             print(f"{LOG_PREFIX} Creating public schema...", flush=True)
             cur.execute("CREATE SCHEMA public")
-            cur.execute("GRANT ALL ON SCHEMA public TO PUBLIC")
+	            # Grant full privileges on the public schema to the current user
+	            # (the Shu app role), rather than to PUBLIC. This avoids giving
+	            # CREATE on public to every role in shared/non-dev environments.
+	            cur.execute("GRANT ALL ON SCHEMA public TO CURRENT_USER")
 
         print(f"{LOG_PREFIX} Schema reset complete", flush=True)
     except psycopg2.Error as e:

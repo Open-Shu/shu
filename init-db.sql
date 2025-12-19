@@ -2,10 +2,23 @@
 -- This script sets up a PostgreSQL database for Shu with all required extensions and configurations
 -- Can be run against any PostgreSQL database (local, remote, or cloud)
 
--- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+-- Optional extension: pg_stat_statements is not available on all Postgres
+-- deployments (especially some managed services). Treat it as best-effort so
+-- init-db.sql can run successfully even when the extension cannot be installed.
+DO $$
+BEGIN
+    BEGIN
+        CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE NOTICE 'pg_stat_statements extension not available, skipping';
+    END;
+END;
+$$;
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- For text search improvements
 CREATE EXTENSION IF NOT EXISTS btree_gin;  -- For better indexing
 
