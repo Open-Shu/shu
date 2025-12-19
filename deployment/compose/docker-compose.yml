@@ -112,7 +112,7 @@ services:
       shu-postgres:
         condition: service_healthy
     restart: "no"
-    command: ["python", "scripts/db_migrate.py"]
+    command: ["python", "scripts/database.py"]
 
   # Redis for caching
   redis:

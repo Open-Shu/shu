@@ -226,17 +226,16 @@ redis-cli ping  # Should return "PONG"
    createdb shu
    ```
 
-   Then run the automated setup script (recommended):
+   Then run the database setup script:
    ```bash
-   # Interactive setup - will prompt for database connection details
-   python backend/scripts/setup_database.py --interactive
+   # Set your database URL
+   export SHU_DATABASE_URL="postgresql://user:password@localhost:5432/shu"
+
+   # Run full setup (init-db.sql + migrations + requirements check)
+   python backend/scripts/database.py setup
 
    # Or provide database URL directly
-   python backend/scripts/setup_database.py --database-url postgresql://user:password@localhost:5432/shu
-
-   # Or use environment variable
-   export SHU_DATABASE_URL="postgresql://user:password@localhost:5432/shu"
-   python backend/scripts/setup_database.py
+   python backend/scripts/database.py setup --database-url postgresql://user:password@localhost:5432/shu
    ```
 
    This script will:
@@ -244,6 +243,13 @@ redis-cli ping  # Should return "PONG"
    - Configure database settings for optimal performance
    - Run Alembic migrations to create all tables
    - Verify the setup meets all requirements
+
+   Other useful database commands:
+   ```bash
+   python backend/scripts/database.py migrate   # Run migrations only
+   python backend/scripts/database.py check     # Check status and requirements
+   python backend/scripts/database.py reset --force  # Reset database (destructive)
+   ```
 
 3. **Set environment variables:**
    ```bash
