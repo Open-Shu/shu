@@ -186,13 +186,13 @@ const ModelConfigurationDialog = ({
             </Box>
             {itemsSpec && itemsSpec.properties
               ? Object.entries(itemsSpec.properties).map(([propKey, propSpec]) =>
-                  renderSchemaField(
-                    propKey,
-                    propSpec,
-                    entry ? entry[propKey] : undefined,
-                    (val) => updateEntry(idx, setByPath(entry || {}, propKey, val))
-                  )
+                renderSchemaField(
+                  propKey,
+                  propSpec,
+                  entry ? entry[propKey] : undefined,
+                  (val) => updateEntry(idx, setByPath(entry || {}, propKey, val))
                 )
+              )
               : (
                 <TextField
                   fullWidth
@@ -366,12 +366,12 @@ const ModelConfigurationDialog = ({
             : typeof currentVal === 'string' || typeof currentVal === 'number' || typeof currentVal === 'boolean'
               ? currentVal
               : (() => {
-                  try {
-                    return JSON.stringify(currentVal);
-                  } catch {
-                    return String(currentVal);
-                  }
-                })()
+                try {
+                  return JSON.stringify(currentVal);
+                } catch {
+                  return String(currentVal);
+                }
+              })()
         }
         onChange={(e) => handlePrimitiveChange(e.target.value)}
       />
@@ -604,8 +604,8 @@ const ModelConfigurationDialog = ({
                             <Select
                               value={
                                 paramOverrides[key] === undefined || paramOverrides[key] === null
-                                ? ''
-                                : paramOverrides[key]
+                                  ? ''
+                                  : paramOverrides[key]
                               }
                               label={spec.label || key}
                               renderValue={(selected) => {
@@ -682,11 +682,11 @@ const ModelConfigurationDialog = ({
                               );
                             })()}
                           </FormControl>
-                          ) : spec.type === 'boolean' ? (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Switch
-                                checked={paramOverrides[key] === true || paramOverrides[key] === false ? !!paramOverrides[key] : false}
-                                onChange={(e) => {
+                        ) : spec.type === 'boolean' ? (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Switch
+                              checked={paramOverrides[key] === true || paramOverrides[key] === false ? !!paramOverrides[key] : false}
+                              onChange={(e) => {
                                 const val = e.target.checked;
                                 handleParamChange(key, val);
                               }}
@@ -696,30 +696,30 @@ const ModelConfigurationDialog = ({
                         ) : spec.type === 'array' && Array.isArray(spec.options) ? (
                           <Box sx={{ pl: 1 }}>
                             {(spec.options || []).map((opt, idx) => {
-                                const currentArr = Array.isArray(paramOverrides[key]) ? paramOverrides[key] : [];
-                                const existingIdx = matchOptionIndex(currentArr, opt.value);
-                                const checked = existingIdx >= 0;
-                                const handleToggle = (checkedVal) => {
-                                  let nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                  if (checkedVal) {
-                                    nextArr.push(deepClone(opt.value));
+                              const currentArr = Array.isArray(paramOverrides[key]) ? paramOverrides[key] : [];
+                              const existingIdx = matchOptionIndex(currentArr, opt.value);
+                              const checked = existingIdx >= 0;
+                              const handleToggle = (checkedVal) => {
+                                let nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
+                                if (checkedVal) {
+                                  nextArr.push(deepClone(opt.value));
                                 } else if (existingIdx >= 0) {
                                   nextArr.splice(existingIdx, 1);
                                 }
                                 updateParamValue(key, nextArr);
                               };
-                                const handleInputFieldChange = (field, val) => {
-                                  if (existingIdx < 0) return;
-                                  const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                  nextArr[existingIdx] = setByPath(nextArr[existingIdx], field.path, val);
-                                  updateParamValue(key, nextArr);
-                                };
-                                const handleSchemaJsonChange = (val) => {
-                                  if (existingIdx < 0) return;
-                                  const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                  nextArr[existingIdx] = { ...nextArr[existingIdx], ...(val || {}) };
-                                  updateParamValue(key, nextArr);
-                                };
+                              const handleInputFieldChange = (field, val) => {
+                                if (existingIdx < 0) return;
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
+                                nextArr[existingIdx] = setByPath(nextArr[existingIdx], field.path, val);
+                                updateParamValue(key, nextArr);
+                              };
+                              const handleSchemaJsonChange = (val) => {
+                                if (existingIdx < 0) return;
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
+                                nextArr[existingIdx] = { ...nextArr[existingIdx], ...(val || {}) };
+                                updateParamValue(key, nextArr);
+                              };
                               return (
                                 <Paper key={`${key}-opt-${idx}`} variant="outlined" sx={{ p: 1, mb: 1 }}>
                                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -741,14 +741,14 @@ const ModelConfigurationDialog = ({
                                           value={
                                             existingIdx >= 0
                                               ? (() => {
-                                                  const parts = field.path.split('.');
-                                                  let cur = paramOverrides[key][existingIdx];
-                                                  for (const p of parts) {
-                                                    if (cur == null) break;
-                                                    cur = cur[p];
-                                                  }
-                                                  return cur ?? '';
-                                                })()
+                                                const parts = field.path.split('.');
+                                                let cur = paramOverrides[key][existingIdx];
+                                                for (const p of parts) {
+                                                  if (cur == null) break;
+                                                  cur = cur[p];
+                                                }
+                                                return cur ?? '';
+                                              })()
                                               : ''
                                           }
                                           onChange={(e) => handleInputFieldChange(field, e.target.value)}
@@ -940,43 +940,65 @@ const ModelConfigurationDialog = ({
           </Grid>
 
           <Grid item xs={12}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* Status Toggle */}
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>Status</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
               <Switch
                 checked={formData.is_active}
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
               />
               <Typography variant="body2">Active</Typography>
             </Box>
-            {capabilityToggles.map(({ funcKey, value, label }) => (
-              <Box key={funcKey} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Switch
-                  checked={!!value}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    functionalities: {
-                      ...(formData.functionalities || {}),
-                      [funcKey]: e.target.checked,
-                    },
-                  })}
-                />
-                <Typography variant="body2">{label}</Typography>
-              </Box>
-            ))}
+
+            {/* Model Capabilities */}
+            {capabilityToggles.length > 0 && (
+              <>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>Capabilities</Typography>
+                {capabilityToggles.map(({ funcKey, value, label }) => (
+                  <Box key={funcKey} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Switch
+                      checked={!!value}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        functionalities: {
+                          ...(formData.functionalities || {}),
+                          [funcKey]: e.target.checked,
+                        },
+                      })}
+                    />
+                    <Typography variant="body2">{label}</Typography>
+                  </Box>
+                ))}
+              </>
+            )}
+
+            {/* System Designations */}
+            <Typography variant="subtitle2" sx={{ mt: 2, mb: 0.5, fontWeight: 600 }}>System Designations</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              Only one model can be designated for each role at a time.
+            </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Switch
                 checked={formData.is_side_call_model || false}
                 onChange={(e) => setFormData({ ...formData, is_side_call_model: e.target.checked })}
               />
-              <Typography variant="body2">Use model for side calls</Typography>
+              <Typography variant="body2">Side Call Model</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Switch
+                checked={formData.is_ocr_call_model || false}
+                onChange={(e) => setFormData({ ...formData, is_ocr_call_model: e.target.checked })}
+              />
+              <Typography variant="body2">OCR Model (requires vision)</Typography>
             </Box>
           </Grid>
           <Grid item xs={12}>
             <Box sx={{ mt: 0.5 }}>
-              <NotImplemented label="Model vision toggle is informational; runtime enforcement not implemented" />
-            </Box>
-            <Box sx={{ mt: 0.5 }}>
               <Typography variant="body2" color="text.secondary">
-                <strong>Side Calls:</strong> When enabled, this model will be used for optimized LLM side-calls like prompt assistance, title generation, and UI summaries. Only one model should have this enabled at a time.
+                <strong>Side Calls:</strong> Used for optimized LLM operations like prompt assistance and title generation.
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                <strong>OCR Model:</strong> Used for vision-based text extraction from PDFs and images during ingestion.
               </Typography>
             </Box>
           </Grid>
@@ -987,8 +1009,8 @@ const ModelConfigurationDialog = ({
         <Button onClick={onClose}>Cancel</Button>
         <Button onClick={() => {
           onSubmit();
-          // Invalidate side-call config query if this model is marked for side calls
-          if (formData.is_side_call_model) {
+          // Invalidate config queries if caller designations changed
+          if (formData.is_side_call_model || formData.is_ocr_call_model) {
             handleSaveSuccess();
           }
         }} variant="contained" disabled={isSubmitting || !formData.name || !formData.llm_provider_id || !formData.model_name}>

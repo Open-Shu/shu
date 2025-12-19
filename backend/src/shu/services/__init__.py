@@ -10,7 +10,9 @@ from .document_service import DocumentService
 from .query_service import QueryService
 from .branding_service import BrandingService
 from .system_settings_service import SystemSettingsService
+from .base_caller_service import BaseCallerService, CallerResult
 from .side_call_service import SideCallService
+from .ocr_call_service import OcrCallService
 from .conversation_automation_service import ConversationAutomationService
 
 __all__ = [
@@ -19,6 +21,10 @@ __all__ = [
     "QueryService",
     "BrandingService",
     "SystemSettingsService",
+    "BaseCallerService",
+    "CallerResult",
     "SideCallService",
+    "OcrCallService",
     "ConversationAutomationService",
 ]
+

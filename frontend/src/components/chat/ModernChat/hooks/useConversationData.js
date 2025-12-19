@@ -26,7 +26,7 @@ const normalizeModelConfigs = (raw) => {
   return [];
 };
 
-const filterAvailableModelConfigs = (configs) => configs.filter((config) => !config.is_side_call);
+const filterAvailableModelConfigs = (configs) => configs.filter((config) => !config.is_side_call && !config.is_ocr_call);
 
 const useConversationData = ({
   summaryQuery,

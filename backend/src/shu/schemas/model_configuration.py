@@ -61,6 +61,7 @@ class ModelConfigurationCreate(ModelConfigurationBase):
     parameter_overrides: Dict[str, Any] = Field(default_factory=dict, description="Per-model LLM parameter overrides (admin-controlled); validated only for known mapped keys")
     functionalities: Optional[Dict[str, Any]] = Field(None, description="Enabled functionalities for the given model")
     is_side_call_model: bool = Field(False, description="Whether this model is designated for side-calls")
+    is_ocr_call_model: bool = Field(False, description="Whether this model is designated for OCR calls")
 
     kb_prompt_assignments: List[ModelConfigKBPromptAssignment] = Field(
         default_factory=list,
@@ -89,6 +90,7 @@ class ModelConfigurationUpdate(BaseModel):
     )
     functionalities: Optional[Dict[str, Any]] = Field(None, description="Enabled functionalities for the given model")
     is_side_call_model: Optional[bool] = Field(None, description="Whether this model is designated for side-calls")
+    is_ocr_call_model: Optional[bool] = Field(None, description="Whether this model is designated for OCR calls")
 
     @validator('name')
     def validate_name(cls, v):
@@ -136,6 +138,7 @@ class ModelConfigurationResponse(ModelConfigurationBase):
 
     functionalities: Dict[str, Any] = Field(default_factory=dict, description="Enabled functionalities for this model")
     is_side_call: bool = Field(False, description="Whether this model is designated for side-calls")
+    is_ocr_call: bool = Field(False, description="Whether this model is designated for OCR calls")
 
 
 class ModelConfigurationList(BaseModel):

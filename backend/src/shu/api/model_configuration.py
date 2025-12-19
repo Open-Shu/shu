@@ -21,6 +21,7 @@ from ..services.chat_service import ChatService
 from ..schemas.query import RagRewriteMode
 from ..services.model_configuration_service import ModelConfigurationService
 from ..services.side_call_service import SideCallService
+from ..services.ocr_call_service import OcrCallService
 from ..schemas.model_configuration import (
     ModelConfigurationCreate,
     ModelConfigurationUpdate,
@@ -39,15 +40,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
 
 
-def _create_side_call_service(db: AsyncSession) -> SideCallService:
+def _create_caller_services(db: AsyncSession) -> SideCallService:
     """Instantiate a SideCallService for the current request."""
-    return SideCallService(db, get_config_manager_dependency())
+    return (
+        SideCallService(db, get_config_manager_dependency()),
+        OcrCallService(db, get_config_manager_dependency()),
+    )
 
 
 async def _get_side_call_model_id(side_call_service: SideCallService) -> Optional[str]:
     """Return the configured side-call model ID, if any."""
     side_call_model = await side_call_service.get_side_call_model()
     return side_call_model.id if side_call_model else None
+
+
+async def _get_ocr_call_model_id(ocr_call_service: OcrCallService) -> Optional[str]:
+    """Return the configured OCR call model ID, if any."""
+    ocr_call_model = await ocr_call_service.get_ocr_call_model()
+    return ocr_call_model.id if ocr_call_model else None
 
 
 def _apply_side_call_flag(
@@ -67,6 +77,33 @@ def _apply_side_call_flag(
             config.is_side_call = config.id == side_call_model_id
 
 
+def _apply_ocr_call_flag(
+    configs: Union[ModelConfigurationResponse, Iterable[ModelConfigurationResponse], None],
+    ocr_call_model_id: Optional[str],
+) -> None:
+    """Mark configuration response objects with the is_ocr_call flag."""
+    if not configs:
+        return
+
+    if isinstance(configs, ModelConfigurationResponse):
+        configs.is_ocr_call = configs.id == ocr_call_model_id
+        return
+
+    for config in configs:
+        if config is not None:
+            config.is_ocr_call = config.id == ocr_call_model_id
+
+
+def _apply_caller_flags(
+    configs: Union[ModelConfigurationResponse, Iterable[ModelConfigurationResponse], None],
+    side_call_model_id: Optional[str],
+    ocr_call_model_id: Optional[str],
+) -> None:
+    """Apply all caller designation flags to configuration responses."""
+    _apply_side_call_flag(configs, side_call_model_id)
+    _apply_ocr_call_flag(configs, ocr_call_model_id)
+
+
 @router.post(
     "",
     response_model=SuccessResponse[ModelConfigurationResponse],
@@ -82,12 +119,16 @@ async def create_model_configuration(
     """Create a new model configuration."""
     try:
         service = ModelConfigurationService(db)
-        side_call_service = _create_side_call_service(db)
+        side_call_service, ocr_call_service = _create_caller_services(db)
         config = await service.create_model_configuration(config_data)
 
         # If this model is marked for side calls, update the system setting
         if getattr(config_data, "is_side_call_model", False):
             await side_call_service.set_side_call_model(config.id, current_user.id)
+
+        # If this model is marked for OCR calls, update the system setting
+        if getattr(config_data, "is_ocr_call_model", False):
+            await ocr_call_service.set_ocr_call_model(config.id, current_user.id)
 
         # Reload with relationships for response serialization
         config_with_relationships = await service.get_model_configuration(
@@ -95,10 +136,11 @@ async def create_model_configuration(
         )
 
         side_call_model_id = await _get_side_call_model_id(side_call_service)
+        ocr_call_model_id = await _get_ocr_call_model_id(ocr_call_service)
 
         # Convert to response format
         response_data = service._to_response(config_with_relationships)
-        _apply_side_call_flag(response_data, side_call_model_id)
+        _apply_caller_flags(response_data, side_call_model_id, ocr_call_model_id)
 
         # Use ShuResponse to ensure single-wrapped JSON envelope
         return ShuResponse.created(response_data)
@@ -136,7 +178,7 @@ async def list_model_configurations(
     """List model configurations with pagination and filtering."""
     try:
         service = ModelConfigurationService(db)
-        side_call_service = _create_side_call_service(db)
+        side_call_service, ocr_call_service = _create_caller_services(db)
 
         is_power_user = current_user.has_role(UserRole.POWER_USER)
         effective_include_relationships = include_relationships # default to include relationships
@@ -165,8 +207,9 @@ async def list_model_configurations(
         )
 
         side_call_model_id = await _get_side_call_model_id(side_call_service)
+        ocr_call_model_id = await _get_ocr_call_model_id(ocr_call_service)
         if hasattr(result, "items"):
-            _apply_side_call_flag(result.items, side_call_model_id)
+            _apply_caller_flags(result.items, side_call_model_id, ocr_call_model_id)
             if not is_power_user:
                 for cfg in result.items:
                     if cfg is None:
@@ -221,10 +264,11 @@ async def get_model_configuration(
                 detail=f"Model configuration {config_id} not found"
             )
         
-        side_call_service = _create_side_call_service(db)
+        side_call_service, ocr_call_service = _create_caller_services(db)
         response_data = service._to_response(config)
         side_call_model_id = await _get_side_call_model_id(side_call_service)
-        _apply_side_call_flag(response_data, side_call_model_id)
+        ocr_call_model_id = await _get_ocr_call_model_id(ocr_call_service)
+        _apply_caller_flags(response_data, side_call_model_id, ocr_call_model_id)
         
         return SuccessResponse(data=response_data)
         
@@ -259,11 +303,12 @@ async def update_model_configuration(
     """Update a model configuration."""
     try:
         service = ModelConfigurationService(db)
-        side_call_service = _create_side_call_service(db)
+        side_call_service, ocr_call_service = _create_caller_services(db)
 
-        # Capture current side-call model before applying updates so we can
-        # decide whether this update should clear the designation.
+        # Capture current caller models before applying updates so we can
+        # decide whether this update should clear the designations.
         existing_side_call_model_id = await _get_side_call_model_id(side_call_service)
+        existing_ocr_call_model_id = await _get_ocr_call_model_id(ocr_call_service)
 
         config = await service.update_model_configuration(config_id, update_data)
 
@@ -273,19 +318,27 @@ async def update_model_configuration(
                 detail=f"Model configuration {config_id} not found"
             )
 
+        # Handle side-call designation
         is_side_call_flag = getattr(update_data, "is_side_call_model", None)
-
-        # If this model is marked for side calls, update the system setting
         if is_side_call_flag is True:
             await side_call_service.set_side_call_model(config_id, current_user.id)
-        # If the flag is explicitly False and this config is currently the
-        # side-call model, clear the designation.
         elif (
             is_side_call_flag is False
             and existing_side_call_model_id is not None
             and existing_side_call_model_id == config_id
         ):
             await side_call_service.clear_side_call_model(current_user.id)
+
+        # Handle OCR-call designation
+        is_ocr_call_flag = getattr(update_data, "is_ocr_call_model", None)
+        if is_ocr_call_flag is True:
+            await ocr_call_service.set_ocr_call_model(config_id, current_user.id)
+        elif (
+            is_ocr_call_flag is False
+            and existing_ocr_call_model_id is not None
+            and existing_ocr_call_model_id == config_id
+        ):
+            await ocr_call_service.clear_ocr_call_model(current_user.id)
 
         # Reload with relationships to ensure they're available for serialization
         config_with_relationships = await service.get_model_configuration(
@@ -294,7 +347,8 @@ async def update_model_configuration(
 
         response_data = service._to_response(config_with_relationships)
         side_call_model_id = await _get_side_call_model_id(side_call_service)
-        _apply_side_call_flag(response_data, side_call_model_id)
+        ocr_call_model_id = await _get_ocr_call_model_id(ocr_call_service)
+        _apply_caller_flags(response_data, side_call_model_id, ocr_call_model_id)
 
         return SuccessResponse(data=response_data)
 
