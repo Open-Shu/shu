@@ -93,7 +93,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # One-off job to ensure pgvector extension and run Alembic migrations
+  # One-off job to bootstrap database (create role/db if needed, run migrations)
   shu-db-migrate:
     build:
       context: ../..
@@ -106,13 +106,14 @@ services:
     volumes:
       - ../../backend/scripts:/app/scripts
       - ../../backend/migrations:/app/migrations
+      - ../../init-db.sql:/app/init-db.sql:ro
     networks:
       - shu-network
     depends_on:
       shu-postgres:
         condition: service_healthy
     restart: "no"
-    command: ["python", "scripts/db_migrate.py"]
+    command: ["python", "scripts/database.py", "bootstrap", "--admin-user", "shu", "--admin-password", "password"]
 
   # Redis for caching
   redis:

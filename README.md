@@ -221,29 +221,42 @@ redis-cli ping  # Should return "PONG"
 
 2. **Create and set up the PostgreSQL database:**
 
-   First, create the database:
-   ```bash
-   createdb shu
-   ```
+	   First, create the database:
+	   ```bash
+	   createdb shu
+	   ```
 
-   Then run the automated setup script (recommended):
-   ```bash
-   # Interactive setup - will prompt for database connection details
-   python backend/scripts/setup_database.py --interactive
+	   Then run the database setup script:
+	   ```bash
+	   # Set your database URL for the setup script. database.py accepts either
+	   # `postgresql://` or `postgresql+asyncpg://` here and normalizes it for
+	   # psycopg2/Alembic.
+	   export SHU_DATABASE_URL="postgresql+asyncpg://user:password@localhost:5432/shu"
+	
+	   # Run full setup (init-db.sql + migrations + requirements check)
+	   python backend/scripts/database.py setup
+	
+	   # Or provide database URL directly
+	   python backend/scripts/database.py setup --database-url postgresql+asyncpg://user:password@localhost:5432/shu
+	   ```
 
-   # Or provide database URL directly
-   python backend/scripts/setup_database.py --database-url postgresql://user:password@localhost:5432/shu
-
-   # Or use environment variable
-   export SHU_DATABASE_URL="postgresql://user:password@localhost:5432/shu"
-   python backend/scripts/setup_database.py
-   ```
-
-   This script will:
+	   This script will:
    - Execute `init-db.sql` to create required PostgreSQL extensions (pgvector, uuid-ossp, etc.)
    - Configure database settings for optimal performance
    - Run Alembic migrations to create all tables
    - Verify the setup meets all requirements
+
+	   Note: `backend/scripts/database.py` accepts both `postgresql://` and
+	   `postgresql+asyncpg://` URLs for setup, but when running the Shu API
+	   itself you should keep `SHU_DATABASE_URL` using the async
+	   `postgresql+asyncpg://` scheme as shown in the next step.
+
+   Other useful database commands:
+   ```bash
+   python backend/scripts/database.py migrate   # Run migrations only
+   python backend/scripts/database.py check     # Check status and requirements
+   python backend/scripts/database.py reset --force  # Reset database (destructive)
+   ```
 
 3. **Set environment variables:**
    ```bash
