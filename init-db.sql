@@ -49,15 +49,15 @@ BEGIN
             ELSE 'pgvector extension is NOT installed - Shu will not work'
         END;
     
-    -- Check database permissions
+    -- Check schema permissions (can create tables in public schema)
     RETURN QUERY
-    SELECT 
-        'Database Permissions'::TEXT,
-        CASE 
-            WHEN has_database_privilege(current_database(), 'CREATE') THEN 'OK'
+    SELECT
+        'Schema Permissions'::TEXT,
+        CASE
+            WHEN has_schema_privilege('public', 'CREATE') THEN 'OK'
             ELSE 'ERROR'
         END,
-        'User: ' || current_user;
+        'User: ' || current_user || ' can create tables in public schema';
     
     -- Check available memory
     RETURN QUERY
