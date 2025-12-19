@@ -19,6 +19,7 @@ import {
 } from '@mui/material';
 import { RAG_REWRITE_OPTIONS } from '../../../utils/constants';
 import NotImplemented from '../../NotImplemented';
+import ModelConfigSelector from './ModelConfigSelector';
 
 const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
   open,
@@ -31,6 +32,11 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
   isSaving,
   ragRewriteMode,
   setRagRewriteMode,
+  // Model configuration props (for mobile users)
+  availableModelConfigs,
+  selectedModelConfig,
+  onModelChange,
+  disableModelSelect,
 }) {
 
   return (
@@ -38,6 +44,26 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
       <DialogTitle>Chat Settings</DialogTitle>
       <DialogContent>
         <Box sx={{ mt: 2 }}>
+          {/* Model Configuration - visible for mobile users */}
+          {Array.isArray(availableModelConfigs) && availableModelConfigs.length > 0 && (
+            <>
+              <Typography variant="h6" gutterBottom>
+                Model Configuration
+              </Typography>
+              <Grid container spacing={3} sx={{ mb: 3 }}>
+                <Grid item xs={12}>
+                  <ModelConfigSelector
+                    availableModelConfigs={availableModelConfigs}
+                    selectedModelConfig={selectedModelConfig}
+                    onModelChange={onModelChange}
+                    disabled={disableModelSelect}
+                    fullWidth
+                  />
+                </Grid>
+              </Grid>
+            </>
+          )}
+
           <Typography variant="h6" gutterBottom>
             Memory Settings
           </Typography>

@@ -54,7 +54,7 @@ const AdminLayout = ({ children }) => {
   const primaryMain = appTheme.palette.primary.main;
 
   const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen);
+    setMobileOpen((prev) => !prev);
   };
 
   const handleNavigation = (path) => {

@@ -3,16 +3,13 @@ import {
   Box,
   Chip,
   CircularProgress,
-  FormControl,
   IconButton,
-  InputLabel,
   Menu,
-  MenuItem,
   Paper,
-  Select,
   Tooltip,
   Typography,
 } from '@mui/material';
+import ModelConfigSelector from './ModelConfigSelector';
 import {
   Description as DescriptionIcon,
   MoreVert as MoreVertIcon,
@@ -112,53 +109,33 @@ const ChatHeader = React.memo(function ChatHeader({
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
-            {/* Mobile: show overflow menu button instead of full model selector */}
+            {/* Mobile: show summary, settings, and menu buttons */}
             {isMobile ? (
               <>
+                <Tooltip title="View summary" arrow>
+                  <IconButton size="small" onClick={onOpenSummary} aria-label="View summary">
+                    <DescriptionIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
                 <Tooltip title="Menu" arrow>
                   <IconButton size="small" onClick={onOpenAutomationMenu} aria-label="Menu">
                     <MoreVertIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
                 <Tooltip title="Chat settings" arrow>
-                  <IconButton
-                    onClick={onOpenSettings}
-                    color="default"
-                    size="small"
-                    aria-label="Chat settings"
-                  >
-                    <SettingsIcon />
+                  <IconButton size="small" onClick={onOpenSettings} aria-label="Chat settings">
+                    <SettingsIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </>
             ) : (
               <>
-                <FormControl size="small" sx={{ minWidth: 220 }}>
-                  <InputLabel>Model</InputLabel>
-                  <Select
-                    value={selectedModelConfig || ''}
-                    label="Model"
-                    onChange={onModelChange}
-                    disabled={disableModelSelect}
-                    displayEmpty
-                  >
-                    <MenuItem value="" disabled>
-                      <Typography variant="body2" color="text.secondary">
-                        Select a model
-                      </Typography>
-                    </MenuItem>
-                    {availableModelConfigs.map((config) => (
-                      <MenuItem key={config.id} value={config.id}>
-                        <Box>
-                          <Typography variant="body2" noWrap>{config.name}</Typography>
-                          <Typography variant="caption" color="text.secondary" noWrap>
-                            {(config.llm_provider?.name || 'Provider')} • {config.model_name}
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <ModelConfigSelector
+                  availableModelConfigs={availableModelConfigs}
+                  selectedModelConfig={selectedModelConfig}
+                  onModelChange={onModelChange}
+                  disabled={disableModelSelect}
+                />
                 <Tooltip title="Chat settings" arrow>
                   <IconButton
                     onClick={onOpenSettings}

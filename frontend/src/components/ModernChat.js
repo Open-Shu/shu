@@ -1178,6 +1178,11 @@ const ModernChat = () => {
     isSaving: updatePreferencesMutation.isLoading,
     ragRewriteMode,
     setRagRewriteMode,
+    // Model configuration props for mobile users
+    availableModelConfigs,
+    selectedModelConfig,
+    onModelChange: handleModelConfigChange,
+    disableModelSelect: !selectedConversation || isStreamingForSelectedConversation,
   };
 
   return (
