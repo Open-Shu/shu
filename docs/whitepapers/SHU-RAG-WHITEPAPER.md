@@ -106,6 +106,16 @@ Chunk profiles serve two purposes:
 1. **Fast filtering**: Keyword/topic matching (O(log n) via index) can eliminate 90% of chunks before expensive vector search
 2. **LLM-scannable index**: An agentic retriever can scan chunk summaries to navigate top-down from document to relevant chunks without loading full content
 
+### 2.1.2 Incremental Profiling for Long Documents
+
+Shu RAG does **not** require the full text of very long documents to be processed in a single
+LLM call. Instead, chunk profiling is the primary unit of intelligence: document-level fields
+such as `synopsis`, `document_type`, and `capability_manifest` are derived by aggregating chunk
+profiles (and, where helpful, higher-level summaries of those profiles). When a document fits in
+one chunk, the system may profile it directly, but the architecture is defined so that
+multi-chunk documents are handled via incremental, chunk-first profiling rather than
+"all-at-once" full-document passes.
+
 ### 2.2 Capability Manifests
 
 A document's *capability* is the set of user questions for which the document contains sufficient evidence to support a satisfactory answer. Rather than leaving this implicit in embeddings, Shu RAG makes it explicit through capability manifests.
@@ -426,6 +436,8 @@ Document and chunk profiling require LLM inference at ingestion time. Cost consi
 - **Async processing**: Profiling runs in background; documents are immediately searchable via chunks
 - **Chunk batching**: Chunk profiling can batch multiple chunks per LLM call to reduce API overhead
 - **Proportional cost**: Chunk profiling adds N LLM calls per document (batched), where N scales with document size
+ - **Hierarchical aggregation**: Document-level profiles for long documents are computed by
+   aggregating chunk profiles, keeping individual LLM calls within a bounded context window.
 
 ### 6.2 Storage Requirements
 

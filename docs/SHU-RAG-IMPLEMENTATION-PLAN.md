@@ -77,7 +77,14 @@ individual task files under `tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/`.
 - Generate document profiles (synopsis, document type, capability manifest) and chunk profiles
   (summary, keywords, topics) at ingestion time while keeping traditional RAG behavior unchanged.
 - Chunk profiling enables fast keyword/topic filtering before vector search and provides an
-  LLM-scannable index for agentic retrieval.
+  LLM-scannable index for agentic retrieval. Chunk profiles are **always computed** for every
+  document regardless of size.
+- Document-level profiling uses a **hybrid strategy** based on document size:
+  - **Small documents** (`doc_tokens <= PROFILING_FULL_DOC_MAX_TOKENS`): Profile the full
+    document directly in a single LLM call for higher quality.
+  - **Large documents**: Use chunk-first aggregation to derive document-level fields from
+    chunk profiles.
+- No single LLM call should exceed `PROFILING_MAX_INPUT_TOKENS`.
 - Primary tasks: SHU-343 Document and Chunk Profiling Service, SHU-344 Ingestion
   Pipeline Integration, SHU-359 Synopsis Embedding.
 
@@ -154,13 +161,22 @@ Phase 5: Agentic Orchestration (requires SHU-18)
 - Profiling generates: synopsis, capability manifest, synthesized questions
 - Store profile artifacts in new tables
 - Document immediately searchable via chunks; profile surfaces available after profiling completes
+ - A small DB-aware profiling orchestrator (SHU-343) owns loading documents/chunks, managing
+   `profiling_status`, and delegating to the ProfilingService; ingestion (SHU-344) only enqueues
+   work to this orchestrator.
 
 **Configuration**:
 ```python
 # config.py additions
 ENABLE_DOCUMENT_PROFILING: bool = False  # Feature flag
 PROFILING_LLM_MODEL: str = "gpt-4o-mini"  # Model for profiling
-PROFILING_QUESTION_COUNT: int = 10  # Questions per document
+PROFILING_FULL_DOC_MAX_TOKENS: int = 4000  # Routing threshold: documents at or below
+                                            # this size use full-doc profiling; larger
+                                            # docs use chunk-first aggregation
+PROFILING_MAX_INPUT_TOKENS: int = 8000  # Hard ceiling on any single profiling LLM call
+                                        # (full-doc or aggregate). Never truncate to
+                                        # satisfy; route to chunk-agg or partition.
+PROFILING_QUESTION_COUNT: int = 10  # Questions per document (Phase 2: Query Synthesis)
 PROFILING_ASYNC: bool = True  # Background processing
 ```
 
@@ -276,23 +292,24 @@ All tasks are documented under [tasks/SHU-339-SHU-RAG-Intelligent-Retrieval](./t
 | 3 | SHU-343 | Document and Chunk Profiling Service | 1 | 4-5 days | [SHU-343-Document-Profiling-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-343-Document-Profiling-Service.md) |
 | 4 | SHU-344 | Ingestion Pipeline Integration | 1 | 2-3 days | [SHU-344-Ingestion-Pipeline-Integration.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-344-Ingestion-Pipeline-Integration.md) |
 | 5 | SHU-359 | Synopsis Embedding | 1 | 1-2 days | [SHU-359-Synopsis-Embedding.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-359-Synopsis-Embedding.md) |
-| 6 | SHU-353 | Query Synthesis Service | 2 | 3-4 days | [SHU-353-Question-Synthesis-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-353-Question-Synthesis-Service.md) |
-| 7 | SHU-351 | Query Embedding and Storage | 2 | 2-3 days | [SHU-351-Question-Embedding-and-Storage.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-351-Question-Embedding-and-Storage.md) |
-| 8 | SHU-352 | Query-Match Retrieval Surface | 2 | 2-3 days | [SHU-352-Question-Match-Retrieval-Surface.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-352-Question-Match-Retrieval-Surface.md) |
-| 9 | SHU-350 | Query Classification Service | 3 | 2-3 days | [SHU-350-Query-Classification-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-350-Query-Classification-Service.md) |
-| 10 | SHU-348 | Multi-Surface Query Router | 3 | 2-3 days | [SHU-348-Multi-Surface-Query-Router.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-348-Multi-Surface-Query-Router.md) |
-| 11 | SHU-358 | Score Fusion Service | 3 | 2-3 days | [SHU-358-Score-Fusion-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-358-Score-Fusion-Service.md) |
-| 12 | SHU-347 | Manifest-Based Filtering | 3 | 2-3 days | [SHU-347-Manifest-Based-Filtering.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-347-Manifest-Based-Filtering.md) |
-| 13 | SHU-341 | Document Participant Extraction | 4 | 3-4 days | [SHU-341-Document-Participant-Extraction.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-341-Document-Participant-Extraction.md) |
-| 14 | SHU-349 | Project Association Extraction | 4 | 2-3 days | [SHU-349-Project-Association-Extraction.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-349-Project-Association-Extraction.md) |
-| 15 | SHU-354 | Relational Boost Scoring | 4 | 3-4 days | [SHU-354-Relational-Boost-Scoring.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-354-Relational-Boost-Scoring.md) |
-| 16 | SHU-360 | Temporal Relevance Scoring | 4 | 2-3 days | [SHU-360-Temporal-Relevance-Scoring.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-360-Temporal-Relevance-Scoring.md) |
-| 17 | SHU-357 | Retrieval Tool Definitions | 5 | 3-4 days | [SHU-357-Retrieval-Tool-Definitions.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-357-Retrieval-Tool-Definitions.md) |
-| 18 | SHU-345 | Invocation Policy Service | 5 | 2-3 days | [SHU-345-Invocation-Policy-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-345-Invocation-Policy-Service.md) |
-| 19 | SHU-346 | Iterative Refinement Logic | 5 | 3-4 days | [SHU-346-Iterative-Refinement-Logic.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-346-Iterative-Refinement-Logic.md) |
-| 20 | SHU-356 | Retrieval Feedback Loop | 5 | 2-3 days | [SHU-356-Retrieval-Feedback-Loop.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-356-Retrieval-Feedback-Loop.md) |
+| 6 | SHU-361 | Admin UI and Configuration for Profiling | 1 | 3-4 days | [SHU-361-Admin-Configuration-for-Shu-RAG-Ingestion-Time-Intelligence.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-361-Admin-Configuration-for-Shu-RAG-Ingestion-Time-Intelligence.md) |
+| 7 | SHU-353 | Query Synthesis Service | 2 | 3-4 days | [SHU-353-Question-Synthesis-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-353-Question-Synthesis-Service.md) |
+| 8 | SHU-351 | Query Embedding and Storage | 2 | 2-3 days | [SHU-351-Question-Embedding-and-Storage.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-351-Question-Embedding-and-Storage.md) |
+| 9 | SHU-352 | Query-Match Retrieval Surface | 2 | 2-3 days | [SHU-352-Question-Match-Retrieval-Surface.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-352-Question-Match-Retrieval-Surface.md) |
+| 10 | SHU-350 | Query Classification Service | 3 | 2-3 days | [SHU-350-Query-Classification-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-350-Query-Classification-Service.md) |
+| 11 | SHU-348 | Multi-Surface Query Router | 3 | 2-3 days | [SHU-348-Multi-Surface-Query-Router.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-348-Multi-Surface-Query-Router.md) |
+| 12 | SHU-358 | Score Fusion Service | 3 | 2-3 days | [SHU-358-Score-Fusion-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-358-Score-Fusion-Service.md) |
+| 13 | SHU-347 | Manifest-Based Filtering | 3 | 2-3 days | [SHU-347-Manifest-Based-Filtering.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-347-Manifest-Based-Filtering.md) |
+| 14 | SHU-341 | Document Participant Extraction | 4 | 3-4 days | [SHU-341-Document-Participant-Extraction.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-341-Document-Participant-Extraction.md) |
+| 15 | SHU-349 | Project Association Extraction | 4 | 2-3 days | [SHU-349-Project-Association-Extraction.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-349-Project-Association-Extraction.md) |
+| 16 | SHU-354 | Relational Boost Scoring | 4 | 3-4 days | [SHU-354-Relational-Boost-Scoring.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-354-Relational-Boost-Scoring.md) |
+| 17 | SHU-360 | Temporal Relevance Scoring | 4 | 2-3 days | [SHU-360-Temporal-Relevance-Scoring.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-360-Temporal-Relevance-Scoring.md) |
+| 18 | SHU-357 | Retrieval Tool Definitions | 5 | 3-4 days | [SHU-357-Retrieval-Tool-Definitions.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-357-Retrieval-Tool-Definitions.md) |
+| 19 | SHU-345 | Invocation Policy Service | 5 | 2-3 days | [SHU-345-Invocation-Policy-Service.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-345-Invocation-Policy-Service.md) |
+| 20 | SHU-346 | Iterative Refinement Logic | 5 | 3-4 days | [SHU-346-Iterative-Refinement-Logic.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-346-Iterative-Refinement-Logic.md) |
+| 21 | SHU-356 | Retrieval Feedback Loop | 5 | 2-3 days | [SHU-356-Retrieval-Feedback-Loop.md](./tasks/SHU-339-SHU-RAG-Intelligent-Retrieval/SHU-356-Retrieval-Feedback-Loop.md) |
 
-**Total Estimated Effort**: 47-63 days (not including SHU-15/SHU-18 dependencies)
+**Total Estimated Effort**: 50-67 days (not including SHU-15/SHU-18 dependencies)
 
 Note: Phase 1 effort increased to account for chunk profiling alongside document profiling.
 
