@@ -37,21 +37,26 @@ class OcrCallService(BaseCallerService):
     SETTING_KEY = OCR_CALL_MODEL_SETTING_KEY
     REQUEST_TYPE = "ocr_call"
 
-    async def get_ocr_call_model(self) -> Optional[ModelConfiguration]:
-        """Get the currently designated OCR call model configuration."""
+    async def get_model(self) -> Optional[ModelConfiguration]:
+        """Get the currently designated model configuration for this caller."""
         return await self._get_designated_model()
 
-    async def set_ocr_call_model(self, model_config_id: str, user_id: str) -> bool:
+    async def set_model(self, model_config_id: str, user_id: str) -> bool:
         """
-        Set the designated OCR call model configuration.
+        Set the designated model configuration for this caller.
         
         Validates that the model supports vision capabilities.
         """
         return await self._set_designated_model(model_config_id, user_id)
 
-    async def clear_ocr_call_model(self, user_id: str) -> bool:
-        """Clear the designated OCR call model configuration."""
+    async def clear_model(self, user_id: str) -> bool:
+        """Clear the designated model configuration for this caller."""
         return await self._clear_designated_model(user_id)
+
+    # Backward-compatible aliases
+    get_ocr_call_model = get_model
+    set_ocr_call_model = set_model
+    clear_ocr_call_model = clear_model
 
     async def _validate_model_for_designation(self, model_config: ModelConfiguration) -> Optional[str]:
         """

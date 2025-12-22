@@ -56,17 +56,22 @@ class SideCallService(BaseCallerService):
             timeout_ms=timeout_ms,
         )
 
-    async def get_side_call_model(self):
-        """Get the currently designated side-call model configuration."""
+    async def get_model(self):
+        """Get the currently designated model configuration for this caller."""
         return await self._get_designated_model()
 
-    async def set_side_call_model(self, model_config_id: str, user_id: str) -> bool:
-        """Set the designated side-call model configuration."""
+    async def set_model(self, model_config_id: str, user_id: str) -> bool:
+        """Set the designated model configuration for this caller."""
         return await self._set_designated_model(model_config_id, user_id)
 
-    async def clear_side_call_model(self, user_id: str) -> bool:
-        """Clear the designated side-call model configuration."""
+    async def clear_model(self, user_id: str) -> bool:
+        """Clear the designated model configuration for this caller."""
         return await self._clear_designated_model(user_id)
+
+    # Backward-compatible aliases
+    get_side_call_model = get_model
+    set_side_call_model = set_model
+    clear_side_call_model = clear_model
 
     async def propose_rag_query(
         self,
