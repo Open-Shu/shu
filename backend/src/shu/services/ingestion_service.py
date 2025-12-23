@@ -15,6 +15,7 @@ Security Vulnerabilities:
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -59,6 +60,61 @@ def _build_skipped_result(
         "skipped": True,
         "skip_reason": skip_reason,
     }
+
+
+async def _trigger_profiling_if_enabled(document_id: str) -> None:
+    """
+    Trigger async document profiling if enabled (SHU-344).
+
+    This spawns a fire-and-forget background task that:
+    1. Opens a new DB session
+    2. Calls the profiling orchestrator
+    3. Updates document/chunk records with profile data
+
+    Does not block the caller - ingestion returns immediately.
+    Must be called from an async context to ensure event loop exists.
+    """
+    from ..core.config import get_settings_instance
+
+    settings = get_settings_instance()
+    if not settings.enable_document_profiling:
+        return
+
+    async def _run_profiling():
+        try:
+            from ..core.database import get_async_session_local
+            from ..core.config import get_config_manager
+            from .side_call_service import SideCallService
+            from .profiling_orchestrator import ProfilingOrchestrator
+
+            async with get_async_session_local()() as bg_session:
+                config_manager = get_config_manager()
+                side_call_service = SideCallService(bg_session, config_manager)
+                orchestrator = ProfilingOrchestrator(bg_session, settings, side_call_service)
+                result = await orchestrator.run_for_document(document_id)
+                if result.success:
+                    logger.info(
+                        "document_profiling_complete",
+                        document_id=document_id,
+                        mode=result.profiling_mode.value,
+                        tokens_used=result.tokens_used,
+                        duration_ms=result.duration_ms,
+                    )
+                else:
+                    logger.warning(
+                        "document_profiling_failed",
+                        document_id=document_id,
+                        error=result.error,
+                    )
+        except Exception as e:
+            logger.error(
+                "document_profiling_error",
+                document_id=document_id,
+                error=str(e),
+            )
+
+    # Fire-and-forget - don't await
+    asyncio.create_task(_run_profiling())
 
 
 def _infer_file_type(filename: str, mime_type: str) -> str:
@@ -419,6 +475,9 @@ async def ingest_document(
         content,
     )
 
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
+
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
         "document_id": document.id,
@@ -531,6 +590,9 @@ async def ingest_email(
         content,
     )
 
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
+
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", external_id),
         "document_id": document.id,
@@ -597,6 +659,9 @@ async def ingest_text(
         effective_title,
         effective_content,
     )
+
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
@@ -665,6 +730,9 @@ async def ingest_thread(
         effective_title,
         effective_content,
     )
+
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),

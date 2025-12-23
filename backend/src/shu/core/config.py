@@ -184,6 +184,17 @@ class Settings(BaseSettings):
         alias="SHU_KB_UPLOAD_ALLOWED_TYPES"
     )
 
+    # Shu RAG Document Profiling (SHU-343)
+    enable_document_profiling: bool = Field(False, alias="SHU_ENABLE_DOCUMENT_PROFILING")
+    # Routing threshold: docs at or below this size use full-doc profiling;
+    # larger docs use chunk-first aggregation
+    profiling_full_doc_max_tokens: int = Field(4000, alias="SHU_PROFILING_FULL_DOC_MAX_TOKENS")
+    # Hard ceiling on any single profiling LLM call (full-doc or aggregate)
+    profiling_max_input_tokens: int = Field(8000, alias="SHU_PROFILING_MAX_INPUT_TOKENS")
+    profiling_timeout_seconds: int = Field(60, alias="SHU_PROFILING_TIMEOUT_SECONDS")
+    # Process chunks in batches for efficiency
+    chunk_profiling_batch_size: int = Field(10, alias="SHU_CHUNK_PROFILING_BATCH_SIZE")
+
     @staticmethod
     def _repo_root_from_this_file() -> Path:
         """Resolve repository root robustly for both local and container layouts.
