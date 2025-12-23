@@ -29,6 +29,7 @@ def mock_settings():
     settings.profiling_timeout_seconds = 60
     settings.chunk_profiling_batch_size = 5
     settings.profiling_full_doc_max_tokens = 4000
+    settings.profiling_max_input_tokens = 8000
     return settings
 
 

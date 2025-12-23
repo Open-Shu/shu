@@ -194,6 +194,9 @@ class Settings(BaseSettings):
     profiling_timeout_seconds: int = Field(60, alias="SHU_PROFILING_TIMEOUT_SECONDS")
     # Process chunks in batches for efficiency
     chunk_profiling_batch_size: int = Field(10, alias="SHU_CHUNK_PROFILING_BATCH_SIZE")
+    # Max concurrent profiling tasks to prevent LLM rate-limit storms during bulk imports
+    # Tasks beyond this limit queue in memory; see SHU-211 for persistent queue migration
+    profiling_max_concurrent_tasks: int = Field(5, alias="SHU_PROFILING_MAX_CONCURRENT_TASKS")
 
     @staticmethod
     def _repo_root_from_this_file() -> Path:

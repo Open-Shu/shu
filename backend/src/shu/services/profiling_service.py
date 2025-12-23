@@ -10,6 +10,7 @@ Key responsibilities:
 - Generate chunk profiles (summary, keywords, topics)
 - Batch chunk profiling for efficiency
 - Aggregate chunk profiles for large documents
+- Enforce profiling_max_input_tokens limit on all LLM calls
 """
 
 import json
@@ -23,6 +24,7 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     DocumentProfile,
 )
+from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
 from .side_call_service import SideCallService, SideCallResult
 
@@ -94,6 +96,38 @@ class ProfilingService:
         """Resolve timeout, using settings default if not provided."""
         return timeout_ms or (self.settings.profiling_timeout_seconds * 1000)
 
+    def _validate_input_tokens(self, content: str, context: str) -> Optional[SideCallResult]:
+        """Validate that content does not exceed profiling_max_input_tokens.
+
+        Args:
+            content: The content to validate
+            context: Description for logging (e.g., "document profiling")
+
+        Returns:
+            SideCallResult with error if limit exceeded, None if OK
+        """
+        max_tokens = self.settings.profiling_max_input_tokens
+        token_count = estimate_tokens(content)
+        if token_count > max_tokens:
+            error_msg = (
+                f"Input exceeds profiling_max_input_tokens: "
+                f"{token_count} > {max_tokens}"
+            )
+            logger.warning(
+                "profiling_input_too_large",
+                context=context,
+                token_count=token_count,
+                max_tokens=max_tokens,
+            )
+            return SideCallResult(
+                success=False,
+                content="",
+                tokens_used=0,
+                duration_ms=0,
+                error_message=error_msg,
+            )
+        return None
+
     async def profile_document(
         self,
         document_text: str,
@@ -120,6 +154,11 @@ class ProfilingService:
         if document_metadata:
             meta_str = json.dumps(document_metadata, indent=2)
             user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
+
+        # Validate input doesn't exceed max tokens
+        error_result = self._validate_input_tokens(user_content, "document profiling")
+        if error_result:
+            return None, error_result
 
         message_sequence = [{"role": "user", "content": user_content}]
 
@@ -197,6 +236,20 @@ class ProfilingService:
             + "\n\nRespond with a JSON array of profiles, one per chunk, in order."
         )
 
+        # Validate input doesn't exceed max tokens
+        error_result = self._validate_input_tokens(
+            user_content, f"chunk batch ({len(chunks)} chunks)"
+        )
+        if error_result:
+            # Return failed results for all chunks
+            failed_results = [
+                self.parser.create_failed_chunk_result(
+                    c, error_result.error_message or "Input too large"
+                )
+                for c in chunks
+            ]
+            return failed_results, 0
+
         message_sequence = [{"role": "user", "content": user_content}]
 
         result = await self.side_call.call(
@@ -263,6 +316,13 @@ class ProfilingService:
         if document_metadata:
             meta_str = json.dumps(document_metadata, indent=2)
             user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
+
+        # Validate input doesn't exceed max tokens
+        error_result = self._validate_input_tokens(
+            user_content, f"aggregate profiling ({len(chunk_profiles)} chunks)"
+        )
+        if error_result:
+            return None, error_result
 
         message_sequence = [{"role": "user", "content": user_content}]
 
