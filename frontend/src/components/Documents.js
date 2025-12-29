@@ -36,10 +36,12 @@ import {
   CloudUpload as UploadIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
+  Description as DocumentIcon,
 } from '@mui/icons-material';
 import KBPluginFeedsTab from './KBPluginFeedsTab';
 import DocumentPreview from './DocumentPreview';
 import FileDropzone from './shared/FileDropzone';
+import PageHelpHeader from './PageHelpHeader';
 import { knowledgeBaseAPI, extractDataFromResponse, formatError } from '../services/api';
 import { configService } from '../services/config';
 
@@ -447,8 +449,20 @@ function Documents() {
       )}
 
       {tab === 0 && (<>
+        <PageHelpHeader
+          title="Documents in this Knowledge Base"
+          description="Documents are the content that powers RAG retrieval. Each document is automatically chunked and embedded for semantic search. Upload files directly or configure Plugin Feeds for automated ingestion."
+          icon={<DocumentIcon />}
+          tips={[
+            'Upload documents using the dropzone below or configure Plugin Feeds for automated sync',
+            'Supported formats include PDF, DOC, TXT, HTML, and more',
+            'Use the preview button to inspect document content and chunk boundaries',
+            'Filter by status to find documents that failed processing or need attention',
+          ]}
+        />
+
         {/* Upload Section */}
-        <Paper sx={{ p: 2, mb: 3 }}>
+        <Paper sx={{ p: 2, mb: 3, mt: 2 }}>
           <Box
             display="flex"
             alignItems="center"

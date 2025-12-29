@@ -9,6 +9,7 @@ import {
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
 import { extractDataFromResponse, formatError, authAPI } from '../services/api';
 import { schedulesAPI } from '../services/schedulesApi';
@@ -17,6 +18,7 @@ import FeedCreateDialog from './FeedCreateDialog';
 import FeedEditDialog from './FeedEditDialog';
 import FeedTable from './FeedTable';
 import RecentRunsDialog from './RecentRunsDialog';
+import PageHelpHeader from './PageHelpHeader';
 
 export default function KBPluginFeedsTab({ knowledgeBaseId }) {
   const qc = useQueryClient();
@@ -77,7 +79,19 @@ export default function KBPluginFeedsTab({ knowledgeBaseId }) {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
+      <PageHelpHeader
+        title="Plugin Feeds for this Knowledge Base"
+        description="Plugin Feeds automate data ingestion by running plugin operations on a schedule. Feeds created here are pre-configured to target this specific Knowledge Base."
+        icon={<ScheduleIcon />}
+        tips={[
+          'Create a feed to automatically sync data from email, calendar, drive, or other connected services',
+          'Each feed runs as a specific user—ensure that user has authorized the required plugin',
+          'Use "Run Now" to manually trigger a feed for testing before enabling the schedule',
+          'View recent runs via the clock icon to troubleshoot execution issues',
+        ]}
+      />
+
+      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2} mt={2}>
         <Typography variant="h6">Feeds targeting this KB</Typography>
         <Stack direction="row" spacing={1}>
           <Tooltip title="Reload list">
