@@ -12,6 +12,7 @@ from .branding_service import BrandingService
 from .system_settings_service import SystemSettingsService
 from .side_call_service import SideCallService
 from .conversation_automation_service import ConversationAutomationService
+from .experience_service import ExperienceService
 
 __all__ = [
     "KnowledgeBaseService",
@@ -21,4 +22,5 @@ __all__ = [
     "SystemSettingsService",
     "SideCallService",
     "ConversationAutomationService",
+    "ExperienceService",
 ]
