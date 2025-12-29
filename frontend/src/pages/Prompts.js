@@ -8,7 +8,6 @@
 
 import React from 'react';
 import {
-  Box,
   Container,
   Paper
 } from '@mui/material';

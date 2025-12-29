@@ -595,7 +595,6 @@ const ModernChat = () => {
     replaceSideBySideParent,
     registerRegenerationStart,
     registerRegenerationComplete,
-    enqueueAutoEnable,
     handleToggleReasoning,
   } = useSideBySideManager({
     variantGroups,
