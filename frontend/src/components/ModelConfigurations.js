@@ -38,6 +38,8 @@ import { promptAPI } from '../api/prompts';
 import { useAuth } from '../hooks/useAuth';
 import ModelConfigurationDialog from './shared/ModelConfigurationDialog';
 import { sideCallsAPI } from '../services/api';
+import PageHelpHeader from './PageHelpHeader';
+import TuneIcon from '@mui/icons-material/Tune';
 
 const ModelConfigurations = () => {
   const { canManagePromptsAndModels, user, handleAuthError } = useAuth();
@@ -496,26 +498,37 @@ const ModelConfigurations = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">Model Configurations</Typography>
-        <Box display="flex" gap={1}>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={() => queryClient.invalidateQueries('model-configurations')}
-            disabled={configsLoading}
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => { resetForm(); setParamOverrides({}); setAdvancedJson(''); setAdvancedJsonError(null); setSubmitError(null); setCreateDialogOpen(true); }}
-          >
-            Create Configuration
-          </Button>
-        </Box>
-      </Box>
+      <PageHelpHeader
+        title="Model Configurations"
+        description="Model Configurations combine an LLM provider, model, system prompt, and optional knowledge bases into a usable AI configuration. This is where you define how your assistant behaves."
+        icon={<TuneIcon />}
+        tips={[
+          'Create at least one Model Configuration to enable the chat interface',
+          'Each configuration links a provider (e.g., OpenAI, Anthropic) with a specific model',
+          'Attach a system prompt to define the assistant\'s personality and behavior',
+          'Add Knowledge Bases to enable RAG—the assistant will search them for context',
+          'Use parameter overrides to tune temperature, max tokens, and other model settings',
+        ]}
+        actions={
+          <Box display="flex" gap={1}>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={() => queryClient.invalidateQueries('model-configurations')}
+              disabled={configsLoading}
+            >
+              Refresh
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => { resetForm(); setParamOverrides({}); setAdvancedJson(''); setAdvancedJsonError(null); setSubmitError(null); setCreateDialogOpen(true); }}
+            >
+              Create Configuration
+            </Button>
+          </Box>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>

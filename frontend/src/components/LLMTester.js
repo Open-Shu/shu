@@ -38,6 +38,7 @@ import { llmAPI, knowledgeBaseAPI, queryAPI, modelConfigAPI, chatAPI, authAPI, f
 import { promptAPI, ENTITY_TYPES } from '../api/prompts';
 import QueryConfiguration from './QueryConfiguration';
 import SourcePreview from './SourcePreview';
+import PageHelpHeader from './PageHelpHeader';
 import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
@@ -376,12 +377,18 @@ This is where retrieved context from the knowledge base would appear. In the act
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        LLM Tester
-      </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Test LLM calls with dynamic composition of base models, prompts, and knowledge bases.
-      </Typography>
+      <PageHelpHeader
+        title="LLM Tester"
+        description="Test LLM calls directly by composing providers, models, prompts, and knowledge bases. Use this to verify model behavior, debug prompts, and experiment with configurations before saving them."
+        icon={<PromptIcon />}
+        tips={[
+          'Select a provider and model, then type a message to test basic completion',
+          'Add a system prompt to test how prompts affect the model\'s behavior',
+          'Add a Knowledge Base to test RAG—the system will retrieve context and include it',
+          'View the Request Preview tab to see exactly what will be sent to the LLM',
+          'This creates a temporary Model Configuration—results are for testing only',
+        ]}
+      />
 
       <Grid container spacing={3}>
         {/* Configuration Panel */}

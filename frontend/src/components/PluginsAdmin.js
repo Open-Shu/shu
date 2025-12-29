@@ -40,6 +40,8 @@ import PluginLimitsEditor from './PluginLimitsEditor';
 import LimitsStatsPanel from './LimitsStatsPanel';
 import PluginSecretsEditor from './PluginSecretsEditor';
 import PluginUploadDialog from './PluginUploadDialog';
+import PageHelpHeader from './PageHelpHeader';
+import ExtensionIcon from '@mui/icons-material/Extension';
 
 const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpandLimits, onExpandSecrets, onDelete, expanded, limitsExpanded, secretsExpanded, isLoading }) => {
   const [anchorEl, setAnchorEl] = useState(null);
@@ -495,13 +497,22 @@ export default function PluginsAdmin() {
 
   return (
     <Box p={3}>
+      <PageHelpHeader
+        title="Plugins"
+        description="Plugins extend your assistant with capabilities like email, calendar, cloud storage, and more. Enable plugins here, then users can connect their accounts in Settings > Connected Accounts. Plugins can also power automated Plugin Feeds."
+        icon={<ExtensionIcon />}
+        tips={[
+          'Enable a plugin first, then users need to authorize their accounts in Connected Accounts',
+          'Each plugin lists its required OAuth scopes and capabilities',
+          'Use the menu (three dots) to configure limits or manage secrets for each plugin',
+          'Click Sync Plugins after adding new plugin packages to the server',
+          'Plugins with feeds capability can be used in Plugin Feeds for automated data sync',
+        ]}
+      />
       {/* Header */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5 }}>
-            Plugins Admin
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
             {enabledCount} of {totalCount} plugins enabled
           </Typography>
         </Box>

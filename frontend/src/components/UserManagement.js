@@ -32,8 +32,10 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BlockIcon from '@mui/icons-material/Block';
+import PeopleIcon from '@mui/icons-material/People';
 import { authAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+import PageHelpHeader from './PageHelpHeader';
 
 const resolveUserId = (user) => {
   if (!user) {
@@ -263,18 +265,27 @@ const UserManagement = () => {
 
   return (
     <Box sx={{ position: 'relative' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h4" gutterBottom>
-          User Management
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={handleOpenCreateDialog}
-        >
-          Create User
-        </Button>
-      </Box>
+      <PageHelpHeader
+        title="User Management"
+        description="Manage user accounts, roles, and access. Create new users, assign roles (Admin, Power User, Regular User), and activate or deactivate accounts as needed."
+        icon={<PeopleIcon />}
+        tips={[
+          'Admins have full access to all admin features including user management',
+          'Power Users can manage prompts, models, and knowledge bases but not users',
+          'Regular Users can only access the chat interface and their own settings',
+          'Deactivated users cannot log in but their data is preserved',
+          'Users can authenticate via password or Google SSO depending on auth method',
+        ]}
+        actions={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleOpenCreateDialog}
+          >
+            Create User
+          </Button>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

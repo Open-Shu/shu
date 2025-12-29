@@ -6,7 +6,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { Box } from '@mui/material';
 
 // Admin Components
-import Dashboard from './components/Dashboard';
+import QuickStart from './components/QuickStart';
 import KnowledgeBases from './components/KnowledgeBases';
 import Documents from './components/Documents';
 
@@ -164,7 +164,7 @@ const AuthenticatedApp = () => {
           path="/admin/dashboard"
           element={
             <RoleBasedRoute adminOnly>
-              <Dashboard />
+              <QuickStart />
             </RoleBasedRoute>
           }
         />

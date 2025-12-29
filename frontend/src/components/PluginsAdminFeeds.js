@@ -21,8 +21,9 @@ import { pluginsAPI } from '../services/pluginsApi';
 import FeedCreateDialog from './FeedCreateDialog';
 import FeedEditDialog from './FeedEditDialog';
 import FeedTable from './FeedTable';
-
 import RecentRunsDialog from './RecentRunsDialog';
+import PageHelpHeader from './PageHelpHeader';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 
 export default function PluginsAdminFeeds() {
   const qc = useQueryClient();
@@ -99,8 +100,20 @@ export default function PluginsAdminFeeds() {
 
   return (
     <Box p={3}>
+      <PageHelpHeader
+        title="Plugin Feeds"
+        description="Plugin Feeds automate data synchronization by running plugin operations on a schedule. Feeds pull data from external services (email, calendar, drive, etc.) and ingest it into Knowledge Bases for searchable retrieval."
+        icon={<ScheduleIcon />}
+        tips={[
+          'Create a feed by selecting a plugin, operation, target KB, and schedule interval',
+          'Use "Run Now" to manually trigger a feed execution for testing',
+          'Use "Run Due" to trigger all feeds that are past their scheduled time',
+          'Each feed runs as a specific user—ensure that user has authorized the required plugin',
+          'View recent runs by clicking the clock icon to troubleshoot execution issues',
+        ]}
+      />
       <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
-        <Typography variant="h3">Plugin Feeds</Typography>
+        <Box />
         <Stack direction="row" spacing={1}>
           <Tooltip title="Reload list">
             <span>

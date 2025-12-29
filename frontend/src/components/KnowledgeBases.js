@@ -31,7 +31,9 @@ import {
   Settings as ConfigIcon,
   Description as DocumentsIcon,
   RssFeed as FeedsIcon,
+  Storage as KBIcon,
 } from '@mui/icons-material';
+import PageHelpHeader from './PageHelpHeader';
 
 import { knowledgeBaseAPI, formatError, extractItemsFromResponse } from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -165,8 +167,18 @@ function KnowledgeBases() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">Knowledge Bases</Typography>
+      <PageHelpHeader
+        title="Knowledge Bases"
+        description="Knowledge Bases are searchable collections of documents that power RAG (Retrieval-Augmented Generation). Create a KB, then add documents manually or configure Plugin Feeds to sync data automatically from external sources."
+        icon={<KBIcon />}
+        tips={[
+          'Create a KB first, then click "Docs" to upload documents or "Feeds" to set up automated ingestion',
+          'Configure retrieval settings via the gear icon to tune chunk size, overlap, and search behavior',
+          'Use KB Permissions (Access Control menu) to control who can access each knowledge base',
+          'Documents are automatically chunked and embedded for vector search',
+        ]}
+      />
+      <Box display="flex" justifyContent="flex-end" alignItems="center" mb={2}>
         <Box>
           <Button
             variant="outlined"
