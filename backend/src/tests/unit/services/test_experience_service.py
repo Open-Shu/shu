@@ -407,7 +407,6 @@ class TestCreateExperience:
         experience_data = ExperienceCreate(
             name="Daily Digest",
             description="Get your daily email digest",
-            created_by="admin-user",
             visibility=ExperienceVisibility.DRAFT,
             trigger_type=TriggerType.SCHEDULED,
             trigger_config={"cron": "0 9 * * *"},
@@ -425,7 +424,7 @@ class TestCreateExperience:
         
         # Mock the response conversion to avoid datetime serialization issues
         with patch.object(service, '_experience_to_response', return_value=mock_experience_response):
-            result = await service.create_experience(experience_data)
+            result = await service.create_experience(experience_data, created_by="admin-user")
         
         # Verify db operations
         assert mock_db_session.add.called

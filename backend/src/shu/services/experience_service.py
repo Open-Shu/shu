@@ -10,7 +10,7 @@ from datetime import datetime
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, inspect as sa_inspect
 from sqlalchemy.orm import selectinload, Query
 
 from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
@@ -48,12 +48,17 @@ class ExperienceService:
     # CRUD Operations
     # =========================================================================
 
-    async def create_experience(self, experience_data: ExperienceCreate) -> ExperienceResponse:
+    async def create_experience(
+        self,
+        experience_data: ExperienceCreate,
+        created_by: str
+    ) -> ExperienceResponse:
         """
         Create a new experience with steps.
 
         Args:
             experience_data: Experience creation data including steps
+            created_by: User ID of the creator (from authenticated user)
 
         Returns:
             Created experience
@@ -82,7 +87,7 @@ class ExperienceService:
             id=str(uuid.uuid4()),
             name=experience_data.name,
             description=experience_data.description,
-            created_by=experience_data.created_by,
+            created_by=created_by,
             visibility=experience_data.visibility.value,
             trigger_type=experience_data.trigger_type.value,
             trigger_config=experience_data.trigger_config,
@@ -252,7 +257,8 @@ class ExperienceService:
         Returns:
             Paginated list of experiences
         """
-        stmt = self._base_experience_query()
+        # Include prompt to avoid lazy loading in _experience_to_response
+        stmt = self._base_experience_query(include_prompt=True)
 
         # Build visibility conditions
         if is_admin:
@@ -835,6 +841,29 @@ class ExperienceService:
         # Non-admins only see published experiences
         return experience.visibility == ExperienceVisibility.PUBLISHED.value
 
+    def _get_last_run_timestamp(self, experience: Experience) -> Optional[datetime]:
+        """
+        Get the last run timestamp for an experience.
+        
+        Uses SQLAlchemy inspect to check if 'runs' was eagerly loaded,
+        avoiding lazy loading in async context which causes greenlet errors.
+        
+        Returns:
+            Last run timestamp if runs are loaded, None otherwise
+        """
+        insp = sa_inspect(experience)
+        if 'runs' not in insp.dict:
+            return None
+        
+        runs = experience.runs
+        if not runs:
+            return None
+        
+        latest = max(runs, key=lambda r: r.created_at, default=None)
+        if latest:
+            return latest.finished_at or latest.created_at
+        return None
+
     def _experience_to_response(self, experience: Experience) -> ExperienceResponse:
         """Convert Experience model to response schema."""
         steps = [
@@ -857,13 +886,7 @@ class ExperienceService:
             for step in sorted(experience.steps, key=lambda s: s.order)
         ]
 
-        # Get latest run timestamp - use getattr to avoid lazy loading issues
-        last_run_at = None
-        runs = getattr(experience, 'runs', None)
-        if runs:
-            latest = max(runs, key=lambda r: r.created_at, default=None)
-            if latest:
-                last_run_at = latest.finished_at or latest.created_at
+        last_run_at = self._get_last_run_timestamp(experience)
 
         return ExperienceResponse(
             id=experience.id,

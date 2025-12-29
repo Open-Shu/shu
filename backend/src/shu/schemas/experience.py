@@ -164,7 +164,6 @@ class ExperienceCreate(ExperienceBase):
     """Schema for creating experiences."""
 
     steps: List[ExperienceStepCreate] = Field(default_factory=list, description="Experience steps")
-    created_by: str = Field(..., description="User ID who created this experience")
 
 
 class ExperienceUpdate(BaseModel):

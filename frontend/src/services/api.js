@@ -572,4 +572,20 @@ export const agentsAPI = {
   runMorningBriefing: (params = {}, timeoutMs = 120000) => api.post('/agents/morning-briefing/run', params, { timeout: timeoutMs }),
 };
 
+// Experiences endpoints
+export const experiencesAPI = {
+  list: (params = {}) => api.get('/experiences', { params }),
+  get: (id) => api.get(`/experiences/${id}`),
+  create: (data) => api.post('/experiences', data),
+  update: (id, data) => api.put(`/experiences/${id}`, data),
+  delete: (id) => api.delete(`/experiences/${id}`),
+  // Run management
+  listRuns: (experienceId, params = {}) => api.get(`/experiences/${experienceId}/runs`, { params }),
+  getRun: (runId) => api.get(`/experiences/runs/${runId}`),
+  runExperience: (id, data = {}) => api.post(`/experiences/${id}/run`, data),
+  // User dashboard
+  getMyResults: (params = {}) => api.get('/experiences/my-results', { params }),
+};
+
 export default api;
+

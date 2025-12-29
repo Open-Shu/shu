@@ -46,6 +46,7 @@ from .api.plugins_router import router as plugins_router
 from .api.branding import router as branding_router
 from .api.side_call import router as side_call_router
 from .api.system import router as system_router
+from .api.experiences import router as experiences_router
 
 from .plugins.request_limits import RequestSizeLimitMiddleware
 
@@ -569,6 +570,9 @@ def setup_routes(app: FastAPI) -> None:
     # Agent MVP routes
     app.include_router(agents_router, prefix=settings.api_v1_prefix)
     
+    # Experience Platform routes
+    app.include_router(experiences_router, prefix=settings.api_v1_prefix)
+    
     # Side-call routes
     app.include_router(side_call_router, prefix=settings.api_v1_prefix)
 
@@ -595,6 +599,7 @@ def setup_routes(app: FastAPI) -> None:
             permissions_router.prefix,
             user_permissions_router.prefix,
             agents_router.prefix,
+            experiences_router.prefix,
             side_call_router.prefix,
         ]
         base = settings.api_v1_prefix.rstrip("/")

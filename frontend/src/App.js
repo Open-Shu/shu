@@ -22,6 +22,7 @@ import Prompts from './pages/Prompts';
 import MorningBriefing from './components/MorningBriefing';
 import PluginsAdmin from './components/PluginsAdmin';
 import PluginsAdminFeeds from './components/PluginsAdminFeeds';
+import ExperiencesAdmin from './components/ExperiencesAdmin';
 import BrandingSettings from './components/admin/BrandingSettings';
 
 // User Components
@@ -301,6 +302,16 @@ const AuthenticatedApp = () => {
           element={
             <RoleBasedRoute adminOnly>
               <PluginsAdminFeeds />
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/admin/experiences"
+          element={
+            <RoleBasedRoute adminOnly>
+              <ProtectedRoute requiredRole="admin">
+                <ExperiencesAdmin />
+              </ProtectedRoute>
             </RoleBasedRoute>
           }
         />
