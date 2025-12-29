@@ -90,13 +90,24 @@ class ConfigService {
   }
 
   /**
-   * Get upload restrictions for file uploads
+   * Get upload restrictions for chat attachments (supports images via OCR)
    * @returns {{ allowed_types: string[], max_size_bytes: number }}
    */
   getUploadRestrictions() {
     return this.config?.upload_restrictions || {
       allowed_types: ['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
       max_size_bytes: 20 * 1024 * 1024, // 20MB default
+    };
+  }
+
+  /**
+   * Get upload restrictions for KB document uploads (text extraction only, no image OCR)
+   * @returns {{ allowed_types: string[], max_size_bytes: number }}
+   */
+  getKbUploadRestrictions() {
+    return this.config?.kb_upload_restrictions || {
+      allowed_types: ['pdf', 'docx', 'doc', 'txt', 'md', 'rtf', 'html', 'htm', 'csv', 'py', 'js', 'xlsx', 'pptx'],
+      max_size_bytes: 50 * 1024 * 1024, // 50MB default
     };
   }
 

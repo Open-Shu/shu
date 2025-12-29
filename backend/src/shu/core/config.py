@@ -177,6 +177,13 @@ class Settings(BaseSettings):
     chat_attachment_storage_dir: str = Field("./data/attachments", alias="SHU_CHAT_ATTACHMENT_STORAGE_DIR")
     chat_ensemble_max_models: int = Field(3, alias="SHU_CHAT_ENSEMBLE_MAX_MODELS")
 
+    # KB document upload (types supported by text extractor - no standalone image OCR)
+    kb_upload_max_size: int = Field(50 * 1024 * 1024, alias="SHU_KB_UPLOAD_MAX_SIZE")  # 50MB
+    kb_upload_allowed_types: List[str] = Field(
+        default_factory=lambda: ["pdf", "docx", "doc", "txt", "md", "rtf", "html", "htm", "csv", "py", "js", "xlsx", "pptx"],
+        alias="SHU_KB_UPLOAD_ALLOWED_TYPES"
+    )
+
     @staticmethod
     def _repo_root_from_this_file() -> Path:
         """Resolve repository root robustly for both local and container layouts.

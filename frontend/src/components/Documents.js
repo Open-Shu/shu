@@ -305,8 +305,8 @@ function Documents() {
   const initialTab = ((searchParams.get('tab') || '') === 'feeds') ? 1 : 0;
   const [tab, setTab] = useState(initialTab);
 
-  // Get upload restrictions from config
-  const uploadRestrictions = configService.getUploadRestrictions();
+  // Get KB-specific upload restrictions (text extraction only, no image OCR)
+  const uploadRestrictions = configService.getKbUploadRestrictions();
 
   useEffect(() => {
     const desired = tab === 1 ? 'feeds' : 'documents';
