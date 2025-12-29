@@ -5,11 +5,13 @@ This module provides REST API endpoints for managing knowledge bases,
 including CRUD operations, statistics, and multi-source support.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List, Optional
+import mimetypes
 import time
+import uuid
 import logging
 
 from .dependencies import get_db
@@ -28,6 +30,7 @@ from ..schemas.knowledge_base import (
     KnowledgeBaseList, KnowledgeBaseStats, RAGConfig, RAGConfigResponse
 )
 from ..services.knowledge_base_service import KnowledgeBaseService
+from ..services.ingestion_service import ingest_document as ingest_document_service
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
@@ -942,4 +945,120 @@ async def get_extraction_summary(
         })
     except Exception as e:
         logger.error(f"Error getting extraction summary: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") 
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/{kb_id}/documents/upload",
+    summary="Upload documents to knowledge base",
+    description="Upload one or more documents directly to a knowledge base. Power user only.",
+)
+async def upload_documents(
+    kb_id: str,
+    files: List[UploadFile] = File(..., description="Files to upload"),
+    current_user: User = Depends(require_power_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload documents directly to a knowledge base.
+
+    Accepts multiple files via multipart/form-data. Each file is validated
+    against the application's upload restrictions (allowed types, max size)
+    and ingested using the standard document processing pipeline.
+
+    Returns results for each file indicating success or failure.
+    """
+    # Verify KB exists
+    kb_service = KnowledgeBaseService(db)
+    kb = await kb_service.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    # Get upload restrictions from settings
+    allowed_types = [t.lower() for t in settings.chat_attachment_allowed_types]
+    max_size = settings.chat_attachment_max_size
+
+    results = []
+
+    for file in files:
+        filename = file.filename or "upload"
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+        # Validate file type
+        if ext not in allowed_types:
+            results.append({
+                "filename": filename,
+                "success": False,
+                "error": f"Unsupported file type: .{ext}. Allowed: {', '.join('.' + t for t in allowed_types)}",
+            })
+            continue
+
+        # Read file bytes
+        try:
+            file_bytes = await file.read()
+        except Exception as e:
+            results.append({
+                "filename": filename,
+                "success": False,
+                "error": f"Failed to read file: {str(e)}",
+            })
+            continue
+
+        # Validate file size
+        if len(file_bytes) > max_size:
+            results.append({
+                "filename": filename,
+                "success": False,
+                "error": f"File too large: {len(file_bytes)} bytes. Maximum: {max_size} bytes",
+            })
+            continue
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(filename)
+        mime_type = mime_type or "application/octet-stream"
+
+        # Generate unique source_id for manual uploads
+        source_id = f"manual-upload-{uuid.uuid4().hex[:12]}"
+
+        try:
+            result = await ingest_document_service(
+                db,
+                kb_id,
+                plugin_name="manual_upload",
+                user_id=current_user.id,
+                file_bytes=file_bytes,
+                filename=filename,
+                mime_type=mime_type,
+                source_id=source_id,
+                source_url=None,
+                attributes={"uploaded_by": current_user.email or current_user.id},
+            )
+
+            results.append({
+                "filename": filename,
+                "success": True,
+                "document_id": result.get("document_id"),
+                "word_count": result.get("word_count", 0),
+                "character_count": result.get("character_count", 0),
+                "chunk_count": result.get("chunk_count", 0),
+                "extraction_method": result.get("extraction", {}).get("method"),
+            })
+        except Exception as e:
+            logger.error(f"Failed to ingest document {filename}: {e}", exc_info=True)
+            results.append({
+                "filename": filename,
+                "success": False,
+                "error": str(e),
+            })
+
+    # Summary
+    successful = sum(1 for r in results if r.get("success"))
+    failed = len(results) - successful
+
+    return ShuResponse.success({
+        "knowledge_base_id": kb_id,
+        "total_files": len(files),
+        "successful": successful,
+        "failed": failed,
+        "results": results,
+    })

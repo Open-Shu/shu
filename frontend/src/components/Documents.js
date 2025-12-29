@@ -25,17 +25,23 @@ import {
   Grid,
   TablePagination,
   Tabs,
-  Tab
+  Tab,
+  Collapse,
 } from '@mui/material';
 import {
   Visibility as PreviewIcon,
   Search as SearchIcon,
   Refresh as RefreshIcon,
-  ArrowBack as BackIcon
+  ArrowBack as BackIcon,
+  CloudUpload as UploadIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import KBPluginFeedsTab from './KBPluginFeedsTab';
 import DocumentPreview from './DocumentPreview';
-import { knowledgeBaseAPI, extractDataFromResponse } from '../services/api';
+import FileDropzone from './shared/FileDropzone';
+import { knowledgeBaseAPI, extractDataFromResponse, formatError } from '../services/api';
+import { configService } from '../services/config';
 
 const SearchFilter = memo(function SearchFilter({searchQuery, setSearchQuery, filterBy, setFilterBy, fetchDocuments, setPage}) {
   return <Paper sx={{ p: 2, mb: 3 }}>
@@ -286,9 +292,19 @@ function Documents() {
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [totalDocuments, setTotalDocuments] = useState(0);
 
+  // Upload state
+  const [uploadExpanded, setUploadExpanded] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadResults, setUploadResults] = useState([]);
+  const [uploadError, setUploadError] = useState(null);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = ((searchParams.get('tab') || '') === 'feeds') ? 1 : 0;
   const [tab, setTab] = useState(initialTab);
+
+  // Get upload restrictions from config
+  const uploadRestrictions = configService.getUploadRestrictions();
 
   useEffect(() => {
     const desired = tab === 1 ? 'feeds' : 'documents';
@@ -357,6 +373,38 @@ function Documents() {
     setSelectedDocument(null);
   };
 
+  const handleFilesSelected = useCallback(async (files) => {
+    if (!files.length || !kbId) return;
+
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadResults([]);
+    setUploadError(null);
+
+    try {
+      const response = await knowledgeBaseAPI.uploadDocuments(
+        kbId,
+        files,
+        (progressEvent) => {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(percent);
+        }
+      );
+
+      const data = extractDataFromResponse(response);
+      setUploadResults(data.results || []);
+
+      // Refresh documents list if any uploads succeeded
+      if (data.successful > 0) {
+        fetchDocuments();
+      }
+    } catch (err) {
+      setUploadError(formatError(err));
+    } finally {
+      setUploading(false);
+    }
+  }, [kbId, fetchDocuments]);
+
   if (error) {
     return (
       <Box p={3}>
@@ -399,6 +447,46 @@ function Documents() {
       )}
 
       {tab === 0 && (<>
+        {/* Upload Section */}
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Box
+            display="flex"
+            alignItems="center"
+            justifyContent="space-between"
+            onClick={() => setUploadExpanded(!uploadExpanded)}
+            sx={{ cursor: 'pointer' }}
+          >
+            <Box display="flex" alignItems="center" gap={1}>
+              <UploadIcon color="primary" />
+              <Typography variant="subtitle1" fontWeight={500}>
+                Upload Documents
+              </Typography>
+            </Box>
+            <IconButton size="small">
+              {uploadExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={uploadExpanded}>
+            <Box sx={{ mt: 2 }}>
+              {uploadError && (
+                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setUploadError(null)}>
+                  {uploadError}
+                </Alert>
+              )}
+              <FileDropzone
+                allowedTypes={uploadRestrictions.allowed_types}
+                maxSizeBytes={uploadRestrictions.max_size_bytes}
+                multiple
+                disabled={uploading}
+                onFilesSelected={handleFilesSelected}
+                uploadResults={uploadResults}
+                uploading={uploading}
+                uploadProgress={uploadProgress}
+              />
+            </Box>
+          </Collapse>
+        </Paper>
+
         <SearchFilter
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}

@@ -89,6 +89,17 @@ class ConfigService {
     return this.config?.environment || 'development';
   }
 
+  /**
+   * Get upload restrictions for file uploads
+   * @returns {{ allowed_types: string[], max_size_bytes: number }}
+   */
+  getUploadRestrictions() {
+    return this.config?.upload_restrictions || {
+      allowed_types: ['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
+      max_size_bytes: 20 * 1024 * 1024, // 20MB default
+    };
+  }
+
   isLoaded() {
     return this.config !== null;
   }
