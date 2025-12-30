@@ -406,7 +406,9 @@ function Documents() {
         kbId,
         files,
         (progressEvent) => {
-          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          // Guard against missing/zero total to prevent NaN/Infinity
+          const total = progressEvent.total || 0;
+          const percent = total > 0 ? Math.round((progressEvent.loaded * 100) / total) : 0;
           setUploadProgress(percent);
         }
       );

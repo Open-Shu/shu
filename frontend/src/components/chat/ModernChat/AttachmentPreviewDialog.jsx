@@ -66,7 +66,7 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
                 URL.revokeObjectURL(blobUrlRef.current);
             }
         };
-    }, [open, attachment]);
+    }, [open, attachment?.id]);
 
     const handleDownload = () => {
         if (blobUrl && attachment) {

@@ -38,11 +38,11 @@ async def get_public_config():
         version=settings.version,
         environment=settings.environment,
         upload_restrictions=UploadRestrictions(
-            allowed_types=settings.chat_attachment_allowed_types,
+            allowed_types=[t.lower() for t in settings.chat_attachment_allowed_types],
             max_size_bytes=settings.chat_attachment_max_size,
         ),
         kb_upload_restrictions=UploadRestrictions(
-            allowed_types=settings.kb_upload_allowed_types,
+            allowed_types=[t.lower() for t in settings.kb_upload_allowed_types],
             max_size_bytes=settings.kb_upload_max_size,
         ),
     )
