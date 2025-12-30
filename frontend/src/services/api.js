@@ -246,6 +246,7 @@ export const knowledgeBaseAPI = {
   delete: (id) => api.delete(`/knowledge-bases/${id}`),
   getDocuments: (id, params = {}) => api.get(`/knowledge-bases/${id}/documents`, { params }),
   getDocument: (id, docId) => api.get(`/knowledge-bases/${id}/documents/${docId}`),
+  deleteDocument: (id, docId) => api.delete(`/knowledge-bases/${id}/documents/${docId}`),
   // Document upload
   uploadDocuments: (id, files, onUploadProgress) => {
     const formData = new FormData();

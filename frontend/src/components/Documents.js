@@ -37,6 +37,7 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   Description as DocumentIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import KBPluginFeedsTab from './KBPluginFeedsTab';
 import DocumentPreview from './DocumentPreview';
@@ -104,7 +105,9 @@ const DocumentResults = function DocumentResults({
   rowsPerPage,
   searchQuery,
   filterBy,
-  loading
+  loading,
+  onDeleteDocument,
+  canDeleteDocument,
 }) {
   const handlePreview = (document) => {
     setSelectedDocument(document);
@@ -252,6 +255,21 @@ const DocumentResults = function DocumentResults({
                     >
                       <PreviewIcon />
                     </IconButton>
+                  </Tooltip>
+                  <Tooltip title={canDeleteDocument(doc)
+                    ? "Delete Document"
+                    : "Feed-sourced documents cannot be deleted. Manage through the feed instead."
+                  }>
+                    <span>
+                      <IconButton
+                        onClick={() => onDeleteDocument(doc)}
+                        size="small"
+                        disabled={!canDeleteDocument(doc)}
+                        color="error"
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                 </TableCell>
               </TableRow>
@@ -414,6 +432,21 @@ function Documents() {
     }
   }, [kbId, fetchDocuments]);
 
+  const handleDeleteDocument = useCallback(async (doc) => {
+    if (!window.confirm(`Are you sure you want to delete "${doc.title}"? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await knowledgeBaseAPI.deleteDocument(kbId, doc.id);
+      fetchDocuments();
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, [kbId, fetchDocuments]);
+
+  // Helper to check if document can be deleted (only manual uploads)
+  const canDeleteDocument = (doc) => doc.source_type === 'plugin:manual_upload';
+
   if (error) {
     return (
       <Box p={3}>
@@ -530,6 +563,8 @@ function Documents() {
           searchQuery={searchQuery}
           filterBy={filterBy}
           loading={loading}
+          onDeleteDocument={handleDeleteDocument}
+          canDeleteDocument={canDeleteDocument}
         />
       </>)}
 

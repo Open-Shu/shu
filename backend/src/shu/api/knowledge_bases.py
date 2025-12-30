@@ -891,6 +891,72 @@ async def list_documents(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.delete(
+    "/{kb_id}/documents/{document_id}",
+    summary="Delete a document from knowledge base",
+    description="Delete a manually uploaded document. Feed-sourced documents cannot be deleted via this endpoint.",
+)
+async def delete_document(
+    kb_id: str,
+    document_id: str,
+    current_user: User = Depends(require_kb_modify_default),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a document from a knowledge base.
+
+    Only manually uploaded documents (source_type='plugin:manual_upload') can be deleted.
+    Feed-sourced documents must be managed through their respective feeds.
+    """
+    try:
+        kb_service = KnowledgeBaseService(db)
+        kb = await kb_service.get_knowledge_base(kb_id)
+        if not kb:
+            return ShuResponse.error(
+                message="Knowledge base not found",
+                code="KNOWLEDGE_BASE_NOT_FOUND",
+                status_code=404
+            )
+
+        # Get the document to check source_type
+        document = await kb_service.get_document(kb_id, document_id)
+        if not document:
+            return ShuResponse.error(
+                message="Document not found",
+                code="DOCUMENT_NOT_FOUND",
+                status_code=404
+            )
+
+        # Only allow deletion of manually uploaded documents
+        if document.source_type != "plugin:manual_upload":
+            return ShuResponse.error(
+                message="Only manually uploaded documents can be deleted. Feed-sourced documents are managed through their feeds.",
+                code="DOCUMENT_DELETE_NOT_ALLOWED",
+                status_code=403
+            )
+
+        # Delete the document
+        from ..services.document_service import DocumentService
+        doc_service = DocumentService(db)
+        await doc_service.delete_document(document_id)
+
+        logger.info("Deleted document", extra={
+            "kb_id": kb_id,
+            "document_id": document_id,
+            "deleted_by": current_user.id
+        })
+
+        return ShuResponse.no_content()
+
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}", exc_info=True)
+        return ShuResponse.error(
+            message="Failed to delete document",
+            code="DOCUMENT_DELETE_ERROR",
+            status_code=500
+        )
+
+
 @router.get("/{kb_id}/documents/extraction-summary")
 async def get_extraction_summary(
     kb_id: str,
