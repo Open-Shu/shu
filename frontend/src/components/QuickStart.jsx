@@ -1,4 +1,4 @@
-import React from 'react';
+import { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -9,6 +9,7 @@ import {
   Chip,
   useTheme,
   alpha,
+  CircularProgress,
 } from '@mui/material';
 import {
   RocketLaunch as RocketIcon,
@@ -26,23 +27,54 @@ import {
   Psychology as LLMTesterIcon,
   HealthAndSafety as HealthIcon,
   ArrowForward as ArrowIcon,
+  WbSunny as BriefingIcon,
+  CheckCircle as CheckIcon,
+  Description as DocumentsIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName } from '../utils/constants';
 import PageHelpHeader from './PageHelpHeader';
+import { setupAPI, extractDataFromResponse } from '../services/api';
 
 // Section card component for navigation
-const SectionCard = ({ title, description, icon, priority, onClick }) => {
+const SectionCard = ({ title, description, icon, priority, completed, onClick }) => {
   const theme = useTheme();
-  
+
+  // Determine chip display: completed takes precedence over priority
+  const renderChip = () => {
+    if (completed) {
+      return (
+        <Chip
+          icon={<CheckIcon sx={{ fontSize: '0.9rem' }} />}
+          label="Done"
+          size="small"
+          color="success"
+          sx={{ fontSize: '0.7rem', height: 20 }}
+        />
+      );
+    }
+    if (priority) {
+      return (
+        <Chip
+          label={priority}
+          size="small"
+          color={priority === 'Start Here' ? 'primary' : 'default'}
+          sx={{ fontSize: '0.7rem', height: 20 }}
+        />
+      );
+    }
+    return null;
+  };
+
   return (
     <Card
       elevation={0}
       sx={{
         height: '100%',
-        border: `1px solid ${theme.palette.divider}`,
+        border: `1px solid ${completed ? theme.palette.success.main : theme.palette.divider}`,
         transition: 'all 0.2s ease-in-out',
+        backgroundColor: completed ? alpha(theme.palette.success.main, 0.03) : 'inherit',
         '&:hover': {
           borderColor: theme.palette.primary.main,
           boxShadow: `0 4px 12px ${alpha(theme.palette.primary.main, 0.15)}`,
@@ -60,8 +92,10 @@ const SectionCard = ({ title, description, icon, priority, onClick }) => {
                 width: 36,
                 height: 36,
                 borderRadius: 1,
-                backgroundColor: alpha(theme.palette.primary.main, 0.1),
-                color: theme.palette.primary.main,
+                backgroundColor: completed
+                  ? alpha(theme.palette.success.main, 0.1)
+                  : alpha(theme.palette.primary.main, 0.1),
+                color: completed ? theme.palette.success.main : theme.palette.primary.main,
                 mr: 1.5,
               }}
             >
@@ -70,14 +104,7 @@ const SectionCard = ({ title, description, icon, priority, onClick }) => {
             <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>
               {title}
             </Typography>
-            {priority && (
-              <Chip
-                label={priority}
-                size="small"
-                color={priority === 'Start Here' ? 'primary' : 'default'}
-                sx={{ fontSize: '0.7rem', height: 20 }}
-              />
-            )}
+            {renderChip()}
           </Box>
           <Typography variant="body2" color="text.secondary" sx={{ flex: 1, lineHeight: 1.5 }}>
             {description}
@@ -99,34 +126,73 @@ const QuickStart = () => {
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
 
+  // Setup status state
+  const [setupStatus, setSetupStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+
+  // Fetch setup status on mount
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const response = await setupAPI.getStatus();
+        const status = extractDataFromResponse(response);
+        setSetupStatus(status);
+      } catch (error) {
+        console.error('Failed to fetch setup status:', error);
+        // Silently fail - status is optional enhancement
+      } finally {
+        setStatusLoading(false);
+      }
+    };
+    fetchStatus();
+  }, []);
+
+  // Map setup status to section keys
+  const getCompletionStatus = (statusKey) => {
+    if (!setupStatus) return false;
+    return setupStatus[statusKey] === true;
+  };
+
   const gettingStartedSections = [
     {
+      title: 'LLM Providers',
+      description: 'Configure API connections to LLM providers (OpenAI, Anthropic, Ollama, etc.). Set up API keys and endpoints first.',
+      icon: <LLMProvidersIcon />,
+      path: '/admin/llm-providers',
+      priority: 'Start Here',
+      statusKey: 'llm_provider_configured',
+    },
+    {
       title: 'Model Configurations',
-      description: 'Configure which AI models power your assistant. Set up providers like OpenAI, Anthropic, or local models via Ollama.',
+      description: 'Create model configurations that define which AI models power your assistant. Requires an LLM Provider.',
       icon: <ModelConfigIcon />,
       path: '/admin/model-configurations',
-      priority: 'Start Here',
+      priority: 'Step 2',
+      statusKey: 'model_configuration_created',
     },
     {
       title: 'Knowledge Bases',
       description: 'Create knowledge bases to store and organize your documents. Enable RAG (Retrieval-Augmented Generation) for context-aware responses.',
       icon: <KnowledgeBasesIcon />,
       path: '/admin/knowledge-bases',
-      priority: 'Step 2',
+      priority: 'Step 3',
+      statusKey: 'knowledge_base_created',
+    },
+    {
+      title: 'Add Documents',
+      description: 'Upload documents to your knowledge bases. These will be indexed for semantic search and retrieval.',
+      icon: <DocumentsIcon />,
+      path: '/admin/knowledge-bases',
+      priority: 'Step 4',
+      statusKey: 'documents_added',
     },
     {
       title: 'Plugins',
-      description: 'Extend functionality with plugins for email, calendar, drive, and more. Enable plugins to connect external services to your assistant.',
+      description: 'Extend functionality with plugins. Connect external services and power automated Plugin Feeds to ingest data into knowledge bases.',
       icon: <PluginIcon />,
       path: '/admin/plugins',
-      priority: 'Step 3',
-    },
-    {
-      title: 'Plugin Feeds',
-      description: 'Configure automated data synchronization. Feeds pull data from connected services on a schedule into your knowledge bases.',
-      icon: <FeedsIcon />,
-      path: '/admin/feeds',
-      priority: 'Step 4',
+      priority: 'Step 5',
+      statusKey: 'plugins_enabled',
     },
   ];
 
@@ -138,10 +204,10 @@ const QuickStart = () => {
       path: '/admin/prompts',
     },
     {
-      title: 'LLM Providers',
-      description: 'Configure API connections to LLM providers. Set up API keys, endpoints, and provider-specific settings.',
-      icon: <LLMProvidersIcon />,
-      path: '/admin/llm-providers',
+      title: 'Plugin Feeds',
+      description: 'Configure automated data synchronization. Feeds pull data from connected services on a schedule into your knowledge bases.',
+      icon: <FeedsIcon />,
+      path: '/admin/feeds',
     },
     {
       title: 'Branding',
@@ -174,6 +240,12 @@ const QuickStart = () => {
 
   const toolsSections = [
     {
+      title: 'Morning Briefing',
+      description: 'Run an AI-powered daily briefing that summarizes your calendar, email, and chat. Experimental demo feature.',
+      icon: <BriefingIcon />,
+      path: '/admin/briefing',
+    },
+    {
       title: 'Query Tester',
       description: 'Test vector search and retrieval against your knowledge bases. Debug and tune search quality.',
       icon: <QueryIcon />,
@@ -193,16 +265,36 @@ const QuickStart = () => {
     },
   ];
 
-  const renderSection = (title, sections, columns = 4) => (
+  // Calculate progress for Getting Started section
+  const completedSteps = gettingStartedSections.filter(
+    s => s.statusKey && getCompletionStatus(s.statusKey)
+  ).length;
+  const totalSteps = gettingStartedSections.length;
+
+  const renderSection = (title, sections, columns = 4, showProgress = false) => (
     <Box sx={{ mb: 4 }}>
-      <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-        {title}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600 }}>
+          {title}
+        </Typography>
+        {showProgress && !statusLoading && (
+          <Chip
+            label={`${completedSteps} of ${totalSteps} complete`}
+            size="small"
+            color={completedSteps === totalSteps ? 'success' : 'default'}
+            sx={{ ml: 2, fontSize: '0.75rem' }}
+          />
+        )}
+        {showProgress && statusLoading && (
+          <CircularProgress size={16} sx={{ ml: 2 }} />
+        )}
+      </Box>
       <Grid container spacing={2}>
-        {sections.map((section) => (
-          <Grid item xs={12} sm={6} md={12 / columns} key={section.path}>
+        {sections.map((section, index) => (
+          <Grid item xs={12} sm={6} md={12 / columns} key={section.path + index}>
             <SectionCard
               {...section}
+              completed={section.statusKey ? getCompletionStatus(section.statusKey) : false}
               onClick={() => navigate(section.path)}
             />
           </Grid>
@@ -218,19 +310,19 @@ const QuickStart = () => {
         description={`This Quick Start guide will help you set up and configure ${appDisplayName}. Follow the steps below to get your AI assistant up and running. Each section includes detailed help once you navigate there.`}
         icon={<RocketIcon />}
         tips={[
-          'Start by configuring your AI model in Model Configurations - this powers all AI interactions',
+          'Start by configuring an LLM Provider with your API key (OpenAI, Anthropic, Ollama, etc.)',
+          'Create a Model Configuration to define which AI model powers your assistant',
           'Create a Knowledge Base to store documents your assistant can reference',
-          'Enable Plugins to connect external services like email, calendar, and cloud storage',
-          'Set up Plugin Feeds to automatically sync data from connected services',
+          'Enable Plugins to connect external services and power automated data feeds',
           'Use the Query Tester and LLM Tester to verify everything is working correctly',
         ]}
         defaultExpanded={true}
       />
 
-      {renderSection('Getting Started', gettingStartedSections, 4)}
+      {renderSection('Getting Started', gettingStartedSections, 3, true)}
       {renderSection('Configuration', advancedSections, 3)}
       {renderSection('Access Control', accessControlSections, 3)}
-      {renderSection('Tools & Testing', toolsSections, 3)}
+      {renderSection('Tools & Testing', toolsSections, 4)}
 
       <Box sx={{ mt: 4, p: 2, backgroundColor: 'action.hover', borderRadius: 2 }}>
         <Typography variant="subtitle2" color="text.secondary">

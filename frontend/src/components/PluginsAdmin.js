@@ -499,7 +499,7 @@ export default function PluginsAdmin() {
     <Box p={3}>
       <PageHelpHeader
         title="Plugins"
-        description="Plugins extend your assistant with capabilities like email, calendar, cloud storage, and more. Enable plugins here, then users can connect their accounts in Settings > Connected Accounts. Plugins can also power automated Plugin Feeds."
+        description="Plugins extend your assistant with capabilities like email, calendar, cloud storage, and more. Enable plugins here, then users can connect their accounts in Settings > Connected Accounts. Plugins can also power automated Plugin Feeds to ingest data into knowledge bases."
         icon={<ExtensionIcon />}
         tips={[
           'Enable a plugin first, then users need to authorize their accounts in Connected Accounts',

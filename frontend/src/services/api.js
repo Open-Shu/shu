@@ -581,4 +581,9 @@ export const agentsAPI = {
   runMorningBriefing: (params = {}, timeoutMs = 120000) => api.post('/agents/morning-briefing/run', params, { timeout: timeoutMs }),
 };
 
+// Setup status endpoint for QuickStart wizard
+export const setupAPI = {
+  getStatus: () => api.get('/config/setup-status'),
+};
+
 export default api;
