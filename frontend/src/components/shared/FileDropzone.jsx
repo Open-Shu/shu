@@ -42,6 +42,7 @@ const FileDropzone = ({
   uploadResults = [],
   uploading = false,
   uploadProgress = 0,
+  ingesting = false, // True when upload complete but server is still processing
 }) => {
   const theme = useTheme();
   const fileInputRef = useRef(null);
@@ -161,11 +162,21 @@ const FileDropzone = ({
       </Box>
 
       {/* Upload Progress */}
-      {uploading && (
+      {uploading && !ingesting && (
         <Box sx={{ mt: 2 }}>
           <LinearProgress variant="determinate" value={uploadProgress} />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, textAlign: 'center' }}>
             Uploading... {uploadProgress}%
+          </Typography>
+        </Box>
+      )}
+
+      {/* Ingestion Progress - shown after upload completes while server processes */}
+      {ingesting && (
+        <Box sx={{ mt: 2 }}>
+          <LinearProgress variant="indeterminate" color="secondary" />
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, textAlign: 'center' }}>
+            Document Uploaded — Ingesting for Intelligence... (this may take a while)
           </Typography>
         </Box>
       )}

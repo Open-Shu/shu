@@ -36,7 +36,8 @@ import {
 import PageHelpHeader from './PageHelpHeader';
 
 import { knowledgeBaseAPI, formatError, extractItemsFromResponse } from '../services/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { keyframes } from '@mui/system';
 
 
 
@@ -44,8 +45,18 @@ import KBConfigDialog from './KBConfigDialog';
 import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
+// Pulsing animation for highlighting the documents button
+const pulseAnimation = keyframes`
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.4); }
+  50% { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(25, 118, 210, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25, 118, 210, 0); }
+`;
+
 function KnowledgeBases() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const highlightDocs = searchParams.get('action') === 'add-documents';
+
   const [selectedKB, setSelectedKB] = useState(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -178,6 +189,15 @@ function KnowledgeBases() {
           'Documents are automatically chunked and embedded for vector search',
         ]}
       />
+      {highlightDocs && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2 }}
+          onClose={() => setSearchParams({})}
+        >
+          Click the pulsing <DocumentsIcon fontSize="small" sx={{ verticalAlign: 'middle', mx: 0.5 }} /> button on any Knowledge Base to add documents.
+        </Alert>
+      )}
       <Box display="flex" justifyContent="flex-end" alignItems="center" mb={2}>
         <Box>
           <Button
@@ -289,9 +309,23 @@ function KnowledgeBases() {
                       </IconButton>
                       <IconButton
                         size="small"
-                        onClick={() => handleViewDocuments(kb)}
-                        title="View Documents"
+                        onClick={() => {
+                          // Clear the highlight param when clicking
+                          if (highlightDocs) {
+                            setSearchParams({});
+                          }
+                          handleViewDocuments(kb);
+                        }}
+                        title={highlightDocs ? 'Click to add documents to this Knowledge Base' : 'View Documents'}
                         color="primary"
+                        sx={highlightDocs ? {
+                          animation: `${pulseAnimation} 1.5s ease-in-out infinite`,
+                          bgcolor: 'primary.light',
+                          color: 'primary.contrastText',
+                          '&:hover': {
+                            bgcolor: 'primary.main',
+                          },
+                        } : {}}
                       >
                         <DocumentsIcon />
                       </IconButton>

@@ -182,17 +182,25 @@ const QuickStart = () => {
       title: 'Add Documents',
       description: 'Upload documents to your knowledge bases. These will be indexed for semantic search and retrieval.',
       icon: <DocumentsIcon />,
-      path: '/admin/knowledge-bases',
+      path: '/admin/knowledge-bases?action=add-documents',
       priority: 'Step 4',
       statusKey: 'documents_added',
     },
     {
       title: 'Plugins',
-      description: 'Extend functionality with plugins. Connect external services and power automated Plugin Feeds to ingest data into knowledge bases.',
+      description: 'Extend functionality with plugins. Connect external services like Gmail, Google Drive, and Calendar.',
       icon: <PluginIcon />,
       path: '/admin/plugins',
       priority: 'Step 5',
       statusKey: 'plugins_enabled',
+    },
+    {
+      title: 'Plugin Feeds',
+      description: 'Configure automated data synchronization. Feeds pull data from connected services on a schedule into your knowledge bases.',
+      icon: <FeedsIcon />,
+      path: '/admin/feeds',
+      priority: 'Step 6',
+      statusKey: 'plugin_feed_created',
     },
   ];
 
@@ -202,12 +210,6 @@ const QuickStart = () => {
       description: 'Manage system prompts that define your assistant\'s behavior, personality, and response style.',
       icon: <PromptsIcon />,
       path: '/admin/prompts',
-    },
-    {
-      title: 'Plugin Feeds',
-      description: 'Configure automated data synchronization. Feeds pull data from connected services on a schedule into your knowledge bases.',
-      icon: <FeedsIcon />,
-      path: '/admin/feeds',
     },
     {
       title: 'Branding',

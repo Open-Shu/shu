@@ -17,6 +17,7 @@ from ..models import (
     KnowledgeBase,
     Document,
     PluginDefinition,
+    PluginFeed,
 )
 
 router = APIRouter(prefix="/config", tags=["configuration"])
@@ -75,6 +76,7 @@ class SetupStatus(BaseModel):
     knowledge_base_created: bool
     documents_added: bool
     plugins_enabled: bool
+    plugin_feed_created: bool
 
 
 @router.get("/setup-status", response_model=SuccessResponse[SetupStatus])
@@ -118,12 +120,19 @@ async def get_setup_status(
     )
     plugins_enabled = plugin_result.scalar() > 0
 
+    # Check if any plugin feed exists
+    feed_result = await db.execute(
+        select(func.count()).select_from(PluginFeed)
+    )
+    plugin_feed_created = feed_result.scalar() > 0
+
     status = SetupStatus(
         llm_provider_configured=llm_provider_configured,
         model_configuration_created=model_configuration_created,
         knowledge_base_created=knowledge_base_created,
         documents_added=documents_added,
         plugins_enabled=plugins_enabled,
+        plugin_feed_created=plugin_feed_created,
     )
 
     return SuccessResponse(data=status)

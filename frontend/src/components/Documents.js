@@ -298,6 +298,7 @@ function Documents() {
   const [uploadExpanded, setUploadExpanded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [ingesting, setIngesting] = useState(false); // True when upload done but server processing
   const [uploadResults, setUploadResults] = useState([]);
   const [uploadError, setUploadError] = useState(null);
 
@@ -380,6 +381,7 @@ function Documents() {
 
     setUploading(true);
     setUploadProgress(0);
+    setIngesting(false);
     setUploadResults([]);
     setUploadError(null);
 
@@ -390,6 +392,10 @@ function Documents() {
         (progressEvent) => {
           const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           setUploadProgress(percent);
+          // When upload reaches 100%, switch to ingesting state
+          if (percent >= 100) {
+            setIngesting(true);
+          }
         }
       );
 
@@ -404,6 +410,7 @@ function Documents() {
       setUploadError(formatError(err));
     } finally {
       setUploading(false);
+      setIngesting(false);
     }
   }, [kbId, fetchDocuments]);
 
@@ -491,11 +498,12 @@ function Documents() {
                 allowedTypes={uploadRestrictions.allowed_types}
                 maxSizeBytes={uploadRestrictions.max_size_bytes}
                 multiple
-                disabled={uploading}
+                disabled={uploading || ingesting}
                 onFilesSelected={handleFilesSelected}
                 uploadResults={uploadResults}
                 uploading={uploading}
                 uploadProgress={uploadProgress}
+                ingesting={ingesting}
               />
             </Box>
           </Collapse>
