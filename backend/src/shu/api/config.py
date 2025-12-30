@@ -1,13 +1,12 @@
 """Configuration API endpoints for Shu"""
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from typing import List
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
 from ..schemas.envelope import SuccessResponse
+from ..schemas.config import UploadRestrictions, PublicConfig, SetupStatus
 from ..api.dependencies import get_db
 from ..auth.rbac import get_current_user
 from ..auth.models import User
@@ -21,24 +20,6 @@ from ..models import (
 )
 
 router = APIRouter(prefix="/config", tags=["configuration"])
-
-
-class UploadRestrictions(BaseModel):
-    """File upload restrictions"""
-    allowed_types: List[str]
-    max_size_bytes: int
-
-
-class PublicConfig(BaseModel):
-    """Public configuration that can be safely exposed to frontend"""
-    google_client_id: str
-    app_name: str
-    version: str
-    environment: str
-    # Chat attachments (supports images via OCR)
-    upload_restrictions: UploadRestrictions
-    # KB document upload (no standalone image support - text extraction only)
-    kb_upload_restrictions: UploadRestrictions
 
 
 @router.get("/public", response_model=SuccessResponse[PublicConfig])
@@ -67,16 +48,6 @@ async def get_public_config():
     )
 
     return SuccessResponse(data=config)
-
-
-class SetupStatus(BaseModel):
-    """Setup completion status for QuickStart wizard"""
-    llm_provider_configured: bool
-    model_configuration_created: bool
-    knowledge_base_created: bool
-    documents_added: bool
-    plugins_enabled: bool
-    plugin_feed_created: bool
 
 
 @router.get("/setup-status", response_model=SuccessResponse[SetupStatus])
