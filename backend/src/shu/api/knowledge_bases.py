@@ -1041,9 +1041,9 @@ async def upload_documents(
             status_code=404
         )
 
-    # Get upload restrictions from settings
-    allowed_types = [t.lower() for t in settings.chat_attachment_allowed_types]
-    max_size = settings.chat_attachment_max_size
+    # Get upload restrictions from KB-specific settings
+    allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]
+    max_size = settings.kb_upload_max_size
 
     results = []
 
