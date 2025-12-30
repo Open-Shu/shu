@@ -89,50 +89,29 @@ async def get_setup_status(
 
     Returns boolean flags indicating whether each setup step has been completed.
     Used by the frontend to show checkmarks on the QuickStart page.
+
+    Uses a single optimized query with subqueries instead of 6 separate queries.
     """
-    # Check if any active LLM provider exists
-    provider_result = await db.execute(
-        select(func.count()).select_from(LLMProvider).where(LLMProvider.is_active == True)
+    # Single query using scalar subqueries for all counts
+    result = await db.execute(
+        select(
+            select(func.count()).select_from(LLMProvider).where(LLMProvider.is_active == True).correlate(None).scalar_subquery().label("llm_providers"),
+            select(func.count()).select_from(ModelConfiguration).where(ModelConfiguration.is_active == True).correlate(None).scalar_subquery().label("model_configs"),
+            select(func.count()).select_from(KnowledgeBase).correlate(None).scalar_subquery().label("knowledge_bases"),
+            select(func.count()).select_from(Document).correlate(None).scalar_subquery().label("documents"),
+            select(func.count()).select_from(PluginDefinition).where(PluginDefinition.enabled == True).correlate(None).scalar_subquery().label("plugins"),
+            select(func.count()).select_from(PluginFeed).correlate(None).scalar_subquery().label("feeds"),
+        )
     )
-    llm_provider_configured = provider_result.scalar() > 0
-
-    # Check if any active model configuration exists
-    model_config_result = await db.execute(
-        select(func.count()).select_from(ModelConfiguration).where(ModelConfiguration.is_active == True)
-    )
-    model_configuration_created = model_config_result.scalar() > 0
-
-    # Check if any knowledge base exists
-    kb_result = await db.execute(
-        select(func.count()).select_from(KnowledgeBase)
-    )
-    knowledge_base_created = kb_result.scalar() > 0
-
-    # Check if any documents exist
-    doc_result = await db.execute(
-        select(func.count()).select_from(Document)
-    )
-    documents_added = doc_result.scalar() > 0
-
-    # Check if any plugin is enabled
-    plugin_result = await db.execute(
-        select(func.count()).select_from(PluginDefinition).where(PluginDefinition.enabled == True)
-    )
-    plugins_enabled = plugin_result.scalar() > 0
-
-    # Check if any plugin feed exists
-    feed_result = await db.execute(
-        select(func.count()).select_from(PluginFeed)
-    )
-    plugin_feed_created = feed_result.scalar() > 0
+    row = result.one()
 
     status = SetupStatus(
-        llm_provider_configured=llm_provider_configured,
-        model_configuration_created=model_configuration_created,
-        knowledge_base_created=knowledge_base_created,
-        documents_added=documents_added,
-        plugins_enabled=plugins_enabled,
-        plugin_feed_created=plugin_feed_created,
+        llm_provider_configured=row.llm_providers > 0,
+        model_configuration_created=row.model_configs > 0,
+        knowledge_base_created=row.knowledge_bases > 0,
+        documents_added=row.documents > 0,
+        plugins_enabled=row.plugins > 0,
+        plugin_feed_created=row.feeds > 0,
     )
 
     return SuccessResponse(data=status)

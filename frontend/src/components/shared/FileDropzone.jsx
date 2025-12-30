@@ -20,6 +20,7 @@ import {
   Error as ErrorIcon,
   Close as RemoveIcon,
 } from '@mui/icons-material';
+import { formatFileSize } from '../../utils/format';
 
 /**
  * FileDropzone - A reusable drag-and-drop file upload component
@@ -48,12 +49,6 @@ const FileDropzone = ({
   const fileInputRef = useRef(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingFiles, setPendingFiles] = useState([]);
-
-  const formatFileSize = (bytes) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
 
   const validateFile = useCallback((file) => {
     const ext = file.name.split('.').pop()?.toLowerCase() || '';

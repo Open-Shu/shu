@@ -316,7 +316,6 @@ function Documents() {
   const [uploadExpanded, setUploadExpanded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [ingesting, setIngesting] = useState(false); // True when upload done but server processing
   const [uploadResults, setUploadResults] = useState([]);
   const [uploadError, setUploadError] = useState(null);
 
@@ -399,7 +398,6 @@ function Documents() {
 
     setUploading(true);
     setUploadProgress(0);
-    setIngesting(false);
     setUploadResults([]);
     setUploadError(null);
 
@@ -410,10 +408,6 @@ function Documents() {
         (progressEvent) => {
           const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           setUploadProgress(percent);
-          // When upload reaches 100%, switch to ingesting state
-          if (percent >= 100) {
-            setIngesting(true);
-          }
         }
       );
 
@@ -428,9 +422,11 @@ function Documents() {
       setUploadError(formatError(err));
     } finally {
       setUploading(false);
-      setIngesting(false);
     }
   }, [kbId, fetchDocuments]);
+
+  // Derive ingesting state: true when upload is done (100%) but still waiting for server response
+  const isIngesting = uploading && uploadProgress >= 100;
 
   const handleDeleteDocument = useCallback(async (doc) => {
     if (!window.confirm(`Are you sure you want to delete "${doc.title}"? This cannot be undone.`)) {
@@ -531,12 +527,12 @@ function Documents() {
                 allowedTypes={uploadRestrictions.allowed_types}
                 maxSizeBytes={uploadRestrictions.max_size_bytes}
                 multiple
-                disabled={uploading || ingesting}
+                disabled={uploading}
                 onFilesSelected={handleFilesSelected}
                 uploadResults={uploadResults}
                 uploading={uploading}
                 uploadProgress={uploadProgress}
-                ingesting={ingesting}
+                ingesting={isIngesting}
               />
             </Box>
           </Collapse>

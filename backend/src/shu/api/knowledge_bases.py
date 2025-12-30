@@ -30,6 +30,7 @@ from ..schemas.knowledge_base import (
     KnowledgeBaseList, KnowledgeBaseStats, RAGConfig, RAGConfigResponse
 )
 from ..services.knowledge_base_service import KnowledgeBaseService
+from ..services.document_service import DocumentService
 from ..services.ingestion_service import ingest_document as ingest_document_service
 
 logger = get_logger(__name__)
@@ -899,6 +900,7 @@ async def list_documents(
 async def delete_document(
     kb_id: str,
     document_id: str,
+    role_guard: User = Depends(require_power_user),
     current_user: User = Depends(require_kb_modify_default),
     db: AsyncSession = Depends(get_db)
 ):
@@ -907,22 +909,17 @@ async def delete_document(
 
     Only manually uploaded documents (source_type='plugin:manual_upload') can be deleted.
     Feed-sourced documents must be managed through their respective feeds.
+
+    Power users and admins can delete regardless of KB-specific permissions.
     """
     try:
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            return ShuResponse.error(
-                message="Knowledge base not found",
-                code="KNOWLEDGE_BASE_NOT_FOUND",
-                status_code=404
-            )
 
-        # Get the document to check source_type
+        # Get the document - also validates it belongs to this KB
         document = await kb_service.get_document(kb_id, document_id)
         if not document:
             return ShuResponse.error(
-                message="Document not found",
+                message="Document not found in this knowledge base",
                 code="DOCUMENT_NOT_FOUND",
                 status_code=404
             )
@@ -936,7 +933,6 @@ async def delete_document(
             )
 
         # Delete the document
-        from ..services.document_service import DocumentService
         doc_service = DocumentService(db)
         await doc_service.delete_document(document_id)
 
@@ -1022,7 +1018,8 @@ async def get_extraction_summary(
 async def upload_documents(
     kb_id: str,
     files: List[UploadFile] = File(..., description="Files to upload"),
-    current_user: User = Depends(require_power_user),
+    role_guard: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_modify_default),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1033,12 +1030,18 @@ async def upload_documents(
     and ingested using the standard document processing pipeline.
 
     Returns results for each file indicating success or failure.
+
+    Power users and admins can upload regardless of KB-specific permissions.
     """
-    # Verify KB exists
+    # Verify KB exists (require_kb_modify_default already validates access)
     kb_service = KnowledgeBaseService(db)
     kb = await kb_service.get_knowledge_base(kb_id)
     if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+        return ShuResponse.error(
+            message="Knowledge base not found",
+            code="KNOWLEDGE_BASE_NOT_FOUND",
+            status_code=404
+        )
 
     # Get upload restrictions from settings
     allowed_types = [t.lower() for t in settings.chat_attachment_allowed_types]
