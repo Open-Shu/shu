@@ -45,6 +45,7 @@ import NotImplemented from './NotImplemented';
 import { knowledgeBaseAPI, groupsAPI, authAPI, extractItemsFromResponse, formatError } from '../services/api';
 import AdminLayout from '../layouts/AdminLayout';
 import { log } from '../utils/log';
+import PageHelpHeader from './PageHelpHeader';
 
 const PERMISSION_LEVELS = [
   { value: 'owner', label: 'Owner', description: 'Full control, can delete KB, manage permissions', color: 'error' },
@@ -223,29 +224,39 @@ const KBPermissions = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" fontWeight="bold">
-          Knowledge Base Permissions
-        </Typography>
-        <Box display="flex" gap={2}>
-          <Button
-            variant="outlined"
-            startIcon={<AddIcon />}
-            onClick={() => setBulkDialogOpen(true)}
-            disabled={!selectedKB}
-          >
-            Bulk Operations
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setGrantDialogOpen(true)}
-            disabled={!selectedKB}
-          >
-            Grant Permission
-          </Button>
-        </Box>
-      </Box>
+      <PageHelpHeader
+        title="Knowledge Base Permissions"
+        description="Control who can access each Knowledge Base. Grant permissions to individual users or entire groups with different access levels: Owner, Admin, Member, or Read Only."
+        icon={<SecurityIcon />}
+        tips={[
+          'Select a Knowledge Base first, then grant permissions to users or groups',
+          'Owner: Full control including deletion and permission management',
+          'Admin: Can modify KB and documents, but cannot delete the KB',
+          'Member: Can query and add documents, but cannot delete',
+          'Read Only: Can only search and view, no modifications allowed',
+          'Use groups to grant the same permissions to multiple users at once',
+        ]}
+        actions={
+          <Box display="flex" gap={2}>
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setBulkDialogOpen(true)}
+              disabled={!selectedKB}
+            >
+              Bulk Operations
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setGrantDialogOpen(true)}
+              disabled={!selectedKB}
+            >
+              Grant Permission
+            </Button>
+          </Box>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

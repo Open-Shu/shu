@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
-  Dashboard as DashboardIcon,
+  RocketLaunch as QuickStartIcon,
   Storage as KnowledgeBasesIcon,
   TextSnippet as PromptsIcon,
   Search as QueryTesterIcon,
@@ -65,7 +65,7 @@ const AdminLayout = ({ children }) => {
   };
 
   const adminMenuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/admin/dashboard' },
+    { text: 'Quick Start', icon: <QuickStartIcon />, path: '/admin/dashboard' },
     { text: 'Model Configurations', icon: <ModelConfigIcon />, path: '/admin/model-configurations' },
     { text: 'Knowledge Bases', icon: <KnowledgeBasesIcon />, path: '/admin/knowledge-bases' },
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },

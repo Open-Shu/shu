@@ -38,11 +38,12 @@ import {
   Delete as DeleteIcon,
   People as PeopleIcon,
   MoreVert as MoreVertIcon,
-
+  Groups as GroupsIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
 import { groupsAPI, authAPI, extractItemsFromResponse, formatError } from '../services/api';
 import AdminLayout from '../layouts/AdminLayout';
+import PageHelpHeader from './PageHelpHeader';
 
 const UserGroups = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -275,18 +276,26 @@ const UserGroups = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" fontWeight="bold">
-          User Groups
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setCreateDialogOpen(true)}
-        >
-          Create Group
-        </Button>
-      </Box>
+      <PageHelpHeader
+        title="User Groups"
+        description="Organize users into groups for easier permission management. Groups can be granted access to Knowledge Bases, making it simple to manage access for teams or departments."
+        icon={<GroupsIcon />}
+        tips={[
+          'Create groups for teams, departments, or projects that need shared KB access',
+          'Add users to groups via the Members button in the actions menu',
+          'Groups can be used in KB Permissions to grant access to multiple users at once',
+          'Deactivate groups to temporarily revoke their permissions without deleting',
+        ]}
+        actions={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setCreateDialogOpen(true)}
+          >
+            Create Group
+          </Button>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

@@ -26,6 +26,7 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import { healthAPI, knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
+import PageHelpHeader from './PageHelpHeader';
 import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
@@ -187,9 +188,17 @@ function HealthMonitor() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        System Health Monitor
-      </Typography>
+      <PageHelpHeader
+        title="Health Monitor"
+        description="Monitor the health of your system in real-time. This page shows the status of the API, database, and other critical services. Use it to diagnose connectivity issues or confirm everything is running."
+        icon={<HealthIcon />}
+        tips={[
+          'Green indicators mean the service is healthy; red means there\'s an issue',
+          'The page auto-refreshes every 30 seconds to show current status',
+          'Check Database Health if you see errors related to data storage',
+          'Knowledge Base stats show document and chunk counts for quick reference',
+        ]}
+      />
 
       {/* Overall Status */}
       <Alert 

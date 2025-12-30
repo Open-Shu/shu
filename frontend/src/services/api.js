@@ -246,6 +246,16 @@ export const knowledgeBaseAPI = {
   delete: (id) => api.delete(`/knowledge-bases/${id}`),
   getDocuments: (id, params = {}) => api.get(`/knowledge-bases/${id}/documents`, { params }),
   getDocument: (id, docId) => api.get(`/knowledge-bases/${id}/documents/${docId}`),
+  deleteDocument: (id, docId) => api.delete(`/knowledge-bases/${id}/documents/${docId}`),
+  // Document upload
+  uploadDocuments: (id, files, onUploadProgress) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+    return api.post(`/knowledge-bases/${id}/documents/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress,
+    });
+  },
   // RAG Configuration endpoints
   getRAGConfig: (id) => api.get(`/knowledge-bases/${id}/rag-config`),
   updateRAGConfig: (id, config) => api.put(`/knowledge-bases/${id}/rag-config`, config),
@@ -570,6 +580,11 @@ export const chatRegenerateAPI = {
 // Agents endpoints (Morning Briefing)
 export const agentsAPI = {
   runMorningBriefing: (params = {}, timeoutMs = 120000) => api.post('/agents/morning-briefing/run', params, { timeout: timeoutMs }),
+};
+
+// Setup status endpoint for QuickStart wizard
+export const setupAPI = {
+  getStatus: () => api.get('/config/setup-status'),
 };
 
 export default api;

@@ -171,8 +171,8 @@ class RBACController:
         from ..models.knowledge_base import KnowledgeBase
         from ..models.rbac import KnowledgeBasePermission, UserGroupMembership, PermissionLevel
 
-        # Admins have owner-level access to all knowledge bases
-        if user.role_enum == UserRole.ADMIN:
+        # Admins and power users have owner-level access to all knowledge bases
+        if user.role_enum in [UserRole.ADMIN, UserRole.POWER_USER]:
             return PermissionLevel.OWNER.value
 
         # Verify knowledge base exists first
