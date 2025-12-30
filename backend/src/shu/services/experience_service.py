@@ -202,6 +202,9 @@ class ExperienceService:
             # Delete existing steps
             for step in experience.steps:
                 await self.db.delete(step)
+            
+            # Flush deletes before inserting to avoid unique constraint violations
+            await self.db.flush()
 
             # Create new steps
             for step_data in update_data.steps:

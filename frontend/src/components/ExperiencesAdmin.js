@@ -32,6 +32,7 @@ import {
     Event as CronIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useNavigate } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 
 // Visibility chip colors
@@ -146,91 +147,6 @@ const ExperienceCard = ({ experience, onEdit, onDelete, isDeleting }) => {
     );
 };
 
-const CreateExperienceDialog = ({ open, onClose, onCreate, isCreating }) => {
-    const [name, setName] = useState('');
-    const [description, setDescription] = useState('');
-    const [visibility, setVisibility] = useState('draft');
-    const [triggerType, setTriggerType] = useState('manual');
-
-    const handleSubmit = () => {
-        onCreate({
-            name,
-            description: description || null,
-            visibility,
-            trigger_type: triggerType,
-            steps: [],
-        });
-    };
-
-    const handleClose = () => {
-        setName('');
-        setDescription('');
-        setVisibility('draft');
-        setTriggerType('manual');
-        onClose();
-    };
-
-    return (
-        <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-            <DialogTitle>Create New Experience</DialogTitle>
-            <DialogContent>
-                <Stack spacing={2} sx={{ mt: 1 }}>
-                    <TextField
-                        label="Name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        fullWidth
-                        required
-                        autoFocus
-                    />
-                    <TextField
-                        label="Description"
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        fullWidth
-                        multiline
-                        rows={2}
-                    />
-                    <FormControl fullWidth>
-                        <InputLabel>Visibility</InputLabel>
-                        <Select
-                            value={visibility}
-                            label="Visibility"
-                            onChange={(e) => setVisibility(e.target.value)}
-                        >
-                            <MenuItem value="draft">Draft</MenuItem>
-                            <MenuItem value="admin_only">Admin Only</MenuItem>
-                            <MenuItem value="published">Published</MenuItem>
-                        </Select>
-                    </FormControl>
-                    <FormControl fullWidth>
-                        <InputLabel>Trigger Type</InputLabel>
-                        <Select
-                            value={triggerType}
-                            label="Trigger Type"
-                            onChange={(e) => setTriggerType(e.target.value)}
-                        >
-                            <MenuItem value="manual">Manual</MenuItem>
-                            <MenuItem value="scheduled">Scheduled</MenuItem>
-                            <MenuItem value="cron">Cron</MenuItem>
-                        </Select>
-                    </FormControl>
-                </Stack>
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={handleClose}>Cancel</Button>
-                <Button
-                    onClick={handleSubmit}
-                    variant="contained"
-                    disabled={!name.trim() || isCreating}
-                >
-                    {isCreating ? 'Creating...' : 'Create'}
-                </Button>
-            </DialogActions>
-        </Dialog>
-    );
-};
-
 const DeleteConfirmDialog = ({ open, experience, onClose, onConfirm, isDeleting }) => (
     <Dialog open={open} onClose={onClose}>
         <DialogTitle>Delete Experience</DialogTitle>
@@ -256,7 +172,7 @@ const DeleteConfirmDialog = ({ open, experience, onClose, onConfirm, isDeleting 
 
 export default function ExperiencesAdmin() {
     const queryClient = useQueryClient();
-    const [createDialogOpen, setCreateDialogOpen] = useState(false);
+    const navigate = useNavigate();
     const [deleteTarget, setDeleteTarget] = useState(null);
 
     // Fetch experiences
@@ -272,17 +188,6 @@ export default function ExperiencesAdmin() {
         return items.sort((a, b) => a.name.localeCompare(b.name));
     }, [data]);
 
-    // Create mutation
-    const createMutation = useMutation(
-        (newExp) => experiencesAPI.create(newExp).then(extractDataFromResponse),
-        {
-            onSuccess: () => {
-                queryClient.invalidateQueries(['experiences', 'list']);
-                setCreateDialogOpen(false);
-            },
-        }
-    );
-
     // Delete mutation
     const deleteMutation = useMutation(
         (id) => experiencesAPI.delete(id),
@@ -295,8 +200,11 @@ export default function ExperiencesAdmin() {
     );
 
     const handleEdit = (experience) => {
-        // TODO: Navigate to editor (Phase 6)
-        console.log('Edit experience:', experience.id);
+        navigate(`/admin/experiences/${experience.id}/edit`);
+    };
+
+    const handleCreate = () => {
+        navigate('/admin/experiences/new');
     };
 
     const handleDelete = (experience) => {
@@ -325,7 +233,7 @@ export default function ExperiencesAdmin() {
                     <Button
                         variant="contained"
                         startIcon={<AddIcon />}
-                        onClick={() => setCreateDialogOpen(true)}
+                        onClick={handleCreate}
                     >
                         New Experience
                     </Button>
@@ -393,7 +301,7 @@ export default function ExperiencesAdmin() {
                             <Button
                                 variant="contained"
                                 startIcon={<AddIcon />}
-                                onClick={() => setCreateDialogOpen(true)}
+                                onClick={handleCreate}
                             >
                                 New Experience
                             </Button>
@@ -412,13 +320,7 @@ export default function ExperiencesAdmin() {
                 </Stack>
             )}
 
-            {/* Create Dialog */}
-            <CreateExperienceDialog
-                open={createDialogOpen}
-                onClose={() => setCreateDialogOpen(false)}
-                onCreate={(data) => createMutation.mutate(data)}
-                isCreating={createMutation.isLoading}
-            />
+
 
             {/* Delete Confirmation Dialog */}
             <DeleteConfirmDialog

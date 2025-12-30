@@ -23,6 +23,7 @@ import MorningBriefing from './components/MorningBriefing';
 import PluginsAdmin from './components/PluginsAdmin';
 import PluginsAdminFeeds from './components/PluginsAdminFeeds';
 import ExperiencesAdmin from './components/ExperiencesAdmin';
+import ExperienceEditor from './components/ExperienceEditor';
 import BrandingSettings from './components/admin/BrandingSettings';
 
 // User Components
@@ -311,6 +312,26 @@ const AuthenticatedApp = () => {
             <RoleBasedRoute adminOnly>
               <ProtectedRoute requiredRole="admin">
                 <ExperiencesAdmin />
+              </ProtectedRoute>
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/admin/experiences/new"
+          element={
+            <RoleBasedRoute adminOnly>
+              <ProtectedRoute requiredRole="admin">
+                <ExperienceEditor />
+              </ProtectedRoute>
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/admin/experiences/:experienceId/edit"
+          element={
+            <RoleBasedRoute adminOnly>
+              <ProtectedRoute requiredRole="admin">
+                <ExperienceEditor />
               </ProtectedRoute>
             </RoleBasedRoute>
           }
