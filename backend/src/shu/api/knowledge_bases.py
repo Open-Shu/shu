@@ -18,7 +18,7 @@ from .dependencies import get_db
 from ..auth.rbac import (
     get_current_user, require_admin, require_power_user,
     require_kb_query_default, require_kb_manage_default,
-    require_kb_modify_default, require_kb_delete_default
+    require_kb_delete_default
 )
 from ..auth.models import User
 from ..core.config import get_settings_instance
@@ -895,13 +895,12 @@ async def list_documents(
 @router.delete(
     "/{kb_id}/documents/{document_id}",
     summary="Delete a document from knowledge base",
-    description="Delete a manually uploaded document. Feed-sourced documents cannot be deleted via this endpoint.",
+    description="Delete a manually uploaded document. Power user or admin only. Feed-sourced documents cannot be deleted via this endpoint.",
 )
 async def delete_document(
     kb_id: str,
     document_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_modify_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -910,7 +909,7 @@ async def delete_document(
     Only manually uploaded documents (source_type='plugin:manual_upload') can be deleted.
     Feed-sourced documents must be managed through their respective feeds.
 
-    Power users and admins can delete regardless of KB-specific permissions.
+    Requires power_user or admin role. These roles have automatic access to all KBs.
     """
     try:
         kb_service = KnowledgeBaseService(db)
@@ -1013,13 +1012,12 @@ async def get_extraction_summary(
 @router.post(
     "/{kb_id}/documents/upload",
     summary="Upload documents to knowledge base",
-    description="Upload one or more documents directly to a knowledge base. Power user only.",
+    description="Upload one or more documents directly to a knowledge base. Power user or admin only.",
 )
 async def upload_documents(
     kb_id: str,
     files: List[UploadFile] = File(..., description="Files to upload"),
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_modify_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1031,7 +1029,7 @@ async def upload_documents(
 
     Returns results for each file indicating success or failure.
 
-    Power users and admins can upload regardless of KB-specific permissions.
+    Requires power_user or admin role. These roles have automatic access to all KBs.
     """
     # Verify KB exists (require_kb_modify_default already validates access)
     kb_service = KnowledgeBaseService(db)
