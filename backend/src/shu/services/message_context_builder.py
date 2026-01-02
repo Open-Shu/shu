@@ -21,6 +21,7 @@ from .context_window_manager import ContextWindowManager
 from .message_utils import collapse_assistant_variants
 from .rag_query_processing import execute_rag_queries
 from .providers.adapter_base import get_adapter_from_provider
+from .side_call_service import SideCallService
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class MessageContextBuilder:
     @classmethod
     def init(cls, db_session: AsyncSession, config_manager: ConfigurationManager, diagnostics_target: Any):
         llm_service = LLMService(db_session)
+        side_call_service = SideCallService(db_session, config_manager)
         return MessageContextBuilder(
             db_session=db_session,
             config_manager=config_manager,
@@ -64,6 +66,7 @@ class MessageContextBuilder:
                 llm_service=llm_service,
                 db_session=db_session,
                 config_manager=config_manager,
+                side_call_service=side_call_service,
             ),
             context_preferences_resolver=ContextPreferencesResolver(
                 db_session=db_session,

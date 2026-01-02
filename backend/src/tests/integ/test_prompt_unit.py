@@ -22,14 +22,14 @@ def test_prompt_create_schema_validation():
     valid_data = {
         "name": "Test Prompt",
         "description": "A test prompt",
-        "content": "You are a helpful assistant. Query: {query}",
+        "content": "You are a helpful assistant. Provide clear and accurate responses.",
         "entity_type": "knowledge_base",
         "is_active": True
     }
 
     prompt_create = PromptCreate(**valid_data)
     assert prompt_create.name == "Test Prompt"
-    assert prompt_create.content == "You are a helpful assistant. Query: {query}"
+    assert prompt_create.content == "You are a helpful assistant. Provide clear and accurate responses."
     assert prompt_create.entity_type == "knowledge_base"
     assert prompt_create.is_active is True
 
@@ -88,13 +88,13 @@ def test_prompt_update_schema_validation():
     update_data = {
         "name": "Updated Prompt",
         "description": "Updated description",
-        "content": "Updated content: {query}",
+        "content": "You are an updated assistant. Be helpful and accurate.",
         "is_active": False
     }
 
     prompt_update = PromptUpdate(**update_data)
     assert prompt_update.name == "Updated Prompt"
-    assert prompt_update.content == "Updated content: {query}"
+    assert prompt_update.content == "You are an updated assistant. Be helpful and accurate."
     assert prompt_update.is_active is False
 
     # Partial update (only some fields)
@@ -115,7 +115,7 @@ def test_prompt_response_schema():
         "id": str(uuid.uuid4()),
         "name": "Response Test Prompt",
         "description": "Testing response formatting",
-        "content": "Response test content: {query}",
+        "content": "You are a response test assistant. Be helpful.",
         "entity_type": "knowledge_base",
         "version": 1,
         "is_active": True,
@@ -126,7 +126,7 @@ def test_prompt_response_schema():
     prompt_response = PromptResponse(**prompt_data)
     assert prompt_response.id == prompt_data["id"]
     assert prompt_response.name == "Response Test Prompt"
-    assert prompt_response.content == "Response test content: {query}"
+    assert prompt_response.content == "You are a response test assistant. Be helpful."
     assert prompt_response.entity_type == "knowledge_base"
     assert prompt_response.version == 1
     assert prompt_response.is_active is True
@@ -136,21 +136,25 @@ def test_prompt_response_schema():
 
 def test_prompt_assignment_create_schema():
     """Test that PromptAssignmentCreate schema validates entity assignments."""
-    # Valid knowledge base assignment
-    kb_assignment = {
-        "entity_id": str(uuid.uuid4())
-    }
-
-    assignment = PromptAssignmentCreate(**kb_assignment)
-    assert assignment.entity_id == kb_assignment["entity_id"]
-
-    # Valid model assignment
+    # Valid LLM model assignment (entity_type is required)
     model_assignment = {
-        "entity_id": str(uuid.uuid4())
+        "entity_id": str(uuid.uuid4()),
+        "entity_type": "llm_model"
     }
 
     assignment = PromptAssignmentCreate(**model_assignment)
     assert assignment.entity_id == model_assignment["entity_id"]
+    assert assignment.entity_type == "llm_model"
+
+    # Valid agent assignment
+    agent_assignment = {
+        "entity_id": str(uuid.uuid4()),
+        "entity_type": "agent"
+    }
+
+    assignment = PromptAssignmentCreate(**agent_assignment)
+    assert assignment.entity_id == agent_assignment["entity_id"]
+    assert assignment.entity_type == "agent"
 
 
 def test_entity_type_enum_validation():
@@ -171,36 +175,39 @@ def test_entity_type_enum_validation():
         assert prompt.entity_type == entity_type
 
 
-def test_prompt_content_template_validation():
-    """Test validation of prompt content templates."""
-    # Valid template with placeholder
-    valid_content = "You are a helpful assistant. Please respond to: {query}"
+def test_prompt_content_validation():
+    """Test validation of prompt content with various formats."""
+    # Simple system prompt
+    simple_content = "You are a helpful assistant."
     prompt_create = PromptCreate(
-        name="Template Test",
-        content=valid_content,
+        name="Simple Test",
+        content=simple_content,
         entity_type="knowledge_base"
     )
-    assert "{query}" in prompt_create.content
+    assert prompt_create.content == simple_content
 
-    # Content without template (should still be valid)
-    static_content = "You are a helpful assistant."
-    prompt_create = PromptCreate(
-        name="Static Test",
-        content=static_content,
-        entity_type="knowledge_base"
-    )
-    assert prompt_create.content == static_content
+    # Multi-line prompt with instructions
+    multiline_content = """You are a helpful assistant.
 
-    # Complex template with multiple placeholders
-    complex_content = "Context: {context}\nQuery: {query}\nInstructions: {instructions}"
+When answering questions:
+- Be concise and accurate
+- Cite sources when available
+- Acknowledge uncertainty when appropriate"""
     prompt_create = PromptCreate(
-        name="Complex Template",
-        content=complex_content,
+        name="Multiline Test",
+        content=multiline_content,
         entity_type="knowledge_base"
     )
-    assert "{context}" in prompt_create.content
-    assert "{query}" in prompt_create.content
-    assert "{instructions}" in prompt_create.content
+    assert "Be concise and accurate" in prompt_create.content
+
+    # KB-aware prompt (context is appended automatically, not substituted)
+    kb_prompt = "You are a knowledge assistant. When context is provided, use it to give accurate answers."
+    prompt_create = PromptCreate(
+        name="KB Aware Test",
+        content=kb_prompt,
+        entity_type="knowledge_base"
+    )
+    assert prompt_create.content == kb_prompt
 
 
 def test_prompt_version_handling():

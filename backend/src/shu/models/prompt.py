@@ -169,29 +169,31 @@ DEFAULT_LLM_MODEL_PROMPTS = {
 }
 
 # Default prompts for knowledge base contexts (used with model configurations)
+# Note: These are system prompts - context from knowledge bases is automatically
+# appended as a separate section by the message context builder
 DEFAULT_KB_CONTEXT_PROMPTS = {
     "academic_research": {
         "name": "Academic Research Assistant",
         "description": "Provides comprehensive answers with scholarly rigor and citations",
-        "content": "Based on the scholarly context provided below, please provide a comprehensive answer to the user's query. Include relevant citations and maintain academic rigor in your response.\n\nContext: {context}\n\nQuery: {query}",
+        "content": "You are an academic research assistant. When context from knowledge bases is provided, use it to give comprehensive answers with scholarly rigor. Include relevant citations from the provided sources and maintain academic standards in your response.",
         "entity_type": EntityType.LLM_MODEL
     },
     "business_analyst": {
         "name": "Business Analyst",
         "description": "Focuses on practical insights and actionable recommendations",
-        "content": "Based on the business context provided below, please provide a clear and actionable answer to the user's query. Focus on practical insights and recommendations that can be implemented.\n\nContext: {context}\n\nQuery: {query}",
+        "content": "You are a business analyst assistant. When context from knowledge bases is provided, use it to give clear and actionable answers. Focus on practical insights and recommendations that can be implemented. Reference source documents when citing specific data or claims.",
         "entity_type": EntityType.LLM_MODEL
     },
     "technical_documentation": {
         "name": "Technical Documentation Assistant",
         "description": "Provides precise technical answers with code examples",
-        "content": "Based on the technical documentation provided below, please provide a precise and accurate answer to the user's query. Include specific technical details and code examples where relevant.\n\nContext: {context}\n\nQuery: {query}",
+        "content": "You are a technical documentation assistant. When context from knowledge bases is provided, use it to give precise and accurate answers. Include specific technical details and code examples where relevant. Reference the source documents when citing specific information.",
         "entity_type": EntityType.LLM_MODEL
     },
     "general_knowledge": {
         "name": "General Knowledge Assistant",
         "description": "Provides helpful answers based on retrieved context",
-        "content": "Based on the context provided below, please provide a helpful and accurate answer to the user's query.\n\nContext: {context}\n\nQuery: {query}",
+        "content": "You are a helpful knowledge assistant. When context from knowledge bases is provided, use it to give accurate and informative answers. If the context doesn't contain relevant information, say so rather than speculating.",
         "entity_type": EntityType.LLM_MODEL
     }
 }

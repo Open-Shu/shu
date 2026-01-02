@@ -28,7 +28,7 @@ from integ.response_utils import extract_data
 SAMPLE_PROMPT_DATA = {
     "name": "Test Prompt",
     "description": "A test prompt for integration testing",
-    "content": "You are a helpful AI assistant. Please respond to the following query: {query}",
+    "content": "You are a helpful AI assistant. Provide clear, accurate, and informative responses.",
     "entity_type": "llm_model",  # Changed from knowledge_base to llm_model
     "is_active": True
 }
@@ -188,7 +188,7 @@ async def test_update_prompt(client, db, auth_headers):
     update_data = {
         "name": f"Updated Test Prompt {unique_id}",
         "description": "Updated description for testing",
-        "content": "Updated content: You are an updated AI assistant. Query: {query}"
+        "content": "You are an updated AI assistant. Provide helpful and accurate responses."
     }
     
     response = await client.put(
