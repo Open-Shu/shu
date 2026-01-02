@@ -294,16 +294,15 @@ const StepCard = ({
                                 </>
                             )}
 
-                            {/* Condition Template */}
-                            {/* TODO: Add clickable variable hints for step_outputs.<step_key>, user, etc. */}
+                            {/* Condition Template - actually just a required step key */}
                             <TextField
-                                label="Condition Template (Optional)"
+                                label="Required Step (Optional)"
                                 value={step.condition_template || ''}
                                 onChange={handleFieldChange('condition_template')}
                                 size="small"
                                 fullWidth
-                                placeholder="{{ step_outputs.previous_step.success }}"
-                                helperText="Step only runs if this evaluates to true"
+                                placeholder="previous_step"
+                                helperText="Step key that must succeed before this step runs"
                             />
                         </Stack>
                     </Box>

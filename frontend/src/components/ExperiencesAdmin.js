@@ -30,10 +30,12 @@ import {
     Schedule as ScheduleIcon,
     TouchApp as ManualIcon,
     Event as CronIcon,
+    History as HistoryIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import ExperienceRunDialog from './ExperienceRunDialog';
 
 // Visibility chip colors
 const visibilityColors = {
@@ -49,7 +51,7 @@ const triggerIcons = {
     cron: <CronIcon fontSize="small" />,
 };
 
-const ExperienceCard = ({ experience, onEdit, onDelete, isDeleting }) => {
+const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDeleting }) => {
     const visibilityLabel = experience.visibility?.replace('_', ' ') || 'draft';
 
     return (
@@ -106,12 +108,22 @@ const ExperienceCard = ({ experience, onEdit, onDelete, isDeleting }) => {
                     {/* Actions */}
                     <Grid item xs={12} md={4}>
                         <Stack direction="row" spacing={1} justifyContent="flex-end">
-                            <Tooltip title="Run experience (not implemented)">
-                                <span>
-                                    <IconButton size="small" disabled>
-                                        <PlayIcon fontSize="small" />
-                                    </IconButton>
-                                </span>
+                            <Tooltip title="Run experience">
+                                <IconButton
+                                    size="small"
+                                    color="primary"
+                                    onClick={() => onRun(experience)}
+                                >
+                                    <PlayIcon fontSize="small" />
+                                </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Run history">
+                                <IconButton
+                                    size="small"
+                                    onClick={() => onHistory(experience)}
+                                >
+                                    <HistoryIcon fontSize="small" />
+                                </IconButton>
                             </Tooltip>
                             <Tooltip title="Edit experience">
                                 <IconButton
@@ -174,6 +186,7 @@ export default function ExperiencesAdmin() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const [runDialogExperience, setRunDialogExperience] = useState(null);
 
     // Fetch experiences
     const { data, isLoading, isFetching, error, refetch } = useQuery(
@@ -215,6 +228,14 @@ export default function ExperiencesAdmin() {
         if (deleteTarget) {
             deleteMutation.mutate(deleteTarget.id);
         }
+    };
+
+    const handleRun = (experience) => {
+        setRunDialogExperience(experience);
+    };
+
+    const handleHistory = (experience) => {
+        navigate(`/admin/experiences/${experience.id}/edit?tab=1`);
     };
 
     return (
@@ -313,6 +334,8 @@ export default function ExperiencesAdmin() {
                                 experience={exp}
                                 onEdit={handleEdit}
                                 onDelete={handleDelete}
+                                onRun={handleRun}
+                                onHistory={handleHistory}
                                 isDeleting={deleteMutation.isLoading && deleteTarget?.id === exp.id}
                             />
                         ))
@@ -330,6 +353,17 @@ export default function ExperiencesAdmin() {
                 onConfirm={confirmDelete}
                 isDeleting={deleteMutation.isLoading}
             />
+
+            {/* Run Dialog */}
+            {runDialogExperience && (
+                <ExperienceRunDialog
+                    open={!!runDialogExperience}
+                    onClose={() => setRunDialogExperience(null)}
+                    experienceId={runDialogExperience.id}
+                    experienceName={runDialogExperience.name}
+                    steps={runDialogExperience.steps || []}
+                />
+            )}
         </Box>
     );
 }

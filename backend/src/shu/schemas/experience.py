@@ -278,6 +278,9 @@ class ExperienceRunResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # User info (populated when listing runs)
+    user: Optional[Dict[str, Any]] = Field(None, description="User info (id, email)")
+
     # Computed
     duration_seconds: Optional[float] = Field(None, description="Run duration in seconds")
 

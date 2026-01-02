@@ -414,7 +414,7 @@ async def delete_experience(
 @router.post(
     "/{experience_id}/run",
     summary="Execute experience",
-    description="Execute an experience. Returns 501 - not yet implemented."
+    description="Execute an experience and stream results via SSE."
 )
 async def run_experience(
     experience_id: str = Path(..., description="Experience ID"),
@@ -422,19 +422,90 @@ async def run_experience(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Execute an experience.
+    Execute an experience with SSE streaming.
     
-    This endpoint is not yet implemented - Phase 3 (Experience Executor) is deferred.
+    Returns a Server-Sent Events stream with execution progress:
+    - run_started: Execution has begun
+    - step_started/step_completed/step_failed/step_skipped: Step progress
+    - synthesis_started: LLM synthesis has begun
+    - content_delta: Streaming LLM tokens
+    - run_completed: Execution finished successfully
+    - error: Execution failed
     """
-    logger.info("API: Run experience (not implemented)", extra={
+    import json
+    from fastapi.responses import StreamingResponse
+    from ..core.config import get_config_manager
+    from ..services.experience_executor import ExperienceExecutor
+    
+    logger.info("API: Run experience", extra={
         "experience_id": experience_id,
         "user_id": current_user.id
     })
     
-    return ShuResponse.error(
-        message="Experience execution is not yet implemented",
-        code="NOT_IMPLEMENTED",
-        status_code=501
+    # First, verify the experience exists and user has access
+    service = ExperienceService(db)
+    is_admin = current_user.can_manage_users()
+    
+    experience = await service.get_experience(
+        experience_id=experience_id,
+        user_id=current_user.id,
+        is_admin=is_admin
+    )
+    
+    if not experience:
+        return ShuResponse.error(
+            message=f"Experience '{experience_id}' not found or access denied",
+            code="EXPERIENCE_NOT_FOUND",
+            status_code=404
+        )
+    
+    # Get the actual Experience model for execution
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from ..models.experience import Experience
+    result = await db.execute(
+        select(Experience)
+        .options(
+            selectinload(Experience.steps),
+            selectinload(Experience.prompt)
+        )
+        .where(Experience.id == experience_id)
+    )
+    experience_model = result.scalars().first()
+    
+    if not experience_model:
+        return ShuResponse.error(
+            message=f"Experience '{experience_id}' not found",
+            code="EXPERIENCE_NOT_FOUND",
+            status_code=404
+        )
+    
+    async def event_generator():
+        """Generate SSE events from executor."""
+        config_manager = get_config_manager()
+        executor = ExperienceExecutor(db, config_manager)
+        
+        try:
+            async for event in executor.execute_streaming(
+                experience=experience_model,
+                user_id=str(current_user.id),
+                input_params={},  # TODO: Accept input params from request body
+                current_user=current_user,
+            ):
+                yield f"data: {json.dumps(event.to_dict())}\n\n"
+        except Exception as e:
+            logger.exception("Experience execution error", extra={"experience_id": experience_id})
+            error_event = {"type": "error", "message": str(e)}
+            yield f"data: {json.dumps(error_event)}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        }
     )
 
 

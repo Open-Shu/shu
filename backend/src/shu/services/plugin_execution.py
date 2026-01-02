@@ -82,6 +82,45 @@ async def build_agent_tools(db_session: AsyncSession) -> List[CallableTool]:
     return tools
 
 
+def _coerce_params(plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce parameter types based on plugin schema."""
+    try:
+        schema = plugin.get_schema()
+        if not schema:
+            return params
+
+        # Assume standard JSON schema structure with "properties"
+        props = schema.get("properties", {})
+        
+        coerced = params.copy()
+        for key, value in params.items():
+            if key in props and isinstance(value, str):
+                prop_def = props[key]
+                prop_type = prop_def.get("type")
+                
+                if prop_type == "integer":
+                    # Handle pure digits
+                    if value.lstrip('-').isdigit():
+                        coerced[key] = int(value)
+                elif prop_type == "number":
+                    # Handle float format
+                    try:
+                        coerced[key] = float(value)
+                    except ValueError:
+                        pass
+                elif prop_type == "boolean":
+                    # Handle string booleans
+                    if value.lower() == "true":
+                        coerced[key] = True
+                    elif value.lower() == "false":
+                        coerced[key] = False
+
+        return coerced
+    except Exception as e:
+        logger.warning(f"Parameter coercion failed: {e}")
+        return params
+
+
 async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: str, args_dict: Dict[str, Any], conversation_owner_id: str) -> Dict[str, Any]:
     """
         Execute a chat-callable plugin op using the internal executor and return a serializable dict.
@@ -137,6 +176,7 @@ async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: 
         user_email_val = None
 
     params = dict(args_dict or {})
+    params = _coerce_params(plugin, params)
     params["op"] = operation
 
     try:
@@ -174,7 +214,7 @@ async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: 
         provider_identities=providers_map,
     )
     try:
-        return result.model_dump()
+        return result.model_dump(mode='json')
     except Exception:
         return {
             "status": getattr(result, "status", None),

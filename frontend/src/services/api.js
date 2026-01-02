@@ -186,6 +186,49 @@ const refreshTokenInBackground = async () => {
   }
 };
 
+/**
+ * Shared helper for SSE streaming POST requests with auto token refresh.
+ * 
+ * @param {string} url - Full URL for the request
+ * @param {Object} data - Request body data
+ * @param {Object} options - Optional config ({ signal, headers })
+ * @returns {Promise<Response>} Fetch response
+ */
+const sseStreamRequest = async (url, data = {}, options = {}) => {
+  const { signal, headers: extraHeaders } = options || {};
+
+  const makeRequest = (authToken) => {
+    const headers = { 'Accept': 'text/event-stream', 'Content-Type': 'application/json' };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { ...headers, ...(extraHeaders || {}) },
+      body: JSON.stringify(data),
+      signal,
+    });
+  };
+
+  const token = localStorage.getItem('shu_token');
+  const response = await makeRequest(token);
+
+  // Handle 401 by refreshing token and retrying once
+  if (response.status === 401) {
+    try {
+      log.debug('SSE request got 401, attempting token refresh...');
+      const tokens = await attemptTokenRefresh();
+      if (tokens) {
+        log.info('Token refreshed during SSE, retrying request...');
+        return makeRequest(tokens.access_token);
+      }
+    } catch (refreshError) {
+      log.warn('Token refresh failed during SSE:', refreshError);
+      // Fall through to return original 401 response
+    }
+  }
+
+  return response;
+};
+
 // Authentication endpoints
 export const authAPI = {
   login: (googleToken) => api.post('/auth/login', { google_token: googleToken }),
@@ -310,44 +353,8 @@ export const chatAPI = {
 
   // Core chat functionality
   sendMessage: (conversationId, data, config = {}) => api.post(`/chat/conversations/${conversationId}/send`, data, config),
-  streamMessage: async (conversationId, data, options = {}) => {
-    // Use POST /send with stream=true to support attachments
-    // This function handles 401 errors by refreshing the token and retrying once
-    const { signal, headers: extraHeaders } = options || {};
-
-    const makeRequest = (authToken) => {
-      const headers = { 'Accept': 'text/event-stream', 'Content-Type': 'application/json' };
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-
-      return fetch(`${api.defaults.baseURL}/chat/conversations/${conversationId}/send`, {
-        method: 'POST',
-        headers: { ...headers, ...(extraHeaders || {}) },
-        body: JSON.stringify({ ...data }),
-        signal,
-      });
-    };
-
-    const token = localStorage.getItem('shu_token');
-    const response = await makeRequest(token);
-
-    // Handle 401 by refreshing token and retrying once
-    if (response.status === 401) {
-      try {
-        log.debug('Streaming request got 401, attempting token refresh...');
-        const tokens = await attemptTokenRefresh();
-
-        if (tokens) {
-          log.info('Token refreshed during streaming, retrying request...');
-          return makeRequest(tokens.access_token);
-        }
-      } catch (refreshError) {
-        log.warn('Token refresh failed during streaming:', refreshError);
-        // Fall through to return original 401 response
-      }
-    }
-
-    return response;
-  },
+  streamMessage: (conversationId, data, options = {}) =>
+    sseStreamRequest(`${api.defaults.baseURL}/chat/conversations/${conversationId}/send`, data, options),
   switchConversationModel: (conversationId, data) => api.post(`/chat/conversations/${conversationId}/switch-model`, data),
 
   // Attachments
@@ -548,23 +555,8 @@ export const extractPaginationFromResponse = (response) => {
 // Chat regenerate endpoints
 export const chatRegenerateAPI = {
   regenerate: (messageId, data = {}) => api.post(`/chat/messages/${messageId}/regenerate`, data),
-  streamRegenerate: (messageId, data = {}, options = {}) => {
-    const token = localStorage.getItem('shu_token');
-    const url = `${api.defaults.baseURL}/chat/messages/${messageId}/regenerate`;
-    const { signal, headers: extraHeaders } = options || {};
-
-    return fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(extraHeaders || {}),
-      },
-      body: JSON.stringify({ ...data }),
-      signal,
-    });
-  },
+  streamRegenerate: (messageId, data = {}, options = {}) =>
+    sseStreamRequest(`${api.defaults.baseURL}/chat/messages/${messageId}/regenerate`, data, options),
 };
 
 // Agents endpoints (Morning Briefing)
@@ -585,6 +577,8 @@ export const experiencesAPI = {
   runExperience: (id, data = {}) => api.post(`/experiences/${id}/run`, data),
   // User dashboard
   getMyResults: (params = {}) => api.get('/experiences/my-results', { params }),
+  streamRun: (experienceId, data = {}, options = {}) =>
+    sseStreamRequest(`${api.defaults.baseURL}/experiences/${experienceId}/run`, data, options),
 };
 
 export default api;

@@ -11,7 +11,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, inspect as sa_inspect
-from sqlalchemy.orm import selectinload, Query
+from sqlalchemy.orm import selectinload
 
 from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
@@ -583,10 +583,39 @@ class ExperienceService:
             limit=limit
         )
 
-        items = [self._run_to_response(run) for run in runs]
+        # Fetch user info for all runs
+        user_ids = list(set(run.user_id for run in runs if run.user_id))
+        users_by_id = await self._fetch_users_by_ids(user_ids)
+
+        items = [self._run_to_response(run, users_by_id.get(run.user_id)) for run in runs]
         return self._build_paginated_response(
             ExperienceRunList, items, total, offset, limit
         )
+
+    async def _fetch_users_by_ids(self, user_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch user info for a list of user IDs.
+        
+        Args:
+            user_ids: List of user IDs to fetch
+            
+        Returns:
+            Dict mapping user_id to user info dict with id, email, display_name
+        """
+        if not user_ids:
+            return {}
+        
+        from ..auth.models import User as UserModel
+        user_stmt = select(UserModel).where(UserModel.id.in_(user_ids))
+        user_result = await self.db.execute(user_stmt)
+        
+        users_by_id: Dict[str, Dict[str, Any]] = {}
+        for user in user_result.scalars().all():
+            users_by_id[str(user.id)] = {
+                "id": str(user.id),
+                "email": user.email,
+                "display_name": getattr(user, "display_name", None) or user.email
+            }
+        return users_by_id
 
     async def get_run(
         self,
@@ -621,6 +650,7 @@ class ExperienceService:
     async def get_user_results(
         self,
         user_id: str,
+        offset: int = 0,
         limit: int = 50
     ) -> UserExperienceResults:
         """
@@ -628,21 +658,18 @@ class ExperienceService:
 
         Args:
             user_id: User ID
+            offset: Number of experiences to skip
             limit: Maximum number of experiences to return
 
         Returns:
             User's experience results summary
         """
-        # Get published experiences with their latest run for this user in a single query
-        # Using a lateral subquery pattern via SQLAlchemy
-        from sqlalchemy import literal_column
-        from sqlalchemy.orm import aliased
-
         # First, get experiences with steps
         exp_stmt = (
             self._base_experience_query()
             .where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
             .order_by(Experience.name)
+            .offset(offset)
             .limit(limit)
         )
         exp_result = await self.db.execute(exp_stmt)
@@ -918,7 +945,7 @@ class ExperienceService:
             updated_at=experience.updated_at
         )
 
-    def _run_to_response(self, run: ExperienceRun) -> ExperienceRunResponse:
+    def _run_to_response(self, run: ExperienceRun, user_info: Optional[Dict[str, Any]] = None) -> ExperienceRunResponse:
         """Convert ExperienceRun model to response schema."""
         duration_seconds = None
         if run.started_at and run.finished_at:
@@ -944,5 +971,6 @@ class ExperienceService:
             error_details=run.error_details,
             created_at=run.created_at,
             updated_at=run.updated_at,
+            user=user_info,
             duration_seconds=duration_seconds
         )

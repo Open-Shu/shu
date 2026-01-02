@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
     Alert,
@@ -17,10 +17,15 @@ import {
     Stack,
     TextField,
     Typography,
+    Tabs,
+    Tab,
+    Switch,
+    FormControlLabel,
 } from '@mui/material';
 import {
     ArrowBack as BackIcon,
     Save as SaveIcon,
+    PlayArrow as RunIcon,
 } from '@mui/icons-material';
 import {
     experiencesAPI,
@@ -30,6 +35,8 @@ import {
 } from '../services/api';
 import { promptAPI } from '../api/prompts';
 import ExperienceStepBuilder from './ExperienceStepBuilder';
+import ExperienceRunDialog from './ExperienceRunDialog';
+import ExperienceRunsList from './ExperienceRunsList';
 
 export default function ExperienceEditor() {
     const { experienceId } = useParams();
@@ -48,6 +55,14 @@ export default function ExperienceEditor() {
     const [promptId, setPromptId] = useState('');
     const [inlinePromptTemplate, setInlinePromptTemplate] = useState('');
     const [steps, setSteps] = useState([]);
+    const [maxRunSeconds, setMaxRunSeconds] = useState(120);
+    const [includePreviousRun, setIncludePreviousRun] = useState(false);
+    const [runDialogOpen, setRunDialogOpen] = useState(false);
+
+    // Read tab from URL query parameter
+    const [searchParams] = useSearchParams();
+    const initialTab = parseInt(searchParams.get('tab') || '0', 10);
+    const [activeTab, setActiveTab] = useState(initialTab);
     const [isDirty, setIsDirty] = useState(false);
     const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
@@ -122,6 +137,8 @@ export default function ExperienceEditor() {
             setPromptId(exp.prompt_id || '');
             setInlinePromptTemplate(exp.inline_prompt_template || '');
             setSteps(exp.steps || []);
+            setMaxRunSeconds(exp.max_run_seconds || 120);
+            setIncludePreviousRun(exp.include_previous_run || false);
             setIsDirty(false);
         }
     }, [experienceQuery.data]);
@@ -172,6 +189,8 @@ export default function ExperienceEditor() {
             model_name: modelName || null,
             prompt_id: promptId || null,
             inline_prompt_template: inlinePromptTemplate || null,
+            max_run_seconds: parseInt(maxRunSeconds, 10),
+            include_previous_run: includePreviousRun,
             steps: steps.map((step, index) => ({
                 step_key: step.step_key || `step_${index}`,
                 step_type: step.step_type,
@@ -244,6 +263,14 @@ export default function ExperienceEditor() {
                         />
                     )}
                     <Button
+                        variant="outlined"
+                        startIcon={<RunIcon />}
+                        onClick={() => setRunDialogOpen(true)}
+                        disabled={isNew || isDirty || isSaving}
+                    >
+                        Run Now
+                    </Button>
+                    <Button
                         variant="contained"
                         startIcon={<SaveIcon />}
                         onClick={handleSave}
@@ -261,201 +288,249 @@ export default function ExperienceEditor() {
                 </Alert>
             )}
 
-            <Grid container spacing={3}>
-                {/* Left Column - Basic Info & LLM Config */}
-                <Grid item xs={12} md={5}>
-                    <Stack spacing={3}>
-                        {/* Basic Info */}
-                        <Paper sx={{ p: 3 }}>
-                            <Typography variant="h6" gutterBottom>
-                                Basic Information
-                            </Typography>
-                            <Stack spacing={2}>
-                                <TextField
-                                    label="Name"
-                                    value={name}
-                                    onChange={handleFieldChange(setName)}
-                                    fullWidth
-                                    required
-                                />
-                                <TextField
-                                    label="Description"
-                                    value={description}
-                                    onChange={handleFieldChange(setDescription)}
-                                    fullWidth
-                                    multiline
-                                    rows={3}
-                                />
-                                <FormControl fullWidth>
-                                    <InputLabel>Visibility</InputLabel>
-                                    <Select
-                                        value={visibility}
-                                        label="Visibility"
-                                        onChange={handleFieldChange(setVisibility)}
-                                    >
-                                        <MenuItem value="draft">Draft</MenuItem>
-                                        <MenuItem value="admin_only">Admin Only</MenuItem>
-                                        <MenuItem value="published">Published</MenuItem>
-                                    </Select>
-                                </FormControl>
-                            </Stack>
-                        </Paper>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
+                    <Tab label="Configuration" />
+                    <Tab label="Run History" disabled={isNew} />
+                </Tabs>
+            </Box>
 
-                        {/* Trigger Configuration */}
-                        <Paper sx={{ p: 3 }}>
-                            <Typography variant="h6" gutterBottom>
-                                Trigger Configuration
-                            </Typography>
-                            <Stack spacing={2}>
-                                <FormControl fullWidth>
-                                    <InputLabel>Trigger Type</InputLabel>
-                                    <Select
-                                        value={triggerType}
-                                        label="Trigger Type"
-                                        onChange={handleFieldChange(setTriggerType)}
-                                    >
-                                        <MenuItem value="manual">Manual</MenuItem>
-                                        <MenuItem value="scheduled">Scheduled</MenuItem>
-                                        <MenuItem value="cron">Cron</MenuItem>
-                                    </Select>
-                                </FormControl>
-                                {triggerType === 'scheduled' && (
+            {activeTab === 0 && (
+                <Grid container spacing={3}>
+                    {/* Left Column - Basic Info & LLM Config */}
+                    <Grid item xs={12} md={5}>
+                        <Stack spacing={3}>
+                            {/* Basic Info */}
+                            <Paper sx={{ p: 3 }}>
+                                <Typography variant="h6" gutterBottom>
+                                    Basic Information
+                                </Typography>
+                                <Stack spacing={2}>
                                     <TextField
-                                        label="Scheduled Date/Time"
-                                        type="datetime-local"
-                                        value={triggerConfig.scheduled_at || ''}
-                                        onChange={(e) => {
-                                            setTriggerConfig({ ...triggerConfig, scheduled_at: e.target.value });
-                                            setIsDirty(true);
-                                        }}
+                                        label="Name"
+                                        value={name}
+                                        onChange={handleFieldChange(setName)}
                                         fullWidth
-                                        InputLabelProps={{ shrink: true }}
-                                        helperText="One-time execution at the specified date and time"
+                                        required
                                     />
-                                )}
-                                {triggerType === 'cron' && (
                                     <TextField
-                                        label="Cron Expression"
-                                        value={triggerConfig.cron || ''}
-                                        onChange={(e) => {
-                                            setTriggerConfig({ ...triggerConfig, cron: e.target.value });
-                                            setIsDirty(true);
-                                        }}
+                                        label="Description"
+                                        value={description}
+                                        onChange={handleFieldChange(setDescription)}
                                         fullWidth
-                                        placeholder="0 9 * * *"
-                                        helperText="Standard cron expression (e.g., '0 9 * * *' for daily at 9am)"
+                                        multiline
+                                        rows={3}
                                     />
-                                )}
-                            </Stack>
-                        </Paper>
+                                    <Grid container>
+                                        <Grid item xs={6}>
+                                            <FormControl fullWidth>
+                                                <InputLabel>Visibility</InputLabel>
+                                                <Select
+                                                    value={visibility}
+                                                    label="Visibility"
+                                                    onChange={handleFieldChange(setVisibility)}
+                                                >
+                                                    <MenuItem value="draft">Draft</MenuItem>
+                                                    <MenuItem value="admin_only">Admin Only</MenuItem>
+                                                    <MenuItem value="published">Published</MenuItem>
+                                                </Select>
+                                            </FormControl>
+                                        </Grid>
+                                        <Grid item xs={6}>
+                                            <TextField
+                                                label="Max Run Time (s)"
+                                                type="number"
+                                                value={maxRunSeconds}
+                                                onChange={handleFieldChange(setMaxRunSeconds)}
+                                                fullWidth
+                                                inputProps={{ min: 10, max: 600 }}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12}>
+                                            <FormControlLabel
+                                                control={
+                                                    <Switch
+                                                        checked={includePreviousRun}
+                                                        onChange={(e) => {
+                                                            setIncludePreviousRun(e.target.checked);
+                                                            setIsDirty(true);
+                                                        }}
+                                                    />
+                                                }
+                                                label="Include output from previous successful run in context"
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Stack>
+                            </Paper>
 
-                        {/* LLM Configuration */}
-                        <Paper sx={{ p: 3 }}>
-                            <Typography variant="h6" gutterBottom>
-                                LLM Configuration (Optional)
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                Configure the LLM to process step outputs and generate final results.
-                            </Typography>
-                            <Stack spacing={2}>
-                                <FormControl fullWidth>
-                                    <InputLabel>LLM Provider</InputLabel>
-                                    <Select
-                                        value={llmProviderId}
-                                        label="LLM Provider"
-                                        onChange={(e) => {
-                                            setLlmProviderId(e.target.value);
-                                            setModelName(''); // Reset model when provider changes
-                                            setIsDirty(true);
-                                        }}
-                                    >
-                                        <MenuItem value="">
-                                            <em>None</em>
-                                        </MenuItem>
-                                        {providers.map((p) => (
-                                            <MenuItem key={p.id} value={p.id}>
-                                                {p.name}
-                                            </MenuItem>
-                                        ))}
-                                    </Select>
-                                </FormControl>
-                                {llmProviderId && (
+                            {/* Trigger Configuration */}
+                            <Paper sx={{ p: 3 }}>
+                                <Typography variant="h6" gutterBottom>
+                                    Trigger Configuration
+                                </Typography>
+                                <Stack spacing={2}>
                                     <FormControl fullWidth>
-                                        <InputLabel>Model</InputLabel>
+                                        <InputLabel>Trigger Type</InputLabel>
                                         <Select
-                                            value={modelName}
-                                            label="Model"
-                                            onChange={handleFieldChange(setModelName)}
+                                            value={triggerType}
+                                            label="Trigger Type"
+                                            onChange={handleFieldChange(setTriggerType)}
+                                        >
+                                            <MenuItem value="manual">Manual</MenuItem>
+                                            <MenuItem value="scheduled">Scheduled</MenuItem>
+                                            <MenuItem value="cron">Cron</MenuItem>
+                                        </Select>
+                                    </FormControl>
+                                    {triggerType === 'scheduled' && (
+                                        <TextField
+                                            label="Scheduled Date/Time"
+                                            type="datetime-local"
+                                            value={triggerConfig.scheduled_at || ''}
+                                            onChange={(e) => {
+                                                setTriggerConfig({ ...triggerConfig, scheduled_at: e.target.value });
+                                                setIsDirty(true);
+                                            }}
+                                            fullWidth
+                                            InputLabelProps={{ shrink: true }}
+                                            helperText="One-time execution at the specified date and time"
+                                        />
+                                    )}
+                                    {triggerType === 'cron' && (
+                                        <TextField
+                                            label="Cron Expression"
+                                            value={triggerConfig.cron || ''}
+                                            onChange={(e) => {
+                                                setTriggerConfig({ ...triggerConfig, cron: e.target.value });
+                                                setIsDirty(true);
+                                            }}
+                                            fullWidth
+                                            placeholder="0 9 * * *"
+                                            helperText="Standard cron expression (e.g., '0 9 * * *' for daily at 9am)"
+                                        />
+                                    )}
+                                </Stack>
+                            </Paper>
+
+                            {/* LLM Configuration */}
+                            <Paper sx={{ p: 3 }}>
+                                <Typography variant="h6" gutterBottom>
+                                    LLM Configuration (Optional)
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                    Configure the LLM to process step outputs and generate final results.
+                                </Typography>
+                                <Stack spacing={2}>
+                                    <FormControl fullWidth>
+                                        <InputLabel>LLM Provider</InputLabel>
+                                        <Select
+                                            value={llmProviderId}
+                                            label="LLM Provider"
+                                            onChange={(e) => {
+                                                setLlmProviderId(e.target.value);
+                                                setModelName(''); // Reset model when provider changes
+                                                setIsDirty(true);
+                                            }}
                                         >
                                             <MenuItem value="">
-                                                <em>Default</em>
+                                                <em>None</em>
                                             </MenuItem>
-                                            {availableModels.map((m) => (
-                                                <MenuItem key={m} value={m}>
-                                                    {m}
+                                            {providers.map((p) => (
+                                                <MenuItem key={p.id} value={p.id}>
+                                                    {p.name}
                                                 </MenuItem>
                                             ))}
                                         </Select>
                                     </FormControl>
-                                )}
-                                <Divider />
-                                <FormControl fullWidth>
-                                    <InputLabel>Prompt Template</InputLabel>
-                                    <Select
-                                        value={promptId}
-                                        label="Prompt Template"
-                                        onChange={handleFieldChange(setPromptId)}
-                                    >
-                                        <MenuItem value="">
-                                            <em>Use inline prompt</em>
-                                        </MenuItem>
-                                        {prompts.map((p) => (
-                                            <MenuItem key={p.id} value={p.id}>
-                                                {p.name}
+                                    {llmProviderId && (
+                                        <FormControl fullWidth>
+                                            <InputLabel>Model</InputLabel>
+                                            <Select
+                                                value={modelName}
+                                                label="Model"
+                                                onChange={handleFieldChange(setModelName)}
+                                            >
+                                                <MenuItem value="">
+                                                    <em>Default</em>
+                                                </MenuItem>
+                                                {availableModels.map((m) => (
+                                                    <MenuItem key={m} value={m}>
+                                                        {m}
+                                                    </MenuItem>
+                                                ))}
+                                            </Select>
+                                        </FormControl>
+                                    )}
+                                    <Divider />
+                                    <FormControl fullWidth>
+                                        <InputLabel>Prompt Template</InputLabel>
+                                        <Select
+                                            value={promptId}
+                                            label="Prompt Template"
+                                            onChange={handleFieldChange(setPromptId)}
+                                        >
+                                            <MenuItem value="">
+                                                <em>Use inline prompt</em>
                                             </MenuItem>
-                                        ))}
-                                    </Select>
-                                </FormControl>
-                                {!promptId && (
-                                    // TODO: Add clickable variable hints below textarea
-                                    // Available variables: {{ user.id }}, {{ user.email }}, {{ user.display_name }},
-                                    // {{ step_outputs.<step_key> }}, {{ previous_run.result_content }}, {{ now }}
-                                    // Clicking a variable should insert it at cursor position
-                                    <TextField
-                                        label="Inline Prompt Template"
-                                        value={inlinePromptTemplate}
-                                        onChange={handleFieldChange(setInlinePromptTemplate)}
-                                        fullWidth
-                                        multiline
-                                        rows={6}
-                                        placeholder="Use {{ step_outputs.step_key }} to reference step results"
-                                        helperText="Jinja2 template with access to step_outputs, user, and previous_run"
-                                    />
-                                )}
-                            </Stack>
+                                            {prompts.map((p) => (
+                                                <MenuItem key={p.id} value={p.id}>
+                                                    {p.name}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
+                                    {!promptId && (
+                                        // TODO: Add clickable variable hints below textarea
+                                        // Available variables: {{ user.id }}, {{ user.email }}, {{ user.display_name }},
+                                        // {{ step_outputs.<step_key> }}, {{ previous_run.result_content }}, {{ now }}
+                                        // Clicking a variable should insert it at cursor position
+                                        <TextField
+                                            label="Inline Prompt Template"
+                                            value={inlinePromptTemplate}
+                                            onChange={handleFieldChange(setInlinePromptTemplate)}
+                                            fullWidth
+                                            multiline
+                                            rows={6}
+                                            placeholder="Use {{ step_outputs.step_key }} to reference step results"
+                                            helperText="Jinja2 template with access to step_outputs, user, and previous_run"
+                                        />
+                                    )}
+                                </Stack>
+                            </Paper>
+                        </Stack>
+                    </Grid>
+
+                    {/* Right Column - Steps Builder */}
+                    <Grid item xs={12} md={7}>
+                        <Paper sx={{ p: 3 }}>
+                            <Typography variant="h6" gutterBottom>
+                                Experience Steps
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                Define the steps that gather data for this experience. Steps execute
+                                in order and their outputs are available to subsequent steps and the
+                                final prompt.
+                            </Typography>
+                            <ExperienceStepBuilder
+                                steps={steps}
+                                onChange={handleStepsChange}
+                            />
                         </Paper>
-                    </Stack>
+                    </Grid>
                 </Grid>
+            )}
 
-                {/* Right Column - Steps Builder */}
-                <Grid item xs={12} md={7}>
-                    <Paper sx={{ p: 3 }}>
-                        <Typography variant="h6" gutterBottom>
-                            Experience Steps
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            Define the steps that gather data for this experience. Steps execute
-                            in order and their outputs are available to subsequent steps and the
-                            final prompt.
-                        </Typography>
-                        <ExperienceStepBuilder
-                            steps={steps}
-                            onChange={handleStepsChange}
-                        />
-                    </Paper>
-                </Grid>
-            </Grid>
+            {activeTab === 1 && (
+                <ExperienceRunsList experienceId={experienceId} />
+            )}
 
+            <ExperienceRunDialog
+                open={runDialogOpen}
+                onClose={() => setRunDialogOpen(false)}
+                experienceId={experienceId}
+                experienceName={name}
+                steps={steps}
+            />
         </Box>
     );
 }
