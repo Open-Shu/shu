@@ -1,8 +1,11 @@
 import logging
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional, TYPE_CHECKING
 
 from shu.models.llm_provider import Conversation
-from .chat_types import ChatContext, ChatMessage
+from .chat_types import ChatMessage
+
+if TYPE_CHECKING:
+    from .side_call_service import SideCallService
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +20,8 @@ class ContextWindowManager:
         db_session,
         config_manager,
         *,
+        side_call_service: Optional["SideCallService"] = None,
         recent_message_limit: int = 10,
-        summary_max_tokens: int = 200,
-        summary_temperature: float = 0.3,
         summary_prompt: str = (
             "Please provide a concise summary of the following conversation, focusing on key topics, "
             "decisions, and important information that would be useful for continuing the conversation:\n\n"
@@ -30,9 +32,8 @@ class ContextWindowManager:
         self.llm_service = llm_service
         self.db_session = db_session
         self.config_manager = config_manager
+        self.side_call_service = side_call_service
         self.recent_message_limit = recent_message_limit
-        self.summary_max_tokens = summary_max_tokens
-        self.summary_temperature = summary_temperature
         self.summary_prompt = summary_prompt
         self._token_estimator_override = token_estimator
 
@@ -88,7 +89,6 @@ class ContextWindowManager:
         managed_messages: List[ChatMessage] = []
 
         if older_messages:
-            # TODO: The side caller should do this, rather than a random configured provider.
             summary = await self._summarize_conversation_history(older_messages)
             if summary:
                 # Use 'user' role instead of 'system' to avoid adapter compatibility issues.
@@ -131,38 +131,29 @@ class ContextWindowManager:
             else:
                 summary_prompt = f"{self.summary_prompt}\n\n{conversation_text}\n\nSummary:"
 
-            providers = await self.llm_service.get_active_providers()
-            if not providers:
-                logger.warning("No active LLM providers available for summarization")
-                return None
+            # Use the side-call service if available (preferred path)
+            if self.side_call_service:
+                result = await self.side_call_service.call(
+                    message_sequence=[{"role": "user", "content": summary_prompt}],
+                    system_prompt=None,
+                    user_id="system",
+                )
+                if result.success:
+                    logger.info("Generated conversation summary via side-call service")
+                    return (result.content or "").strip()
+                else:
+                    logger.warning(
+                        "Side-call service summarization failed: %s",
+                        result.error_message
+                    )
+                    return None
 
-            provider = providers[0]
-            if not provider.models:
-                logger.warning("No models available for summarization")
-                return None
-
-            model = next((m for m in provider.models if m.is_active), None)
-            if not model:
-                logger.warning("No active models available for summarization")
-                return None
-
-            client = await self.llm_service.get_client(provider.id)
-            summary_params: Dict[str, float] = {
-                "max_tokens": self.summary_max_tokens,
-                "temperature": self.summary_temperature,
-            }
-
-            responses = await client.chat_completion(
-                messages=ChatContext.from_dicts([{"role": "user", "content": summary_prompt}]),
-                model=model.model_name,
-                stream=False,
-                model_overrides=None,
-                llm_params=summary_params,
+            # Fallback: no side-call service configured
+            logger.warning(
+                "No side-call service configured for context summarization; "
+                "skipping summarization to avoid using arbitrary provider"
             )
-
-            summary = (responses[-1].content or "").strip()
-            logger.info("Generated conversation summary for context management")
-            return summary
+            return None
 
         except Exception as exc:
             logger.warning("Failed to summarize conversation history: %s", exc)

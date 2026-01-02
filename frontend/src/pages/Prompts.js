@@ -26,7 +26,6 @@ function Prompts() {
           'Create a "system" prompt type to define your assistant\'s core behavior',
           'Assign prompts to Model Configurations to activate them',
           'Use KB-specific prompts to customize how documents from each knowledge base are presented',
-          'Prompts can include variables like {{context}} and {{user_message}} that get filled at runtime',
           'Test prompts by attaching them to a Model Configuration and using the LLM Tester',
         ]}
       />

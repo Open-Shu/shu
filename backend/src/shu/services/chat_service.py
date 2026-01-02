@@ -33,6 +33,7 @@ from ..services.context_preferences_resolver import ContextPreferencesResolver
 from ..services.message_context_builder import MessageContextBuilder
 from ..services.chat_types import ChatContext
 from ..services.message_utils import serialize_message_for_sse
+from ..services.side_call_service import SideCallService
 from .conversation_lock_service import acquire_conversation_lock, release_conversation_lock
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 
@@ -71,10 +72,12 @@ class ChatService:
         self.llm_service = LLMService(db_session)
         self.prompt_service = PromptService(db_session)
         self.query_service = QueryService(db_session, config_manager)
+        self.side_call_service = SideCallService(db_session, config_manager)
         self.context_window_manager = ContextWindowManager(
             llm_service=self.llm_service,
             db_session=self.db_session,
             config_manager=self.config_manager,
+            side_call_service=self.side_call_service,
         )
         self.context_preferences_resolver = ContextPreferencesResolver(
             db_session=self.db_session,

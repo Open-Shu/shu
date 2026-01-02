@@ -1146,6 +1146,7 @@ const ModernChat = () => {
     onSave: applyEnsembleSelection,
     availableModelConfigs,
     selectedIds: ensembleModeConfigIds,
+    currentModelConfigId: selectedConversation?.model_configuration_id,
   };
 
   const renameDialogProps = {
