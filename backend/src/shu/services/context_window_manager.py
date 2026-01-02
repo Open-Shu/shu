@@ -22,8 +22,6 @@ class ContextWindowManager:
         *,
         side_call_service: Optional["SideCallService"] = None,
         recent_message_limit: int = 10,
-        summary_max_tokens: int = 200,
-        summary_temperature: float = 0.3,
         summary_prompt: str = (
             "Please provide a concise summary of the following conversation, focusing on key topics, "
             "decisions, and important information that would be useful for continuing the conversation:\n\n"
@@ -36,8 +34,6 @@ class ContextWindowManager:
         self.config_manager = config_manager
         self.side_call_service = side_call_service
         self.recent_message_limit = recent_message_limit
-        self.summary_max_tokens = summary_max_tokens
-        self.summary_temperature = summary_temperature
         self.summary_prompt = summary_prompt
         self._token_estimator_override = token_estimator
 
@@ -141,10 +137,6 @@ class ContextWindowManager:
                     message_sequence=[{"role": "user", "content": summary_prompt}],
                     system_prompt=None,
                     user_id="system",
-                    config_overrides={
-                        "max_tokens": self.summary_max_tokens,
-                        "temperature": self.summary_temperature,
-                    },
                 )
                 if result.success:
                     logger.info("Generated conversation summary via side-call service")
