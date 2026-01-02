@@ -333,22 +333,24 @@ def upgrade() -> None:
                 "entity_type": "llm_model",
             },
             # KB context styles (used by model configurations)
+            # Note: These are system prompts - context from knowledge bases is automatically
+            # appended as a separate section by the message context builder
             {
                 "name": "Academic Research Assistant",
                 "description": "Provides comprehensive answers with scholarly rigor and citations",
-                "content": "Based on the scholarly context provided below, please provide a comprehensive answer to the user's query. Include relevant citations and maintain academic rigor in your response.\n\nContext: {context}\n\nQuery: {query}",
+                "content": "You are an academic research assistant. When context from knowledge bases is provided, use it to give comprehensive answers with scholarly rigor. Include relevant citations from the provided sources and maintain academic standards in your response.",
                 "entity_type": "llm_model",
             },
             {
                 "name": "Technical Documentation Assistant",
                 "description": "Provides precise technical answers with code examples",
-                "content": "Based on the technical documentation provided below, please provide a precise and accurate answer to the user's query. Include specific technical details and code examples where relevant.\n\nContext: {context}\n\nQuery: {query}",
+                "content": "You are a technical documentation assistant. When context from knowledge bases is provided, use it to give precise and accurate answers. Include specific technical details and code examples where relevant. Reference the source documents when citing specific information.",
                 "entity_type": "llm_model",
             },
             {
                 "name": "General Knowledge Assistant",
                 "description": "Provides helpful answers based on retrieved context",
-                "content": "Based on the context provided below, please provide a helpful and accurate answer to the user's query.\n\nContext: {context}\n\nQuery: {query}",
+                "content": "You are a helpful knowledge assistant. When context from knowledge bases is provided, use it to give accurate and informative answers. If the context doesn't contain relevant information, say so rather than speculating.",
                 "entity_type": "llm_model",
             },
         ]

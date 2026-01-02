@@ -125,23 +125,52 @@ async def test_config_consistency_across_requests(client, db, auth_headers):
         assert config == first_config, "Configuration values should be consistent across requests"
 
 
+def _is_json_serializable(value) -> bool:
+    """Check if a value is JSON serializable (basic types or nested dicts/lists)."""
+    if value is None:
+        return True
+    if isinstance(value, (str, int, float, bool)):
+        return True
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and _is_json_serializable(v) for k, v in value.items())
+    if isinstance(value, list):
+        return all(_is_json_serializable(item) for item in value)
+    return False
+
+
 async def test_config_response_format(client, db, auth_headers):
     """Test that configuration response follows expected format."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     # Check response structure
     data = response.json()
     assert isinstance(data, dict)
     assert "data" in data
     assert isinstance(data["data"], dict)
-    
-    # Check that all values are JSON serializable types
+
+    # Check that all values are JSON serializable types (including nested objects)
     config = extract_data(response)
     for key, value in config.items():
         assert isinstance(key, str), f"Config key '{key}' is not a string"
-        assert isinstance(value, (str, int, float, bool, type(None))), \
-            f"Config value for '{key}' is not a basic JSON type"
+        assert _is_json_serializable(value), \
+            f"Config value for '{key}' is not a valid JSON type"
+
+    # Verify upload_restrictions structure if present
+    if "upload_restrictions" in config:
+        ur = config["upload_restrictions"]
+        assert isinstance(ur, dict), "upload_restrictions should be a dict"
+        assert "allowed_types" in ur, "upload_restrictions should have allowed_types"
+        assert "max_size_bytes" in ur, "upload_restrictions should have max_size_bytes"
+        assert isinstance(ur["allowed_types"], list), "allowed_types should be a list"
+        assert isinstance(ur["max_size_bytes"], int), "max_size_bytes should be an int"
+
+    # Verify kb_upload_restrictions structure if present
+    if "kb_upload_restrictions" in config:
+        kbur = config["kb_upload_restrictions"]
+        assert isinstance(kbur, dict), "kb_upload_restrictions should be a dict"
+        assert "allowed_types" in kbur, "kb_upload_restrictions should have allowed_types"
+        assert "max_size_bytes" in kbur, "kb_upload_restrictions should have max_size_bytes"
 
 
 async def test_config_caching_headers(client, db, auth_headers):

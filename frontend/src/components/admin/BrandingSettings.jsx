@@ -11,10 +11,12 @@ import {
   Typography,
 } from '@mui/material';
 
+import PaletteIcon from '@mui/icons-material/Palette';
 import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
 import { getThemeConfig } from '../../utils/constants';
 import log from '../../utils/log';
+import PageHelpHeader from '../PageHelpHeader';
 
 const emptyForm = {
   appName: '',
@@ -208,13 +210,18 @@ const BrandingSettings = () => {
   return (
     <Box component="form" onSubmit={handleSubmit} sx={{ maxWidth: 1000, mx: 'auto' }}>
       <Stack spacing={3}>
-        <Typography variant="h4" fontWeight={600}>
-          Branding Settings
-        </Typography>
-
-        <Typography variant="body1" color="text.secondary">
-          Customize the application experience by updating the logo, favicon, and primary colors for both light and dark modes.
-        </Typography>
+        <PageHelpHeader
+          title="Branding Settings"
+          description="Customize the look and feel of your application. Upload your logo, set a favicon, and configure color themes for both light and dark modes."
+          icon={<PaletteIcon />}
+          tips={[
+            'Upload a logo image to replace the default branding throughout the app',
+            'The favicon appears in browser tabs—upload a small square image',
+            'Set primary colors to match your brand identity',
+            'Configure both light and dark mode themes for users who prefer either',
+            'Changes take effect immediately after saving',
+          ]}
+        />
 
         {status && (
           <Alert severity={status.type} onClose={() => setStatus(null)}>

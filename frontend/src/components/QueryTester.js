@@ -27,6 +27,7 @@ import {
 } from '@mui/icons-material';
 import { knowledgeBaseAPI, queryAPI, formatError, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
 import SourcePreview from './SourcePreview';
+import PageHelpHeader from './PageHelpHeader';
 import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
@@ -172,9 +173,18 @@ function QueryTester() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Query Tester
-      </Typography>
+      <PageHelpHeader
+        title="Query Tester"
+        description="Test vector search and retrieval against your Knowledge Bases. Use this tool to debug search quality, tune thresholds, and understand how RAG retrieval works."
+        icon={<SearchIcon />}
+        tips={[
+          'Select a Knowledge Base, enter a query, and click Search to see retrieved chunks',
+          'Similarity search uses pure vector matching; Hybrid adds keyword boosting',
+          'Lower the similarity threshold to retrieve more (but potentially less relevant) results',
+          'Enable title weighting to boost chunks from documents with matching titles',
+          'Use RAG rewrite modes to see how query preprocessing affects results',
+        ]}
+      />
 
       <Grid container spacing={3}>
         {/* Query Configuration */}

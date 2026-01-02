@@ -38,6 +38,7 @@ import { llmAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import LLMProviderForm from './shared/LLMProviderForm';
 import { log } from '../utils/log';
+import PageHelpHeader from './PageHelpHeader';
 
 const createDefaultProviderCapabilities = () => ({});
 
@@ -624,18 +625,27 @@ const handleEditProvider = (provider) => {
 
   return (
     <Box sx={{ position: 'relative' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h4" gutterBottom>
-          LLM Providers
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setCreateDialogOpen(true)}
-        >
-          Add Provider
-        </Button>
-      </Box>
+      <PageHelpHeader
+        title="LLM Providers"
+        description="LLM Providers connect your system to AI model services like OpenAI, Anthropic, or local Ollama instances. Configure API credentials here, then discover and enable models for use in Model Configurations."
+        icon={<SettingsIcon />}
+        tips={[
+          'Add a provider by selecting the provider type and entering your API key/endpoint',
+          'Use Test Connection to verify your credentials are working',
+          'Click Manage Models to discover available models from the provider',
+          'Enable specific models that you want available in Model Configurations',
+          'For local models (Ollama), ensure the service is running and accessible',
+        ]}
+        actions={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setCreateDialogOpen(true)}
+          >
+            Add Provider
+          </Button>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

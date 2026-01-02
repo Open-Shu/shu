@@ -595,7 +595,6 @@ const ModernChat = () => {
     replaceSideBySideParent,
     registerRegenerationStart,
     registerRegenerationComplete,
-    enqueueAutoEnable,
     handleToggleReasoning,
   } = useSideBySideManager({
     variantGroups,
@@ -1147,6 +1146,7 @@ const ModernChat = () => {
     onSave: applyEnsembleSelection,
     availableModelConfigs,
     selectedIds: ensembleModeConfigIds,
+    currentModelConfigId: selectedConversation?.model_configuration_id,
   };
 
   const renameDialogProps = {
