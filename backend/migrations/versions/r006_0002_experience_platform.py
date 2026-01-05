@@ -91,11 +91,16 @@ def upgrade() -> None:
             # Constraints & budgets
             sa.Column("max_run_seconds", sa.Integer(), nullable=False, server_default="120"),
             sa.Column("token_budget", sa.Integer(), nullable=True),
+
+            # Scheduler fields
+            sa.Column("next_run_at", TIMESTAMP(timezone=True), nullable=True),
+            sa.Column("last_run_at", TIMESTAMP(timezone=True), nullable=True),
         )
 
         # Additional indexes for experiences
         op.create_index("ix_experiences_visibility", "experiences", ["visibility"])
         op.create_index("ix_experiences_active_version", "experiences", ["is_active_version"])
+        op.create_index("ix_experiences_next_run_at", "experiences", ["next_run_at"])
 
     # ========================================================================
     # Part 2: Create experience_steps table
@@ -231,6 +236,7 @@ def downgrade() -> None:
     # Drop indexes first
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user_finished")
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user")
+    op.execute("DROP INDEX IF EXISTS ix_experiences_next_run_at")
 
     # Drop tables in reverse order (respecting foreign key dependencies)
     drop_table_if_exists(inspector, "experience_runs")

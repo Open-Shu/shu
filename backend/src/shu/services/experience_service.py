@@ -17,6 +17,7 @@ from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
 from ..models.experience import Experience, ExperienceStep, ExperienceRun
+from ..models.user_preferences import UserPreferences
 from ..schemas.experience import (
     ExperienceCreate, ExperienceUpdate, ExperienceResponse,
     ExperienceList, ExperienceStepCreate, ExperienceStepResponse,
@@ -186,13 +187,33 @@ class ExperienceService:
 
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={'steps'})
+        trigger_changed = False
         for field, value in update_dict.items():
             if field == 'visibility' and value:
                 setattr(experience, field, value.value if hasattr(value, 'value') else value)
             elif field == 'trigger_type' and value:
                 setattr(experience, field, value.value if hasattr(value, 'value') else value)
+                trigger_changed = True
+            elif field == 'trigger_config':
+                setattr(experience, field, value)
+                trigger_changed = True
             else:
                 setattr(experience, field, value)
+
+        # Recalculate next_run_at if trigger configuration changed
+        if trigger_changed:
+            # Get user's timezone preference for scheduling
+            user_tz = None
+            try:
+                prefs_result = await self.db.execute(
+                    select(UserPreferences).where(UserPreferences.user_id == experience.created_by)
+                )
+                prefs = prefs_result.scalar_one_or_none()
+                if prefs:
+                    user_tz = prefs.timezone
+            except Exception:
+                pass
+            experience.schedule_next(user_timezone=user_tz)
 
         # Replace steps if provided
         if update_data.steps is not None:
@@ -719,10 +740,8 @@ class ExperienceService:
 
             result_preview = None
             if latest_run and latest_run.result_content:
-                # Truncate result for preview
-                result_preview = latest_run.result_content[:500]
-                if len(latest_run.result_content) > 500:
-                    result_preview += "..."
+                # Return full result content (frontend handles display)
+                result_preview = latest_run.result_content
 
             summary = ExperienceResultSummary(
                 experience_id=exp.id,

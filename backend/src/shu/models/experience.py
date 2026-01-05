@@ -16,7 +16,11 @@ from sqlalchemy import Column, String, Text, Boolean, Integer, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import JSON, TIMESTAMP
 from sqlalchemy.orm import relationship
 
+from shu.core.logging import get_logger
+
 from .base import BaseModel
+
+logger = get_logger(__name__)
 
 
 class Experience(BaseModel):
@@ -66,6 +70,10 @@ class Experience(BaseModel):
     max_run_seconds = Column(Integer, default=120, nullable=False)
     token_budget = Column(Integer, nullable=True)
 
+    # Scheduler fields
+    next_run_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True)
+    last_run_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
     # Relationships
     steps = relationship(
         "ExperienceStep",
@@ -78,6 +86,73 @@ class Experience(BaseModel):
     prompt = relationship("Prompt")
     parent_version = relationship("Experience", remote_side="Experience.id")
     creator = relationship("User", foreign_keys=[created_by])
+
+    def schedule_next(self, user_timezone: str = None) -> None:
+        """
+        Compute and set the next_run_at based on trigger_type and trigger_config.
+        
+        Args:
+            user_timezone: Optional user timezone from UserPreferences. Used as fallback
+                          if trigger_config doesn't specify a timezone override.
+        
+        Timezone priority:
+        1. trigger_config["timezone"] - per-experience override
+        2. user_timezone - from user preferences  
+        3. "UTC" - default fallback
+        
+        Called after each scheduled execution to advance to the next window.
+        Manual experiences will have next_run_at = None.
+        """
+        from datetime import datetime, timezone as tz, timedelta
+        
+        if self.trigger_type == "manual":
+            self.next_run_at = None
+            return
+        
+        config = self.trigger_config or {}
+        now = datetime.now(tz.utc)
+        
+        # Timezone priority: config override > user preference > UTC
+        tz_name = config.get("timezone") or user_timezone or "UTC"
+        try:
+            import zoneinfo
+            local_tz = zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            local_tz = tz.utc
+        
+        if self.trigger_type == "scheduled":
+            # Daily at specific time
+            time_str = config.get("time", "08:00")
+            try:
+                hour, minute = map(int, time_str.split(":"))
+            except Exception:
+                hour, minute = 8, 0
+            
+            # Compute next occurrence in local timezone
+            local_now = now.astimezone(local_tz)
+            target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            if target <= local_now:
+                # Already past today, schedule for tomorrow
+                target = target + timedelta(days=1)
+            
+            self.next_run_at = target.astimezone(tz.utc)
+            
+        elif self.trigger_type == "cron":
+            # Cron expression
+            cron_expr = config.get("cron", "0 8 * * *")
+            try:
+                from croniter import croniter
+                local_now = now.astimezone(local_tz)
+                cron = croniter(cron_expr, local_now)
+                next_local = cron.get_next(datetime)
+                self.next_run_at = next_local.astimezone(tz.utc)
+            except Exception as e:
+                logger.error("Could not get next run: %s", e)
+                # Fallback: schedule for next hour
+                self.next_run_at = now + timedelta(hours=1)
+        else:
+            self.next_run_at = None
 
     def __repr__(self) -> str:
         return f"<Experience(id={self.id}, name='{self.name}', visibility='{self.visibility}')>"

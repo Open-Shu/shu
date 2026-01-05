@@ -2,17 +2,11 @@ import React from 'react';
 import {
   Box,
   Paper,
-  Typography,
-  Button,
   Alert,
   Drawer,
   useMediaQuery,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import {
-  Add as AddIcon,
-  SmartToy as BotIcon,
-} from '@mui/icons-material';
 
 import ConversationSidebar from './ConversationSidebar';
 import ChatHeader from './ChatHeader';
@@ -27,6 +21,7 @@ import EnsembleModeDialog from './EnsembleModeDialog';
 import RenameConversationDialog from './RenameConversationDialog';
 import DeleteConversationDialog from './DeleteConversationDialog';
 import ChatSettingsDialog from './ChatSettingsDialog';
+import ExperienceDashboard from '../../ExperienceDashboard';
 
 const SIDEBAR_WIDTH = 300;
 
@@ -138,49 +133,14 @@ const ModernChatView = ({
               <EnsembleModeDialog {...ensembleDialogProps} />
             </>
           ) : (
-            <Box
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                height: '100%',
+            <ExperienceDashboard
+              onCreateConversation={handleCreateConversation}
+              createConversationDisabled={createConversationButtonDisabled || !getSelectedConfig()}
+              onStartChat={(experience) => {
+                // TODO: Create conversation with experience context
+                handleCreateConversation();
               }}
-            >
-              {/* Centered welcome content */}
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexGrow: 1,
-                  textAlign: 'center',
-                  p: { xs: 2, sm: 4 },
-                }}
-              >
-                <BotIcon sx={{ fontSize: { xs: 60, sm: 80 }, color: 'primary.main', mb: 2 }} />
-                <Typography variant="h4" gutterBottom sx={{ fontSize: { xs: '1.5rem', sm: '2.125rem' } }}>
-                  {`Welcome to ${appDisplayName || ''}`}
-                </Typography>
-                <Typography variant="body1" color="text.secondary" sx={{ mb: 4, maxWidth: 500, px: { xs: 2, sm: 0 } }}>
-                  {isMobile
-                    ? 'Tap the menu to see your conversations, or start a new chat below.'
-                    : 'Start a new chat, select a model configuration in the top right and begin chatting with AI. Your conversations will be saved and you can switch between them anytime.'}
-                </Typography>
-                {getSelectedConfig() && (
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Button
-                      variant="contained"
-                      size="large"
-                      startIcon={<AddIcon />}
-                      onClick={handleCreateConversation}
-                      disabled={createConversationButtonDisabled}
-                    >
-                      Start New Chat
-                    </Button>
-                  </Box>
-                )}
-              </Box>
-            </Box>
+            />
           )}
         </Box>
       </Box>

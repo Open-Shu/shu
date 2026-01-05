@@ -240,6 +240,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start Plugin Feeds scheduler: {e}")
 
+    # Start Experiences scheduler (in-process)
+    try:
+        if getattr(settings, "experiences_scheduler_enabled", True):
+            from .services.experiences_scheduler_service import start_experiences_scheduler
+            app.state.experiences_scheduler_task = await start_experiences_scheduler()
+            logger.info("Experiences scheduler started")
+        else:
+            logger.info("Experiences scheduler disabled by configuration")
+    except Exception as e:
+        logger.warning(f"Failed to start Experiences scheduler: {e}")
+
     # Plugins v1: optional auto-sync from plugins to DB registry
     try:
         if getattr(settings, "plugins_auto_sync", False):
@@ -267,6 +278,12 @@ async def lifespan(app: FastAPI):
         t2 = getattr(app.state, 'plugins_scheduler_task', None)
         if t2:
             t2.cancel()
+    except Exception:
+        pass
+    try:
+        t3 = getattr(app.state, 'experiences_scheduler_task', None)
+        if t3:
+            t3.cancel()
     except Exception:
         pass
 
