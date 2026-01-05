@@ -29,17 +29,14 @@ async def _check_auth_rate_limit(request: Request) -> None:
 
     Uses stricter rate limits for brute-force protection.
     """
+    from ..core.rate_limiting import get_client_ip
+
     rate_limit_service = get_rate_limit_service()
 
     if not rate_limit_service.enabled:
         return
 
-    # Get client IP for rate limiting
-    forwarded = request.headers.get("X-Forwarded-For")
-    client_ip = forwarded.split(",")[0].strip() if forwarded else (
-        request.client.host if request.client else "unknown"
-    )
-
+    client_ip = get_client_ip(request.headers, request.client.host if request.client else None)
     result = await rate_limit_service.check_auth_limit(client_ip)
 
     if not result.allowed:

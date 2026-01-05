@@ -15,19 +15,28 @@ from __future__ import annotations
 
 import logging
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Optional, Protocol, Tuple
+from typing import Any, Dict, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
 
-class RateLimitType(Enum):
-    """Types of rate limits."""
-    RPM = "rpm"  # Requests per minute
-    TPM = "tpm"  # Tokens per minute
-    GENERAL = "general"  # General request limiting
+def get_client_ip(headers: Dict[str, str], client_host: Optional[str] = None) -> str:
+    """Extract client IP from request headers.
+
+    Checks X-Forwarded-For for proxied requests, falls back to client host.
+
+    Args:
+        headers: Request headers (or dict-like with .get())
+        client_host: Direct client host if available
+
+    Returns:
+        Client IP address string
+    """
+    forwarded = headers.get("X-Forwarded-For") if hasattr(headers, "get") else None
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return client_host or "unknown"
 
 
 @dataclass(frozen=True)
