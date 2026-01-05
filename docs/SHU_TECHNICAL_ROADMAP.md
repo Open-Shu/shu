@@ -76,6 +76,9 @@ This living document captures Shu’ technical trajectory. The summary below lin
     - [Implement plugin registry lifecycle](#agentic-platform-implement-plugin-registry-lifecycle)
     - [Capture plugin artifact lineage](#agentic-platform-capture-plugin-artifact-lineage)
     - [Consume external MCP servers](#agentic-platform-consume-external-mcp-servers)
+    - [Publish Plugin SDK CLI](#agentic-platform-publish-plugin-sdk-cli)
+    - [Publish Plugin SDK test harness](#agentic-platform-publish-plugin-sdk-test-harness)
+    - [Implement plugin signing and allow-list](#agentic-platform-implement-plugin-signing-and-allow-list)
     - [Add provider health probes](#agentic-platform-add-provider-health-probes)
     - [Normalize LLM parameters](#agentic-platform-normalize-llm-parameters)
     - [Implement LLM fallback logic](#agentic-platform-implement-llm-fallback-logic)
@@ -270,6 +273,9 @@ Phase 3 is divided into three focused sub-initiatives to reduce coupling and ena
 | [Implement plugin registry lifecycle](#agentic-platform-implement-plugin-registry-lifecycle) | In Progress | [SHU-337 Plugin Registry CRUD](./tasks/SHU-8-PLATFORM-REGISTRIES-POLICY/SHU-337-Plugin-Registry-CRUD.md), [SHU-48 Plugin Package Upload](./tasks/SHU-11-PLUGIN-ECOSYSTEM/SHU-48-Plugin-Package-Upload-and-Installation.md) |
 | [Capture plugin artifact lineage](#agentic-platform-capture-plugin-artifact-lineage) | TODO | None documented |
 | [Consume external MCP servers](#agentic-platform-consume-external-mcp-servers) | TODO | [SHU-87 MCP Server Consumption Adapter](./tasks/SHU-11-PLUGIN-ECOSYSTEM/SHU-87-MCP-Server-Consumption-Adapter.md) |
+| [Publish Plugin SDK CLI](#agentic-platform-publish-plugin-sdk-cli) | TODO | [Plugin Ingestion Interface](./tasks/SHU-9-PLUGIN-SDK/Plugin-Ingestion-Interface.md), [CLI Scaffold and Validators](./tasks/SHU-9-PLUGIN-SDK/CLI-Scaffold-and-Validators.md), [SDK Utilities Library](./tasks/SHU-9-PLUGIN-SDK/SDK-Utilities-Library.md) |
+| [Publish Plugin SDK test harness](#agentic-platform-publish-plugin-sdk-test-harness) | TODO | [Contract Test Runner](./tasks/SHU-9-PLUGIN-SDK/Contract-Test-Runner.md) |
+| [Implement plugin signing and allow-list](#agentic-platform-implement-plugin-signing-and-allow-list) | TODO | [Plugin Signing and Allow-List](./tasks/SHU-9-PLUGIN-SDK/Plugin-Signing-and-Allow-List.md) |
 | [Add provider health probes](#agentic-platform-add-provider-health-probes) | TODO | None documented |
 | [Normalize LLM parameters](#agentic-platform-normalize-llm-parameters) | Complete | [SHU-285 Parameter Normalization](./tasks/SHU-3-LLM-PROVIDER-GENERALIZATION/SHU-285-Parameter-Normalization-and-Mapping-Layer.md) |
 | [Implement LLM fallback logic](#agentic-platform-implement-llm-fallback-logic) | In Progress | [SHU-288 UnifiedLLMClient Routing Updates](./tasks/SHU-3-LLM-PROVIDER-GENERALIZATION/SHU-288-UnifiedLLMClient-Routing-Updates.md) |
@@ -632,6 +638,18 @@ Record how each artifact was produced (inputs, version, plugin) to aid debugging
 <a id="agentic-platform-consume-external-mcp-servers"></a>
 ### Agentic Platform Consume external MCP servers
 Expose external MCP (Model Context Protocol) servers as first-class Shu plugins via a new adapter type, starting with stdio transport for local tools and WebSocket for remote servers in later iterations.
+
+<a id="agentic-platform-publish-plugin-sdk-cli"></a>
+### Agentic Platform Publish Plugin SDK CLI
+Provide a command-line toolkit (`shu-plugin`) for plugin developers with `init` (scaffolding), `validate` (manifest/schema validation), and `check` (static contract analysis) commands. Includes the Plugin Ingestion Interface contract and SDK utilities library for result envelopes, retry/backoff, and diagnostics.
+
+<a id="agentic-platform-publish-plugin-sdk-test-harness"></a>
+### Agentic Platform Publish Plugin SDK test harness
+Build a contract test runner that validates plugins against golden outputs, latency thresholds, and cost tracking. Provides mock host capabilities for isolated testing and enables CI integration for plugin development workflows.
+
+<a id="agentic-platform-implement-plugin-signing-and-allow-list"></a>
+### Agentic Platform Implement plugin signing and allow-list
+Add cryptographic signing for plugin packages and signature verification in the plugin loader. Implement admin-configurable allow-lists for trusted plugins and signing keys, with audit-only and enforce modes for gradual rollout.
 
 <a id="agentic-platform-activate-profile-graph-entities"></a>
 ### Agentic Platform Activate profile graph entities
