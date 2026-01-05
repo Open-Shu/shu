@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
@@ -37,6 +37,7 @@ import { promptAPI } from '../api/prompts';
 import ExperienceStepBuilder from './ExperienceStepBuilder';
 import ExperienceRunDialog from './ExperienceRunDialog';
 import ExperienceRunsList from './ExperienceRunsList';
+import TemplateVariableHints from './TemplateVariableHints';
 
 export default function ExperienceEditor() {
     const { experienceId } = useParams();
@@ -58,6 +59,11 @@ export default function ExperienceEditor() {
     const [maxRunSeconds, setMaxRunSeconds] = useState(120);
     const [includePreviousRun, setIncludePreviousRun] = useState(false);
     const [runDialogOpen, setRunDialogOpen] = useState(false);
+
+    const [validationErrors, setValidationErrors] = useState({});
+
+    // Ref for inline prompt textarea to insert variables at cursor
+    const inlinePromptRef = useRef(null);
 
     // Read tab from URL query parameter
     const [searchParams] = useSearchParams();
@@ -171,6 +177,10 @@ export default function ExperienceEditor() {
     const handleFieldChange = (setter) => (e) => {
         setter(e.target.value);
         setIsDirty(true);
+        // Clear error when field changes
+        if (Object.keys(validationErrors).length > 0) {
+            setValidationErrors({});
+        }
     };
 
     const handleStepsChange = (newSteps) => {
@@ -178,7 +188,51 @@ export default function ExperienceEditor() {
         setIsDirty(true);
     };
 
+    // Insert template variable at cursor position in inline prompt
+    const handleInsertVariable = (variableText) => {
+        const textarea = inlinePromptRef.current;
+        if (!textarea) {
+            // Fallback: append to end
+            setInlinePromptTemplate(prev => prev + variableText);
+            setIsDirty(true);
+            return;
+        }
+
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const before = inlinePromptTemplate.substring(0, start);
+        const after = inlinePromptTemplate.substring(end);
+
+        setInlinePromptTemplate(before + variableText + after);
+        setIsDirty(true);
+
+        // Restore cursor position after the inserted text
+        setTimeout(() => {
+            textarea.focus();
+            textarea.setSelectionRange(start + variableText.length, start + variableText.length);
+        }, 0);
+    };
+
     const handleSave = () => {
+        // Validation
+        const errors = {};
+        if (!name.trim()) {
+            errors.name = 'Name is required';
+        }
+
+        if (triggerType === 'scheduled' && !triggerConfig.scheduled_at) {
+            errors.scheduled_at = 'Scheduled date/time is required';
+        }
+
+        if (triggerType === 'cron' && !triggerConfig.cron) {
+            errors.cron = 'Cron expression is required';
+        }
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
         const payload = {
             name,
             description: description || null,
@@ -312,6 +366,8 @@ export default function ExperienceEditor() {
                                         onChange={handleFieldChange(setName)}
                                         fullWidth
                                         required
+                                        error={!!validationErrors.name}
+                                        helperText={validationErrors.name}
                                     />
                                     <TextField
                                         label="Description"
@@ -393,7 +449,8 @@ export default function ExperienceEditor() {
                                             }}
                                             fullWidth
                                             InputLabelProps={{ shrink: true }}
-                                            helperText="One-time execution at the specified date and time"
+                                            error={!!validationErrors.scheduled_at}
+                                            helperText={validationErrors.scheduled_at || "One-time execution at the specified date and time"}
                                         />
                                     )}
                                     {triggerType === 'cron' && (
@@ -406,7 +463,8 @@ export default function ExperienceEditor() {
                                             }}
                                             fullWidth
                                             placeholder="0 9 * * *"
-                                            helperText="Standard cron expression (e.g., '0 9 * * *' for daily at 9am)"
+                                            error={!!validationErrors.cron}
+                                            helperText={validationErrors.cron || "Standard cron expression (e.g., '0 9 * * *' for daily at 9am)"}
                                         />
                                     )}
                                 </Stack>
@@ -480,20 +538,24 @@ export default function ExperienceEditor() {
                                         </Select>
                                     </FormControl>
                                     {!promptId && (
-                                        // TODO: Add clickable variable hints below textarea
-                                        // Available variables: {{ user.id }}, {{ user.email }}, {{ user.display_name }},
-                                        // {{ step_outputs.<step_key> }}, {{ previous_run.result_content }}, {{ now }}
-                                        // Clicking a variable should insert it at cursor position
-                                        <TextField
-                                            label="Inline Prompt Template"
-                                            value={inlinePromptTemplate}
-                                            onChange={handleFieldChange(setInlinePromptTemplate)}
-                                            fullWidth
-                                            multiline
-                                            rows={6}
-                                            placeholder="Use {{ step_outputs.step_key }} to reference step results"
-                                            helperText="Jinja2 template with access to step_outputs, user, and previous_run"
-                                        />
+                                        <>
+                                            <TextField
+                                                label="Inline Prompt Template"
+                                                value={inlinePromptTemplate}
+                                                onChange={handleFieldChange(setInlinePromptTemplate)}
+                                                fullWidth
+                                                multiline
+                                                rows={6}
+                                                placeholder="Use {{ step_outputs.step_key }} to reference step results"
+                                                helperText="Jinja2 template with access to step_outputs, user, and previous_run"
+                                                inputRef={inlinePromptRef}
+                                            />
+                                            <TemplateVariableHints
+                                                steps={steps}
+                                                includePreviousRun={includePreviousRun}
+                                                onInsert={handleInsertVariable}
+                                            />
+                                        </>
                                     )}
                                 </Stack>
                             </Paper>

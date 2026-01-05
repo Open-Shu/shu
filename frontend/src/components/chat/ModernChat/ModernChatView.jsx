@@ -137,8 +137,7 @@ const ModernChatView = ({
               onCreateConversation={handleCreateConversation}
               createConversationDisabled={createConversationButtonDisabled || !getSelectedConfig()}
               onStartChat={(experience) => {
-                // TODO: Create conversation with experience context
-                handleCreateConversation();
+                handleCreateConversation(experience);
               }}
             />
           )}

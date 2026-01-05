@@ -121,22 +121,34 @@ class Experience(BaseModel):
             local_tz = tz.utc
         
         if self.trigger_type == "scheduled":
-            # Daily at specific time
-            time_str = config.get("time", "08:00")
-            try:
-                hour, minute = map(int, time_str.split(":"))
-            except Exception:
-                hour, minute = 8, 0
+            # One-time execution (scheduled_at)
+            # We strictly enforce scheduled_at for "scheduled" type now.
+            scheduled_at_str = config.get("scheduled_at")
+            if scheduled_at_str:
+                try:
+                    # Parse ISO format (e.g. 2023-10-27T14:30)
+                    target = datetime.fromisoformat(scheduled_at_str)
+                    if target.tzinfo is None:
+                        # Assuming the naive datetime provided is in the user's local time or UTC if unknown
+                        # Ideally frontend sends ISO with timezone, but if not we assume local_tz
+                        target = target.replace(tzinfo=local_tz)
+                    
+                    target_utc = target.astimezone(tz.utc)
+                    
+                    # If we have already run at or after this time, don't run again
+                    # We use a small tolerance (1 second) to handle precision issues
+                    if self.last_run_at and self.last_run_at >= (target_utc - timedelta(seconds=1)):
+                        self.next_run_at = None
+                    else:
+                        self.next_run_at = target_utc
+                    return
+                except Exception as e:
+                    logger.error("Invalid scheduled_at format: %s", e)
+                    self.next_run_at = None
+                    return
             
-            # Compute next occurrence in local timezone
-            local_now = now.astimezone(local_tz)
-            target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            
-            if target <= local_now:
-                # Already past today, schedule for tomorrow
-                target = target + timedelta(days=1)
-            
-            self.next_run_at = target.astimezone(tz.utc)
+            # If no scheduled_at provided, we can't schedule anything
+            self.next_run_at = None
             
         elif self.trigger_type == "cron":
             # Cron expression

@@ -50,6 +50,19 @@ class ExperiencesSchedulerService:
         except Exception:
             return None
 
+    async def get_all_active_users(self) -> List[User]:
+        """
+        Get all active users for experience execution.
+        
+        TODO: In the future, consider:
+        - Filtering by users who have "subscribed" to experiences
+        - Supporting delegation (admin runs on behalf of users)
+        - Checking user preferences for experience notifications
+        """
+        stmt = select(User).where(User.is_active == True)  # noqa: E712
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_due_experiences(self, *, limit: int = 10) -> List[Experience]:
         """
         Find experiences that are due to run.
@@ -68,10 +81,7 @@ class ExperiencesSchedulerService:
                 and_(
                     Experience.trigger_type.in_(["scheduled", "cron"]),
                     Experience.visibility.in_(["published", "admin_only"]),
-                    or_(
-                        Experience.next_run_at == None,  # noqa: E711 - Never scheduled
-                        Experience.next_run_at <= now,   # Due now
-                    ),
+                    Experience.next_run_at <= now,   # Due now
                 )
             )
             .with_for_update(skip_locked=True)  # Avoid duplicates across workers
@@ -128,78 +138,99 @@ class ExperiencesSchedulerService:
 
     async def run_due_experiences(self, *, limit: int = 10) -> Dict[str, int]:
         """
-        Find and execute due experiences.
+        Find and execute due experiences for ALL active users.
         
-        Returns: {"due": n, "ran": m, "failed": f, "skipped_no_owner": s}
+        For each due experience, executes for all active users. Failures for
+        individual users are logged but don't stop execution for other users.
+        
+        TODO: In the future, consider:
+        - User-level opt-in/opt-out for experiences
+        - Delegation mode (admin identity used for all users)
+        - Pre-checking required provider connections before execution
+        
+        Returns: {"due": n, "user_runs": m, "user_failures": f, "no_users": s}
         """
         due_experiences = await self.get_due_experiences(limit=limit)
         
-        ran = 0
-        failed = 0
-        skipped_no_owner = 0
+        if not due_experiences:
+            return {"due": 0, "user_runs": 0, "user_failures": 0, "no_users": 0}
+        
+        # Get all active users once
+        all_users = await self.get_all_active_users()
+        if not all_users:
+            # No users in system - still advance schedules
+            for exp in due_experiences:
+                exp.schedule_next()
+            await self.db.commit()
+            return {"due": len(due_experiences), "user_runs": 0, "user_failures": 0, "no_users": len(due_experiences)}
         
         now = datetime.now(timezone.utc)
-
-        logger.info("NOW: %s", now)
+        user_runs = 0
+        user_failures = 0
         
         for exp in due_experiences:
-
-            # TODO: We need to trigger this for other users as well.
-
-            # Use experience creator as the runner for scheduled executions
-            runner_user_id = exp.created_by
-            if not runner_user_id:
-                skipped_no_owner += 1
-                # Still advance the schedule to avoid tight loops
-                exp.schedule_next()
-                await self.db.commit()
-                continue
-            
-            # Get user's timezone preference for scheduling
-            user_tz = await self.get_user_timezone(runner_user_id)
-            
             logger.info(
-                "Executing scheduled experience | experience=%s name=%s trigger=%s user=%s timezone=%s",
+                "Executing scheduled experience for all users | experience=%s name=%s trigger=%s user_count=%d",
                 exp.id,
                 exp.name,
                 exp.trigger_type,
-                runner_user_id,
-                user_tz or "UTC",
+                len(all_users),
             )
             
-            try:
-                result = await self.execute_experience(exp, runner_user_id)
-                
-                if result.get("status") == "completed":
-                    ran += 1
-                else:
-                    failed += 1
-                    logger.warning(
-                        "Scheduled experience failed | experience=%s error=%s",
+            # Execute for each user
+            for user in all_users:
+
+                try:
+                    result = await self.execute_experience(exp, user.id)
+                    
+                    if result.get("status") == "completed":
+                        user_runs += 1
+                        logger.debug(
+                            "Experience completed for user | experience=%s user=%s run_id=%s",
+                            exp.id,
+                            user.id,
+                            result.get("run_id"),
+                        )
+                    else:
+                        user_failures += 1
+                        # Log at debug level - silent failure for missing provider connections
+                        logger.debug(
+                            "Experience failed for user (silent) | experience=%s user=%s error=%s",
+                            exp.id,
+                            user.id,
+                            result.get("error"),
+                        )
+                        
+                except Exception as e:
+                    user_failures += 1
+                    # Log at debug level for silent failure
+                    logger.debug(
+                        "Experience execution error for user (silent) | experience=%s user=%s error=%s",
                         exp.id,
-                        result.get("error"),
+                        user.id,
+                        str(e),
                     )
-                
-                # Update last_run_at and advance schedule with user's timezone
-                exp.last_run_at = now
-                exp.schedule_next(user_timezone=user_tz)
-                await self.db.commit()
-                
-            except Exception as e:
-                failed += 1
-                logger.exception(
-                    "Unexpected error executing scheduled experience | experience=%s",
-                    exp.id,
-                )
-                # Still advance schedule to prevent tight loops
-                exp.schedule_next(user_timezone=user_tz)
-                await self.db.commit()
+            
+            # Update schedule ONCE per experience (not per user)
+            # Use experience creator's timezone for scheduling
+            creator_tz = await self.get_user_timezone(exp.created_by) if exp.created_by else None
+            exp.last_run_at = now
+            exp.schedule_next(user_timezone=creator_tz)
+            await self.db.commit()
+            
+            logger.info(
+                "Experience batch complete | experience=%s runs=%d failures=%d next_run=%s",
+                exp.id,
+                user_runs,
+                user_failures,
+                exp.next_run_at,
+            )
         
         return {
             "due": len(due_experiences),
-            "ran": ran,
-            "failed": failed,
-            "skipped_no_owner": skipped_no_owner,
+            "user_runs": user_runs,
+            "user_failures": user_failures,
+            "no_users": 0,
         }
 
 

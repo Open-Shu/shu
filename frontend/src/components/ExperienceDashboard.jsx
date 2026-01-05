@@ -89,7 +89,8 @@ const ExperienceResultCard = ({ experience, onStartChat }) => {
                                 {expanded ? 'Show less' : 'Show more'}
                             </Button>
                         )}
-                        {hasResult && experience.latest_run_status === 'succeeded' && (
+                        {/* TODO: We need to get the conversation start from the experience text to work. */}
+                        {/* {hasResult && experience.latest_run_status === 'succeeded' && (
                             <Button
                                 size="small"
                                 variant="contained"
@@ -98,7 +99,7 @@ const ExperienceResultCard = ({ experience, onStartChat }) => {
                             >
                                 Start Chat
                             </Button>
-                        )}
+                        )} */}
                     </Stack>
                 </Box>
 

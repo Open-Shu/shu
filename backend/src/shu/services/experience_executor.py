@@ -128,6 +128,21 @@ class ExperienceExecutor:
                 async for event in self._execute_steps_loop(experience, context, user_id, current_user, step_states, step_outputs):
                     yield event
 
+                # Sanity check: if no steps succeeded, skip LLM synthesis and fail
+                if not self._has_successful_steps(step_states):
+                    error_msg = "No steps succeeded - skipping LLM synthesis"
+                    logger.warning(
+                        "Experience execution failed: no successful steps | experience=%s user=%s",
+                        experience.id,
+                        user_id,
+                    )
+                    await self._finalize_run(
+                        run, "failed", step_states, step_outputs,
+                        error_message=error_msg
+                    )
+                    yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
+                    return
+
                 # LLM Synthesis
                 yield ExperienceEvent(ExperienceEventType.SYNTHESIS_STARTED, {})
                 
@@ -269,6 +284,13 @@ class ExperienceExecutor:
             return False, f"Required step '{required_step_key}' did not succeed"
             
         return True, None
+
+    def _has_successful_steps(self, step_states: Dict[str, Any]) -> bool:
+        """Check if at least one step succeeded."""
+        return any(
+            state.get("status") == "succeeded" 
+            for state in step_states.values()
+        )
 
     async def _create_run(
         self,

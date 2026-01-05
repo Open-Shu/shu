@@ -11,6 +11,8 @@ Creates:
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+import uuid
+from datetime import datetime, timezone
 
 from migrations.helpers import (
     table_exists,
@@ -229,9 +231,170 @@ def upgrade() -> None:
         )
 
 
+    # ========================================================================
+    # Part 4: Create Morning Briefing experience
+    # ========================================================================
+    experience_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    
+    # Get first user to own this experience (required field)
+    result = conn.execute(sa.text("SELECT id FROM users LIMIT 1"))
+    row = result.fetchone()
+    if row:
+        owner_user_id = row[0]
+        
+        # Create the Morning Briefing experience
+        conn.execute(
+            sa.text("""
+                INSERT INTO experiences (
+                    id, name, description, visibility, trigger_type, trigger_config,
+                    max_run_seconds, include_previous_run, prompt_id, inline_prompt_template,
+                    llm_provider_id, model_name, version, is_active_version,
+                    created_by, created_at, updated_at
+                ) VALUES (
+                    :id, :name, :description, :visibility, :trigger_type, :trigger_config,
+                    :max_run_seconds, :include_previous_run, :prompt_id, :inline_prompt_template,
+                    :llm_provider_id, :model_name, :version, :is_active_version,
+                    :created_by, :created_at, :updated_at
+                )
+            """),
+            {
+                "id": experience_id,
+                "name": "Morning Briefing",
+                "description": (
+                    "Daily morning briefing synthesizing emails, calendar events, "
+                    "and chat messages from the past 24-72 hours."
+                ),
+                "visibility": "published",
+                "trigger_type": "cron",
+                "trigger_config": '{"timezone": "America/Chicago", "cron": "0 7 * * *"}',
+                "max_run_seconds": 180,
+                "include_previous_run": False,
+                "prompt_id": None,
+                "inline_prompt_template": """Synthesize my morning briefing based on the following data.
+
+## Instructions
+- Review all emails, calendar events, and chat messages
+- Highlight important action items and urgent matters first
+- Group by category (email priorities, meetings, chat highlights)
+- Flag likely spam/bulk emails under a separate "Likely Spam" section with brief reasons
+- Keep it concise but comprehensive
+
+## Gmail Messages
+{% for msg in step_outputs.gmail_digest.messages[:20] %}
+- **{{ msg.subject }}** from {{ msg.sender }} ({{ msg.date[:10] if msg.date else 'unknown date' }})
+  {{ msg.snippet[:200] if msg.snippet else '' }}
+{% endfor %}
+
+## Calendar Events
+{% for event in step_outputs.calendar_events.events[:15] %}
+- **{{ event.title }}** at {{ event.start }} {% if event.location %}@ {{ event.location }}{% endif %}
+{% endfor %}
+
+## Google Chat Messages
+{% for msg in step_outputs.gchat_digest.messages[:20] %}
+- **{{ msg.space_name }}** - {{ msg.sender_name }}: {{ msg.text[:150] if msg.text else '' }}
+{% endfor %}
+
+Please synthesize this information into a clear, actionable morning briefing.""",
+                "llm_provider_id": None,  # Will use user's default
+                "model_name": None,
+                "version": 1,
+                "is_active_version": True,
+                "created_by": owner_user_id,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        
+        # Create experience steps
+        steps = [
+            {
+                "id": str(uuid.uuid4()),
+                "experience_id": experience_id,
+                "order": 1,
+                "step_key": "gmail_digest",
+                "step_type": "plugin",
+                "plugin_name": "gmail_digest",
+                "plugin_op": "list",
+                "params_template": '{"since_hours": 72, "max_results": 50}',
+                "condition_template": None,
+                "knowledge_base_id": None,
+                "kb_query_template": None,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "experience_id": experience_id,
+                "order": 2,
+                "step_key": "calendar_events",
+                "step_type": "plugin",
+                "plugin_name": "calendar_events",
+                "plugin_op": "list",
+                "params_template": '{"since_hours": 48, "max_results": 50}',
+                "condition_template": None,
+                "knowledge_base_id": None,
+                "kb_query_template": None,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "experience_id": experience_id,
+                "order": 3,
+                "step_key": "gchat_digest",
+                "step_type": "plugin",
+                "plugin_name": "gchat_digest",
+                "plugin_op": "list",
+                "params_template": '{"since_hours": 168, "max_spaces": 20, "max_messages_per_space": 100}',
+                "condition_template": None,
+                "knowledge_base_id": None,
+                "kb_query_template": None,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+        
+        for step in steps:
+            conn.execute(
+                sa.text("""
+                    INSERT INTO experience_steps (
+                        id, experience_id, "order", step_key, step_type,
+                        plugin_name, plugin_op, params_template, condition_template,
+                        knowledge_base_id, kb_query_template, created_at, updated_at
+                    ) VALUES (
+                        :id, :experience_id, :order, :step_key, :step_type,
+                        :plugin_name, :plugin_op, :params_template, :condition_template,
+                        :knowledge_base_id, :kb_query_template, :created_at, :updated_at
+                    )
+                """),
+                step
+            )
+
+
 def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+
+    # ========================================================================
+    # Part 4: Delete Morning Briefing (if exists)
+    # ========================================================================
+    if table_exists(inspector, "experience_steps") and table_exists(inspector, "experiences"):
+        conn.execute(
+            sa.text("""
+                DELETE FROM experience_steps 
+                WHERE experience_id IN (
+                    SELECT id FROM experiences WHERE name = 'Morning Briefing'
+                )
+            """)
+        )
+        conn.execute(
+            sa.text("""
+                DELETE FROM experiences 
+                WHERE name = 'Morning Briefing'
+            """)
+        )
 
     # Drop indexes first
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user_finished")
