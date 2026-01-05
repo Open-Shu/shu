@@ -337,13 +337,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _get_client_ip(self, request: Request) -> str:
         """Get client IP for anonymous rate limiting."""
-        # Check X-Forwarded-For for proxied requests
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        # Fall back to client host
-        client = request.client
-        return client.host if client else "unknown"
+        from .rate_limiting import get_client_ip
+        return get_client_ip(request.headers, request.client.host if request.client else None)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip rate limiting for excluded paths

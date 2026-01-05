@@ -16,6 +16,36 @@ os.environ.setdefault("SHU_DATABASE_URL", "postgresql+asyncpg://test:test@localh
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
 
 
+class TestGetClientIp:
+    """Tests for get_client_ip utility function."""
+
+    def test_extracts_from_forwarded_header(self):
+        """Extracts first IP from X-Forwarded-For."""
+        from shu.core.rate_limiting import get_client_ip
+
+        headers = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}
+        result = get_client_ip(headers, "fallback")
+
+        assert result == "1.2.3.4"
+
+    def test_falls_back_to_client_host(self):
+        """Falls back to client_host when no header."""
+        from shu.core.rate_limiting import get_client_ip
+
+        headers = {}
+        result = get_client_ip(headers, "10.0.0.1")
+
+        assert result == "10.0.0.1"
+
+    def test_returns_unknown_when_no_info(self):
+        """Returns 'unknown' when no info available."""
+        from shu.core.rate_limiting import get_client_ip
+
+        result = get_client_ip({}, None)
+
+        assert result == "unknown"
+
+
 class TestRateLimitResult:
     """Tests for RateLimitResult dataclass."""
     
