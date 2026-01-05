@@ -10,7 +10,7 @@ import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
-from typing import Callable, Set
+from typing import Callable, Optional, Set
 import logging
 
 from ..auth.jwt_manager import JWTManager
@@ -276,3 +276,123 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         return response
 
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Middleware to apply rate limiting to API endpoints.
+
+    Applies per-user rate limiting with configurable exclusions for
+    public endpoints (health checks, public config, etc.).
+
+    Rate limit headers are added to all responses:
+    - RateLimit-Limit: Maximum requests allowed
+    - RateLimit-Remaining: Remaining requests in current window
+    - RateLimit-Reset: Seconds until rate limit resets
+    - Retry-After: Seconds to wait (only on 429 responses)
+    """
+
+    def __init__(self, app, excluded_paths: Optional[Set[str]] = None):
+        super().__init__(app)
+        self._rate_limit_service = None
+
+        # Default excluded paths (public endpoints that don't need rate limiting)
+        self.excluded_paths: Set[str] = excluded_paths or {
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/api/v1/health/liveness",
+            "/api/v1/health/readiness",
+            "/api/v1/config/public",
+        }
+
+        # Excluded prefixes
+        self.excluded_prefixes = [
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/api/v1/health/",
+        ]
+
+    def _get_rate_limit_service(self):
+        """Get rate limit service lazily."""
+        if self._rate_limit_service is None:
+            from .rate_limiting import get_rate_limit_service
+            self._rate_limit_service = get_rate_limit_service()
+        return self._rate_limit_service
+
+    def _is_excluded(self, path: str) -> bool:
+        """Check if path should be excluded from rate limiting."""
+        if path in self.excluded_paths:
+            return True
+        for prefix in self.excluded_prefixes:
+            if path.startswith(prefix):
+                return True
+        return False
+
+    def _get_user_id(self, request: Request) -> Optional[str]:
+        """Extract user ID from request state."""
+        user = getattr(request.state, "user", None)
+        if user and isinstance(user, dict):
+            return user.get("user_id")
+        return None
+
+    def _get_client_ip(self, request: Request) -> str:
+        """Get client IP for anonymous rate limiting."""
+        # Check X-Forwarded-For for proxied requests
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        # Fall back to client host
+        client = request.client
+        return client.host if client else "unknown"
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip rate limiting for excluded paths
+        if self._is_excluded(request.url.path):
+            return await call_next(request)
+
+        rate_limit_service = self._get_rate_limit_service()
+
+        # Skip if rate limiting is disabled
+        if not rate_limit_service.enabled:
+            return await call_next(request)
+
+        # Get identifier (user ID or IP for anonymous)
+        user_id = self._get_user_id(request)
+        identifier = user_id or f"ip:{self._get_client_ip(request)}"
+
+        # Check rate limit
+        result = await rate_limit_service.check_api_limit(identifier)
+
+        if not result.allowed:
+            # Rate limit exceeded
+            logger.warning(
+                "Rate limit exceeded",
+                extra={
+                    "identifier": identifier,
+                    "path": request.url.path,
+                    "method": request.method,
+                    "retry_after": result.retry_after_seconds,
+                }
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": {
+                        "message": "Rate limit exceeded. Please try again later.",
+                        "code": "RATE_LIMIT_EXCEEDED",
+                        "details": {
+                            "retry_after": result.retry_after_seconds,
+                        },
+                    }
+                },
+                headers=result.to_headers(),
+            )
+
+        # Process request
+        response = await call_next(request)
+
+        # Add rate limit headers to successful responses
+        for header, value in result.to_headers().items():
+            response.headers[header] = value
+
+        return response

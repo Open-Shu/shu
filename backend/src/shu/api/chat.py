@@ -19,6 +19,7 @@ from pathlib import Path as PathlibPath
 from .dependencies import get_db
 from ..auth.rbac import get_current_user
 from ..core.config import get_settings_instance, get_config_manager_dependency, ConfigurationManager
+from ..core.rate_limiting import get_rate_limit_service, RateLimitResult
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse, create_success_response, create_error_response
@@ -35,6 +36,60 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 settings = get_settings_instance()
+
+
+async def check_llm_rate_limit(user_id: str, estimated_tokens: int = 100) -> RateLimitResult:
+    """Check LLM rate limits (RPM and TPM).
+
+    Returns the most restrictive rate limit result (RPM or TPM).
+
+    Args:
+        user_id: User identifier
+        estimated_tokens: Estimated tokens for this request
+
+    Returns:
+        RateLimitResult (most restrictive of RPM or TPM)
+
+    Raises:
+        HTTPException: If rate limit exceeded
+    """
+    rate_limit_service = get_rate_limit_service()
+
+    if not rate_limit_service.enabled:
+        return RateLimitResult(allowed=True, remaining=999, limit=999)
+
+    # Check RPM first
+    rpm_result = await rate_limit_service.check_llm_rpm_limit(user_id)
+    if not rpm_result.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": "LLM request rate limit exceeded. Please try again later.",
+                    "code": "LLM_RPM_LIMIT_EXCEEDED",
+                    "details": {"retry_after": rpm_result.retry_after_seconds},
+                }
+            },
+            headers=rpm_result.to_headers(),
+        )
+
+    # Check TPM
+    tpm_result = await rate_limit_service.check_llm_tpm_limit(user_id, estimated_tokens)
+    if not tpm_result.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": "LLM token rate limit exceeded. Please try again later.",
+                    "code": "LLM_TPM_LIMIT_EXCEEDED",
+                    "details": {"retry_after": tpm_result.retry_after_seconds},
+                }
+            },
+            headers=tpm_result.to_headers(),
+        )
+
+    # Return the more restrictive result
+    return rpm_result if rpm_result.remaining < tpm_result.remaining else tpm_result
 
 
 # Pydantic models for API requests/responses
@@ -828,6 +883,9 @@ async def send_message(
 ):
     """Send a message and get LLM response."""
     try:
+        # Check LLM rate limits (RPM and TPM)
+        estimated_tokens = len(request_data.message.split()) * 2 if request_data.message else 100
+        await check_llm_rate_limit(str(current_user.id), estimated_tokens)
         chat_service = ChatService(db, config_manager)
 
         if not request_data.message:
@@ -1044,6 +1102,9 @@ async def regenerate_message(
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency)
 ):
     try:
+        # Check LLM rate limits
+        await check_llm_rate_limit(str(current_user.id), 100)
+
         chat_service = ChatService(db, config_manager)
 
         async def stream_generator():

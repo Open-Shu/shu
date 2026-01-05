@@ -21,7 +21,7 @@ from .core.config import get_settings_instance
 from .core.database import init_db
 from .core.exceptions import ShuException
 from .core.logging import get_logger, setup_logging
-from .core.middleware import RequestIDMiddleware, TimingMiddleware, AuthenticationMiddleware, SecurityHeadersMiddleware
+from .core.middleware import RequestIDMiddleware, TimingMiddleware, AuthenticationMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware
 from .core.http_client import close_http_client
 from .api.auth import router as auth_router
 from .api.config import router as config_router
@@ -395,6 +395,14 @@ def setup_middleware(app: FastAPI) -> None:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
     elif not settings.debug:
         logger.warning("TrustedHostMiddleware not enforcing host validation; set SHU_ALLOWED_HOSTS for non-dev deployments")
+
+    # Rate limiting middleware (applied after authentication to have user context)
+    if settings.enable_rate_limiting:
+        try:
+            app.add_middleware(RateLimitMiddleware)
+            logger.info("Rate limiting middleware enabled")
+        except Exception as e:
+            logger.warning("Failed to add RateLimitMiddleware: %s", e)
 
 
 def setup_exception_handlers(app: FastAPI) -> None:
