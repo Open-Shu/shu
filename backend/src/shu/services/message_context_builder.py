@@ -97,10 +97,6 @@ class MessageContextBuilder:
         if base_prompt:
             system_sections.append(base_prompt)
 
-        mb_section = await self._get_morning_briefing_section(conversation)
-        if mb_section:
-            system_sections.append(mb_section)
-
         if conversation_messages is not None:
             recent_messages_raw = list(conversation_messages)
         else:
@@ -221,52 +217,6 @@ class MessageContextBuilder:
 
         return None
 
-    async def _get_morning_briefing_section(self, conversation: Conversation) -> Optional[str]:
-        try:
-            mb_msg = None
-            for m in reversed(getattr(conversation, 'messages', []) or []):
-                meta = getattr(m, 'message_metadata', None) or {}
-                if isinstance(meta, dict) and 'morning_briefing' in meta:
-                    mb_msg = m
-                    break
-            if not mb_msg:
-                return None
-
-            settings = self.config_manager.settings
-            per_section = getattr(settings, 'chat_attachment_max_chars_per_file', 5000)
-            total_cap = getattr(settings, 'chat_attachment_max_total_chars', 15000)
-            added = 0
-
-            def clip(val: Any) -> str:
-                nonlocal added
-                try:
-                    remaining = max(0, total_cap - added)
-                    s = json.dumps(val, ensure_ascii=False) if not isinstance(val, str) else val
-                    snippet = s[:min(remaining, per_section)]
-                    added += len(snippet)
-                    return snippet
-                except Exception:
-                    return ""
-
-            mb = (mb_msg.message_metadata or {}).get('morning_briefing') or {}
-            gmail_snip = clip(mb.get('gmail_digest', {}))
-            cal_snip = clip(mb.get('calendar_events', {}))
-            kb_snip = clip(mb.get('kb_insights', {}))
-            gchat_snip = clip(mb.get('gchat_digest', {}))
-
-            if not any([gmail_snip, cal_snip, kb_snip, gchat_snip]):
-                return None
-
-            return (
-                "Morning Briefing Context:\n\n"
-                + ("Gmail:\n" + gmail_snip + "\n\n" if gmail_snip else "")
-                + ("Calendar:\n" + cal_snip + "\n\n" if cal_snip else "")
-                + ("Knowledge Base:\n" + kb_snip + "\n\n" if kb_snip else "")
-                + ("Google Chat:\n" + gchat_snip if gchat_snip else "")
-            )
-        except Exception as e:
-            logger.warning(f"Failed to include morning briefing context: {e}")
-            return None
 
     async def _get_rag_sections(
         self,
