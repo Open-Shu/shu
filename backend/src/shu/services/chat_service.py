@@ -61,6 +61,9 @@ class ModelExecutionInputs:
     context_messages: ChatContext
     source_metadata: List[Dict]
     knowledge_base_id: Optional[str]
+    # Per-provider rate limits
+    rate_limit_rpm: int = 60
+    rate_limit_tpm: int = 60000
 
 
 class ChatService:
@@ -212,6 +215,8 @@ class ChatService:
             context_messages=chat_context,
             source_metadata=source_metadata,
             knowledge_base_id=turn_context.knowledge_base_id,
+            rate_limit_rpm=provider.rate_limit_rpm or 60,
+            rate_limit_tpm=provider.rate_limit_tpm or 60000,
         )
 
     @staticmethod

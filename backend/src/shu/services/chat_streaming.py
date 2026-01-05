@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.exceptions import LLMProviderError, LLMTimeoutError, LLMRateLimitError, LLMError
 from shu.core.config import get_settings_instance
+from shu.core.rate_limiting import get_rate_limit_service
 from shu.services.providers.events import ProviderStreamEvent
 from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, ProviderToolCallEventResult, get_adapter_from_provider
 from shu.core.config import ConfigurationManager
@@ -123,6 +124,52 @@ class EnsembleStreamingHelper:
             conversation_owner_id = None
         return conversation_owner_id
 
+    async def _check_provider_rate_limits(
+        self,
+        user_id: str,
+        provider_id: str,
+        rpm_limit: int,
+        tpm_limit: int,
+        estimated_tokens: int = 100,
+    ) -> None:
+        """Check per-provider rate limits before making LLM call.
+
+        Raises LLMRateLimitError if rate limit exceeded.
+        """
+        rate_limit_service = get_rate_limit_service()
+        if not rate_limit_service.enabled:
+            return
+
+        # Check RPM with provider-specific limit
+        rpm_result = await rate_limit_service.check_llm_rpm_limit(
+            user_id, provider_id=provider_id, rpm_override=rpm_limit
+        )
+        if not rpm_result.allowed:
+            raise LLMRateLimitError(
+                f"Provider rate limit exceeded ({rpm_limit} RPM). Retry after {rpm_result.retry_after_seconds}s.",
+                details={
+                    "provider_id": provider_id,
+                    "limit_type": "rpm",
+                    "limit": rpm_limit,
+                    "retry_after": rpm_result.retry_after_seconds,
+                }
+            )
+
+        # Check TPM with provider-specific limit
+        tpm_result = await rate_limit_service.check_llm_tpm_limit(
+            user_id, estimated_tokens, provider_id=provider_id, tpm_override=tpm_limit
+        )
+        if not tpm_result.allowed:
+            raise LLMRateLimitError(
+                f"Provider token rate limit exceeded ({tpm_limit} TPM). Retry after {tpm_result.retry_after_seconds}s.",
+                details={
+                    "provider_id": provider_id,
+                    "limit_type": "tpm",
+                    "limit": tpm_limit,
+                    "retry_after": tpm_result.retry_after_seconds,
+                }
+            )
+
     async def _call_provider(
         self,
         *,
@@ -215,6 +262,22 @@ class EnsembleStreamingHelper:
             model_snapshot = dict(config_metadata.get("model_configuration") or {})
             model_display_name = getattr(inputs.model_configuration, "name", None)
             config_metadata["model_configuration"] = model_snapshot
+
+            # Check per-provider rate limits before calling LLM
+            if conversation_owner_id:
+                # Estimate tokens from context (rough approximation)
+                estimated_tokens = sum(
+                    len(str(getattr(m, "content", "") or "").split()) * 2
+                    for m in (inputs.context_messages.messages or [])
+                )
+                estimated_tokens = max(100, estimated_tokens)
+                await self._check_provider_rate_limits(
+                    user_id=str(conversation_owner_id),
+                    provider_id=inputs.provider_id,
+                    rpm_limit=inputs.rate_limit_rpm,
+                    tpm_limit=inputs.rate_limit_tpm,
+                    estimated_tokens=estimated_tokens,
+                )
 
             try:
 

@@ -155,6 +155,68 @@ class TestTokenBucketRateLimiter:
             assert result.retry_after_seconds > 0
 
 
+class TestProviderRateLimits:
+    """Tests for per-provider rate limiting."""
+
+    @pytest.mark.asyncio
+    async def test_check_llm_rpm_with_provider_override(self):
+        """Per-provider RPM limits use provider-specific bucket."""
+        from shu.core.rate_limiting import RateLimitService
+
+        # Create mock settings
+        mock_settings = MagicMock()
+        mock_settings.enable_rate_limiting = True
+        mock_settings.llm_global_rate_limit = 100  # Used by _get_llm_rpm_limiter
+        mock_settings.llm_global_tpm_limit = 100000
+        mock_settings.api_rate_limit_requests = 100
+        mock_settings.api_rate_limit_period_seconds = 60
+        mock_settings.auth_rate_limit_requests = 10
+        mock_settings.auth_rate_limit_period_seconds = 60
+
+        # Pass settings directly to avoid patching
+        service = RateLimitService(settings=mock_settings)
+
+        # Check with provider-specific limit
+        result = await service.check_llm_rpm_limit(
+            user_id="user1",
+            provider_id="provider_openai",
+            rpm_override=30  # Lower than global
+        )
+
+        assert result.allowed is True
+        # Limit should reflect the override
+        assert result.limit == 30
+
+    @pytest.mark.asyncio
+    async def test_check_llm_tpm_with_provider_override(self):
+        """Per-provider TPM limits use provider-specific bucket."""
+        from shu.core.rate_limiting import RateLimitService
+
+        # Create mock settings
+        mock_settings = MagicMock()
+        mock_settings.enable_rate_limiting = True
+        mock_settings.llm_global_rpm_limit = 100
+        mock_settings.llm_global_tpm_limit = 100000
+        mock_settings.api_rate_limit_requests = 100
+        mock_settings.api_rate_limit_period_seconds = 60
+        mock_settings.auth_rate_limit_requests = 10
+        mock_settings.auth_rate_limit_period_seconds = 60
+
+        # Pass settings directly
+        service = RateLimitService(settings=mock_settings)
+
+        # Check with provider-specific TPM limit
+        result = await service.check_llm_tpm_limit(
+            user_id="user1",
+            token_cost=500,
+            provider_id="provider_anthropic",
+            tpm_override=10000  # Lower than global
+        )
+
+        assert result.allowed is True
+        assert result.limit == 10000
+
+
 class TestRateLimitService:
     """Tests for RateLimitService."""
     
