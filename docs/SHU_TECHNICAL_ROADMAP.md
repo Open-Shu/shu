@@ -45,6 +45,7 @@ This living document captures Shu’ technical trajectory. The summary below lin
 - [Phase 2 - Adaptive Deployment Platform](#phase-2-adaptive-deployment-platform)
   - [Modularize services for multi-topology deploys](#adaptive-deployment-platform-modularize-services-for-multi-topology-deploys)
   - [Introduce dynamic work queues](#adaptive-deployment-platform-introduce-dynamic-work-queues)
+  - [Introduce unified cache abstraction](#adaptive-deployment-platform-introduce-unified-cache-abstraction)
   - [Implement workload routing patterns](#adaptive-deployment-platform-implement-workload-routing-patterns)
   - [Publish containerized single-node dev stack](#adaptive-deployment-platform-publish-containerized-single-node-dev-stack)
   - [Publish bare-metal single-node installer](#adaptive-deployment-platform-publish-bare-metal-single-node-installer)
@@ -222,13 +223,14 @@ Status legend: **Complete** (implemented in current codebase), **In Progress** (
 | Feature | Status | Related Tasks |
 | -- | -- | -- |
 | [Modularize services for multi-topology deploys](#adaptive-deployment-platform-modularize-services-for-multi-topology-deploys) | TODO | [SHU-212 Repository layer](./tasks/SHU-24-adaptive-deployment-platform/SHU-212-Repository-layer-for-KB-scheduler-and-workflows.md), [SHU-213 Repository rollout](./tasks/SHU-24-adaptive-deployment-platform/SHU-213-Repository-pattern-rollout-across-remaining-application-data-access.md), [SHU-214 VectorStore interface](./tasks/SHU-24-adaptive-deployment-platform/SHU-214-VectorStore-interface-for-Postgres-and-SQLite.md) |
-| [Introduce dynamic work queues](#adaptive-deployment-platform-introduce-dynamic-work-queues) | TODO | [SHU-211 Queue and cache interfaces](./tasks/SHU-24-adaptive-deployment-platform/SHU-211-Queue-and-cache-interfaces-with-Redis-and-in-memory-backends.md), [SHU-215 Workload routing](./tasks/SHU-24-adaptive-deployment-platform/SHU-215-Workload-routing-and-worker-roles-for-queues.md) |
+| [Introduce dynamic work queues](#adaptive-deployment-platform-introduce-dynamic-work-queues) | TODO | [SHU-211 Queue interface](./tasks/SHU-24-Adaptive-Deployment-Platform/SHU-211-Queue-and-cache-interfaces-with-Redis-and-in-memory-backends.md), [SHU-215 Workload routing](./tasks/SHU-24-Adaptive-Deployment-Platform/SHU-215-Workload-routing-and-worker-roles-for-queues.md) |
+| [Introduce unified cache abstraction](#adaptive-deployment-platform-introduce-unified-cache-abstraction) | TODO | [Unified Cache Interface](./tasks/SHU-24-Adaptive-Deployment-Platform/SHU-414-Unified-Cache-Interface-with-Redis-and-In-Memory-Backends.md) |
 | [Implement workload routing patterns](#adaptive-deployment-platform-implement-workload-routing-patterns) | TODO | [SHU-215 Workload routing](./tasks/SHU-24-adaptive-deployment-platform/SHU-215-Workload-routing-and-worker-roles-for-queues.md) |
 | [Publish containerized single-node dev stack](#adaptive-deployment-platform-publish-containerized-single-node-dev-stack) | Complete | [SHU-208 Docker Compose alignment](./tasks/SHU-24-adaptive-deployment-platform/SHU-208-Align-Docker-Compose-dev-stack-with-adaptive-deployment-architecture.md), [SHU-178 Docker Compose](./tasks/SHU-21-USABILITY/SHU-178-Docker-Compose-from-scratch-install.md) |
 | [Publish bare-metal single-node installer](#adaptive-deployment-platform-publish-bare-metal-single-node-installer) | TODO | [SHU-209 Bare-metal installer](./tasks/SHU-24-adaptive-deployment-platform/SHU-209-Bare-metal-single-node-install-initialization-and-packaging.md) |
 | [Publish containerized packaging](#adaptive-deployment-platform-publish-containerized-packaging) | In Progress | [SHU-218 Kubernetes Alpha Deployment](./tasks/SHU-25-ALPHA-USABILITY/SHU-218-Kubernetes-Alpha-Deployment.md), [SHU-98 Kubernetes Production](./tasks/SHU-14-PRODUCTION-DEPLOYMENT/SHU-98-Kubernetes-Production.md) |
 | [Document migration between deployment modes](#adaptive-deployment-platform-document-migration-between-deployment-modes) | TODO | [SHU-210 Datasource migration](./tasks/SHU-24-adaptive-deployment-platform/SHU-210-Datasource-migration-and-configuration-parity-across-deployment-modes.md) |
-| [Adopt queue abstraction for scheduler](#adaptive-deployment-platform-adopt-queue-abstraction-for-scheduler) | TODO | [SHU-211 Queue and cache interfaces](./tasks/SHU-24-adaptive-deployment-platform/SHU-211-Queue-and-cache-interfaces-with-Redis-and-in-memory-backends.md) |
+| [Adopt queue abstraction for scheduler](#adaptive-deployment-platform-adopt-queue-abstraction-for-scheduler) | TODO | [SHU-211 Queue interface](./tasks/SHU-24-Adaptive-Deployment-Platform/SHU-211-Queue-and-cache-interfaces-with-Redis-and-in-memory-backends.md) |
 | [Maintain configuration parity](#adaptive-deployment-platform-maintain-configuration-parity) | In Progress | [SHU-210 Datasource migration](./tasks/SHU-24-adaptive-deployment-platform/SHU-210-Datasource-migration-and-configuration-parity-across-deployment-modes.md), [SHU-335 Config Source Priorities](./tasks/SHU-7-PLATFORM-INFRA/SHU-335-Config-Source-Priorities.md) |
 | [Implement user API key system](#adaptive-deployment-platform-implement-user-api-key-system) | In Progress | [SHU-121 User API Key System](./tasks/SHU-17-SECURITY-HARDENING/SHU-121-User-API-Key-System.md), [SHU-120 API Key Database Schema](./tasks/SHU-17-SECURITY-HARDENING/SHU-120-API-Key-Database-Schema.md) |
 | [Provide API key management endpoints](#adaptive-deployment-platform-provide-api-key-management-endpoints) | TODO | [SHU-118 API Key Management Endpoints](./tasks/SHU-17-SECURITY-HARDENING/SHU-118-API-Key-Management-Endpoints.md) |
@@ -377,7 +379,8 @@ Phase 3 is divided into three focused sub-initiatives to reduce coupling and ena
 - [Bundle Postgres, Redis, and Ollama option](#foundation-hardening-bundle-postgres-redis-and-ollama-option): Ollama service not bundled in Compose stack.
 
 **Phase 2 Gaps:**
-- [Introduce dynamic work queues](#adaptive-deployment-platform-introduce-dynamic-work-queues): SHU-211 defines QueueBackend and CacheBackend interfaces with Redis and in-memory backends; implementation not started.
+- [Introduce dynamic work queues](#adaptive-deployment-platform-introduce-dynamic-work-queues): SHU-211 defines QueueBackend interface with Redis and in-memory backends; implementation not started.
+- [Introduce unified cache abstraction](#adaptive-deployment-platform-introduce-unified-cache-abstraction): Unified-Cache-Interface task defines CacheBackend interface to consolidate all cache implementations; implementation not started.
 - [Adopt queue abstraction for scheduler](#adaptive-deployment-platform-adopt-queue-abstraction-for-scheduler): Migrate Phase 1 DB-backed scheduler to QueueBackend interface.
 - [Implement workload routing patterns](#adaptive-deployment-platform-implement-workload-routing-patterns): No workload tagging or routing layer.
 - [Document migration between deployment modes](#adaptive-deployment-platform-document-migration-between-deployment-modes): No migration documentation.
@@ -536,6 +539,10 @@ Separate runtime components (API, workers, ingestion) into modules with stable i
 <a id="adaptive-deployment-platform-introduce-dynamic-work-queues"></a>
 ### Adaptive Deployment Introduce dynamic work queues
 Provide a queue abstraction with Redis and in-memory backends so background jobs work identically in single-node and distributed deployments.
+
+<a id="adaptive-deployment-platform-introduce-unified-cache-abstraction"></a>
+### Adaptive Deployment Introduce unified cache abstraction
+Provide a cache abstraction with Redis and in-memory backends that consolidates all existing cache implementations (plugin host cache, config cache, rate limiting) into a single CacheBackend interface, enabling the platform to run without Redis while maintaining full functionality.
 
 <a id="adaptive-deployment-platform-implement-workload-routing-patterns"></a>
 ### Adaptive Deployment Implement workload routing patterns
