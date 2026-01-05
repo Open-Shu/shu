@@ -110,7 +110,8 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
                 from .side_call_service import SideCallService
                 from .profiling_orchestrator import ProfilingOrchestrator
 
-                async with get_async_session_local()() as bg_session:
+                session_local = get_async_session_local()
+                async with session_local() as bg_session:
                     config_manager = get_config_manager()
                     side_call_service = SideCallService(bg_session, config_manager)
                     orchestrator = ProfilingOrchestrator(bg_session, settings, side_call_service)
