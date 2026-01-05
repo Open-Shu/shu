@@ -165,7 +165,7 @@ class ProfilingService:
         result = await self.side_call.call(
             message_sequence=message_sequence,
             system_prompt=DOCUMENT_PROFILE_SYSTEM_PROMPT,
-            user_id="system:profiling",
+            user_id=None,  # System operation - no user attribution
             timeout_ms=timeout,
         )
 
@@ -255,7 +255,7 @@ class ProfilingService:
         result = await self.side_call.call(
             message_sequence=message_sequence,
             system_prompt=CHUNK_PROFILE_SYSTEM_PROMPT,
-            user_id="system:profiling",
+            user_id=None,  # System operation - no user attribution
             timeout_ms=timeout_ms,
         )
 
@@ -329,7 +329,7 @@ class ProfilingService:
         result = await self.side_call.call(
             message_sequence=message_sequence,
             system_prompt=AGGREGATE_PROFILE_SYSTEM_PROMPT,
-            user_id="system:profiling",
+            user_id=None,  # System operation - no user attribution
             timeout_ms=timeout,
         )
 
