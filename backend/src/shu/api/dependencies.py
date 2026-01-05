@@ -61,4 +61,52 @@ def paginate(skip: int = 0, limit: int = Query(100, ge=1, le=1000, description="
             detail=f"Limit parameter must be between 1 and {settings.max_pagination_limit}"
         )
     
-    return {"skip": skip, "limit": limit} 
+    return {"skip": skip, "limit": limit}
+
+
+async def check_auth_rate_limit(request) -> None:
+    """Rate limit check for authentication endpoints.
+
+    Uses stricter rate limits for brute-force protection.
+    Raises HTTPException with 429 status if limit exceeded.
+
+    Args:
+        request: FastAPI Request object
+
+    Raises:
+        HTTPException: If rate limit exceeded
+    """
+    from fastapi import Request
+    from ..core.rate_limiting import get_rate_limit_service
+
+    rate_limit_service = get_rate_limit_service()
+
+    if not rate_limit_service.enabled:
+        return
+
+    # Get client IP for rate limiting (auth endpoints may not have user context)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    result = await rate_limit_service.check_auth_limit(client_ip)
+
+    if not result.allowed:
+        logger.warning(
+            "Auth rate limit exceeded for IP %s, retry_after=%s",
+            client_ip,
+            result.retry_after_seconds,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": "Too many authentication attempts. Please try again later.",
+                    "code": "AUTH_RATE_LIMIT_EXCEEDED",
+                    "details": {"retry_after": result.retry_after_seconds},
+                }
+            },
+            headers=result.to_headers(),
+        )

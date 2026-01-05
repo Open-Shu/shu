@@ -1,6 +1,6 @@
 """Authentication API endpoints for Shu"""
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,11 +16,45 @@ from ..auth.rbac import get_current_user, require_admin
 from ..auth.password_auth import password_auth_service
 from ..schemas.envelope import SuccessResponse
 from ..core.config import get_settings_instance
+from ..core.rate_limiting import get_rate_limit_service
 from ..api.dependencies import get_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+async def _check_auth_rate_limit(request: Request) -> None:
+    """Rate limit dependency for auth endpoints.
+
+    Uses stricter rate limits for brute-force protection.
+    """
+    rate_limit_service = get_rate_limit_service()
+
+    if not rate_limit_service.enabled:
+        return
+
+    # Get client IP for rate limiting
+    forwarded = request.headers.get("X-Forwarded-For")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (
+        request.client.host if request.client else "unknown"
+    )
+
+    result = await rate_limit_service.check_auth_limit(client_ip)
+
+    if not result.allowed:
+        logger.warning("Auth rate limit exceeded for IP %s", client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "message": "Too many authentication attempts. Please try again later.",
+                    "code": "AUTH_RATE_LIMIT_EXCEEDED",
+                    "details": {"retry_after": result.retry_after_seconds},
+                }
+            },
+            headers=result.to_headers(),
+        )
 
 async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
     """Verify Google ID token using Google's tokeninfo endpoint with proper TLS trust.
@@ -265,7 +299,12 @@ user_service = UserService()
 
 
 @router.post("/login", response_model=SuccessResponse[TokenResponse])
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: LoginRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(_check_auth_rate_limit),
+):
     """Authenticate user with Google token"""
     try:
         # Authenticate or create user
@@ -297,7 +336,7 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Authentication failed"
         )
 
-@router.post("/register", response_model=SuccessResponse[Dict[str, str]])
+@router.post("/register", response_model=SuccessResponse[Dict[str, str]], dependencies=[Depends(_check_auth_rate_limit)])
 async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Register a new user with email and password (requires admin activation)"""
     try:
@@ -339,7 +378,7 @@ async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get
             detail="Registration failed"
         )
 
-@router.post("/login/password", response_model=SuccessResponse[TokenResponse])
+@router.post("/login/password", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
 async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = Depends(get_db)):
     """Authenticate user with email and password"""
     try:
@@ -480,7 +519,7 @@ class CodeRequest(BaseModel):
     code: str
 
 
-@router.post("/google/exchange-login", response_model=SuccessResponse[TokenResponse])
+@router.post("/google/exchange-login", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
 async def google_exchange_login(request: CodeRequest, db: AsyncSession = Depends(get_db)):
     """Exchange an OAuth authorization code for Google ID token and issue Shu JWTs.
 
