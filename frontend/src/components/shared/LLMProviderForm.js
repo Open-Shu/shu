@@ -130,10 +130,8 @@ const LLMProviderForm = ({
           value={provider.rate_limit_rpm}
           onChange={(e) => onProviderChange({ ...provider, rate_limit_rpm: parseInt(e.target.value || '0', 10) })}
           margin="normal"
+          helperText="Requests per minute limit for this provider"
         />
-        <Box sx={{ mt: 0.5 }}>
-          <NotImplemented label="Rate limiting not enforced server-side yet" />
-        </Box>
       </Grid>
 
       <Grid item xs={12} sm={6}>
@@ -144,10 +142,8 @@ const LLMProviderForm = ({
           value={provider.rate_limit_tpm}
           onChange={(e) => onProviderChange({ ...provider, rate_limit_tpm: parseInt(e.target.value || '0', 10) })}
           margin="normal"
+          helperText="Tokens per minute limit for this provider"
         />
-        <Box sx={{ mt: 0.5 }}>
-          <NotImplemented label="Rate limiting not enforced server-side yet" />
-        </Box>
       </Grid>
 
       {/* Endpoints configuration - Advanced options accordion */}
