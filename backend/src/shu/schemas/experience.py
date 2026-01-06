@@ -78,12 +78,13 @@ class ExperienceStepBase(BaseModel):
     @classmethod
     def validate_step_key(cls, v):
         """Validate step key format."""
-        if not v.strip():
+        v = v.strip()
+        if not v:
             raise ValueError("Step key cannot be empty")
         # Ensure it's a valid identifier for template access
-        if not v.replace('_', '').isalnum():
-            raise ValueError("Step key must contain only alphanumeric characters and underscores")
-        return v.strip()
+        if not v.isidentifier():
+            raise ValueError(f"Step key '{v}' must be a valid Python/Jinja2 identifier (start with letter/underscore, contain only alphanumerics/underscore)")
+        return v
 
 
 class ExperienceStepCreate(ExperienceStepBase):

@@ -348,6 +348,7 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
             kb_query_template: null,
             params_template: null,
             condition_template: null,
+            _id: Math.random().toString(36).substr(2, 9), // Stable ID for React key
         };
         onChange([...steps, newStep]);
     };
@@ -388,7 +389,7 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
                 ) : (
                     steps.map((step, index) => (
                         <StepCard
-                            key={index}
+                            key={step._id || index} // Use stable ID if available, fallback to index
                             step={step}
                             index={index}
                             isFirst={index === 0}

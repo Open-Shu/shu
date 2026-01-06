@@ -42,10 +42,10 @@ class TestParamCoercion:
         assert result == params
 
     def test_coerce_params_invalid_types(self):
-         mock_plugin = MagicMock()
-         mock_plugin.get_schema.return_value = {
-             "properties": {"limit": {"type": "integer"}}
-         }
-         params = {"limit": "abc"}
-         result = _coerce_params(mock_plugin, params)
-         assert result["limit"] == "abc" # Should remain string if not coercible
+        mock_plugin = MagicMock()
+        mock_plugin.get_schema.return_value = {
+            "properties": {"limit": {"type": "integer"}}
+        }
+        params = {"limit": "abc"}
+        result = _coerce_params(mock_plugin, params)
+        assert result["limit"] == "abc" # Should remain string if not coercible

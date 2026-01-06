@@ -291,6 +291,29 @@ export default function ExperienceEditor() {
         );
     }
 
+    if (experienceQuery.isError) {
+        return (
+            <Box p={3} display="flex" justifyContent="center">
+                <Paper sx={{ p: 4, maxWidth: 600, textAlign: 'center' }}>
+                    <Typography variant="h6" color="error" gutterBottom>
+                        Error Loading Experience
+                    </Typography>
+                    <Typography variant="body1" color="text.secondary" paragraph>
+                        {formatError(experienceQuery.error || 'Unknown error')}
+                    </Typography>
+                    <Stack direction="row" spacing={2} justifyContent="center" mt={2}>
+                        <Button variant="outlined" onClick={handleBack}>
+                            Back to List
+                        </Button>
+                        <Button variant="contained" onClick={() => experienceQuery.refetch()}>
+                            Retry
+                        </Button>
+                    </Stack>
+                </Paper>
+            </Box>
+        );
+    }
+
     return (
         <Box p={3}>
             {/* Header */}

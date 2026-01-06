@@ -33,25 +33,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
     const [error, setError] = useState(null);
     const abortControllerRef = useRef(null);
 
-    // Reset state when opening
-    useEffect(() => {
-        if (open) {
-            setStatus('running');
-            setLogs([]);
-            setStepStates({});
-            setLlmContent('');
-            setError(null);
-
-            startExecution();
-        } else {
-            // Cleanup on close
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
-        }
-    }, [open, experienceId]);
-
-    const startExecution = async () => {
+    const startExecution = React.useCallback(async () => {
         try {
             abortControllerRef.current = new AbortController();
 
@@ -87,7 +69,51 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
 
                             try {
                                 const event = JSON.parse(jsonStr);
-                                handleEvent(event);
+                                setLogs(prev => [...prev, event]);
+
+                                // Process events for state updates
+                                if (event.type === 'run_started') setStatus('running');
+                                else if (event.type === 'step_started') {
+                                    setStepStates(prev => ({
+                                        ...prev,
+                                        [event.step_key]: { status: 'running', ...prev[event.step_key] }
+                                    }));
+                                }
+                                else if (event.type === 'step_completed') {
+                                    setStepStates(prev => ({
+                                        ...prev,
+                                        [event.step_key]: {
+                                            status: 'succeeded',
+                                            summary: event.summary
+                                        }
+                                    }));
+                                }
+                                else if (event.type === 'step_failed') {
+                                    setStepStates(prev => ({
+                                        ...prev,
+                                        [event.step_key]: {
+                                            status: 'failed',
+                                            error: event.error
+                                        }
+                                    }));
+                                }
+                                else if (event.type === 'step_skipped') {
+                                    setStepStates(prev => ({
+                                        ...prev,
+                                        [event.step_key]: {
+                                            status: 'skipped',
+                                            reason: event.reason
+                                        }
+                                    }));
+                                }
+                                else if (event.type === 'content_delta') {
+                                    setLlmContent(prev => prev + (event.content || ''));
+                                }
+                                else if (event.type === 'run_completed') setStatus('completed');
+                                else if (event.type === 'error') {
+                                    setError(event.message);
+                                    setStatus('failed');
+                                }
                             } catch (e) {
                                 console.warn('Failed to parse SSE event:', e);
                             }
@@ -107,62 +133,30 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                 setStatus('failed');
             }
         }
-    };
+    }, [experienceId]);
 
-    const handleEvent = (event) => {
-        setLogs(prev => [...prev, event]);
+    // Reset state when opening
+    useEffect(() => {
+        if (open) {
+            setStatus('running');
+            setLogs([]);
+            setStepStates({});
+            setLlmContent('');
+            setError(null);
 
-        switch (event.type) {
-            case 'run_started':
-                setStatus('running');
-                break;
-            case 'step_started':
-                setStepStates(prev => ({
-                    ...prev,
-                    [event.step_key]: { status: 'running', ...prev[event.step_key] }
-                }));
-                break;
-            case 'step_completed':
-                setStepStates(prev => ({
-                    ...prev,
-                    [event.step_key]: {
-                        status: 'succeeded',
-                        summary: event.summary
-                    }
-                }));
-                break;
-            case 'step_failed':
-                setStepStates(prev => ({
-                    ...prev,
-                    [event.step_key]: {
-                        status: 'failed',
-                        error: event.error
-                    }
-                }));
-                break;
-            case 'step_skipped':
-                setStepStates(prev => ({
-                    ...prev,
-                    [event.step_key]: {
-                        status: 'skipped',
-                        reason: event.reason
-                    }
-                }));
-                break;
-            case 'content_delta':
-                setLlmContent(prev => prev + (event.content || ''));
-                break;
-            case 'run_completed':
-                setStatus('completed');
-                break;
-            case 'error':
-                setError(event.message);
-                setStatus('failed');
-                break;
-            default:
-                break;
+            startExecution();
+        } else {
+            // Cleanup on close
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
         }
-    };
+    }, [open, startExecution]);
+
+    // Handle incoming events (helper function merged into startExecution loop)
+    // const handleEvent = ... removed to avoid stale closures
+
+
 
 
 

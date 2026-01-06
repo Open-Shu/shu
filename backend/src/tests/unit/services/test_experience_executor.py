@@ -396,6 +396,12 @@ class TestRunManagement:
         
         executor.db.add.assert_called_once()
         executor.db.commit.assert_called_once()
+        
+        assert run.experience_id == "exp-123"
+        assert run.user_id == "user-123"
+        assert run.input_params == {"query": "test"}
+        assert run.status == "running"
+        assert run.model_name == "gpt-4"
     
     @pytest.mark.asyncio
     async def test_finalize_run_success(self, executor):

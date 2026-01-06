@@ -60,7 +60,7 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
         >
             <DialogTitle>
                 Run Details
-                {run && (
+                {run && run.started_at && !isNaN(new Date(run.started_at).getTime()) && (
                     <Typography variant="body2" color="text.secondary">
                         {format(new Date(run.started_at), 'MMMM d, yyyy HH:mm:ss')}
                     </Typography>
@@ -128,8 +128,8 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
                                                     primary={step.step_key}
                                                     secondary={
                                                         <React.Fragment>
-                                                            {step.status === 'failed' && `Error: ${step.error}`}
-                                                            {step.status === 'skipped' && `Skipped: ${step.reason}`}
+                                                            {step.status === 'failed' && `Error: ${step.error || 'Unknown error'}`}
+                                                            {step.status === 'skipped' && `Skipped: ${step.reason || 'No reason provided'}`}
                                                             {step.status === 'succeeded' && (
                                                                 // If we have output summary we could show it, but usually not in state.
                                                                 // We rely on status.

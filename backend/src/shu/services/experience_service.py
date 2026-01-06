@@ -13,6 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
+
+try:
+    from croniter import croniter
+except ImportError:
+    croniter = None
+
+import zoneinfo
+
 from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -45,6 +53,50 @@ class ExperienceService:
         # Lazily-initialized plugin loader (created on first use)
         self._plugin_loader: Optional['PluginLoader'] = None
 
+    def _validate_trigger_config(
+        self,
+        trigger_type: TriggerType,
+        trigger_config: Optional[Dict[str, Any]]
+    ) -> None:
+        """
+        Validate trigger configuration for scheduled/cron types.
+        
+        Args:
+            trigger_type: Type of trigger (scheduled, cron, manual)
+            trigger_config: Dictionary of trigger settings
+            
+        Raises:
+            ValidationError: If configuration is invalid
+        """
+        if trigger_type == TriggerType.SCHEDULED:
+            if not trigger_config or not trigger_config.get("scheduled_at"):
+                raise ValidationError("Trigger type 'scheduled' requires 'scheduled_at' in trigger_config")
+            try:
+                datetime.fromisoformat(trigger_config["scheduled_at"])
+            except ValueError:
+                raise ValidationError("Invalid 'scheduled_at' format. Expected ISO 8601 (YYYY-MM-DDTHH:MM:SS)")
+        
+        elif trigger_type == TriggerType.CRON:
+            if not trigger_config or not trigger_config.get("cron"):
+                raise ValidationError("Trigger type 'cron' requires 'cron' expression in trigger_config")
+            
+            if croniter:
+                try:
+                    if not croniter.is_valid(trigger_config["cron"]):
+                        raise ValidationError(f"Invalid cron expression: {trigger_config['cron']}")
+                except Exception as e:
+                    # croniter.is_valid might raise or return False depending on version/input
+                    raise ValidationError(f"Invalid cron expression: {trigger_config['cron']}")
+            else:
+                logger.warning("croniter not installed, skipping strict cron validation")
+
+        # Validate timezone if provided (for both scheduled and cron)
+        if trigger_config and trigger_config.get("timezone"):
+            try:
+                zoneinfo.ZoneInfo(trigger_config["timezone"])
+            except Exception:
+                raise ValidationError(f"Invalid timezone: {trigger_config['timezone']}")
+
     # =========================================================================
     # CRUD Operations
     # =========================================================================
@@ -72,6 +124,9 @@ class ExperienceService:
         existing = await self._get_experience_by_name(experience_data.name)
         if existing:
             raise ConflictError(f"Experience '{experience_data.name}' already exists")
+
+        # Validate trigger config
+        self._validate_trigger_config(experience_data.trigger_type, experience_data.trigger_config)
 
         # Validate templates before creating
         if experience_data.inline_prompt_template:
@@ -200,6 +255,19 @@ class ExperienceService:
             else:
                 setattr(experience, field, value)
 
+        # Validate trigger config if changed
+        if trigger_changed:
+            # Ensure the configuration is valid for the (potentially new) type
+            try:
+                # Trigger type in DB is string, convert to Enum for consistency if needed, 
+                # but our validator handles the logic based on values.
+                current_type = TriggerType(experience.trigger_type)
+                self._validate_trigger_config(current_type, experience.trigger_config)
+            except ValueError:
+                logger.exception("Incorrect validation for experience %s", experience.id)
+                # Fallback if DB has invalid string (unlikely)
+                pass
+
         # Recalculate next_run_at if trigger configuration changed
         if trigger_changed:
             # Get user's timezone preference for scheduling
@@ -212,6 +280,8 @@ class ExperienceService:
                 if prefs:
                     user_tz = prefs.timezone
             except Exception:
+                logger.exception("Failed to load user preferences for scheduling experience %s", experience.id)
+                # Fallback to None (which falls back to UTC in schedule_next)
                 pass
             experience.schedule_next(user_timezone=user_tz)
 

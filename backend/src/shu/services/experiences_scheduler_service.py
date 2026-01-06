@@ -290,10 +290,10 @@ async def start_experiences_scheduler():
                     # Only log if something happened
                     if result.get("due", 0) > 0:
                         logger.info(
-                            "Experiences scheduler tick | due=%d ran=%d failed=%d skipped_no_owner=%d",
+                            "Experiences scheduler tick | due=%d user_runs=%d user_failures=%d skipped_no_owner=%d",
                             result.get("due", 0),
-                            result.get("ran", 0),
-                            result.get("failed", 0),
+                            result.get("user_runs", 0),
+                            result.get("user_failures", 0),
                             result.get("no_users", 0),
                         )
             except Exception as ex:

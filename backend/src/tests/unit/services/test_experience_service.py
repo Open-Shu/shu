@@ -408,8 +408,8 @@ class TestCreateExperience:
             name="Daily Digest",
             description="Get your daily email digest",
             visibility=ExperienceVisibility.DRAFT,
-            trigger_type=TriggerType.SCHEDULED,
-            trigger_config={"cron": "0 9 * * *"},
+            trigger_type=TriggerType.CRON,
+            trigger_config={"cron": "0 9 * * *", },
             steps=[
                 ExperienceStepCreate(
                     step_key="emails",
