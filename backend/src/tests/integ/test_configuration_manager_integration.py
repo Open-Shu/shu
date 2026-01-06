@@ -126,7 +126,19 @@ class ConfigurationManagerIntegrationTest:
             self.log_result(test_name, False, f"Error: {e}")
     
     def test_configuration_dictionaries(self):
-        """Test configuration dictionary generation."""
+        """
+        Verify generation and key/value resolution of RAG, LLM, and user preferences configuration dictionaries.
+        
+        This test builds sample input configs and asserts that:
+        - The RAG configuration dictionary contains the expected keys and that
+          `search_threshold`, `max_results`, and `context_format` resolve to the provided values.
+        - The LLM configuration dictionary contains the keys `temperature`, `max_tokens`, and `timeout`
+          and that `temperature` and `max_tokens` resolve to the provided values.
+        - The user preferences dictionary contains `memory_depth`, `memory_similarity_threshold`,
+          `theme`, `language`, and `timezone`, and that `theme` and `memory_depth` resolve to the provided values.
+        
+        Logs success when all assertions pass; logs a failure message if any assertion or step raises an exception.
+        """
         test_name = "Configuration Dictionary Generation"
         
         try:

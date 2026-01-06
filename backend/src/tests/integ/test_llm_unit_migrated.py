@@ -20,7 +20,14 @@ from shu.core.exceptions import LLMProviderError
 
 
 def test_provider_with_api_key():
-    """Test provider response when API key exists."""
+    """
+    Verify that converting a provider with an encrypted API key yields a response indicating an API key is present and omits actual key fields.
+    
+    Asserts that:
+    - response.id, response.name, and response.provider_type match the provider.
+    - response.has_api_key is True.
+    - the response does not include `api_key` or `api_key_encrypted` attributes.
+    """
     provider = LLMProvider(
         id="test-id-1",
         name="Test OpenAI",

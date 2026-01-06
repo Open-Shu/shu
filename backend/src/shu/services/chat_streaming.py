@@ -116,6 +116,15 @@ class EnsembleStreamingHelper:
         return provider_and_model_support_tools and chat_plugins_enabled
     
     async def _get_conversation_owner(self, conversation_id):
+        """
+        Fetches the owner user ID for a conversation by its ID.
+        
+        Parameters:
+            conversation_id: Identifier of the conversation to look up.
+        
+        Returns:
+            `str` user ID if the conversation exists and has a user_id, `None` if the conversation is missing, has no user_id, or an error occurs while fetching it.
+        """
         conversation_owner_id = None
         try:
             conv_obj = await self.chat_service.get_conversation_by_id(conversation_id)
@@ -132,13 +141,20 @@ class EnsembleStreamingHelper:
         tpm_limit: int,
         estimated_tokens: int = 100,
     ) -> None:
-        """Check per-provider rate limits before making LLM call.
-
-        Args:
-            rpm_limit: Requests per minute limit. 0 means no limit.
-            tpm_limit: Tokens per minute limit. 0 means no limit.
-
-        Raises LLMRateLimitError if rate limit exceeded.
+        """
+        Enforces per-provider requests-per-minute (RPM) and tokens-per-minute (TPM) limits for a user before making an LLM call.
+        
+        Checks the configured provider limits and, when rate limiting is enabled, queries the rate limit service to verify both RPM and TPM allowances. A limit value of 0 disables that specific check.
+        
+        Parameters:
+            user_id (str): ID of the conversation owner / user making the request.
+            provider_id (str): Provider identifier to check limits against.
+            rpm_limit (int): Requests-per-minute limit for the provider; 0 means no RPM check.
+            tpm_limit (int): Tokens-per-minute limit for the provider; 0 means no TPM check.
+            estimated_tokens (int): Estimated number of tokens the pending request will consume (used for TPM calculation).
+        
+        Raises:
+            LLMRateLimitError: If the RPM or TPM check fails; error details include provider_id, limit_type ("rpm" or "tpm"), limit, and retry_after.
         """
         rate_limit_service = get_rate_limit_service()
         logger.debug(
@@ -200,6 +216,25 @@ class EnsembleStreamingHelper:
         tools_enabled: bool,
     ) -> tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
 
+        """
+        Stream provider responses for a single model variant and enqueue interim events to the provided queue.
+        
+        Parameters:
+            client (UnifiedLLMClient): LLM client to call for chat completions.
+            messages (ChatContext): Conversation context to send to the provider.
+            inputs (ModelExecutionInputs): Execution inputs including model and configuration.
+            model_snapshot (Dict[str, Any]): Metadata snapshot of the model configuration to attach to events.
+            model_display_name (Optional[str]): Human-readable model name for events.
+            allowed_to_stream (bool): Whether the provider call should request streaming responses.
+            queue (asyncio.Queue): Queue to which intermediate ProviderResponseEvent objects are put.
+            variant_index (int): Index of the current model variant within the ensemble.
+            tools_enabled (bool): Whether tool-calling is enabled for this run.
+        
+        Returns:
+            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
+                final_message_event: The provider's final event (content or error) if produced, otherwise None.
+                followup_messages: Additional messages emitted by the provider (e.g., from a tool call) to be sent back for follow-up, or None.
+        """
         final_message_event: Optional[ProviderFinalEventResult] = None
         followup_messages: Optional[List[ChatMessage]] = None
         llm_params = None
@@ -258,7 +293,19 @@ class EnsembleStreamingHelper:
         conversation_id: str,
         parent_message_id_override: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream multiple model configurations concurrently and emit multiplexed SSE events."""
+        """
+        Stream responses from multiple model configurations in parallel and emit multiplexed server-sent-event style events.
+        
+        This coroutine concurrently executes each provided ModelExecutionInputs variant, forwards intermediate deltas and final results into a shared queue, persists the final assistant message and usage, and yields each queued ProviderResponseEvent as a dictionary suitable for SSE delivery. The generator yields content and reasoning deltas as they arrive, final_message events when a variant completes, and error events when a variant fails.
+        
+        Parameters:
+            ensemble_inputs (List[ModelExecutionInputs]): One entry per model/variant describing provider, model configuration, context, and rate limits to execute.
+            conversation_id (str): Identifier of the conversation to which produced assistant messages will be appended.
+            parent_message_id_override (Optional[str]): If provided, use this value as the parent message id for all produced messages; otherwise a new UUID is generated and the first variant may reuse it as the message id.
+        
+        Returns:
+            AsyncGenerator[Dict[str, Any], None]: An async generator that yields dictionaries representing ProviderResponseEvent objects (SSE-serializable events) with keys such as `event`/`type`, `content`, `variant_index`, and model/metadata fields.
+        """
         service = self.chat_service
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -273,6 +320,13 @@ class EnsembleStreamingHelper:
 
         async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs"):
 
+            """
+            Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
+            
+            Parameters:
+            	variant_index (int): Zero-based index of the variant within the ensemble.
+            	inputs (ModelExecutionInputs): Execution inputs and configuration for this variant, including provider/model identifiers, context messages, and rate-limit settings.
+            """
             client = await service.llm_service.get_client(inputs.provider_id, conversation_owner_id)
             config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
             model_snapshot = dict(config_metadata.get("model_configuration") or {})

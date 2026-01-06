@@ -99,20 +99,59 @@ class TestTokenBucketRateLimiter:
     
     @pytest.fixture
     def mock_redis(self):
-        """Create a mock in-memory Redis client."""
+        """
+        Create a simple in-memory mock of an async Redis client for tests.
+        
+        The mock implements async `incr(key)`, `incrby(key, amount)`, and `expire(key, seconds)` operations backed by an internal `_store` dict:
+        - `incr` increments the integer value for `key` by 1 and returns the new value.
+        - `incrby` increments the integer value for `key` by `amount` and returns the new value.
+        - `expire` always returns `True`.
+        
+        Returns:
+            AsyncMock: An AsyncMock instance named `InMemoryRedis` with `_store` and the above async methods.
+        """
         redis = AsyncMock()
         redis.__class__.__name__ = "InMemoryRedis"
         redis._store = {}
 
         async def mock_incr(key):
+            """
+            Increment the integer value stored for `key` in the in-memory mock Redis and return the updated value.
+            
+            Parameters:
+                key (str): The Redis key whose integer value should be incremented.
+            
+            Returns:
+                int: The new integer value stored at `key` after incrementing.
+            """
             redis._store[key] = redis._store.get(key, 0) + 1
             return redis._store[key]
 
         async def mock_incrby(key, amount):
+            """
+            Increment a mocked Redis key by a given amount and return the updated value.
+            
+            Parameters:
+                key (str): The Redis key to increment.
+                amount (int): The amount to add to the key's current integer value.
+            
+            Returns:
+                int: The key's new integer value after the increment.
+            """
             redis._store[key] = redis._store.get(key, 0) + amount
             return redis._store[key]
 
         async def mock_expire(key, seconds):
+            """
+            Simulate setting a time-to-live on a key in an async-compatible test double.
+            
+            Parameters:
+                key (str): The key to set an expiration for.
+                seconds (int): Time-to-live in seconds.
+            
+            Returns:
+                bool: `True` indicating the expiration was (mock) applied.
+            """
             return True
 
         redis.incr = mock_incr
@@ -208,11 +247,10 @@ class TestProviderRateLimits:
 
     @pytest.mark.asyncio
     async def test_zero_limit_means_no_check_at_streaming_layer(self):
-        """Zero limit should be handled at streaming layer, not service.
-
-        The streaming layer (_check_provider_rate_limits) skips calls to
-        the service when limit is 0. This test documents that the service
-        itself expects positive limits.
+        """
+        Documents that a provider rate limit of 0 is handled by the streaming layer and not by the RateLimitService.
+        
+        The streaming layer (_check_provider_rate_limits) short-circuits and skips calling the service when a provider's configured limit is 0; the service itself expects positive limits and does not perform this zero-limit short-circuiting.
         """
         # This is a documentation test - actual skipping is in chat_streaming.py
         # When limit is 0, _check_provider_rate_limits returns early
@@ -260,4 +298,3 @@ class TestRateLimitService:
         result = await service.check_api_limit("user:123")
         
         assert result.allowed is True
-

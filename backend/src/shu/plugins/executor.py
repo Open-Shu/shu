@@ -110,6 +110,13 @@ class _DenyHttpImportsCtx:
 
 class Executor:
     def __init__(self):
+        """
+        Initialize executor rate limiters from configuration.
+        
+        If rate limiting is enabled in the global settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")
+        and a provider/model TokenBucketRateLimiter (namespace "rl:plugin:prov") using the configured requests-per-period and period to
+        derive capacity and refill rate. On any initialization error, log the failure and leave both limiter attributes set to None.
+        """
         self._limiter = None  # per-user/per-tool limiter
         self._provider_limiter = None  # provider/model limiter
         try:
@@ -138,6 +145,21 @@ class Executor:
             self._provider_limiter = None
 
     def _validate(self, plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate the provided params against the plugin's input schema and return the params if validation succeeds.
+        
+        If the plugin exposes no schema, the params are returned unchanged. If jsonschema is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required" field are present and raise an HTTPException 422 identifying a missing key if not.
+        
+        Parameters:
+            plugin (Plugin): Plugin instance whose schema will be used (via plugin.get_schema()).
+            params (Dict[str, Any]): Input parameters to validate.
+        
+        Returns:
+            Dict[str, Any]: The same `params` dictionary if validation passes.
+        
+        Raises:
+            HTTPException: Raised with status code 422 and a structured detail when validation fails or required keys are missing.
+        """
         schema = None
         try:
             schema = plugin.get_schema()
@@ -282,6 +304,26 @@ class Executor:
 
     async def execute(self, *, plugin: Plugin, user_id: str, user_email: Optional[str], agent_key: Optional[str], params: Dict[str, Any], limits: Optional[Dict[str, Any]] = None, provider_identities: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> PluginResult:
         # Split host-only overlay from plugin params (reserved key) BEFORE validation
+        """
+        Execute a plugin call with rate limiting, quotas, validation, and import-deny enforcement.
+        
+        This method enforces per-user and provider quotas/rate-limits, optionally acquires provider concurrency slots, validates input and output against plugin schemas when available, constructs the host execution context (including resolved provider auth and schedule id), runs the plugin under a runtime import deny policy, maps host HTTP failures to structured provider errors, and returns the plugin execution result.
+        
+        Parameters:
+            plugin (Plugin): The plugin instance to execute.
+            user_id (str): The invoking user's identifier used for quota and rate-limit scoping.
+            user_email (Optional[str]): The invoking user's email for host context population.
+            agent_key (Optional[str]): Optional agent key for the execution context.
+            params (Dict[str, Any]): Plugin invocation parameters; a reserved "__host" dict may be supplied and will be removed from plugin-visible params and merged into the host context.
+            limits (Optional[Dict[str, Any]]): Optional per-plugin overrides for quotas and rate limits. Recognized keys include "quota_daily_requests", "quota_monthly_requests", "rate_limit_user_requests", "rate_limit_user_period", "provider_name", "provider_rpm", "provider_window_seconds", and "provider_concurrency".
+            provider_identities (Optional[Dict[str, List[Dict[str, Any]]]]): Optional provider identity mappings to include in the host context.
+        
+        Returns:
+            PluginResult: The plugin's execution result. On host HTTP failures returns a PluginResult with code "provider_error" and structured details; on other plugin exceptions returns a PluginResult with code "plugin_execute_error".
+        
+        Raises:
+            HTTPException: For quota, rate-limit, or provider concurrency violations (status 429) and for other HTTP-level rejections raised by the plugin execution path.
+        """
         raw_params = dict(params or {})
         host_overlay = {}
         try:
@@ -477,4 +519,3 @@ class Executor:
 
 
 EXECUTOR = Executor()
-

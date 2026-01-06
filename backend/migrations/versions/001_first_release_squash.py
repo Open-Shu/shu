@@ -34,6 +34,11 @@ replaces = ("001", "002", "003", "004", "005")
 
 def upgrade() -> None:
     # Ensure pgvector is available before creating vector columns
+    """
+    Create the initial database schema for the application, including core tables, indexes, and seeded system prompts.
+    
+    This migration ensures the PostgreSQL `vector` extension is attempted (failure is tolerated), creates all core tables and constraints for knowledge bases, sources, documents, chunks, sync jobs, prompts, users, LLM providers/models/usage, conversations/messages, model configurations, RBAC, attachments, and related junction tables, and adds performance indexes. It also seeds a small set of system default prompts if they do not already exist; prompt seeding failures are non-blocking.
+    """
     try:
         op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     except Exception:
@@ -702,4 +707,3 @@ def downgrade() -> None:
             op.drop_table(t)
         except Exception:
             pass
-
