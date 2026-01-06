@@ -47,6 +47,7 @@ from .plugin_execution import PluginExecution
 from .plugin_feed import PluginFeed
 from .plugin_subscription import PluginSubscription
 from .system_setting import SystemSetting
+from .experience import Experience, ExperienceStep, ExperienceRun
 
 # Note: User model is in auth.models to avoid circular imports
 
@@ -97,4 +98,7 @@ __all__ = [
     "AgentMemory",
     "PluginStorage",
     "SystemSetting",
+    "Experience",
+    "ExperienceStep",
+    "ExperienceRun",
 ]

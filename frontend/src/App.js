@@ -22,7 +22,11 @@ import Prompts from './pages/Prompts';
 import MorningBriefing from './components/MorningBriefing';
 import PluginsAdmin from './components/PluginsAdmin';
 import PluginsAdminFeeds from './components/PluginsAdminFeeds';
+import ExperiencesAdmin from './components/ExperiencesAdmin';
+import ExperienceEditor from './components/ExperienceEditor';
 import BrandingSettings from './components/admin/BrandingSettings';
+import DashboardPage from './pages/DashboardPage';
+import ExperienceDetailPage from './pages/ExperienceDetailPage';
 
 // User Components
 import ModernChat from './components/ModernChat';
@@ -121,6 +125,24 @@ const AuthenticatedApp = () => {
           element={
             <RoleBasedRoute layout="user">
               <ModernChat />
+            </RoleBasedRoute>
+          }
+        />
+
+        {/* Experience Dashboard - Available to ALL users */}
+        <Route
+          path="/dashboard"
+          element={
+            <RoleBasedRoute layout="user">
+              <DashboardPage />
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/experience/:experienceId"
+          element={
+            <RoleBasedRoute layout="user">
+              <ExperienceDetailPage />
             </RoleBasedRoute>
           }
         />
@@ -301,6 +323,36 @@ const AuthenticatedApp = () => {
           element={
             <RoleBasedRoute adminOnly>
               <PluginsAdminFeeds />
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/admin/experiences"
+          element={
+            <RoleBasedRoute adminOnly>
+              <ProtectedRoute requiredRole="admin">
+                <ExperiencesAdmin />
+              </ProtectedRoute>
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/admin/experiences/new"
+          element={
+            <RoleBasedRoute adminOnly>
+              <ProtectedRoute requiredRole="admin">
+                <ExperienceEditor />
+              </ProtectedRoute>
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/admin/experiences/:experienceId/edit"
+          element={
+            <RoleBasedRoute adminOnly>
+              <ProtectedRoute requiredRole="admin">
+                <ExperienceEditor />
+              </ProtectedRoute>
             </RoleBasedRoute>
           }
         />

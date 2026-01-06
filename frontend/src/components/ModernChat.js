@@ -877,7 +877,7 @@ const ModernChat = () => {
     })();
   }, [searchParams, conversations]);
 
-  const handleCreateConversation = () => {
+  const handleCreateConversation = (experience = null) => {
     if (!Array.isArray(availableModelConfigs) || availableModelConfigs.length === 0) {
       setError('No model configurations available');
       return;
@@ -903,7 +903,7 @@ const ModernChat = () => {
     setError(null);
     createConversationMutation.mutate({
       model_configuration_id: selectedConfig.id,
-      title: DEFAULT_NEW_CHAT_TITLE
+      title: experience?.experience_name || DEFAULT_NEW_CHAT_TITLE
     });
   };
 

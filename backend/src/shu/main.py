@@ -41,11 +41,11 @@ from .api.host_auth import router as host_auth_router, public_router as host_aut
 from .api.groups import router as groups_router
 from .api.permissions import router as permissions_router
 from .api.user_permissions import router as user_permissions_router
-from .api.agents import router as agents_router
 from .api.plugins_router import router as plugins_router
 from .api.branding import router as branding_router
 from .api.side_call import router as side_call_router
 from .api.system import router as system_router
+from .api.experiences import router as experiences_router
 
 from .plugins.request_limits import RequestSizeLimitMiddleware
 
@@ -239,6 +239,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start Plugin Feeds scheduler: {e}")
 
+    # Start Experiences scheduler (in-process)
+    try:
+        if getattr(settings, "experiences_scheduler_enabled", True):
+            from .services.experiences_scheduler_service import start_experiences_scheduler
+            app.state.experiences_scheduler_task = await start_experiences_scheduler()
+            logger.info("Experiences scheduler started")
+        else:
+            logger.info("Experiences scheduler disabled by configuration")
+    except Exception as e:
+        logger.warning(f"Failed to start Experiences scheduler: {e}")
+
     # Plugins v1: optional auto-sync from plugins to DB registry
     try:
         if getattr(settings, "plugins_auto_sync", False):
@@ -266,6 +277,12 @@ async def lifespan(app: FastAPI):
         t2 = getattr(app.state, 'plugins_scheduler_task', None)
         if t2:
             t2.cancel()
+    except Exception:
+        pass
+    try:
+        t3 = getattr(app.state, 'experiences_scheduler_task', None)
+        if t3:
+            t3.cancel()
     except Exception:
         pass
 
@@ -566,8 +583,8 @@ def setup_routes(app: FastAPI) -> None:
     app.include_router(permissions_router, prefix=settings.api_v1_prefix)
     app.include_router(user_permissions_router, prefix=settings.api_v1_prefix)
 
-    # Agent MVP routes
-    app.include_router(agents_router, prefix=settings.api_v1_prefix)
+    # Experience Platform routes
+    app.include_router(experiences_router, prefix=settings.api_v1_prefix)
     
     # Side-call routes
     app.include_router(side_call_router, prefix=settings.api_v1_prefix)
@@ -594,7 +611,7 @@ def setup_routes(app: FastAPI) -> None:
             groups_router.prefix,
             permissions_router.prefix,
             user_permissions_router.prefix,
-            agents_router.prefix,
+            experiences_router.prefix,
             side_call_router.prefix,
         ]
         base = settings.api_v1_prefix.rstrip("/")

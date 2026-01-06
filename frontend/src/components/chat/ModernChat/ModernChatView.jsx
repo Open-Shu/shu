@@ -1,17 +1,20 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
-  Paper,
-  Typography,
   Button,
+  Paper,
   Alert,
   Drawer,
+  Stack,
+  Typography,
   useMediaQuery,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
   Add as AddIcon,
-  SmartToy as BotIcon,
+  ChatBubbleOutline as ChatIcon,
+  Dashboard as DashboardIcon,
 } from '@mui/icons-material';
 
 import ConversationSidebar from './ConversationSidebar';
@@ -61,6 +64,7 @@ const ModernChatView = ({
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const navigate = useNavigate();
 
   const sidebarContent = <ConversationSidebar {...conversationSidebarProps} isMobile={isMobile} />;
 
@@ -138,48 +142,44 @@ const ModernChatView = ({
               <EnsembleModeDialog {...ensembleDialogProps} />
             </>
           ) : (
+            /* Welcome screen - shown when no conversation is selected */
             <Box
               sx={{
+                flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                height: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
+                p: 4,
               }}
             >
-              {/* Centered welcome content */}
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexGrow: 1,
-                  textAlign: 'center',
-                  p: { xs: 2, sm: 4 },
-                }}
-              >
-                <BotIcon sx={{ fontSize: { xs: 60, sm: 80 }, color: 'primary.main', mb: 2 }} />
-                <Typography variant="h4" gutterBottom sx={{ fontSize: { xs: '1.5rem', sm: '2.125rem' } }}>
-                  {`Welcome to ${appDisplayName || ''}`}
-                </Typography>
-                <Typography variant="body1" color="text.secondary" sx={{ mb: 4, maxWidth: 500, px: { xs: 2, sm: 0 } }}>
-                  {isMobile
-                    ? 'Tap the menu to see your conversations, or start a new chat below.'
-                    : 'Start a new chat, select a model configuration in the top right and begin chatting with AI. Your conversations will be saved and you can switch between them anytime.'}
-                </Typography>
-                {getSelectedConfig() && (
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Button
-                      variant="contained"
-                      size="large"
-                      startIcon={<AddIcon />}
-                      onClick={handleCreateConversation}
-                      disabled={createConversationButtonDisabled}
-                    >
-                      Start New Chat
-                    </Button>
-                  </Box>
-                )}
-              </Box>
+              <ChatIcon sx={{ fontSize: 80, color: 'grey.300', mb: 3 }} />
+              <Typography variant="h4" sx={{ fontWeight: 600, mb: 1 }}>
+                {appDisplayName}
+              </Typography>
+              <Typography variant="body1" color="text.secondary" sx={{ mb: 4, maxWidth: 400 }}>
+                Select a conversation from the sidebar or start a new chat to begin.
+              </Typography>
+              <Stack direction="row" spacing={2}>
+                <Button
+                  variant="contained"
+                  size="large"
+                  startIcon={<AddIcon />}
+                  onClick={handleCreateConversation}
+                  disabled={createConversationButtonDisabled || !getSelectedConfig()}
+                >
+                  New Chat
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="large"
+                  startIcon={<DashboardIcon />}
+                  onClick={() => navigate('/dashboard')}
+                >
+                  Dashboard
+                </Button>
+              </Stack>
             </Box>
           )}
         </Box>

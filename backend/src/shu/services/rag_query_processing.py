@@ -150,7 +150,7 @@ async def execute_rag_queries(
         try:
             response = await query_service.query_documents(kb_id, query_request)
             if hasattr(response, "model_dump"):
-                response = response.model_dump()
+                response = response.model_dump(mode='json')
             responses.append({
                 "knowledge_base_id": kb_id,
                 "response": response,

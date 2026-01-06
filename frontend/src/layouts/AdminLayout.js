@@ -31,6 +31,7 @@ import {
   Schedule as ScheduleIcon,
   Palette as BrandingIcon,
   Menu as MenuIcon,
+  AutoAwesome as ExperiencesIcon,
 } from '@mui/icons-material';
 
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -71,6 +72,7 @@ const AdminLayout = ({ children }) => {
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
     { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
     { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
+    { text: 'Experiences', icon: <ExperiencesIcon />, path: '/admin/experiences' },
     { text: 'Query Tester', icon: <QueryTesterIcon />, path: '/admin/query-tester' },
     { text: 'LLM Tester', icon: <LLMTesterIcon />, path: '/admin/llm-tester' },
     { text: 'Health Monitor', icon: <HealthIcon />, path: '/admin/health' },

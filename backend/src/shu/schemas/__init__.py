@@ -50,6 +50,24 @@ from .side_call import (
     ConversationSummaryPayload,
     ConversationRenamePayload,
 )
+from .experience import (
+    ExperienceVisibility,
+    TriggerType,
+    StepType,
+    RunStatus,
+    ExperienceStepCreate,
+    ExperienceStepUpdate,
+    ExperienceStepResponse,
+    ExperienceCreate,
+    ExperienceUpdate,
+    ExperienceResponse,
+    ExperienceList,
+    ExperienceRunRequest,
+    ExperienceRunResponse,
+    ExperienceRunList,
+    ExperienceResultSummary,
+    UserExperienceResults,
+)
 
 __all__ = [
     "KnowledgeBaseCreate",
@@ -85,4 +103,21 @@ __all__ = [
     "ConversationAutomationRequest",
     "ConversationSummaryPayload",
     "ConversationRenamePayload",
+    # Experience
+    "ExperienceVisibility",
+    "TriggerType",
+    "StepType",
+    "RunStatus",
+    "ExperienceStepCreate",
+    "ExperienceStepUpdate",
+    "ExperienceStepResponse",
+    "ExperienceCreate",
+    "ExperienceUpdate",
+    "ExperienceResponse",
+    "ExperienceList",
+    "ExperienceRunRequest",
+    "ExperienceRunResponse",
+    "ExperienceRunList",
+    "ExperienceResultSummary",
+    "UserExperienceResults",
 ]
