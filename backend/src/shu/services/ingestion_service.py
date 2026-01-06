@@ -20,15 +20,15 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.logging import get_logger
 from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
 from ..services.document_service import DocumentService
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -118,23 +118,23 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
                     result = await orchestrator.run_for_document(document_id)
                     if result.success:
                         logger.info(
-                            "document_profiling_complete",
-                            document_id=document_id,
-                            mode=result.profiling_mode.value,
-                            tokens_used=result.tokens_used,
-                            duration_ms=result.duration_ms,
+                            "Document profiling complete: document_id=%s mode=%s tokens_used=%s duration_ms=%s",
+                            document_id,
+                            result.profiling_mode.value,
+                            result.tokens_used,
+                            result.duration_ms,
                         )
                     else:
                         logger.warning(
-                            "document_profiling_failed",
-                            document_id=document_id,
-                            error=result.error,
+                            "Document profiling failed: document_id=%s error=%s",
+                            document_id,
+                            result.error,
                         )
             except Exception as e:
                 logger.error(
-                    "document_profiling_error",
-                    document_id=document_id,
-                    error=str(e),
+                    "Document profiling error: document_id=%s error=%s",
+                    document_id,
+                    str(e),
                 )
 
     # Fire-and-forget - don't await
