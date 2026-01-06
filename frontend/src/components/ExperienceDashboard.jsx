@@ -1,115 +1,195 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useQuery } from 'react-query';
 import {
     Alert,
+    alpha,
     Box,
     Button,
     Card,
+    CardActionArea,
     CardContent,
+    Chip,
     CircularProgress,
     IconButton,
+    Link,
     Stack,
     Typography,
+    useTheme,
 } from '@mui/material';
 import {
     Add as AddIcon,
     Refresh as RefreshIcon,
-    ExpandMore as ExpandIcon,
-    ExpandLess as CollapseIcon,
     SmartToy as BotIcon,
 } from '@mui/icons-material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { format } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
-import { useTheme as useAppTheme } from '../contexts/ThemeContext';
-import { getBrandingAppName } from '../utils/constants';
 
-
-
-const ExperienceResultCard = ({ experience, onStartChat }) => {
-    const [expanded, setExpanded] = useState(false);
+/**
+ * Experience result card using theme-aware styling (like QuickStart SectionCard).
+ * Shows: bot icon, title, preview text, relative timestamp, and "View Details" link.
+ */
+const ExperienceResultCard = ({ experience, onClick }) => {
+    const theme = useTheme();
     const hasResult = !!experience.latest_run_id;
 
-    // Show first ~500 chars as preview, full on expand
-    const previewText = experience.result_preview || '';
-    const isLong = previewText.length > 500;
-    const displayText = expanded ? previewText : (isLong ? previewText.slice(0, 500) + '...' : previewText);
+    // Generate preview text from prompt and data
+    const promptPreview = experience.prompt_template
+        ? experience.prompt_template.substring(0, 100)
+        : '';
+    const dataPreview = experience.result_preview
+        ? experience.result_preview.substring(0, 200)
+        : '';
+
+    // Format relative time
+    const relativeTime = experience.latest_run_finished_at
+        ? formatDistanceToNow(new Date(experience.latest_run_finished_at), { addSuffix: true })
+        : null;
+
+    const handleClick = () => {
+        if (onClick) {
+            onClick(experience.experience_id);
+        }
+    };
 
     return (
-        <Card>
-            <CardContent>
-                {/* Header: Icon + Title + Run Date */}
-                <Box display="flex" alignItems="center" mb={2}>
-                    <BotIcon color="primary" sx={{ mr: 1 }} />
-                    <Typography variant="h6" sx={{ flex: 1 }}>
-                        {experience.experience_name}
-                    </Typography>
-                    {experience.latest_run_finished_at && (
-                        <Typography variant="caption" color="text.secondary">
-                            {format(new Date(experience.latest_run_finished_at), 'MMM d, yyyy h:mm a')}
+        <Card
+            elevation={0}
+            sx={{
+                height: '100%',
+                border: `1px solid ${theme.palette.divider}`,
+                transition: 'all 0.2s ease-in-out',
+                backgroundColor: 'inherit',
+                maxWidth: 360,
+                '&:hover': {
+                    borderColor: theme.palette.primary.main,
+                    boxShadow: `0 4px 12px ${alpha(theme.palette.primary.main, 0.15)}`,
+                },
+            }}
+        >
+            <CardActionArea onClick={handleClick} disabled={!onClick}>
+                <CardContent>
+                    {/* Header: Icon + Title */}
+                    <Box display="flex" alignItems="center" mb={1.5}>
+                        <Box
+                            sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 36,
+                                height: 36,
+                                borderRadius: 1,
+                                backgroundColor: alpha(theme.palette.primary.main, 0.1),
+                                color: theme.palette.primary.main,
+                                mr: 1.5,
+                            }}
+                        >
+                            <BotIcon />
+                        </Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            {experience.experience_name}
+                        </Typography>
+                    </Box>
+
+                    {/* Preview: Prompt description */}
+                    {promptPreview && (
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{ mb: 1.5 }}
+                        >
+                            {promptPreview}...
                         </Typography>
                     )}
-                </Box>
 
+                    {/* Data snippet - shown as code-like block */}
+                    {hasResult && dataPreview && (
+                        <>
+                            <Typography
+                                variant="subtitle2"
+                                sx={{ fontWeight: 600, mb: 0.5 }}
+                            >
+                                {experience.experience_name.toLowerCase().replace(/\s+/g, '_')}
+                            </Typography>
+                            <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.75rem',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-all',
+                                    mb: 1.5,
+                                    backgroundColor: alpha(theme.palette.text.primary, 0.05),
+                                    p: 1,
+                                    borderRadius: 1,
+                                }}
+                            >
+                                {dataPreview.length > 100
+                                    ? dataPreview.substring(0, 100) + '...'
+                                    : dataPreview}
+                            </Typography>
+                        </>
+                    )}
 
+                    {/* Timestamp badge */}
+                    {relativeTime && (
+                        <Chip
+                            icon={
+                                <Box
+                                    sx={{
+                                        width: 8,
+                                        height: 8,
+                                        borderRadius: '50%',
+                                        bgcolor: theme.palette.success.main,
+                                        ml: 1,
+                                    }}
+                                />
+                            }
+                            label={relativeTime}
+                            size="small"
+                            sx={{
+                                bgcolor: 'transparent',
+                                border: `1px solid ${theme.palette.divider}`,
+                                color: theme.palette.success.main,
+                                fontSize: '0.75rem',
+                                mb: 1.5,
+                                '& .MuiChip-icon': {
+                                    marginLeft: '8px',
+                                },
+                            }}
+                        />
+                    )}
 
-                {/* Result Content - visible by default */}
-                {hasResult && previewText ? (
-                    <Box
-                        sx={{
-                            p: 2,
-                            bgcolor: 'grey.50',
-                            borderRadius: 1,
-                            maxHeight: expanded ? 600 : 200,
-                            overflowY: 'auto',
-                            mb: 2,
-                        }}
-                    >
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {displayText}
-                        </ReactMarkdown>
+                    {/* View Details link */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', color: 'primary.main' }}>
+                        <Link
+                            component="button"
+                            variant="body2"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleClick();
+                            }}
+                            sx={{
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                textDecoration: 'none',
+                                '&:hover': {
+                                    textDecoration: 'underline',
+                                },
+                            }}
+                        >
+                            View Details
+                        </Link>
                     </Box>
-                ) : (
-                    <Typography variant="body2" color="text.secondary" fontStyle="italic" sx={{ mb: 2 }}>
-                        {hasResult ? 'No result content' : 'Not run yet'}
-                    </Typography>
-                )}
 
-                {/* Footer: Actions */}
-                <Box display="flex" alignItems="center" justifyContent="flex-end">
-                    <Stack direction="row" spacing={1}>
-                        {isLong && (
-                            <Button
-                                size="small"
-                                variant="text"
-                                onClick={() => setExpanded(!expanded)}
-                                endIcon={expanded ? <CollapseIcon /> : <ExpandIcon />}
-                            >
-                                {expanded ? 'Show less' : 'Show more'}
-                            </Button>
-                        )}
-                        {/* TODO: We need to get the conversation start from the experience text to work. */}
-                        {/* {hasResult && experience.latest_run_status === 'succeeded' && (
-                            <Button
-                                size="small"
-                                variant="contained"
-                                startIcon={<AddIcon />}
-                                onClick={() => onStartChat(experience)}
-                            >
-                                Start Chat
-                            </Button>
-                        )} */}
-                    </Stack>
-                </Box>
-
-                {/* Missing Identities Warning */}
-                {!experience.can_run && experience.missing_identities?.length > 0 && (
-                    <Alert severity="warning" sx={{ mt: 2 }}>
-                        Missing required connections: {experience.missing_identities.join(', ')}
-                    </Alert>
-                )}
-            </CardContent>
+                    {/* Missing Identities Warning */}
+                    {!experience.can_run && experience.missing_identities?.length > 0 && (
+                        <Alert severity="warning" sx={{ mt: 2 }}>
+                            Missing required connections: {experience.missing_identities.join(', ')}
+                        </Alert>
+                    )}
+                </CardContent>
+            </CardActionArea>
         </Card>
     );
 };
@@ -118,10 +198,8 @@ export default function ExperienceDashboard({
     onStartChat,
     onCreateConversation,
     createConversationDisabled,
+    onExperienceClick,
 }) {
-    const { branding } = useAppTheme();
-    const appDisplayName = getBrandingAppName(branding);
-
     // Fetch user's experience results
     const {
         data: results,
@@ -137,31 +215,35 @@ export default function ExperienceDashboard({
         }
     );
 
+    const experiences = results?.experiences || [];
+    const scheduledCount = results?.scheduled_count || 0;
 
-
-    const handleStartChat = (experience) => {
-        if (onStartChat) {
-            onStartChat(experience);
+    const handleCardClick = (experienceId) => {
+        if (onExperienceClick) {
+            onExperienceClick(experienceId);
         }
     };
 
-    const experiences = results?.experiences || [];
-
     return (
-        <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+        <Box
+            sx={{
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'auto',
+                bgcolor: 'background.default',
+            }}
+        >
             {/* Header */}
             <Box sx={{ p: { xs: 2, sm: 3 }, pb: 0 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <BotIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                        <Box>
-                            <Typography variant="h5" sx={{ fontWeight: 600 }}>
-                                {appDisplayName}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                Your personalized experiences and results
-                            </Typography>
-                        </Box>
+                    <Box>
+                        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+                            Dashboard
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            {experiences.length} active results • {scheduledCount} scheduled
+                        </Typography>
                     </Box>
                     <Stack direction="row" spacing={1}>
                         <IconButton onClick={() => refetch()} disabled={isLoading}>
@@ -223,19 +305,23 @@ export default function ExperienceDashboard({
                 )}
 
                 {!isLoading && !error && experiences.length > 0 && (
-                    <Stack spacing={2}>
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 2,
+                        }}
+                    >
                         {experiences.map((exp) => (
                             <ExperienceResultCard
                                 key={exp.experience_id}
                                 experience={exp}
-                                onStartChat={handleStartChat}
+                                onClick={handleCardClick}
                             />
                         ))}
-                    </Stack>
+                    </Box>
                 )}
             </Box>
-
-
         </Box>
     );
 }

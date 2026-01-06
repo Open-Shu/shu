@@ -265,13 +265,13 @@ def upgrade() -> None:
                     "Daily morning briefing synthesizing emails, calendar events, "
                     "and chat messages from the past 24-72 hours."
                 ),
-                "visibility": "published",
+                "visibility": "draft",
                 "trigger_type": "cron",
-                "trigger_config": '{"timezone": "America/Chicago", "cron": "0 7 * * *"}',
+                "trigger_config": '{"timezone": "america/new_york", "cron": "0 7 * * *"}',
                 "max_run_seconds": 180,
                 "include_previous_run": False,
                 "prompt_id": None,
-                "inline_prompt_template": """Synthesize my morning briefing based on the following data.
+                "inline_prompt_template": """Synthesize a morning briefing for {{ user.display_name }} based on the `gmail_digest`, `calendar_events`, and `gchat_digest` data.
 
 ## Instructions
 - Review all emails, calendar events, and chat messages
@@ -279,22 +279,6 @@ def upgrade() -> None:
 - Group by category (email priorities, meetings, chat highlights)
 - Flag likely spam/bulk emails under a separate "Likely Spam" section with brief reasons
 - Keep it concise but comprehensive
-
-## Gmail Messages
-{% for msg in step_outputs.gmail_digest.messages[:20] %}
-- **{{ msg.subject }}** from {{ msg.sender }} ({{ msg.date[:10] if msg.date else 'unknown date' }})
-  {{ msg.snippet[:200] if msg.snippet else '' }}
-{% endfor %}
-
-## Calendar Events
-{% for event in step_outputs.calendar_events.events[:15] %}
-- **{{ event.title }}** at {{ event.start }} {% if event.location %}@ {{ event.location }}{% endif %}
-{% endfor %}
-
-## Google Chat Messages
-{% for msg in step_outputs.gchat_digest.messages[:20] %}
-- **{{ msg.space_name }}** - {{ msg.sender_name }}: {{ msg.text[:150] if msg.text else '' }}
-{% endfor %}
 
 Please synthesize this information into a clear, actionable morning briefing.""",
                 "llm_provider_id": None,  # Will use user's default

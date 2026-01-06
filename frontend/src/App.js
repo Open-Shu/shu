@@ -25,6 +25,8 @@ import PluginsAdminFeeds from './components/PluginsAdminFeeds';
 import ExperiencesAdmin from './components/ExperiencesAdmin';
 import ExperienceEditor from './components/ExperienceEditor';
 import BrandingSettings from './components/admin/BrandingSettings';
+import DashboardPage from './pages/DashboardPage';
+import ExperienceDetailPage from './pages/ExperienceDetailPage';
 
 // User Components
 import ModernChat from './components/ModernChat';
@@ -123,6 +125,24 @@ const AuthenticatedApp = () => {
           element={
             <RoleBasedRoute layout="user">
               <ModernChat />
+            </RoleBasedRoute>
+          }
+        />
+
+        {/* Experience Dashboard - Available to ALL users */}
+        <Route
+          path="/dashboard"
+          element={
+            <RoleBasedRoute layout="user">
+              <DashboardPage />
+            </RoleBasedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/experience/:experienceId"
+          element={
+            <RoleBasedRoute layout="user">
+              <ExperienceDetailPage />
             </RoleBasedRoute>
           }
         />

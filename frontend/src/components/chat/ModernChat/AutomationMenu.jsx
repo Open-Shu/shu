@@ -1,8 +1,10 @@
 import React from 'react';
-import { Menu, MenuItem, ListItemIcon } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { Divider, Menu, MenuItem, ListItemIcon } from '@mui/material';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 
 const AutomationMenu = React.memo(function AutomationMenu({
   anchorEl,
@@ -13,6 +15,13 @@ const AutomationMenu = React.memo(function AutomationMenu({
   disableUnlock,
   disableAutomation,
 }) {
+  const navigate = useNavigate();
+
+  const handleDashboardClick = () => {
+    onClose();
+    navigate('/dashboard');
+  };
+
   return (
     <Menu
       anchorEl={anchorEl}
@@ -21,6 +30,13 @@ const AutomationMenu = React.memo(function AutomationMenu({
       anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       transformOrigin={{ vertical: 'top', horizontal: 'left' }}
     >
+      <MenuItem onClick={handleDashboardClick}>
+        <ListItemIcon>
+          <DashboardIcon fontSize="small" />
+        </ListItemIcon>
+        Dashboard
+      </MenuItem>
+      <Divider />
       {isTitleLocked ? (
         <MenuItem onClick={onUnlock} disabled={disableUnlock}>
           <ListItemIcon>
@@ -47,3 +63,4 @@ const AutomationMenu = React.memo(function AutomationMenu({
 });
 
 export default AutomationMenu;
+
