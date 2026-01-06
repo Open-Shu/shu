@@ -115,8 +115,8 @@ class InMemoryRedisClient:
         if isinstance(current, str):
             try:
                 current = int(current)
-            except ValueError:
-                raise ValueError("ERR value is not an integer or out of range")
+            except ValueError as err:
+                raise ValueError("ERR value is not an integer or out of range") from err
         new_value = current + amount
         self._data[key] = new_value
         return new_value

@@ -329,7 +329,8 @@ async def login(
     
     Parameters:
         request (LoginRequest): Payload containing the Google ID token.
-        http_request (Request): Incoming HTTP request (used for rate-limiting/dependency purposes).
+        db (AsyncSession): Database session injected via dependency.
+        _rate_limit: Rate limiting dependency (enforces auth rate limits).
     
     Returns:
         SuccessResponse: Contains a TokenResponse with `access_token`, `refresh_token`, `token_type`, and `user` dictionary.

@@ -124,32 +124,36 @@ const LLMProviderForm = ({
       </Grid>
 
       <Grid item xs={12} sm={6}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-          <TextField
-            fullWidth
-            label="Rate Limit (RPM)"
-            type="number"
-            value={provider.rate_limit_rpm}
-            onChange={(e) => onProviderChange({ ...provider, rate_limit_rpm: parseInt(e.target.value || '0', 10) })}
-            margin="normal"
-            helperText="Requests per minute limit for this provider"
-          />
-          <HelpTooltip title="Set to 0 to disable rate limiting for this provider" sx={{ mt: -2 }} />
+        <Box sx={{ mt: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <TextField
+              fullWidth
+              label="Rate Limit (RPM)"
+              type="number"
+              value={provider.rate_limit_rpm}
+              onChange={(e) => onProviderChange({ ...provider, rate_limit_rpm: parseInt(e.target.value || '0', 10) })}
+              margin="normal"
+              helperText="Requests per minute limit for this provider"
+            />
+            <HelpTooltip title="Set to 0 to disable rate limiting for this provider" />
+          </Box>
         </Box>
       </Grid>
 
       <Grid item xs={12} sm={6}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-          <TextField
-            fullWidth
-            label="Token Rate Limit (TPM)"
-            type="number"
-            value={provider.rate_limit_tpm}
-            onChange={(e) => onProviderChange({ ...provider, rate_limit_tpm: parseInt(e.target.value || '0', 10) })}
-            margin="normal"
-            helperText="Tokens per minute limit for this provider"
-          />
-          <HelpTooltip title="Set to 0 to disable token rate limiting for this provider" sx={{ mt: -2 }} />
+        <Box sx={{ mt: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <TextField
+              fullWidth
+              label="Token Rate Limit (TPM)"
+              type="number"
+              value={provider.rate_limit_tpm}
+              onChange={(e) => onProviderChange({ ...provider, rate_limit_tpm: parseInt(e.target.value || '0', 10) })}
+              margin="normal"
+              helperText="Tokens per minute limit for this provider"
+            />
+            <HelpTooltip title="Set to 0 to disable token rate limiting for this provider" />
+          </Box>
         </Box>
       </Grid>
 

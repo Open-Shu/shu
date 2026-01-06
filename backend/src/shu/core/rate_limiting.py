@@ -16,12 +16,12 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
 
-def get_client_ip(headers: Dict[str, str], client_host: Optional[str] = None) -> str:
+def get_client_ip(headers: dict[str, str], client_host: Optional[str] = None) -> str:
     """
     Return the client's IP address derived from request headers or a provided host fallback.
     
@@ -261,22 +261,28 @@ class TokenBucketRateLimiter:
         )
 
         try:
-            # Use incrby to properly handle cost (token count for TPM, 1 for RPM)
-            current = await redis.incrby(window_key, cost)
-            await redis.expire(window_key, window_s)
+            # First read current counter to check capacity before incrementing
+            current_raw = await redis.get(window_key)
+            current = int(current_raw) if current_raw is not None else 0
+            projected = current + cost
 
             logger.debug(
-                "In-memory rate limit result: key=%s, current=%d, capacity=%d, allowed=%s",
-                window_key, current, capacity, current <= capacity
+                "In-memory rate limit check: key=%s, current=%d, projected=%d, capacity=%d",
+                window_key, current, projected, capacity
             )
 
-            if current <= capacity:
+            # Only increment if within capacity
+            if projected <= capacity:
+                await redis.incrby(window_key, cost)
+                await redis.expire(window_key, window_s)
                 return RateLimitResult(
                     allowed=True,
-                    remaining=capacity - current,
+                    remaining=capacity - projected,
                     limit=capacity,
                     reset_seconds=window_s,
                 )
+
+            # Denied: do not increment, return denied result
             return RateLimitResult(
                 allowed=False,
                 retry_after_seconds=window_s,
