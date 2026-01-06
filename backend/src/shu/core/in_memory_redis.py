@@ -105,6 +105,10 @@ class InMemoryRedisClient:
         
         Returns:
             int: The new value after applying the increment.
+        
+        Raises:
+            ValueError: If the stored value is a string that cannot be parsed as an integer.
+            TypeError: If the stored value is not an int or str (e.g., dict from hset).
         """
         # Check expiration first
         if key in self._expiry and time.time() > self._expiry[key]:
@@ -112,11 +116,19 @@ class InMemoryRedisClient:
             del self._expiry[key]
 
         current = self._data.get(key, 0)
-        if isinstance(current, str):
+        
+        # Handle type checking with Redis-like error messages
+        if isinstance(current, int):
+            pass  # Already an int, proceed
+        elif isinstance(current, str):
             try:
                 current = int(current)
             except ValueError as err:
                 raise ValueError("ERR value is not an integer or out of range") from err
+        else:
+            # Dict, list, or other incompatible type (e.g., from hset)
+            raise TypeError("WRONGTYPE Operation against a key holding the wrong kind of value")
+        
         new_value = current + amount
         self._data[key] = new_value
         return new_value
