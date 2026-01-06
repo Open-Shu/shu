@@ -448,8 +448,6 @@ def upgrade() -> None:
         sa.Column("supports_streaming", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("supports_functions", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("supports_vision", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("cost_per_input_token", sa.Numeric(precision=12, scale=10), nullable=True),
-        sa.Column("cost_per_output_token", sa.Numeric(precision=12, scale=10), nullable=True),
         sa.Column("rate_limit_rpm", sa.Integer(), nullable=False, server_default=sa.text("60")),
         sa.Column("rate_limit_tpm", sa.Integer(), nullable=False, server_default=sa.text("60000")),
         sa.Column("budget_limit_monthly", sa.Numeric(precision=10, scale=2), nullable=True),

@@ -10,7 +10,7 @@ import os
 from typing import List, Callable
 from unittest.mock import Mock, AsyncMock
 from datetime import datetime
-from decimal import Decimal
+
 
 from integ.base_unit_test import BaseUnitTestSuite
 from shu.api.llm import _provider_to_response
@@ -34,7 +34,6 @@ def test_provider_with_api_key():
         supports_vision=False,
         rate_limit_rpm=3500,
         rate_limit_tpm=90000,
-        budget_limit_monthly=Decimal('100.00'),
         created_at=datetime.now(),
         updated_at=datetime.now()
     )
@@ -189,20 +188,6 @@ def test_rate_limit_validation():
     for invalid in invalid_values:
         if invalid is not None:
             assert not (invalid > 0), f"Invalid rate limit {invalid} should not be positive"
-
-
-def test_budget_limit_validation():
-    """Test budget limit validation logic."""
-    # Valid budget limits
-    valid_budgets = [Decimal('100.00'), Decimal('0.00'), None]
-    
-    for budget in valid_budgets:
-        if budget is not None:
-            assert budget >= 0, f"Budget {budget} should be non-negative"
-    
-    # Invalid budget limits
-    invalid_budget = Decimal('-10.00')
-    assert invalid_budget < 0, "Negative budget should be invalid"
 
 
 def test_endpoint_validation():

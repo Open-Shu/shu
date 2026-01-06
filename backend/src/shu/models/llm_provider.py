@@ -33,9 +33,7 @@ class LLMProvider(BaseModel):
     # Provider capabilities
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     
-    # Cost and rate limiting
-    cost_per_input_token = Column(DECIMAL(12, 10), nullable=True)  # Cost per input token
-    cost_per_output_token = Column(DECIMAL(12, 10), nullable=True)  # Cost per output token
+    # Rate limiting (per-provider limits, 0 = disabled)
     rate_limit_rpm = Column(Integer, default=60, nullable=False)  # Requests per minute
     rate_limit_tpm = Column(Integer, default=60000, nullable=False)  # Tokens per minute
     budget_limit_monthly = Column(DECIMAL(10, 2), nullable=True)  # Monthly budget limit
@@ -138,11 +136,11 @@ class LLMModel(BaseModel):
     supports_streaming = Column(Boolean, default=True, nullable=False)
     supports_functions = Column(Boolean, default=False, nullable=False)
     supports_vision = Column(Boolean, default=False, nullable=False)
-    
-    # Cost information
+
+    # Cost information (per-model pricing)
     cost_per_input_token = Column(DECIMAL(12, 10), nullable=True)
     cost_per_output_token = Column(DECIMAL(12, 10), nullable=True)
-    
+
     # Status
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     

@@ -77,7 +77,6 @@ async def _create_local_side_call_model_config(client, db, auth_headers) -> Dict
         "supports_vision": False,
         "rate_limit_rpm": 1200,
         "rate_limit_tpm": 60000,
-        "budget_limit_monthly": 0,
     }
     provider_response = await client.post(
         "/api/v1/llm/providers", json=provider_payload, headers=auth_headers
