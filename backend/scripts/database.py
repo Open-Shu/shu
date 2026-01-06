@@ -520,7 +520,22 @@ def cmd_reset(
     admin_user: Optional[str] = None,
     admin_password: Optional[str] = None,
 ) -> bool:
-    """Reset database by dropping and recreating the public schema."""
+    """
+    Reset the database by dropping and recreating the public schema and then performing full setup.
+    
+    This is a destructive operation: the public schema is dropped with CASCADE (all data and dependent objects removed),
+    a new public schema is created, and full privileges on that schema are granted to the current user.
+    After the schema recreation, the function runs the full setup sequence (migrations, init SQL, requirements check).
+    
+    Parameters:
+        url (str): Connection URL for the target database.
+        force (bool): If True, skip the interactive confirmation prompt. Defaults to False.
+        admin_user (Optional[str]): Optional admin/superuser name used by setup steps when elevated privileges are required.
+        admin_password (Optional[str]): Optional admin/superuser password used by setup steps when elevated privileges are required.
+    
+    Returns:
+        success (bool): `True` if the reset and subsequent setup completed successfully, `False` on error or if cancelled.
+    """
     db_name = _get_database_name(url)
 
     if not force:
@@ -966,4 +981,3 @@ Examples:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

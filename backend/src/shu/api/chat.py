@@ -826,7 +826,16 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency)
 ):
-    """Send a message and get LLM response."""
+    """
+    Send a user message to a conversation and stream LLM response events as server-sent events (SSE).
+    
+    Parameters:
+        conversation_id (str): ID of the conversation to send the message to.
+        request_data (SendMessageRequest): Payload containing the user message and optional parameters (knowledge_base_id, rag_rewrite_mode, client_temp_id, ensemble_model_configuration_ids, attachment_ids).
+    
+    Returns:
+        StreamingResponse | Response: A StreamingResponse that yields SSE payloads where each event is a JSON object representing LLM or system events; the stream always concludes with a terminal `data: [DONE]` event. If validation or permission checks fail, returns a standardized error response with an error code and HTTP status.
+    """
     try:
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)
@@ -1044,6 +1053,18 @@ async def regenerate_message(
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency)
 ):
+    """
+    Stream a regenerated assistant message as Server-Sent Events (SSE).
+    
+    Streams JSON-encoded event payloads produced during regeneration of the assistant message identified by `message_id`, then emits a final "data: [DONE]" event when the stream completes. If a streaming error occurs, a JSON error payload is emitted before the final DONE event.
+    
+    Parameters:
+        message_id (str): ID of the assistant message to regenerate.
+        request (RegenerateMessageRequest): Optional regeneration options (e.g., `parent_message_id`, `rag_rewrite_mode`).
+    
+    Returns:
+        StreamingResponse: An SSE stream where each event is prefixed with `data: ` and contains a JSON payload; the stream ends with `data: [DONE]`.
+    """
     try:
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)

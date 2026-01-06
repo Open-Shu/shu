@@ -25,9 +25,16 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 async def _check_auth_rate_limit(request: Request) -> None:
-    """Rate limit dependency for auth endpoints.
-
-    Uses stricter rate limits for brute-force protection.
+    """
+    Enforces authentication-specific rate limits and raises HTTP 429 when exceeded.
+    
+    If the configured rate limit service is disabled this function returns immediately. Otherwise it determines the client's IP from the provided Request and checks the authentication rate limit; when the limit is exceeded an HTTPException with status 429 and rate-limit headers is raised.
+    
+    Parameters:
+        request (Request): FastAPI request used to determine client IP and headers.
+    
+    Raises:
+        HTTPException: with status 429 and a payload containing `retry_after` when the auth rate limit is exceeded.
     """
     from ..core.rate_limiting import get_client_ip
 
@@ -54,9 +61,22 @@ async def _check_auth_rate_limit(request: Request) -> None:
         )
 
 async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
-    """Verify Google ID token using Google's tokeninfo endpoint with proper TLS trust.
-
-    Uses httpx with certifi CA bundle to avoid local trust store issues (e.g., macOS).
+    """
+    Validate a Google ID token and return normalized user identity information.
+    
+    Parameters:
+        id_token (str): The Google ID token to verify.
+    
+    Returns:
+        dict: A mapping with keys:
+            - `google_id` (str): The Google account identifier (`sub` claim).
+            - `email` (str): The user's email address.
+            - `name` (str): The user's display name or the local-part of the email if name is absent.
+            - `picture` (Optional[str]): URL of the user's avatar, if provided.
+    
+    Raises:
+        ValueError: If `id_token` is missing, the token payload is invalid or incomplete,
+                    verification fails, or a network error occurs during verification.
     """
     import httpx, certifi
 
@@ -302,7 +322,21 @@ async def login(
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(_check_auth_rate_limit),
 ):
-    """Authenticate user with Google token"""
+    """
+    Authenticate or create a user using a Google ID token and return JWT access and refresh tokens.
+    
+    Authenticates the incoming Google ID token, creates the user if needed, and issues an access token and refresh token packaged with the user's public data.
+    
+    Parameters:
+        request (LoginRequest): Payload containing the Google ID token.
+        http_request (Request): Incoming HTTP request (used for rate-limiting/dependency purposes).
+    
+    Returns:
+        SuccessResponse: Contains a TokenResponse with `access_token`, `refresh_token`, `token_type`, and `user` dictionary.
+    
+    Raises:
+        HTTPException: Raised with 401 when authentication/verification fails; propagated as-is for other HTTP errors; raised with 500 for unexpected internal errors.
+    """
     try:
         # Authenticate or create user
         user = await user_service.authenticate_or_create_google_user(request.google_token, db)
@@ -335,7 +369,20 @@ async def login(
 
 @router.post("/register", response_model=SuccessResponse[Dict[str, str]], dependencies=[Depends(_check_auth_rate_limit)])
 async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """Register a new user with email and password (requires admin activation)"""
+    """
+    Register a new user account using email and password.
+    
+    If the new account is assigned an admin role it is activated immediately; otherwise it remains inactive and requires administrator activation. The endpoint does not issue authentication tokens for newly registered (non-admin) users.
+    
+    Returns:
+        SuccessResponse: Contains a data object with keys:
+            - message: Confirmation text (notes if admin activation is required).
+            - email: The created user's email.
+            - status: "activated" for admin-created accounts or "pending_activation" for accounts awaiting admin activation.
+    
+    Raises:
+        HTTPException: with status 400 when input validation or business rules fail, or 500 for unexpected server errors.
+    """
     try:
 
         is_first_user = await user_service.is_first_user(db)
@@ -377,7 +424,21 @@ async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get
 
 @router.post("/login/password", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
 async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = Depends(get_db)):
-    """Authenticate user with email and password"""
+    """
+    Authenticate a user using email and password and return JWT tokens and user info.
+    
+    Parameters:
+        request (PasswordLoginRequest): Contains the user's `email` and `password`.
+        db (AsyncSession): Database session (typically injected via dependency).
+    
+    Returns:
+        SuccessResponse: Contains a TokenResponse with `access_token`, `refresh_token`, `token_type`, and `user` (user data dictionary).
+    
+    Raises:
+        HTTPException: 409 if the account was created with Google and password login is not allowed.
+        HTTPException: 401 if authentication fails due to invalid credentials or other validation errors.
+        HTTPException: 500 for unexpected server-side errors.
+    """
     try:
         auth_method = await user_service.get_user_auth_method(db, request.email)
         if auth_method == "google":

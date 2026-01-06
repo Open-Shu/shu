@@ -43,9 +43,16 @@ def get_request_id(request) -> str:
 
 def paginate(skip: int = 0, limit: int = Query(100, ge=1, le=1000, description="Number of items to return")) -> dict:
     """
-    Pagination dependency.
+    Validate and return pagination parameters for endpoints.
     
-    Validates and returns pagination parameters.
+    Raises HTTP 400 if `skip` is negative or if `limit` is not between 1 and the configured maximum.
+    
+    Parameters:
+        skip (int): Number of items to skip; must be greater than or equal to 0.
+        limit (int): Maximum number of items to return; must be between 1 and the configured max pagination limit.
+    
+    Returns:
+        dict: A dictionary with keys `"skip"` and `"limit"` containing the validated pagination values.
     """
     settings = get_settings_instance()
     

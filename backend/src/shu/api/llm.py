@@ -147,7 +147,17 @@ class LLMModelResponse(BaseModel):
 
 # Helper function to convert database model to response model
 def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LLMProviderResponse:
-    """Convert LLMProvider database model to response model."""
+    """
+    Builds an LLMProviderResponse from a LLMProvider database model.
+    
+    Parameters:
+        db_session (AsyncSession): Database session used to load provider type definition.
+        provider (LLMProvider): Database model instance to convert.
+    
+    Returns:
+        LLMProviderResponse: Response object containing provider fields. `budget_limit_monthly`
+        is a float when set or `None` when not present; `has_api_key` indicates whether an API key is stored.
+    """
     data = ProviderTypeDefinitionSchema.build_from_existing(db_session, provider)
     return LLMProviderResponse(
         id=provider.id,

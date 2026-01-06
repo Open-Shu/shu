@@ -847,10 +847,21 @@ class ConfigurationManager:
         kb_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Get complete LLM configuration as a dictionary.
-
-        This replaces hardcoded LLM defaults throughout the codebase.
-        Note: Rate limits are per-provider, configured via LLMProvider model.
+        Return the resolved LLM configuration built from optional user, model, and KB overrides.
+        
+        Parameters:
+            user_prefs (Optional[Dict[str, Any]]): User-specific LLM preferences that can override model or KB settings.
+            model_config (Optional[Dict[str, Any]]): Model-specific LLM configuration that can override KB defaults.
+            kb_config (Optional[Dict[str, Any]]): Knowledge-base-specific LLM configuration with the lowest override precedence.
+        
+        Returns:
+            Dict[str, Any]: Dictionary with keys:
+                - "temperature" (float): Resolved sampling temperature.
+                - "max_tokens" (int): Resolved maximum token count for responses.
+                - "timeout" (float): Global LLM request timeout from settings.
+        
+        Notes:
+            Rate limits are provider-specific and are not included in this dictionary.
         """
         return {
             "temperature": self.get_llm_temperature(user_prefs, model_config, kb_config),
@@ -865,9 +876,15 @@ class ConfigurationManager:
         kb_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Get complete user preferences as a dictionary.
-
-        This provides the legitimate user preferences that users can actually control.
+        Assembles the effective user-controllable preferences by resolving available overrides.
+        
+        Parameters:
+            user_prefs (Optional[Dict[str, Any]]): User-provided preference overrides.
+            model_config (Optional[Dict[str, Any]]): Model-level preference overrides.
+            kb_config (Optional[Dict[str, Any]]): Knowledge-base-level preference overrides.
+        
+        Returns:
+            Dict[str, Any]: Dictionary with keys `memory_depth`, `memory_similarity_threshold`, `theme`, `language`, and `timezone`, resolved with priority: user_prefs → model_config → kb_config → global defaults.
         """
         return {
             # Memory settings (legitimate user preferences)

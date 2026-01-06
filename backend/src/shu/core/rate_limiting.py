@@ -22,16 +22,15 @@ logger = logging.getLogger(__name__)
 
 
 def get_client_ip(headers: Dict[str, str], client_host: Optional[str] = None) -> str:
-    """Extract client IP from request headers.
-
-    Checks X-Forwarded-For for proxied requests, falls back to client host.
-
-    Args:
-        headers: Request headers (or dict-like with .get())
-        client_host: Direct client host if available
-
+    """
+    Return the client's IP address derived from request headers or a provided host fallback.
+    
+    Parameters:
+        headers (Dict[str, str]): Request headers or a dict-like object; if the `X-Forwarded-For` header is present the first IP in the comma-separated list is used.
+        client_host (Optional[str]): Direct client host to use when `X-Forwarded-For` is not present.
+    
     Returns:
-        Client IP address string
+        str: The chosen client IP address, or "unknown" if neither header nor `client_host` is available.
     """
     forwarded = headers.get("X-Forwarded-For") if hasattr(headers, "get") else None
     if forwarded:
@@ -49,7 +48,14 @@ class RateLimitResult:
     reset_seconds: int = 0
 
     def to_headers(self) -> dict[str, str]:
-        """Generate standard rate limit response headers."""
+        """
+        Builds HTTP rate limit headers representing the current rate limit state.
+        
+        Includes `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`; adds `Retry-After` when the request was denied.
+        
+        Returns:
+            headers (dict[str, str]): Mapping of HTTP header names to string values. Contains `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`; contains `Retry-After` if `allowed` is `False`.
+        """
         headers = {
             "RateLimit-Limit": str(self.limit),
             "RateLimit-Remaining": str(max(0, self.remaining)),
@@ -70,16 +76,17 @@ class RateLimiter(Protocol):
         capacity: Optional[int] = None,
         refill_per_second: Optional[int] = None,
     ) -> RateLimitResult:
-        """Check if a request is allowed and consume quota if so.
+        """
+        Determine whether a request identified by `key` may proceed and consume the appropriate quota.
         
-        Args:
-            key: Unique identifier for the rate limit bucket (e.g., user_id, ip)
-            cost: Number of tokens to consume (1 for RPM, token count for TPM)
-            capacity: Override default capacity
-            refill_per_second: Override default refill rate
-            
+        Parameters:
+            key (str): Unique identifier for the rate limit bucket (for example, "user:<id>" or "auth:<identifier>").
+            cost (int): Number of tokens to consume for this operation (use 1 for a single request or the token cost for TPM scenarios).
+            capacity (Optional[int]): Optional override for the bucket capacity (maximum tokens).
+            refill_per_second (Optional[int]): Optional override for the refill rate in tokens per second.
+        
         Returns:
-            RateLimitResult with allowed status and metadata
+            RateLimitResult: Result describing whether the request is allowed and related metadata (`allowed`, `retry_after_seconds`, `remaining`, `limit`, `reset_seconds`).
         """
         ...
 
@@ -150,19 +157,39 @@ class TokenBucketRateLimiter:
         self._redis: Optional[Any] = None
     
     async def _get_redis(self) -> Any:
-        """Get Redis client lazily."""
+        """
+        Lazily obtain and cache the Redis client used by this limiter.
+        
+        Calls get_redis_client() on first access and stores the resulting client for reuse on subsequent calls.
+        
+        Returns:
+            redis_client (Any): The cached Redis client instance.
+        """
         if self._redis is None:
             from .database import get_redis_client
             self._redis = await get_redis_client()
         return self._redis
     
     def _key(self, bucket: str) -> str:
-        """Generate Redis key for bucket."""
+        """
+        Build a namespaced Redis key for the given limiter bucket.
+        
+        Parameters:
+            bucket (str): Bucket identifier appended to the rate limiter namespace.
+        
+        Returns:
+            str: Redis key in the form "<namespace>:<bucket>".
+        """
         return f"{self.namespace}:{bucket}"
     
     @staticmethod
     def _is_in_memory(redis_client: Any) -> bool:
-        """Check if using in-memory fallback."""
+        """
+        Detects whether the provided Redis client is an in-memory or fake implementation.
+        
+        Returns:
+            True if the client's class name contains "InMemory" or "Fake", False otherwise.
+        """
         clsname = redis_client.__class__.__name__
         return "InMemory" in clsname or "Fake" in clsname
 
@@ -173,16 +200,17 @@ class TokenBucketRateLimiter:
         capacity: Optional[int] = None,
         refill_per_second: Optional[float] = None,
     ) -> RateLimitResult:
-        """Check if request is allowed and consume quota.
-
-        Args:
-            key: Unique identifier for rate limit bucket
-            cost: Tokens to consume (1 for RPM, token count for TPM)
-            capacity: Override default capacity
-            refill_per_second: Override default refill rate (can be fractional)
-
+        """
+        Determine whether a request is allowed and consume the requested tokens from the corresponding rate limit bucket.
+        
+        Parameters:
+            key (str): Unique identifier for the rate limit bucket.
+            cost (int): Number of tokens to consume from the bucket.
+            capacity (Optional[int]): Optional override for the bucket capacity.
+            refill_per_second (Optional[float]): Optional override for the refill rate; may be fractional.
+        
         Returns:
-            RateLimitResult with allowed status and headers
+            RateLimitResult: Result containing `allowed` and rate-limit metadata (`remaining`, `limit`, `reset_seconds`, `retry_after_seconds`).
         """
         redis = await self._get_redis()
         now_ms = int(time.time() * 1000)
@@ -207,10 +235,20 @@ class TokenBucketRateLimiter:
         capacity: int,
         refill_per_second: float,
     ) -> RateLimitResult:
-        """Fixed-window rate limiting for in-memory backend.
-
-        Window duration is derived from capacity/refill_rate to represent
-        the time period. For RPM limits, window is always 60s.
+        """
+        Fixed-window fallback rate limiter used when Redis scripting is unavailable.
+        
+        Calculates a window size from capacity and refill_per_second (minimum 60 seconds), increments a counter for the current window by `cost`, and grants or denies the request based on whether the windowed count exceeds `capacity`.
+        
+        Parameters:
+            redis (Any): Redis-like client providing `incrby` and `expire`.
+            bucket_key (str): Base key identifying the rate-limited bucket.
+            cost (int): Number of tokens to consume for this request (1 for RPM, >1 for token-costing TPM).
+            capacity (int): Maximum tokens allowed per window.
+            refill_per_second (float): Token refill rate per second used to derive the window duration.
+        
+        Returns:
+            RateLimitResult: Result containing `allowed`, `remaining`, `limit`, `reset_seconds`, and `retry_after_seconds` when denied.
         """
         # For per-minute limits, window is capacity/refill_rate
         # E.g., 2 RPM: capacity=2, refill=0.0333, window = 2/0.0333 = 60s
@@ -260,7 +298,23 @@ class TokenBucketRateLimiter:
         rate_per_ms: float,
         refill_per_second: float,
     ) -> RateLimitResult:
-        """Token bucket rate limiting for Redis backend."""
+        """
+        Perform a token-bucket check using the Redis backend and return the resulting rate limit metadata.
+        
+        Calls a Redis Lua script to attempt consuming `cost` tokens from the bucket identified by `bucket_key` using `rate_per_ms` as the refill rate. If the Redis call fails, falls back to the in-memory fixed-window check and returns its result.
+        
+        Parameters:
+            redis: Redis client used to execute the Lua script.
+            bucket_key (str): Key identifying the token bucket in Redis.
+            now_ms (int): Current time in milliseconds passed to the script.
+            cost (int): Number of tokens to consume for this request.
+            capacity (int): Maximum number of tokens the bucket can hold.
+            rate_per_ms (float): Refill rate expressed in tokens per millisecond.
+            refill_per_second (float): Refill rate expressed in tokens per second; used by the in-memory fallback.
+        
+        Returns:
+            RateLimitResult: Result describing whether the request is allowed, remaining tokens, total limit, retry-after seconds when denied, and seconds until the bucket is fully reset.
+        """
         try:
             res = await redis.eval(TOKEN_BUCKET_LUA, 1, bucket_key, now_ms, capacity, rate_per_ms, cost)
             allowed_int, tokens_left, retry_ms, _ = int(res[0]), int(res[1]), int(res[2]), int(res[3])
@@ -317,11 +371,21 @@ class RateLimitService:
 
     @property
     def enabled(self) -> bool:
-        """Check if rate limiting is enabled."""
+        """
+        Whether rate limiting is enabled according to the service settings.
+        
+        Returns:
+            `true` if rate limiting is enabled, `false` otherwise.
+        """
         return self._enabled
 
     def _get_api_limiter(self) -> TokenBucketRateLimiter:
-        """Get or create API rate limiter."""
+        """
+        Get the TokenBucketRateLimiter used for API rate limiting, creating and configuring it from settings if not already initialized.
+        
+        Returns:
+            TokenBucketRateLimiter: Limiter configured for the "rl:api" namespace. Capacity is taken from `settings.rate_limit_requests` (default 100) and `refill_per_second` is computed as capacity divided by `settings.rate_limit_period` (default 60).
+        """
         if self._api_limiter is None:
             requests = getattr(self._settings, "rate_limit_requests", 100)
             period = getattr(self._settings, "rate_limit_period", 60)
@@ -334,7 +398,14 @@ class RateLimitService:
         return self._api_limiter
 
     def _get_auth_limiter(self) -> TokenBucketRateLimiter:
-        """Get or create auth rate limiter (stricter limits)."""
+        """
+        Get or create a TokenBucketRateLimiter configured for authentication with strict, slow-refill limits.
+        
+        Reads `strict_rate_limit_requests` from settings (default 10) for capacity and sets `refill_per_second` to 1.
+        
+        Returns:
+            TokenBucketRateLimiter: Limiter instance used for auth rate limiting.
+        """
         if self._auth_limiter is None:
             # Use strict limits for auth endpoints
             requests = getattr(self._settings, "strict_rate_limit_requests", 10)
@@ -346,10 +417,14 @@ class RateLimitService:
         return self._auth_limiter
 
     def _get_llm_rpm_limiter(self, rpm_limit: int) -> TokenBucketRateLimiter:
-        """Get or create LLM RPM rate limiter.
-
-        Args:
-            rpm_limit: Provider-specific RPM limit
+        """
+        Get a TokenBucketRateLimiter configured for LLM RPM using the provided provider-specific capacity.
+        
+        Parameters:
+            rpm_limit (int): Provider-specific requests-per-minute capacity used to initialize the limiter.
+        
+        Returns:
+            TokenBucketRateLimiter: A limiter namespaced for LLM RPM with capacity set to `rpm_limit` and refill rate of `rpm_limit / 60`.
         """
         # Create limiter with provider-specific capacity
         # Note: We reuse the cached limiter but override capacity per-call
@@ -363,10 +438,14 @@ class RateLimitService:
         return self._llm_rpm_limiter
 
     def _get_llm_tpm_limiter(self, tpm_limit: int) -> TokenBucketRateLimiter:
-        """Get or create LLM TPM rate limiter.
-
-        Args:
-            tpm_limit: Provider-specific TPM limit
+        """
+        Return a TokenBucketRateLimiter configured for provider-specific tokens-per-minute (TPM) limits.
+        
+        Parameters:
+            tpm_limit (int): Provider-specific TPM capacity to use when creating the limiter.
+        
+        Returns:
+            TokenBucketRateLimiter: A limiter scoped to "rl:llm:tpm". The limiter is created once and cached for reuse.
         """
         # Create limiter with provider-specific capacity
         # Note: We reuse the cached limiter but override capacity per-call
@@ -380,13 +459,11 @@ class RateLimitService:
         return self._llm_tpm_limiter
 
     async def check_api_limit(self, user_id: str) -> RateLimitResult:
-        """Check API rate limit for a user.
-
-        Args:
-            user_id: User identifier
-
+        """
+        Enforces the configured API rate limit for the given user.
+        
         Returns:
-            RateLimitResult
+            RateLimitResult containing whether the request is allowed. When denied, `retry_after_seconds` indicates how long to wait; the result also includes `remaining`, `limit`, and `reset_seconds` metadata.
         """
         if not self._enabled:
             return RateLimitResult(allowed=True, remaining=999, limit=999)
@@ -395,15 +472,16 @@ class RateLimitService:
         return await limiter.check(key=f"user:{user_id}")
 
     async def check_auth_limit(self, identifier: str) -> RateLimitResult:
-        """Check auth rate limit for an identifier (user email or IP).
-
-        Uses stricter limits for brute-force protection.
-
-        Args:
-            identifier: Email or IP address
-
+        """
+        Enforce a stricter authentication rate limit for the given identifier.
+        
+        Used for brute-force protection: when disabled this returns an allowed result with large remaining/limit; otherwise the configured auth limiter is applied.
+        
+        Parameters:
+            identifier (str): Email address or IP address that identifies the actor being rate-limited.
+        
         Returns:
-            RateLimitResult
+            RateLimitResult: Outcome of the rate limit check, including `allowed`, `retry_after_seconds`, `remaining`, `limit`, and `reset_seconds`.
         """
         if not self._enabled:
             return RateLimitResult(allowed=True, remaining=999, limit=999)
@@ -417,15 +495,16 @@ class RateLimitService:
         provider_id: str,
         rpm_override: int,
     ) -> RateLimitResult:
-        """Check LLM requests per minute limit for a specific provider.
-
-        Args:
-            user_id: User identifier
-            provider_id: Provider identifier (required - no global limits)
-            rpm_override: RPM limit from LLMProvider.rate_limit_rpm
-
+        """
+        Enforces the per-provider LLM requests-per-minute limit for a given user.
+        
+        Parameters:
+            user_id: User identifier.
+            provider_id: Provider identifier—limits are applied per provider (no global provider-level limits).
+            rpm_override: RPM limit from the provider configuration to use for this check.
+        
         Returns:
-            RateLimitResult
+            A RateLimitResult describing whether the request is allowed and containing remaining, limit, retry-after, and reset information.
         """
         if not self._enabled:
             return RateLimitResult(allowed=True, remaining=999, limit=999)
@@ -444,16 +523,17 @@ class RateLimitService:
         provider_id: str,
         tpm_override: int,
     ) -> RateLimitResult:
-        """Check LLM tokens per minute limit for a specific provider.
-
-        Args:
-            user_id: User identifier
-            token_cost: Estimated tokens for this request
-            provider_id: Provider identifier (required - no global limits)
-            tpm_override: TPM limit from LLMProvider.rate_limit_tpm
-
+        """
+        Check whether the user may consume the given token cost against the provider-specific tokens-per-minute (TPM) quota.
+        
+        Parameters:
+            user_id (str): User identifier.
+            token_cost (int): Estimated token cost of this request; subtracted from the bucket when allowed.
+            provider_id (str): Provider identifier; limits are applied per provider and no global provider fallback is used.
+            tpm_override (int): TPM capacity to enforce for this check (tokens per minute).
+        
         Returns:
-            RateLimitResult
+            RateLimitResult: Result describing whether the request is allowed, remaining tokens, limit, retry-after (if denied), and reset time.
         """
         if not self._enabled:
             return RateLimitResult(allowed=True, remaining=999, limit=999)
@@ -473,9 +553,13 @@ _rate_limit_service: Optional[RateLimitService] = None
 
 
 def get_rate_limit_service() -> RateLimitService:
-    """Get the rate limit service singleton.
-
-    Prefer dependency injection over this function when possible.
+    """
+    Retrieve the module-level RateLimitService singleton.
+    
+    Creates and stores the singleton on first invocation. Prefer injecting a RateLimitService via dependency injection when possible.
+    
+    Returns:
+        RateLimitService: The shared RateLimitService instance used by the application.
     """
     global _rate_limit_service
     if _rate_limit_service is None:
@@ -484,6 +568,10 @@ def get_rate_limit_service() -> RateLimitService:
 
 
 async def get_rate_limit_service_dependency() -> RateLimitService:
-    """FastAPI dependency for rate limit service."""
+    """
+    Provide the module's RateLimitService as a FastAPI dependency.
+    
+    Returns:
+        RateLimitService: The singleton RateLimitService instance.
+    """
     return get_rate_limit_service()
-
