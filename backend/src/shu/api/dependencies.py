@@ -41,7 +41,7 @@ def get_request_id(request) -> str:
     return getattr(request.state, "request_id", "unknown")
 
 
-def paginate(skip: int = 0, limit: int = Query(100, ge=1, le=1000, description="Number of items to return")) -> dict:
+def paginate(skip: int = 0, limit: int = Query(100, ge=1, description="Number of items to return")) -> dict:
     """
     Validate and return pagination parameters for endpoints.
     

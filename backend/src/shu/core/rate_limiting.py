@@ -74,7 +74,7 @@ class RateLimiter(Protocol):
         key: str,
         cost: int = 1,
         capacity: Optional[int] = None,
-        refill_per_second: Optional[int] = None,
+        refill_per_second: Optional[float] = None,
     ) -> RateLimitResult:
         """
         Determine whether a request identified by `key` may proceed and consume the appropriate quota.
@@ -83,7 +83,7 @@ class RateLimiter(Protocol):
             key (str): Unique identifier for the rate limit bucket (for example, "user:<id>" or "auth:<identifier>").
             cost (int): Number of tokens to consume for this operation (use 1 for a single request or the token cost for TPM scenarios).
             capacity (Optional[int]): Optional override for the bucket capacity (maximum tokens).
-            refill_per_second (Optional[int]): Optional override for the refill rate in tokens per second.
+            refill_per_second (Optional[float]): Optional override for the refill rate in tokens per second; may be fractional.
         
         Returns:
             RateLimitResult: Result describing whether the request is allowed and related metadata (`allowed`, `retry_after_seconds`, `remaining`, `limit`, `reset_seconds`).
