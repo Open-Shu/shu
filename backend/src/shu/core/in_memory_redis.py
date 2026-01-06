@@ -71,6 +71,24 @@ class InMemoryRedisClient:
         """Set expiration for a key."""
         self._expiry[key] = time.time() + seconds
         return True
+
+    async def incr(self, key: str) -> int:
+        """Increment a key by 1."""
+        return await self.incrby(key, 1)
+
+    async def incrby(self, key: str, amount: int) -> int:
+        """Increment a key by a given amount."""
+        # Check expiration first
+        if key in self._expiry and time.time() > self._expiry[key]:
+            del self._data[key]
+            del self._expiry[key]
+
+        current = self._data.get(key, 0)
+        if isinstance(current, str):
+            current = int(current)
+        new_value = current + amount
+        self._data[key] = new_value
+        return new_value
     
     async def delete(self, *keys: str) -> int:
         """Delete keys."""

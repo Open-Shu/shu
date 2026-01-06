@@ -189,10 +189,11 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 - Use **dataclasses** for data containers
 - **Type hints** for function parameters and returns
 - Keep functions focused and reusable
-- Follow SOLID & DRY principles
 
 
-### 7.1 Separation of Concerns (Mandatory)
+### 7.1 SOLID & DRY principles and Separation of Concerns Focus (Mandatory)
+- Follow SOLID principles - single responsibility and separation of concerns, open/closed, LSP, dependency inversion.
+- Follow DRY principles - don't duplicate code or data - consolidate and re-use.
 - Keep layers explicit and small:
   - Routers: HTTP wiring only (params, RBAC deps, envelope responses). No business logic.
   - Schemas: Pydantic request/response models under `src/shu/schemas/*`. Do not define models in routers.
@@ -217,7 +218,6 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 - Migration policy:
   - Prefer incremental slices with tests green at each step; avoid dual-support of legacy paths (no prod yet)
   - No DB wipes; any schema changes follow Alembic policy
-- Reference: see `docs/guidelines/SEPARATION_OF_CONCERNS.md` for detailed rationale and refactor plan slices.
 
 ## **8. Documentation Standards**
 - **Docstrings** for all public functions and classes
