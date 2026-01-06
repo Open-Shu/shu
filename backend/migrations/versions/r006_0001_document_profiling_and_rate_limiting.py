@@ -17,6 +17,10 @@ SHU-355 Changes:
 - Creates document_projects table for project associations
 - Adds indexes for entity_id, entity_type, and project_name lookups
 - Adds unique constraints to prevent duplicate entries
+
+SHU-416 Changes:
+- Removes cost_per_input_token and cost_per_output_token from llm_providers table
+  (token costs belong on models, not providers)
 """
 
 from alembic import op
@@ -235,6 +239,13 @@ def upgrade() -> None:
             """
         )
 
+    # ========================================================================
+    # Part 7: Remove cost fields from llm_providers (SHU-416)
+    # Token costs belong on models, not providers
+    # ========================================================================
+    drop_column_if_exists(inspector, "llm_providers", "cost_per_input_token")
+    drop_column_if_exists(inspector, "llm_providers", "cost_per_output_token")
+
 
 def downgrade() -> None:
     conn = op.get_bind()
@@ -270,3 +281,13 @@ def downgrade() -> None:
     drop_column_if_exists(inspector, "documents", "document_type")
     drop_column_if_exists(inspector, "documents", "synopsis_embedding")
     drop_column_if_exists(inspector, "documents", "synopsis")
+
+    # Re-add cost columns to llm_providers (SHU-416 rollback)
+    add_column_if_not_exists(
+        inspector, "llm_providers",
+        sa.Column("cost_per_input_token", sa.Numeric(precision=12, scale=10), nullable=True)
+    )
+    add_column_if_not_exists(
+        inspector, "llm_providers",
+        sa.Column("cost_per_output_token", sa.Numeric(precision=12, scale=10), nullable=True)
+    )
