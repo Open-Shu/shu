@@ -113,15 +113,39 @@ class TestDocument:
         """Test that mark_profiling_complete clears previous errors."""
         doc = Document()
         doc.mark_profiling_failed("Previous error")
-        
+
         doc.mark_profiling_complete(
             synopsis="New synopsis",
             document_type="technical",
             capability_manifest={},
         )
-        
+
         assert doc.profiling_status == "complete"
         assert doc.profiling_error is None
+
+    def test_mark_profiling_complete_validates_document_type(self):
+        """Test that mark_profiling_complete validates document_type."""
+        doc = Document()
+
+        # Valid types should work
+        for valid_type in ["narrative", "transactional", "technical", "conversational"]:
+            doc.mark_profiling_complete(
+                synopsis="Test",
+                document_type=valid_type,
+                capability_manifest={},
+            )
+            assert doc.document_type == valid_type
+
+        # Invalid type should raise ValueError
+        import pytest
+        with pytest.raises(ValueError) as exc_info:
+            doc.mark_profiling_complete(
+                synopsis="Test",
+                document_type="invalid_type",
+                capability_manifest={},
+            )
+        assert "Invalid document_type" in str(exc_info.value)
+        assert "invalid_type" in str(exc_info.value)
 
     def test_to_dict_includes_profile_fields(self):
         """Test that to_dict includes all profile fields."""

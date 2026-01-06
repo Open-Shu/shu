@@ -15,19 +15,20 @@ Security Vulnerabilities:
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
+import asyncio
 import hashlib
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.logging import get_logger
 from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
 from ..services.document_service import DocumentService
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -59,6 +60,85 @@ def _build_skipped_result(
         "skipped": True,
         "skip_reason": skip_reason,
     }
+
+
+# Module-level semaphore for limiting concurrent profiling tasks.
+# Prevents LLM rate-limit storms during bulk imports. Tasks beyond this limit
+# queue in memory until a slot opens. See SHU-211 for persistent queue migration.
+_profiling_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_profiling_semaphore() -> asyncio.Semaphore:
+    """Get or create the profiling semaphore with configured concurrency limit."""
+    global _profiling_semaphore
+    if _profiling_semaphore is None:
+        from ..core.config import get_settings_instance
+        settings = get_settings_instance()
+        _profiling_semaphore = asyncio.Semaphore(settings.profiling_max_concurrent_tasks)
+    return _profiling_semaphore
+
+
+async def _trigger_profiling_if_enabled(document_id: str) -> None:
+    """
+    Trigger async document profiling if enabled (SHU-344).
+
+    This spawns a fire-and-forget background task that:
+    1. Acquires a slot from the profiling semaphore (waits if at capacity)
+    2. Opens a new DB session
+    3. Calls the profiling orchestrator
+    4. Updates document/chunk records with profile data
+
+    Does not block the caller - ingestion returns immediately.
+    Must be called from an async context to ensure event loop exists.
+
+    Note: Tasks queue in memory if concurrency limit is reached. Tasks are lost
+    on server restart. See SHU-211 for migration to persistent work queue.
+    """
+    from ..core.config import get_settings_instance
+
+    settings = get_settings_instance()
+    if not settings.enable_document_profiling:
+        return
+
+    semaphore = _get_profiling_semaphore()
+
+    async def _run_profiling():
+        async with semaphore:
+            try:
+                from ..core.database import get_async_session_local
+                from ..core.config import get_config_manager
+                from .side_call_service import SideCallService
+                from .profiling_orchestrator import ProfilingOrchestrator
+
+                session_local = get_async_session_local()
+                async with session_local() as bg_session:
+                    config_manager = get_config_manager()
+                    side_call_service = SideCallService(bg_session, config_manager)
+                    orchestrator = ProfilingOrchestrator(bg_session, settings, side_call_service)
+                    result = await orchestrator.run_for_document(document_id)
+                    if result.success:
+                        logger.info(
+                            "Document profiling complete: document_id=%s mode=%s tokens_used=%s duration_ms=%s",
+                            document_id,
+                            result.profiling_mode.value,
+                            result.tokens_used,
+                            result.duration_ms,
+                        )
+                    else:
+                        logger.warning(
+                            "Document profiling failed: document_id=%s error=%s",
+                            document_id,
+                            result.error,
+                        )
+            except Exception as e:
+                logger.error(
+                    "Document profiling error: document_id=%s error=%s",
+                    document_id,
+                    str(e),
+                )
+
+    # Fire-and-forget - don't await
+    asyncio.create_task(_run_profiling())
 
 
 def _infer_file_type(filename: str, mime_type: str) -> str:
@@ -419,6 +499,9 @@ async def ingest_document(
         content,
     )
 
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
+
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
         "document_id": document.id,
@@ -531,6 +614,9 @@ async def ingest_email(
         content,
     )
 
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
+
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", external_id),
         "document_id": document.id,
@@ -597,6 +683,9 @@ async def ingest_text(
         effective_title,
         effective_content,
     )
+
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
@@ -665,6 +754,9 @@ async def ingest_thread(
         effective_title,
         effective_content,
     )
+
+    # Trigger async profiling if enabled (SHU-344)
+    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),

@@ -65,7 +65,7 @@ class SideCallService:
         self,
         message_sequence: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
-        user_id: str = "system",
+        user_id: Optional[str] = None,
         config_overrides: Optional[Dict] = None,
         timeout_ms: Optional[int] = None,
     ) -> SideCallResult:
@@ -75,7 +75,7 @@ class SideCallService:
         Args:
             message_sequence: Chat-style sequence of messages ({"role", "content"})
             system_prompt: Optional system prompt injected ahead of the sequence
-            user_id: ID of the user making the request
+            user_id: ID of the user making the request (None for system operations)
             config_overrides: Optional configuration overrides for this call
             timeout_ms: Optional timeout override in milliseconds
 
@@ -202,7 +202,7 @@ class SideCallService:
         self,
         current_user_query: str,
         prior_messages: Optional[List[Message]] = None,
-        user_id: str = "system",
+        user_id: Optional[str] = None,
         timeout_ms: int = 1200,
     ) -> SideCallResult:
         """
@@ -272,7 +272,7 @@ class SideCallService:
     async def distill_rag_query(
         self,
         current_user_query: str,
-        user_id: str = "system",
+        user_id: Optional[str] = None,
         timeout_ms: int = 1200,
     ) -> SideCallResult:
         """
@@ -531,7 +531,7 @@ class SideCallService:
         self,
         model_config: ModelConfiguration,
         model,
-        user_id: str,
+        user_id: Optional[str],
         tokens_used: int,
         response_time_ms: int,
         success: bool,
@@ -543,7 +543,7 @@ class SideCallService:
         Args:
             model_config: The model configuration used
             model: The model used
-            user_id: ID of the user who made the request
+            user_id: ID of the user who made the request (None for system operations)
             tokens_used: Number of tokens used
             response_time_ms: Response time in milliseconds
             success: Whether the call was successful

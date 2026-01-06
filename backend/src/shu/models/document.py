@@ -194,6 +194,9 @@ class Document(BaseModel):
         """Mark document as currently being profiled."""
         self.profiling_status = "in_progress"
 
+    # Valid document types for profiling (must match schemas.profiling.DocumentType)
+    VALID_DOCUMENT_TYPES = {"narrative", "transactional", "technical", "conversational"}
+
     def mark_profiling_complete(
         self,
         synopsis: str,
@@ -201,7 +204,25 @@ class Document(BaseModel):
         capability_manifest: Dict[str, Any],
         synopsis_embedding: Optional[List[float]] = None,
     ) -> None:
-        """Mark document profiling as complete with profile data."""
+        """
+        Mark document profiling as complete with profile data.
+
+        Args:
+            synopsis: One-paragraph summary of the document
+            document_type: Must be one of: narrative, transactional, technical, conversational
+            capability_manifest: Dict describing what queries this document can satisfy
+            synopsis_embedding: Optional vector embedding for synopsis
+
+        Raises:
+            ValueError: If document_type is not a valid type
+        """
+        # Validate document_type
+        if document_type not in self.VALID_DOCUMENT_TYPES:
+            raise ValueError(
+                f"Invalid document_type '{document_type}'. "
+                f"Must be one of: {', '.join(sorted(self.VALID_DOCUMENT_TYPES))}"
+            )
+
         self.synopsis = synopsis
         self.document_type = document_type
         self.capability_manifest = capability_manifest
