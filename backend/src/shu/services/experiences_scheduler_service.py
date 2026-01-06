@@ -101,7 +101,6 @@ class ExperiencesSchedulerService:
         
         Returns dict with execution status and run_id.
         """
-        from .experience_executor import ExperienceExecutor
         
         # Get the user who will run this experience
         user_result = await self.db.execute(
@@ -230,7 +229,6 @@ class ExperiencesSchedulerService:
             "due": len(due_experiences),
             "user_runs": user_runs,
             "user_failures": user_failures,
-            "no_users": 0,
         }
 
 
@@ -290,11 +288,10 @@ async def start_experiences_scheduler():
                     # Only log if something happened
                     if result.get("due", 0) > 0:
                         logger.info(
-                            "Experiences scheduler tick | due=%d user_runs=%d user_failures=%d skipped_no_owner=%d",
+                            "Experiences scheduler tick | due=%d user_runs=%d user_failures=%d",
                             result.get("due", 0),
                             result.get("user_runs", 0),
                             result.get("user_failures", 0),
-                            result.get("no_users", 0),
                         )
             except Exception as ex:
                 logger.warning(f"Experiences scheduler tick failed: {ex}")

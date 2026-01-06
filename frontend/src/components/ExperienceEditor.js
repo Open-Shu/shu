@@ -400,46 +400,40 @@ export default function ExperienceEditor() {
                                         multiline
                                         rows={3}
                                     />
-                                    <Grid container>
-                                        <Grid item xs={6}>
-                                            <FormControl fullWidth>
-                                                <InputLabel>Visibility</InputLabel>
-                                                <Select
-                                                    value={visibility}
-                                                    label="Visibility"
-                                                    onChange={handleFieldChange(setVisibility)}
-                                                >
-                                                    <MenuItem value="draft">Draft</MenuItem>
-                                                    <MenuItem value="admin_only">Admin Only</MenuItem>
-                                                    <MenuItem value="published">Published</MenuItem>
-                                                </Select>
-                                            </FormControl>
-                                        </Grid>
-                                        <Grid item xs={6}>
-                                            <TextField
-                                                label="Max Run Time (s)"
-                                                type="number"
-                                                value={maxRunSeconds}
-                                                onChange={handleFieldChange(setMaxRunSeconds)}
-                                                fullWidth
-                                                inputProps={{ min: 10, max: 600 }}
+                                    <Stack direction="row" spacing={2}>
+                                        <FormControl fullWidth>
+                                            <InputLabel>Visibility</InputLabel>
+                                            <Select
+                                                value={visibility}
+                                                label="Visibility"
+                                                onChange={handleFieldChange(setVisibility)}
+                                            >
+                                                <MenuItem value="draft">Draft</MenuItem>
+                                                <MenuItem value="admin_only">Admin Only</MenuItem>
+                                                <MenuItem value="published">Published</MenuItem>
+                                            </Select>
+                                        </FormControl>
+                                        <TextField
+                                            label="Max Run Time (s)"
+                                            type="number"
+                                            value={maxRunSeconds}
+                                            onChange={handleFieldChange(setMaxRunSeconds)}
+                                            fullWidth
+                                            inputProps={{ min: 10, max: 600 }}
+                                        />
+                                    </Stack>
+                                    <FormControlLabel
+                                        control={
+                                            <Switch
+                                                checked={includePreviousRun}
+                                                onChange={(e) => {
+                                                    setIncludePreviousRun(e.target.checked);
+                                                    setIsDirty(true);
+                                                }}
                                             />
-                                        </Grid>
-                                        <Grid item xs={12}>
-                                            <FormControlLabel
-                                                control={
-                                                    <Switch
-                                                        checked={includePreviousRun}
-                                                        onChange={(e) => {
-                                                            setIncludePreviousRun(e.target.checked);
-                                                            setIsDirty(true);
-                                                        }}
-                                                    />
-                                                }
-                                                label="Include output from previous successful run in context"
-                                            />
-                                        </Grid>
-                                    </Grid>
+                                        }
+                                        label="Include output from previous successful run in context"
+                                    />
                                 </Stack>
                             </Paper>
 

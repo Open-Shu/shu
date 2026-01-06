@@ -265,8 +265,6 @@ class ExperienceService:
                 self._validate_trigger_config(current_type, experience.trigger_config)
             except ValueError:
                 logger.exception("Incorrect validation for experience %s", experience.id)
-                # Fallback if DB has invalid string (unlikely)
-                pass
 
         # Recalculate next_run_at if trigger configuration changed
         if trigger_changed:
