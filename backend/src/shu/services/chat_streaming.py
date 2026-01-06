@@ -134,41 +134,47 @@ class EnsembleStreamingHelper:
     ) -> None:
         """Check per-provider rate limits before making LLM call.
 
+        Args:
+            rpm_limit: Requests per minute limit. 0 means no limit.
+            tpm_limit: Tokens per minute limit. 0 means no limit.
+
         Raises LLMRateLimitError if rate limit exceeded.
         """
         rate_limit_service = get_rate_limit_service()
         if not rate_limit_service.enabled:
             return
 
-        # Check RPM with provider-specific limit
-        rpm_result = await rate_limit_service.check_llm_rpm_limit(
-            user_id, provider_id=provider_id, rpm_override=rpm_limit
-        )
-        if not rpm_result.allowed:
-            raise LLMRateLimitError(
-                f"Provider rate limit exceeded ({rpm_limit} RPM). Retry after {rpm_result.retry_after_seconds}s.",
-                details={
-                    "provider_id": provider_id,
-                    "limit_type": "rpm",
-                    "limit": rpm_limit,
-                    "retry_after": rpm_result.retry_after_seconds,
-                }
+        # Check RPM with provider-specific limit (0 means no limit)
+        if rpm_limit > 0:
+            rpm_result = await rate_limit_service.check_llm_rpm_limit(
+                user_id, provider_id=provider_id, rpm_override=rpm_limit
             )
+            if not rpm_result.allowed:
+                raise LLMRateLimitError(
+                    f"Provider rate limit exceeded ({rpm_limit} RPM). Retry after {rpm_result.retry_after_seconds}s.",
+                    details={
+                        "provider_id": provider_id,
+                        "limit_type": "rpm",
+                        "limit": rpm_limit,
+                        "retry_after": rpm_result.retry_after_seconds,
+                    }
+                )
 
-        # Check TPM with provider-specific limit
-        tpm_result = await rate_limit_service.check_llm_tpm_limit(
-            user_id, estimated_tokens, provider_id=provider_id, tpm_override=tpm_limit
-        )
-        if not tpm_result.allowed:
-            raise LLMRateLimitError(
-                f"Provider token rate limit exceeded ({tpm_limit} TPM). Retry after {tpm_result.retry_after_seconds}s.",
-                details={
-                    "provider_id": provider_id,
-                    "limit_type": "tpm",
-                    "limit": tpm_limit,
-                    "retry_after": tpm_result.retry_after_seconds,
-                }
+        # Check TPM with provider-specific limit (0 means no limit)
+        if tpm_limit > 0:
+            tpm_result = await rate_limit_service.check_llm_tpm_limit(
+                user_id, estimated_tokens, provider_id=provider_id, tpm_override=tpm_limit
             )
+            if not tpm_result.allowed:
+                raise LLMRateLimitError(
+                    f"Provider token rate limit exceeded ({tpm_limit} TPM). Retry after {tpm_result.retry_after_seconds}s.",
+                    details={
+                        "provider_id": provider_id,
+                        "limit_type": "tpm",
+                        "limit": tpm_limit,
+                        "retry_after": tpm_result.retry_after_seconds,
+                    }
+                )
 
     async def _call_provider(
         self,

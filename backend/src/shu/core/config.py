@@ -315,7 +315,6 @@ class Settings(BaseSettings):
     # Global LLM limits
     llm_global_timeout: int = Field(30, alias="SHU_LLM_GLOBAL_TIMEOUT")
     llm_streaming_read_timeout: int = Field(120, alias="SHU_LLM_STREAMING_READ_TIMEOUT")
-    llm_global_rate_limit: int = Field(100, alias="SHU_LLM_GLOBAL_RATE_LIMIT")
     llm_max_tokens_default: int = Field(50_000, alias="SHU_LLM_MAX_TOKENS_DEFAULT")
     llm_temperature_default: float = Field(0.7, alias="SHU_LLM_TEMPERATURE_DEFAULT")
 
@@ -851,12 +850,12 @@ class ConfigurationManager:
         Get complete LLM configuration as a dictionary.
 
         This replaces hardcoded LLM defaults throughout the codebase.
+        Note: Rate limits are per-provider, configured via LLMProvider model.
         """
         return {
             "temperature": self.get_llm_temperature(user_prefs, model_config, kb_config),
             "max_tokens": self.get_llm_max_tokens(user_prefs, model_config, kb_config),
             "timeout": self.settings.llm_global_timeout,
-            "rate_limit": self.settings.llm_global_rate_limit,
         }
 
     def get_user_preferences_dict(

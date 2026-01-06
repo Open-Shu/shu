@@ -155,8 +155,8 @@ class ConfigurationManagerIntegrationTest:
             # Test LLM config dictionary
             model_config = {"temperature": 0.2, "max_tokens": 1500}
             llm_dict = self.config_manager.get_llm_config_dict(model_config=model_config)
-            
-            expected_llm_keys = {"temperature", "max_tokens", "timeout", "rate_limit"}
+
+            expected_llm_keys = {"temperature", "max_tokens", "timeout"}
             assert set(llm_dict.keys()) == expected_llm_keys, "Missing keys in LLM config dict"
             assert llm_dict["temperature"] == 0.2, "Temperature not resolved"
             assert llm_dict["max_tokens"] == 1500, "Max tokens not resolved"

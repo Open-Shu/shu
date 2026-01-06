@@ -294,6 +294,7 @@ class RateLimitService:
         # Initialize limiters lazily
         self._api_limiter: Optional[TokenBucketRateLimiter] = None
         self._auth_limiter: Optional[TokenBucketRateLimiter] = None
+        # LLM limiters are per-provider, created on demand
         self._llm_rpm_limiter: Optional[TokenBucketRateLimiter] = None
         self._llm_tpm_limiter: Optional[TokenBucketRateLimiter] = None
 
@@ -326,26 +327,35 @@ class RateLimitService:
             )
         return self._auth_limiter
 
-    def _get_llm_rpm_limiter(self) -> TokenBucketRateLimiter:
-        """Get or create LLM RPM rate limiter."""
+    def _get_llm_rpm_limiter(self, rpm_limit: int) -> TokenBucketRateLimiter:
+        """Get or create LLM RPM rate limiter.
+
+        Args:
+            rpm_limit: Provider-specific RPM limit
+        """
+        # Create limiter with provider-specific capacity
+        # Note: We reuse the cached limiter but override capacity per-call
         if self._llm_rpm_limiter is None:
-            rpm = getattr(self._settings, "llm_global_rate_limit", 100)
             self._llm_rpm_limiter = TokenBucketRateLimiter(
                 namespace="rl:llm:rpm",
-                capacity=rpm,
-                refill_per_second=max(1, rpm // 60),
+                capacity=rpm_limit,
+                refill_per_second=max(1, rpm_limit // 60),
             )
         return self._llm_rpm_limiter
 
-    def _get_llm_tpm_limiter(self) -> TokenBucketRateLimiter:
-        """Get or create LLM TPM rate limiter."""
+    def _get_llm_tpm_limiter(self, tpm_limit: int) -> TokenBucketRateLimiter:
+        """Get or create LLM TPM rate limiter.
+
+        Args:
+            tpm_limit: Provider-specific TPM limit
+        """
+        # Create limiter with provider-specific capacity
+        # Note: We reuse the cached limiter but override capacity per-call
         if self._llm_tpm_limiter is None:
-            # Default 100k tokens per minute
-            tpm = getattr(self._settings, "llm_global_tpm_limit", 100000)
             self._llm_tpm_limiter = TokenBucketRateLimiter(
                 namespace="rl:llm:tpm",
-                capacity=tpm,
-                refill_per_second=max(1, tpm // 60),
+                capacity=tpm_limit,
+                refill_per_second=max(1, tpm_limit // 60),
             )
         return self._llm_tpm_limiter
 
@@ -384,15 +394,15 @@ class RateLimitService:
     async def check_llm_rpm_limit(
         self,
         user_id: str,
-        provider_id: Optional[str] = None,
-        rpm_override: Optional[int] = None,
+        provider_id: str,
+        rpm_override: int,
     ) -> RateLimitResult:
-        """Check LLM requests per minute limit.
+        """Check LLM requests per minute limit for a specific provider.
 
         Args:
             user_id: User identifier
-            provider_id: Optional provider for provider-specific limits
-            rpm_override: Optional RPM override (e.g., from LLMProvider.rate_limit_rpm)
+            provider_id: Provider identifier (required - no global limits)
+            rpm_override: RPM limit from LLMProvider.rate_limit_rpm
 
         Returns:
             RateLimitResult
@@ -400,30 +410,26 @@ class RateLimitService:
         if not self._enabled:
             return RateLimitResult(allowed=True, remaining=999, limit=999)
 
-        limiter = self._get_llm_rpm_limiter()
-        key = f"user:{user_id}"
-        if provider_id:
-            key = f"{key}:provider:{provider_id}"
+        limiter = self._get_llm_rpm_limiter(rpm_override)
+        key = f"user:{user_id}:provider:{provider_id}"
+        refill = max(1, rpm_override // 60)
 
-        capacity = rpm_override if rpm_override else None
-        refill = max(1, rpm_override // 60) if rpm_override else None
-
-        return await limiter.check(key=key, capacity=capacity, refill_per_second=refill)
+        return await limiter.check(key=key, capacity=rpm_override, refill_per_second=refill)
 
     async def check_llm_tpm_limit(
         self,
         user_id: str,
         token_cost: int,
-        provider_id: Optional[str] = None,
-        tpm_override: Optional[int] = None,
+        provider_id: str,
+        tpm_override: int,
     ) -> RateLimitResult:
-        """Check LLM tokens per minute limit.
+        """Check LLM tokens per minute limit for a specific provider.
 
         Args:
             user_id: User identifier
             token_cost: Estimated tokens for this request
-            provider_id: Optional provider for provider-specific limits
-            tpm_override: Optional TPM override (e.g., from LLMProvider.rate_limit_tpm)
+            provider_id: Provider identifier (required - no global limits)
+            tpm_override: TPM limit from LLMProvider.rate_limit_tpm
 
         Returns:
             RateLimitResult
@@ -431,16 +437,12 @@ class RateLimitService:
         if not self._enabled:
             return RateLimitResult(allowed=True, remaining=999, limit=999)
 
-        limiter = self._get_llm_tpm_limiter()
-        key = f"user:{user_id}"
-        if provider_id:
-            key = f"{key}:provider:{provider_id}"
-
-        capacity = tpm_override if tpm_override else None
-        refill = max(1, tpm_override // 60) if tpm_override else None
+        limiter = self._get_llm_tpm_limiter(tpm_override)
+        key = f"user:{user_id}:provider:{provider_id}"
+        refill = max(1, tpm_override // 60)
 
         return await limiter.check(
-            key=key, cost=token_cost, capacity=capacity, refill_per_second=refill
+            key=key, cost=token_cost, capacity=tpm_override, refill_per_second=refill
         )
 
 

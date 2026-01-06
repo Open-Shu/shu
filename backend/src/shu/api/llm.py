@@ -57,9 +57,9 @@ class LLMProviderCreate(BaseModel):
     api_endpoint: str = Field(..., description="API endpoint URL")
     api_key: Optional[str] = Field(None, description="API key")
     organization_id: Optional[str] = Field(None, description="Organization ID")
-    rate_limit_rpm: int = Field(60, description="Rate limit (requests per minute)")
-    rate_limit_tpm: int = Field(60000, description="Rate limit (tokens per minute)")
-    budget_limit_monthly: Optional[float] = Field(None, description="Monthly budget limit")
+    rate_limit_rpm: int = Field(60, description="Rate limit (requests per minute, 0 = disabled)")
+    rate_limit_tpm: int = Field(60000, description="Rate limit (tokens per minute, 0 = disabled)")
+    budget_limit_monthly: Optional[float] = Field(None, description="Monthly budget limit in dollars")
     endpoints: Optional[Dict[str, EndpointDefUpdate]] = Field(
         None,
         description="Overrides for ProviderTypeDefinition.endpoints stored on provider"
@@ -158,7 +158,7 @@ def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LL
         is_active=provider.is_active,
         rate_limit_rpm=provider.rate_limit_rpm,
         rate_limit_tpm=provider.rate_limit_tpm,
-        budget_limit_monthly=provider.budget_limit_monthly,
+        budget_limit_monthly=float(provider.budget_limit_monthly) if provider.budget_limit_monthly else None,
         has_api_key=bool(provider.api_key_encrypted),
         endpoints=data.endpoints,
         provider_capabilities=data.provider_capabilities,

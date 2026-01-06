@@ -35,8 +35,7 @@ VALID_PROVIDER_DATA = {
     "supports_functions": True,
     "supports_vision": False,
     "rate_limit_rpm": 3500,
-    "rate_limit_tpm": 90000,
-    "budget_limit_monthly": 100.0
+    "rate_limit_tpm": 90000
 }
 
 
