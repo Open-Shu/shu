@@ -154,9 +154,22 @@ class TestTokenBucketRateLimiter:
             """
             return True
 
+        async def mock_get(key):
+            """
+            Return the current value stored at key, or None if not present.
+            
+            Parameters:
+                key (str): The Redis key to retrieve.
+            
+            Returns:
+                The value stored at key, or None if not present.
+            """
+            return redis._store.get(key)
+
         redis.incr = mock_incr
         redis.incrby = mock_incrby
         redis.expire = mock_expire
+        redis.get = mock_get
         return redis
     
     @pytest.mark.asyncio
