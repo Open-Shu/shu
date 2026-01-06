@@ -141,15 +141,23 @@ class EnsembleStreamingHelper:
         Raises LLMRateLimitError if rate limit exceeded.
         """
         rate_limit_service = get_rate_limit_service()
+        logger.debug(
+            "Rate limit service enabled=%s, rpm_limit=%d, tpm_limit=%d",
+            rate_limit_service.enabled, rpm_limit, tpm_limit
+        )
         if not rate_limit_service.enabled:
+            logger.debug("Rate limiting is disabled, skipping checks")
             return
 
         # Check RPM with provider-specific limit (0 means no limit)
         if rpm_limit > 0:
+            logger.debug("Checking RPM limit: user=%s, provider=%s, limit=%d", user_id, provider_id, rpm_limit)
             rpm_result = await rate_limit_service.check_llm_rpm_limit(
                 user_id, provider_id=provider_id, rpm_override=rpm_limit
             )
+            logger.debug("RPM check result: allowed=%s, remaining=%d, limit=%d", rpm_result.allowed, rpm_result.remaining, rpm_result.limit)
             if not rpm_result.allowed:
+                logger.warning("RPM limit exceeded: user=%s, provider=%s, limit=%d", user_id, provider_id, rpm_limit)
                 raise LLMRateLimitError(
                     f"Provider rate limit exceeded ({rpm_limit} RPM). Retry after {rpm_result.retry_after_seconds}s.",
                     details={
@@ -159,6 +167,8 @@ class EnsembleStreamingHelper:
                         "retry_after": rpm_result.retry_after_seconds,
                     }
                 )
+        else:
+            logger.debug("RPM limit is 0, skipping RPM check")
 
         # Check TPM with provider-specific limit (0 means no limit)
         if tpm_limit > 0:
@@ -269,23 +279,26 @@ class EnsembleStreamingHelper:
             model_display_name = getattr(inputs.model_configuration, "name", None)
             config_metadata["model_configuration"] = model_snapshot
 
-            # Check per-provider rate limits before calling LLM
-            if conversation_owner_id:
-                # Estimate tokens from context (rough approximation)
-                estimated_tokens = sum(
-                    len(str(getattr(m, "content", "") or "").split()) * 2
-                    for m in (inputs.context_messages.messages or [])
-                )
-                estimated_tokens = max(100, estimated_tokens)
-                await self._check_provider_rate_limits(
-                    user_id=str(conversation_owner_id),
-                    provider_id=inputs.provider_id,
-                    rpm_limit=inputs.rate_limit_rpm,
-                    tpm_limit=inputs.rate_limit_tpm,
-                    estimated_tokens=estimated_tokens,
-                )
-
             try:
+                # Check per-provider rate limits before calling LLM
+                if conversation_owner_id:
+                    # Estimate tokens from context (rough approximation)
+                    estimated_tokens = sum(
+                        len(str(getattr(m, "content", "") or "").split()) * 2
+                        for m in (inputs.context_messages.messages or [])
+                    )
+                    estimated_tokens = max(100, estimated_tokens)
+                    logger.info(
+                        "Checking rate limits: user=%s, provider=%s, rpm_limit=%d, tpm_limit=%d, est_tokens=%d",
+                        conversation_owner_id, inputs.provider_id, inputs.rate_limit_rpm, inputs.rate_limit_tpm, estimated_tokens
+                    )
+                    await self._check_provider_rate_limits(
+                        user_id=str(conversation_owner_id),
+                        provider_id=inputs.provider_id,
+                        rpm_limit=inputs.rate_limit_rpm,
+                        tpm_limit=inputs.rate_limit_tpm,
+                        estimated_tokens=estimated_tokens,
+                    )
 
                 # Create the tool callign parameters, if applicable
                 tools_enabled = self._get_tools_enabled(client, inputs)

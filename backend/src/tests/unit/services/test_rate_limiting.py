@@ -103,15 +103,20 @@ class TestTokenBucketRateLimiter:
         redis = AsyncMock()
         redis.__class__.__name__ = "InMemoryRedis"
         redis._store = {}
-        
+
         async def mock_incr(key):
             redis._store[key] = redis._store.get(key, 0) + 1
             return redis._store[key]
-        
+
+        async def mock_incrby(key, amount):
+            redis._store[key] = redis._store.get(key, 0) + amount
+            return redis._store[key]
+
         async def mock_expire(key, seconds):
             return True
-        
+
         redis.incr = mock_incr
+        redis.incrby = mock_incrby
         redis.expire = mock_expire
         return redis
     

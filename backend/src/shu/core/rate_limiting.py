@@ -116,38 +116,37 @@ else
   end
 end
 redis.call('HMSET', key, 'tokens', tokens, 'ts', ts)
--- set TTL to ~two windows worth to allow cleanup
-local ttl = 2000
-if rate > 0 then
-  ttl = math.ceil((capacity / rate) * 2)
-end
-redis.call('PEXPIRE', key, ttl)
+-- TTL of 1 hour (3600000ms) for cleanup of abandoned buckets
+-- The bucket state must persist across the entire rate limit window and beyond
+-- to prevent users from bypassing limits by waiting for key expiration
+redis.call('PEXPIRE', key, 3600000)
 return {allowed, math.ceil(tokens), retry_ms, capacity}
 """
 
 
 class TokenBucketRateLimiter:
     """Token bucket rate limiter with Redis backend and in-memory fallback.
-    
+
     Uses atomic Lua script for Redis, fixed-window fallback for in-memory.
     """
-    
+
     def __init__(
         self,
         namespace: str = "rl",
         capacity: int = 60,
-        refill_per_second: int = 1,
+        refill_per_second: float = 1.0,
     ):
         """Initialize rate limiter.
-        
+
         Args:
             namespace: Redis key namespace (e.g., "rl:api", "rl:auth")
             capacity: Maximum tokens in bucket (burst capacity)
-            refill_per_second: Tokens added per second (sustained rate)
+            refill_per_second: Tokens added per second (sustained rate, can be fractional)
         """
         self.namespace = namespace
         self.capacity = max(1, int(capacity))
-        self.refill_per_second = max(1, int(refill_per_second))
+        # Allow fractional refill rates for per-minute limits (e.g., 2 RPM = 0.0333 tokens/sec)
+        self.refill_per_second = max(0.001, float(refill_per_second))
         self._redis: Optional[Any] = None
     
     async def _get_redis(self) -> Any:
@@ -172,7 +171,7 @@ class TokenBucketRateLimiter:
         key: str,
         cost: int = 1,
         capacity: Optional[int] = None,
-        refill_per_second: Optional[int] = None,
+        refill_per_second: Optional[float] = None,
     ) -> RateLimitResult:
         """Check if request is allowed and consume quota.
 
@@ -180,7 +179,7 @@ class TokenBucketRateLimiter:
             key: Unique identifier for rate limit bucket
             cost: Tokens to consume (1 for RPM, token count for TPM)
             capacity: Override default capacity
-            refill_per_second: Override default refill rate
+            refill_per_second: Override default refill rate (can be fractional)
 
         Returns:
             RateLimitResult with allowed status and headers
@@ -189,8 +188,9 @@ class TokenBucketRateLimiter:
         now_ms = int(time.time() * 1000)
         bucket_key = self._key(key)
         cap = max(1, int(capacity if capacity is not None else self.capacity))
-        rps = max(1, int(refill_per_second if refill_per_second is not None else self.refill_per_second))
-        rate_per_ms = float(rps) / 1000.0
+        # Support fractional refill rates for per-minute limits
+        rps = max(0.001, float(refill_per_second if refill_per_second is not None else self.refill_per_second))
+        rate_per_ms = rps / 1000.0
 
         # In-memory fallback: fixed-window
         if self._is_in_memory(redis):
@@ -205,15 +205,32 @@ class TokenBucketRateLimiter:
         bucket_key: str,
         cost: int,
         capacity: int,
-        refill_per_second: int,
+        refill_per_second: float,
     ) -> RateLimitResult:
-        """Fixed-window rate limiting for in-memory backend."""
-        window_s = max(1, int(capacity / max(1, refill_per_second)))
+        """Fixed-window rate limiting for in-memory backend.
+
+        Window duration is derived from capacity/refill_rate to represent
+        the time period. For RPM limits, window is always 60s.
+        """
+        # For per-minute limits, window is capacity/refill_rate
+        # E.g., 2 RPM: capacity=2, refill=0.0333, window = 2/0.0333 = 60s
+        window_s = max(60, int(capacity / max(0.001, refill_per_second)))
         window_key = f"{bucket_key}:fw:{int(time.time()) // window_s}"
 
+        logger.debug(
+            "In-memory rate limit check: key=%s, cost=%d, capacity=%d, window_s=%d",
+            window_key, cost, capacity, window_s
+        )
+
         try:
-            current = await redis.incr(window_key)
+            # Use incrby to properly handle cost (token count for TPM, 1 for RPM)
+            current = await redis.incrby(window_key, cost)
             await redis.expire(window_key, window_s)
+
+            logger.debug(
+                "In-memory rate limit result: key=%s, current=%d, capacity=%d, allowed=%s",
+                window_key, current, capacity, current <= capacity
+            )
 
             if current <= capacity:
                 return RateLimitResult(
@@ -241,12 +258,12 @@ class TokenBucketRateLimiter:
         cost: int,
         capacity: int,
         rate_per_ms: float,
-        refill_per_second: int,
+        refill_per_second: float,
     ) -> RateLimitResult:
         """Token bucket rate limiting for Redis backend."""
         try:
             res = await redis.eval(TOKEN_BUCKET_LUA, 1, bucket_key, now_ms, capacity, rate_per_ms, cost)
-            allowed_int, tokens_left, retry_ms, cap = int(res[0]), int(res[1]), int(res[2]), int(res[3])
+            allowed_int, tokens_left, retry_ms, _ = int(res[0]), int(res[1]), int(res[2]), int(res[3])
             allowed = allowed_int == 1
 
             # Calculate reset time (time until bucket is full again)
@@ -311,7 +328,8 @@ class RateLimitService:
             self._api_limiter = TokenBucketRateLimiter(
                 namespace="rl:api",
                 capacity=requests,
-                refill_per_second=max(1, requests // period),
+                # Fractional refill: requests per second = requests / period
+                refill_per_second=requests / float(period),
             )
         return self._api_limiter
 
@@ -339,7 +357,8 @@ class RateLimitService:
             self._llm_rpm_limiter = TokenBucketRateLimiter(
                 namespace="rl:llm:rpm",
                 capacity=rpm_limit,
-                refill_per_second=max(1, rpm_limit // 60),
+                # Fractional refill: e.g., 2 RPM = 2/60 = 0.0333 tokens/sec
+                refill_per_second=rpm_limit / 60.0,
             )
         return self._llm_rpm_limiter
 
@@ -355,7 +374,8 @@ class RateLimitService:
             self._llm_tpm_limiter = TokenBucketRateLimiter(
                 namespace="rl:llm:tpm",
                 capacity=tpm_limit,
-                refill_per_second=max(1, tpm_limit // 60),
+                # Fractional refill: tokens per second = TPM / 60
+                refill_per_second=tpm_limit / 60.0,
             )
         return self._llm_tpm_limiter
 
@@ -412,7 +432,8 @@ class RateLimitService:
 
         limiter = self._get_llm_rpm_limiter(rpm_override)
         key = f"user:{user_id}:provider:{provider_id}"
-        refill = max(1, rpm_override // 60)
+        # Fractional refill: e.g., 2 RPM = 2/60 = 0.0333 tokens/sec
+        refill = rpm_override / 60.0
 
         return await limiter.check(key=key, capacity=rpm_override, refill_per_second=refill)
 
@@ -439,7 +460,8 @@ class RateLimitService:
 
         limiter = self._get_llm_tpm_limiter(tpm_override)
         key = f"user:{user_id}:provider:{provider_id}"
-        refill = max(1, tpm_override // 60)
+        # Fractional refill: tokens per second = TPM / 60
+        refill = tpm_override / 60.0
 
         return await limiter.check(
             key=key, cost=token_cost, capacity=tpm_override, refill_per_second=refill
