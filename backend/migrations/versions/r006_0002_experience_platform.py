@@ -267,9 +267,9 @@ def upgrade() -> None:
                 ),
                 "visibility": "draft",
                 "trigger_type": "cron",
-                "trigger_config": '{"timezone": "america/new_york", "cron": "0 7 * * *"}',
+                "trigger_config": '{"timezone": "America/New_York", "cron": "0 7 * * *"}',
                 "max_run_seconds": 180,
-                "include_previous_run": False,
+                "include_previous_run": True,
                 "prompt_id": None,
                 "inline_prompt_template": """Synthesize a morning briefing for {{ user.display_name }} based on the `gmail_digest`, `calendar_events`, and `gchat_digest` data.
 
@@ -280,7 +280,15 @@ def upgrade() -> None:
 - Flag likely spam/bulk emails under a separate "Likely Spam" section with brief reasons
 - Keep it concise but comprehensive
 
-Please synthesize this information into a clear, actionable morning briefing.""",
+Please synthesize this information into a clear, actionable morning briefing.
+
+### Special instructions
+
+You have the previous run result at your disposal. Compare it to the current step data and see if there is something the user may have forgotten to address. Give the user a gentle nudge on those things and make sure to stress the importance.
+
+```
+{{ previous_run.result_content }}
+```""",
                 "llm_provider_id": None,  # Will use user's default
                 "model_name": None,
                 "version": 1,

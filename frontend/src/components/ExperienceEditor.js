@@ -352,7 +352,7 @@ export default function ExperienceEditor() {
             {activeTab === 0 && (
                 <Grid container spacing={3}>
                     {/* Left Column - Basic Info & LLM Config */}
-                    <Grid item xs={12} md={5}>
+                    <Grid item xs={12} md={12} xl={5}>
                         <Stack spacing={3}>
                             {/* Basic Info */}
                             <Paper sx={{ p: 3 }}>
@@ -545,7 +545,7 @@ export default function ExperienceEditor() {
                                                 onChange={handleFieldChange(setInlinePromptTemplate)}
                                                 fullWidth
                                                 multiline
-                                                rows={6}
+                                                rows={20}
                                                 placeholder="Use {{ step_outputs.step_key }} to reference step results"
                                                 helperText="Jinja2 template with access to step_outputs, user, and previous_run"
                                                 inputRef={inlinePromptRef}
@@ -563,7 +563,7 @@ export default function ExperienceEditor() {
                     </Grid>
 
                     {/* Right Column - Steps Builder */}
-                    <Grid item xs={12} md={7}>
+                    <Grid item xs={12} md={12} xl={7}>
                         <Paper sx={{ p: 3 }}>
                             <Typography variant="h6" gutterBottom>
                                 Experience Steps

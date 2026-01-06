@@ -162,7 +162,7 @@ class ExperiencesSchedulerService:
             for exp in due_experiences:
                 exp.schedule_next()
             await self.db.commit()
-            return {"due": len(due_experiences), "user_runs": 0, "user_failures": 0, "no_users": len(due_experiences)}
+            return {"due": len(due_experiences), "user_runs": 0, "user_failures": 0, "no_users": 1}
         
         now = datetime.now(timezone.utc)
         user_runs = 0
@@ -294,7 +294,7 @@ async def start_experiences_scheduler():
                             result.get("due", 0),
                             result.get("ran", 0),
                             result.get("failed", 0),
-                            result.get("skipped_no_owner", 0),
+                            result.get("no_users", 0),
                         )
             except Exception as ex:
                 logger.warning(f"Experiences scheduler tick failed: {ex}")

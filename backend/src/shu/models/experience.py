@@ -118,6 +118,11 @@ class Experience(BaseModel):
             import zoneinfo
             local_tz = zoneinfo.ZoneInfo(tz_name)
         except Exception:
+            logger.warning(
+                "Invalid timezone '%s' for experience %s. Falling back to UTC.",
+                tz_name,
+                self.id or self.name
+            )
             local_tz = tz.utc
         
         if self.trigger_type == "scheduled":

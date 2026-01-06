@@ -512,11 +512,13 @@ class ExperienceService:
                         self._validate_template_syntax(value, f"step '{step.step_key}' param '{key}'")
 
             # Validate condition template
-            if step.condition_template:
-                self._validate_template_syntax(
-                    step.condition_template,
-                    f"step '{step.step_key}' condition_template"
-                )
+            # TODO: Future enhancement - support Jinja2 expressions in condition_template
+            # Currently it is treated as a simple step key string for dependency
+            # if step.condition_template:
+            #     self._validate_template_syntax(
+            #         step.condition_template,
+            #         f"step '{step.step_key}' condition_template"
+            #     )
 
             # Validate KB query template
             if step.kb_query_template:
@@ -685,7 +687,16 @@ class ExperienceService:
         Returns:
             User's experience results summary
         """
-        # First, get experiences with steps
+        # First, count total matching experiences
+        count_stmt = (
+            select(func.count())
+            .select_from(Experience)
+            .where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
+        )
+        total_result = await self.db.execute(count_stmt)
+        total = total_result.scalar() or 0
+
+        # Then fetch paginated experiences
         exp_stmt = (
             self._base_experience_query()
             .where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
@@ -758,7 +769,7 @@ class ExperienceService:
 
         return UserExperienceResults(
             experiences=summaries,
-            total=len(summaries)
+            total=total
         )
 
     # =========================================================================
@@ -936,6 +947,9 @@ class ExperienceService:
         ]
 
         last_run_at = self._get_last_run_timestamp(experience)
+        if last_run_at is None:
+            # Fallback to the column value if runs are not loaded or empty
+            last_run_at = experience.last_run_at
 
         return ExperienceResponse(
             id=experience.id,

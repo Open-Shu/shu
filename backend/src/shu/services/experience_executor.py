@@ -128,8 +128,8 @@ class ExperienceExecutor:
                 async for event in self._execute_steps_loop(experience, context, user_id, current_user, step_states, step_outputs):
                     yield event
 
-                # Sanity check: if no steps succeeded, skip LLM synthesis and fail
-                if not self._has_successful_steps(step_states):
+                # Sanity check: if steps exist but none succeeded, skip LLM synthesis and fail
+                if experience.steps and not self._has_successful_steps(step_states):
                     error_msg = "No steps succeeded - skipping LLM synthesis"
                     logger.warning(
                         "Experience execution failed: no successful steps | experience=%s user=%s",
@@ -164,7 +164,7 @@ class ExperienceExecutor:
                 })
             
         except asyncio.TimeoutError:
-            error_msg = f"Experience execution timed out after {experience.max_run_seconds}s"
+            error_msg = f"Experience execution timed out after {timeout_seconds}s"
             await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
             
@@ -566,9 +566,15 @@ class ExperienceExecutor:
 
     def _build_default_prompt(self, context: Dict[str, Any]) -> str:
         """Build a default synthesis prompt from step outputs."""
-        parts = ["Based on the following data, provide a summary:\n"]
-        
-        for step_key, step_data in context.get("steps", {}).items():
+
+        steps = context.get("steps", {})
+
+        # If there are no steps in this experience, we assume the system prompt contains all the info.
+        if not steps:
+            return "Complete your assignment."
+
+        parts = ["Based on the following data, provide a summary:\n"]        
+        for step_key, step_data in steps.items():
             if step_data.get("status") == "succeeded" and step_data.get("data"):
                 parts.append(f"\n## {step_key}\n")
                 data = step_data.get("data", {})

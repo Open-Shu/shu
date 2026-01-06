@@ -16,7 +16,7 @@ from ..core.exceptions import ShuException, NotFoundError, ConflictError, Valida
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
 from ..schemas.experience import (
-    ExperienceCreate, ExperienceUpdate, ExperienceVisibility
+    ExperienceCreate, ExperienceUpdate, ExperienceVisibility, ExperienceRunRequest
 )
 from ..services.experience_service import ExperienceService
 
@@ -418,6 +418,7 @@ async def delete_experience(
 )
 async def run_experience(
     experience_id: str = Path(..., description="Experience ID"),
+    run_request: Optional[ExperienceRunRequest] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -489,7 +490,7 @@ async def run_experience(
             async for event in executor.execute_streaming(
                 experience=experience_model,
                 user_id=str(current_user.id),
-                input_params={},  # TODO: Accept input params from request body
+                input_params=run_request.input_params if run_request else {},
                 current_user=current_user,
             ):
                 yield f"data: {json.dumps(event.to_dict())}\n\n"
