@@ -190,7 +190,6 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 - **Type hints** for function parameters and returns
 - Keep functions focused and reusable
 
-
 ### 7.1 SOLID & DRY principles and Separation of Concerns Focus (Mandatory)
 - Follow SOLID principles - single responsibility and separation of concerns, open/closed, LSP, dependency inversion.
 - Follow DRY principles - don't duplicate code or data - consolidate and re-use.

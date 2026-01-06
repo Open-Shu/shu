@@ -5,16 +5,23 @@ This module provides middleware for request tracking, timing, and other
 cross-cutting concerns.
 """
 
+from __future__ import annotations
+
+import logging
 import time
 import uuid
+from collections.abc import Callable
+from typing import Optional, TYPE_CHECKING
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
-from typing import Callable, Optional, Set
-import logging
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
+
+if TYPE_CHECKING:
+    from .rate_limiting import RateLimitService
 
 logger = logging.getLogger(__name__)
 
@@ -290,12 +297,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Retry-After: Seconds to wait (only on 429 responses)
     """
 
-    def __init__(self, app, excluded_paths: Optional[Set[str]] = None):
+    def __init__(self, app, excluded_paths: Optional[set[str]] = None) -> None:
         super().__init__(app)
-        self._rate_limit_service = None
+        self._rate_limit_service: Optional["RateLimitService"] = None
 
         # Default excluded paths (public endpoints that don't need rate limiting)
-        self.excluded_paths: Set[str] = excluded_paths or {
+        self.excluded_paths: set[str] = excluded_paths or {
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -305,14 +312,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
 
         # Excluded prefixes
-        self.excluded_prefixes = [
+        self.excluded_prefixes: list[str] = [
             "/docs",
             "/redoc",
             "/openapi.json",
             "/api/v1/health/",
         ]
 
-    def _get_rate_limit_service(self):
+    def _get_rate_limit_service(self) -> "RateLimitService":
         """Get rate limit service lazily."""
         if self._rate_limit_service is None:
             from .rate_limiting import get_rate_limit_service

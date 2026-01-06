@@ -247,7 +247,7 @@ class TokenBucketRateLimiter:
                 reset_seconds=window_s,
             )
         except Exception as e:
-            logger.error("In-memory rate limiter failure; allowing request: %s", e)
+            logger.exception("In-memory rate limiter failure; allowing request: %s", e)
             return RateLimitResult(allowed=True, remaining=capacity, limit=capacity)
 
     async def _check_redis(

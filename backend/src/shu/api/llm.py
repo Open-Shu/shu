@@ -158,7 +158,7 @@ def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LL
         is_active=provider.is_active,
         rate_limit_rpm=provider.rate_limit_rpm,
         rate_limit_tpm=provider.rate_limit_tpm,
-        budget_limit_monthly=float(provider.budget_limit_monthly) if provider.budget_limit_monthly else None,
+        budget_limit_monthly=float(provider.budget_limit_monthly) if provider.budget_limit_monthly is not None else None,
         has_api_key=bool(provider.api_key_encrypted),
         endpoints=data.endpoints,
         provider_capabilities=data.provider_capabilities,

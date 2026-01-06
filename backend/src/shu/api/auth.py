@@ -1,6 +1,7 @@
 """Authentication API endpoints for Shu"""
 
-from fastapi import APIRouter, HTTPException, Depends, status, Request
+from fastapi import APIRouter, HTTPException, Depends, status
+from starlette.requests import Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -298,7 +299,6 @@ user_service = UserService()
 @router.post("/login", response_model=SuccessResponse[TokenResponse])
 async def login(
     request: LoginRequest,
-    http_request: Request,
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(_check_auth_rate_limit),
 ):

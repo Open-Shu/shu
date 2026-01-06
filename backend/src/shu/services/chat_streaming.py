@@ -282,7 +282,11 @@ class EnsembleStreamingHelper:
             try:
                 # Check per-provider rate limits before calling LLM
                 if conversation_owner_id:
-                    # Estimate tokens from context (rough approximation)
+                    # Token estimation heuristic: multiply word count by 2 to approximate tokens.
+                    # English averages ~1.3 tokens/word, but code/JSON/non-Latin scripts can be
+                    # higher; 2x provides a conservative pre-check buffer. This estimate is used
+                    # only for rate limiting, not billing. A floor of 100 tokens is applied to
+                    # handle empty or very short messages.
                     estimated_tokens = sum(
                         len(str(getattr(m, "content", "") or "").split()) * 2
                         for m in (inputs.context_messages.messages or [])

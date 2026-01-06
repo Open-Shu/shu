@@ -85,7 +85,10 @@ class InMemoryRedisClient:
 
         current = self._data.get(key, 0)
         if isinstance(current, str):
-            current = int(current)
+            try:
+                current = int(current)
+            except ValueError:
+                raise ValueError("ERR value is not an integer or out of range")
         new_value = current + amount
         self._data[key] = new_value
         return new_value
