@@ -237,6 +237,7 @@ class ExperiencesSchedulerService:
             "due": len(due_experiences),
             "user_runs": user_runs,
             "user_failures": user_failures,
+            "no_users": 0,
         }
 
 

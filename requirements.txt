@@ -53,6 +53,7 @@ psutil==7.0.0  # For system monitoring
 
 # Testing (Custom Framework)
 pytest==8.3.3  # For pytest-based unit tests
+hypothesis==6.150.0
 pytest-asyncio==0.24.0  # Async support for pytest unit tests
 httpx==0.28.1  # For HTTP client in integration tests
 
