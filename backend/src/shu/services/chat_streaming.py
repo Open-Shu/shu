@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.exceptions import LLMProviderError, LLMTimeoutError, LLMRateLimitError, LLMError
 from shu.core.config import get_settings_instance
+from shu.core.rate_limiting import get_rate_limit_service
 from shu.services.providers.events import ProviderStreamEvent
 from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, ProviderToolCallEventResult, get_adapter_from_provider
 from shu.core.config import ConfigurationManager
@@ -115,6 +116,15 @@ class EnsembleStreamingHelper:
         return provider_and_model_support_tools and chat_plugins_enabled
     
     async def _get_conversation_owner(self, conversation_id):
+        """
+        Fetches the owner user ID for a conversation by its ID.
+        
+        Parameters:
+            conversation_id: Identifier of the conversation to look up.
+        
+        Returns:
+            `str` user ID if the conversation exists and has a user_id, `None` if the conversation is missing, has no user_id, or an error occurs while fetching it.
+        """
         conversation_owner_id = None
         try:
             conv_obj = await self.chat_service.get_conversation_by_id(conversation_id)
@@ -122,6 +132,75 @@ class EnsembleStreamingHelper:
         except Exception:
             conversation_owner_id = None
         return conversation_owner_id
+
+    async def _check_provider_rate_limits(
+        self,
+        user_id: str,
+        provider_id: str,
+        rpm_limit: int,
+        tpm_limit: int,
+        estimated_tokens: int = 100,
+    ) -> None:
+        """
+        Enforces per-provider requests-per-minute (RPM) and tokens-per-minute (TPM) limits for a user before making an LLM call.
+        
+        Checks the configured provider limits and, when rate limiting is enabled, queries the rate limit service to verify both RPM and TPM allowances. A limit value of 0 disables that specific check.
+        
+        Parameters:
+            user_id (str): ID of the conversation owner / user making the request.
+            provider_id (str): Provider identifier to check limits against.
+            rpm_limit (int): Requests-per-minute limit for the provider; 0 means no RPM check.
+            tpm_limit (int): Tokens-per-minute limit for the provider; 0 means no TPM check.
+            estimated_tokens (int): Estimated number of tokens the pending request will consume (used for TPM calculation).
+        
+        Raises:
+            LLMRateLimitError: If the RPM or TPM check fails; error details include provider_id, limit_type ("rpm" or "tpm"), limit, and retry_after.
+        """
+        rate_limit_service = get_rate_limit_service()
+        logger.debug(
+            "Rate limit service enabled=%s, rpm_limit=%d, tpm_limit=%d",
+            rate_limit_service.enabled, rpm_limit, tpm_limit
+        )
+        if not rate_limit_service.enabled:
+            logger.debug("Rate limiting is disabled, skipping checks")
+            return
+
+        # Check RPM with provider-specific limit (0 means no limit)
+        if rpm_limit > 0:
+            logger.debug("Checking RPM limit: user=%s, provider=%s, limit=%d", user_id, provider_id, rpm_limit)
+            rpm_result = await rate_limit_service.check_llm_rpm_limit(
+                user_id, provider_id=provider_id, rpm_override=rpm_limit
+            )
+            logger.debug("RPM check result: allowed=%s, remaining=%d, limit=%d", rpm_result.allowed, rpm_result.remaining, rpm_result.limit)
+            if not rpm_result.allowed:
+                logger.warning("RPM limit exceeded: user=%s, provider=%s, limit=%d", user_id, provider_id, rpm_limit)
+                raise LLMRateLimitError(
+                    f"Provider rate limit exceeded ({rpm_limit} RPM). Retry after {rpm_result.retry_after_seconds}s.",
+                    details={
+                        "provider_id": provider_id,
+                        "limit_type": "rpm",
+                        "limit": rpm_limit,
+                        "retry_after": rpm_result.retry_after_seconds,
+                    }
+                )
+        else:
+            logger.debug("RPM limit is 0, skipping RPM check")
+
+        # Check TPM with provider-specific limit (0 means no limit)
+        if tpm_limit > 0:
+            tpm_result = await rate_limit_service.check_llm_tpm_limit(
+                user_id, estimated_tokens, provider_id=provider_id, tpm_override=tpm_limit
+            )
+            if not tpm_result.allowed:
+                raise LLMRateLimitError(
+                    f"Provider token rate limit exceeded ({tpm_limit} TPM). Retry after {tpm_result.retry_after_seconds}s.",
+                    details={
+                        "provider_id": provider_id,
+                        "limit_type": "tpm",
+                        "limit": tpm_limit,
+                        "retry_after": tpm_result.retry_after_seconds,
+                    }
+                )
 
     async def _call_provider(
         self,
@@ -137,6 +216,25 @@ class EnsembleStreamingHelper:
         tools_enabled: bool,
     ) -> tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
 
+        """
+        Stream provider responses for a single model variant and enqueue interim events to the provided queue.
+        
+        Parameters:
+            client (UnifiedLLMClient): LLM client to call for chat completions.
+            messages (ChatContext): Conversation context to send to the provider.
+            inputs (ModelExecutionInputs): Execution inputs including model and configuration.
+            model_snapshot (Dict[str, Any]): Metadata snapshot of the model configuration to attach to events.
+            model_display_name (Optional[str]): Human-readable model name for events.
+            allowed_to_stream (bool): Whether the provider call should request streaming responses.
+            queue (asyncio.Queue): Queue to which intermediate ProviderResponseEvent objects are put.
+            variant_index (int): Index of the current model variant within the ensemble.
+            tools_enabled (bool): Whether tool-calling is enabled for this run.
+        
+        Returns:
+            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
+                final_message_event: The provider's final event (content or error) if produced, otherwise None.
+                followup_messages: Additional messages emitted by the provider (e.g., from a tool call) to be sent back for follow-up, or None.
+        """
         final_message_event: Optional[ProviderFinalEventResult] = None
         followup_messages: Optional[List[ChatMessage]] = None
         llm_params = None
@@ -195,7 +293,19 @@ class EnsembleStreamingHelper:
         conversation_id: str,
         parent_message_id_override: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream multiple model configurations concurrently and emit multiplexed SSE events."""
+        """
+        Stream responses from multiple model configurations in parallel and emit multiplexed server-sent-event style events.
+        
+        This coroutine concurrently executes each provided ModelExecutionInputs variant, forwards intermediate deltas and final results into a shared queue, persists the final assistant message and usage, and yields each queued ProviderResponseEvent as a dictionary suitable for SSE delivery. The generator yields content and reasoning deltas as they arrive, final_message events when a variant completes, and error events when a variant fails.
+        
+        Parameters:
+            ensemble_inputs (List[ModelExecutionInputs]): One entry per model/variant describing provider, model configuration, context, and rate limits to execute.
+            conversation_id (str): Identifier of the conversation to which produced assistant messages will be appended.
+            parent_message_id_override (Optional[str]): If provided, use this value as the parent message id for all produced messages; otherwise a new UUID is generated and the first variant may reuse it as the message id.
+        
+        Returns:
+            AsyncGenerator[Dict[str, Any], None]: An async generator that yields dictionaries representing ProviderResponseEvent objects (SSE-serializable events) with keys such as `event`/`type`, `content`, `variant_index`, and model/metadata fields.
+        """
         service = self.chat_service
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -210,6 +320,13 @@ class EnsembleStreamingHelper:
 
         async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs"):
 
+            """
+            Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
+            
+            Parameters:
+            	variant_index (int): Zero-based index of the variant within the ensemble.
+            	inputs (ModelExecutionInputs): Execution inputs and configuration for this variant, including provider/model identifiers, context messages, and rate-limit settings.
+            """
             client = await service.llm_service.get_client(inputs.provider_id, conversation_owner_id)
             config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
             model_snapshot = dict(config_metadata.get("model_configuration") or {})
@@ -217,6 +334,29 @@ class EnsembleStreamingHelper:
             config_metadata["model_configuration"] = model_snapshot
 
             try:
+                # Check per-provider rate limits before calling LLM
+                if conversation_owner_id:
+                    # Token estimation heuristic: multiply word count by 2 to approximate tokens.
+                    # English averages ~1.3 tokens/word, but code/JSON/non-Latin scripts can be
+                    # higher; 2x provides a conservative pre-check buffer. This estimate is used
+                    # only for rate limiting, not billing. A floor of 100 tokens is applied to
+                    # handle empty or very short messages.
+                    estimated_tokens = sum(
+                        len(str(getattr(m, "content", "") or "").split()) * 2
+                        for m in (inputs.context_messages.messages or [])
+                    )
+                    estimated_tokens = max(100, estimated_tokens)
+                    logger.info(
+                        "Checking rate limits: user=%s, provider=%s, rpm_limit=%d, tpm_limit=%d, est_tokens=%d",
+                        conversation_owner_id, inputs.provider_id, inputs.rate_limit_rpm, inputs.rate_limit_tpm, estimated_tokens
+                    )
+                    await self._check_provider_rate_limits(
+                        user_id=str(conversation_owner_id),
+                        provider_id=inputs.provider_id,
+                        rpm_limit=inputs.rate_limit_rpm,
+                        tpm_limit=inputs.rate_limit_tpm,
+                        estimated_tokens=estimated_tokens,
+                    )
 
                 # Create the tool callign parameters, if applicable
                 tools_enabled = self._get_tools_enabled(client, inputs)

@@ -110,29 +110,56 @@ class _DenyHttpImportsCtx:
 
 class Executor:
     def __init__(self):
+        """
+        Initialize executor rate limiters from configuration.
+        
+        If rate limiting is enabled in the global settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")
+        and a provider/model TokenBucketRateLimiter (namespace "rl:plugin:prov") using the configured requests-per-period and period to
+        derive capacity and refill rate. On any initialization error, log the failure and leave both limiter attributes set to None.
+        """
         self._limiter = None  # per-user/per-tool limiter
         self._provider_limiter = None  # provider/model limiter
         try:
             s = get_settings_instance()
-        except Exception:
-            s = None
-        if s and (getattr(s, "ENABLE_RATE_LIMITING", False) or getattr(s, "enable_rate_limiting", False)):
-            try:
-                from .rate_limit import TokenBucketLimiter  # local import to avoid hard dependency
-                # Per-user defaults
-                rpm = int(getattr(s, "RATE_LIMIT_USER_REQUESTS", getattr(s, "rate_limit_user_requests", 60)))
-                period = int(getattr(s, "RATE_LIMIT_USER_PERIOD", getattr(s, "rate_limit_user_period", 60)))
+            if s.enable_rate_limiting:
+                from ..core.rate_limiting import TokenBucketRateLimiter
+                # Per-user defaults using settings directly
+                rpm = s.rate_limit_user_requests
+                period = s.rate_limit_user_period
                 capacity = max(1, rpm)
                 refill_per_second = max(1, int(rpm / max(1, period)))
-                self._limiter = TokenBucketLimiter(capacity=capacity, refill_per_second=refill_per_second)
+                self._limiter = TokenBucketRateLimiter(
+                    namespace="rl:plugin:user",
+                    capacity=capacity,
+                    refill_per_second=refill_per_second,
+                )
                 # Provider limiter defaults; per-call overrides will set actual caps
-                self._provider_limiter = TokenBucketLimiter(namespace="rl:prov", capacity=capacity, refill_per_second=refill_per_second)
-            except Exception:
-                logger.exception("Failed to initialize TokenBucketLimiter; proceeding without rate limiting")
-                self._limiter = None
-                self._provider_limiter = None
+                self._provider_limiter = TokenBucketRateLimiter(
+                    namespace="rl:plugin:prov",
+                    capacity=capacity,
+                    refill_per_second=refill_per_second,
+                )
+        except Exception:
+            logger.exception("Failed to initialize rate limiter; proceeding without rate limiting")
+            self._limiter = None
+            self._provider_limiter = None
 
     def _validate(self, plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate the provided params against the plugin's input schema and return the params if validation succeeds.
+        
+        If the plugin exposes no schema, the params are returned unchanged. If jsonschema is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required" field are present and raise an HTTPException 422 identifying a missing key if not.
+        
+        Parameters:
+            plugin (Plugin): Plugin instance whose schema will be used (via plugin.get_schema()).
+            params (Dict[str, Any]): Input parameters to validate.
+        
+        Returns:
+            Dict[str, Any]: The same `params` dictionary if validation passes.
+        
+        Raises:
+            HTTPException: Raised with status code 422 and a structured detail when validation fails or required keys are missing.
+        """
         schema = None
         try:
             schema = plugin.get_schema()
@@ -277,6 +304,26 @@ class Executor:
 
     async def execute(self, *, plugin: Plugin, user_id: str, user_email: Optional[str], agent_key: Optional[str], params: Dict[str, Any], limits: Optional[Dict[str, Any]] = None, provider_identities: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> PluginResult:
         # Split host-only overlay from plugin params (reserved key) BEFORE validation
+        """
+        Execute a plugin call with rate limiting, quotas, validation, and import-deny enforcement.
+        
+        This method enforces per-user and provider quotas/rate-limits, optionally acquires provider concurrency slots, validates input and output against plugin schemas when available, constructs the host execution context (including resolved provider auth and schedule id), runs the plugin under a runtime import deny policy, maps host HTTP failures to structured provider errors, and returns the plugin execution result.
+        
+        Parameters:
+            plugin (Plugin): The plugin instance to execute.
+            user_id (str): The invoking user's identifier used for quota and rate-limit scoping.
+            user_email (Optional[str]): The invoking user's email for host context population.
+            agent_key (Optional[str]): Optional agent key for the execution context.
+            params (Dict[str, Any]): Plugin invocation parameters; a reserved "__host" dict may be supplied and will be removed from plugin-visible params and merged into the host context.
+            limits (Optional[Dict[str, Any]]): Optional per-plugin overrides for quotas and rate limits. Recognized keys include "quota_daily_requests", "quota_monthly_requests", "rate_limit_user_requests", "rate_limit_user_period", "provider_name", "provider_rpm", "provider_window_seconds", and "provider_concurrency".
+            provider_identities (Optional[Dict[str, List[Dict[str, Any]]]]): Optional provider identity mappings to include in the host context.
+        
+        Returns:
+            PluginResult: The plugin's execution result. On host HTTP failures returns a PluginResult with code "provider_error" and structured details; on other plugin exceptions returns a PluginResult with code "plugin_execute_error".
+        
+        Raises:
+            HTTPException: For quota, rate-limit, or provider concurrency violations (status 429) and for other HTTP-level rejections raised by the plugin execution path.
+        """
         raw_params = dict(params or {})
         host_overlay = {}
         try:
@@ -292,11 +339,11 @@ class Executor:
         try:
             s = get_settings_instance()
             # Quotas
-            daily = int(limits.get("quota_daily_requests") or getattr(s, "plugin_quota_daily_requests_default", 0) or 0)
-            monthly = int(limits.get("quota_monthly_requests") or getattr(s, "plugin_quota_monthly_requests_default", 0) or 0)
-            # Rate limit
-            rl_req = int(limits.get("rate_limit_user_requests") or getattr(s, "RATE_LIMIT_USER_REQUESTS", getattr(s, "rate_limit_user_requests", 60)) or 60)
-            rl_period = int(limits.get("rate_limit_user_period") or getattr(s, "RATE_LIMIT_USER_PERIOD", getattr(s, "rate_limit_user_period", 60)) or 60)
+            daily = int(limits.get("quota_daily_requests") or s.plugin_quota_daily_requests_default or 0)
+            monthly = int(limits.get("quota_monthly_requests") or s.plugin_quota_monthly_requests_default or 0)
+            # Rate limit using settings directly
+            rl_req = int(limits.get("rate_limit_user_requests") or s.rate_limit_user_requests or 60)
+            rl_period = int(limits.get("rate_limit_user_period") or s.rate_limit_user_period or 60)
             # Provider caps (optional per-tool override)
             provider_name = str(limits.get("provider_name") or "").strip()
             provider_rpm = int(limits.get("provider_rpm") or 0)
@@ -317,36 +364,29 @@ class Executor:
         # Rate limit per user+plugin
         if self._limiter:
             refill = max(1, int(rl_req / max(1, rl_period)))
-            try:
-                logger.debug("RateLimit check | bucket=%s capacity=%s refill_per_second=%s", bucket, max(1, rl_req), refill)
-            except Exception:
-                pass
-            allowed, retry = await self._limiter.allow(bucket=bucket, cost=1, capacity=max(1, rl_req), refill_per_second=refill)
-            if not allowed:
-                headers = {
-                    "Retry-After": str(retry),
-                    "RateLimit-Limit": f"{rl_req};w={max(1, rl_period)}",
-                    "RateLimit-Remaining": "0",
-                    "RateLimit-Reset": str(retry),
-                }
-                raise HTTPException(status_code=429, detail={"error": "rate_limited", "retry_after": retry}, headers=headers)
+            logger.debug("RateLimit check | bucket=%s capacity=%s refill_per_second=%s", bucket, max(1, rl_req), refill)
+            result = await self._limiter.check(key=bucket, cost=1, capacity=max(1, rl_req), refill_per_second=refill)
+            if not result.allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail={"error": "rate_limited", "retry_after": result.retry_after_seconds},
+                    headers=result.to_headers(),
+                )
 
         # Provider RPM cap (shared across plugins using same provider name)
         acquired_concurrency = False
         try:
             if self._provider_limiter and provider_name and provider_rpm > 0:
                 prov_refill = max(1, int(provider_rpm / max(1, provider_window)))
-                allowed, retry = await self._provider_limiter.allow(
-                    bucket=provider_name, cost=1, capacity=max(1, provider_rpm), refill_per_second=prov_refill
+                result = await self._provider_limiter.check(
+                    key=provider_name, cost=1, capacity=max(1, provider_rpm), refill_per_second=prov_refill
                 )
-                if not allowed:
-                    headers = {
-                        "Retry-After": str(retry),
-                        "RateLimit-Limit": f"{provider_rpm};w={max(1, provider_window)}",
-                        "RateLimit-Remaining": "0",
-                        "RateLimit-Reset": str(retry),
-                    }
-                    raise HTTPException(status_code=429, detail={"error": "provider_rate_limited", "provider": provider_name, "retry_after": retry}, headers=headers)
+                if not result.allowed:
+                    raise HTTPException(
+                        status_code=429,
+                        detail={"error": "provider_rate_limited", "provider": provider_name, "retry_after": result.retry_after_seconds},
+                        headers=result.to_headers(),
+                    )
             # Provider concurrency cap
             if provider_name and provider_concurrency > 0:
                 acquired_concurrency = await self._acquire_provider_concurrency(provider=provider_name, limit=provider_concurrency)
@@ -479,4 +519,3 @@ class Executor:
 
 
 EXECUTOR = Executor()
-

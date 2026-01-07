@@ -57,9 +57,9 @@ class LLMProviderCreate(BaseModel):
     api_endpoint: str = Field(..., description="API endpoint URL")
     api_key: Optional[str] = Field(None, description="API key")
     organization_id: Optional[str] = Field(None, description="Organization ID")
-    rate_limit_rpm: int = Field(60, description="Rate limit (requests per minute)")
-    rate_limit_tpm: int = Field(60000, description="Rate limit (tokens per minute)")
-    budget_limit_monthly: Optional[float] = Field(None, description="Monthly budget limit")
+    rate_limit_rpm: int = Field(60, description="Rate limit (requests per minute, 0 = disabled)")
+    rate_limit_tpm: int = Field(60000, description="Rate limit (tokens per minute, 0 = disabled)")
+    budget_limit_monthly: Optional[float] = Field(None, description="Monthly budget limit in dollars")
     endpoints: Optional[Dict[str, EndpointDefUpdate]] = Field(
         None,
         description="Overrides for ProviderTypeDefinition.endpoints stored on provider"
@@ -147,7 +147,17 @@ class LLMModelResponse(BaseModel):
 
 # Helper function to convert database model to response model
 def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LLMProviderResponse:
-    """Convert LLMProvider database model to response model."""
+    """
+    Builds an LLMProviderResponse from a LLMProvider database model.
+    
+    Parameters:
+        db_session (AsyncSession): Database session used to load provider type definition.
+        provider (LLMProvider): Database model instance to convert.
+    
+    Returns:
+        LLMProviderResponse: Response object containing provider fields. `budget_limit_monthly`
+        is a float when set or `None` when not present; `has_api_key` indicates whether an API key is stored.
+    """
     data = ProviderTypeDefinitionSchema.build_from_existing(db_session, provider)
     return LLMProviderResponse(
         id=provider.id,
@@ -158,7 +168,7 @@ def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LL
         is_active=provider.is_active,
         rate_limit_rpm=provider.rate_limit_rpm,
         rate_limit_tpm=provider.rate_limit_tpm,
-        budget_limit_monthly=provider.budget_limit_monthly,
+        budget_limit_monthly=float(provider.budget_limit_monthly) if provider.budget_limit_monthly else None,
         has_api_key=bool(provider.api_key_encrypted),
         endpoints=data.endpoints,
         provider_capabilities=data.provider_capabilities,
@@ -556,4 +566,4 @@ async def health_check(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to check LLM health"
-        )
+        ) from e

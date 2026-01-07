@@ -34,6 +34,11 @@ replaces = ("001", "002", "003", "004", "005")
 
 def upgrade() -> None:
     # Ensure pgvector is available before creating vector columns
+    """
+    Create the initial database schema for the application, including core tables, indexes, and seeded system prompts.
+    
+    This migration ensures the PostgreSQL `vector` extension is attempted (failure is tolerated), creates all core tables and constraints for knowledge bases, sources, documents, chunks, sync jobs, prompts, users, LLM providers/models/usage, conversations/messages, model configurations, RBAC, attachments, and related junction tables, and adds performance indexes. It also seeds a small set of system default prompts if they do not already exist; prompt seeding failures are non-blocking.
+    """
     try:
         op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     except Exception:
@@ -448,8 +453,6 @@ def upgrade() -> None:
         sa.Column("supports_streaming", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("supports_functions", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("supports_vision", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("cost_per_input_token", sa.Numeric(precision=12, scale=10), nullable=True),
-        sa.Column("cost_per_output_token", sa.Numeric(precision=12, scale=10), nullable=True),
         sa.Column("rate_limit_rpm", sa.Integer(), nullable=False, server_default=sa.text("60")),
         sa.Column("rate_limit_tpm", sa.Integer(), nullable=False, server_default=sa.text("60000")),
         sa.Column("budget_limit_monthly", sa.Numeric(precision=10, scale=2), nullable=True),
@@ -704,4 +707,3 @@ def downgrade() -> None:
             op.drop_table(t)
         except Exception:
             pass
-

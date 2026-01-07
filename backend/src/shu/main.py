@@ -21,7 +21,7 @@ from .core.config import get_settings_instance
 from .core.database import init_db
 from .core.exceptions import ShuException
 from .core.logging import get_logger, setup_logging
-from .core.middleware import RequestIDMiddleware, TimingMiddleware, AuthenticationMiddleware, SecurityHeadersMiddleware
+from .core.middleware import RequestIDMiddleware, TimingMiddleware, AuthenticationMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware
 from .core.http_client import close_http_client
 from .api.auth import router as auth_router
 from .api.config import router as config_router
@@ -352,7 +352,11 @@ def create_app() -> FastAPI:
 
 
 def setup_middleware(app: FastAPI) -> None:
-    """Configure application middleware."""
+    """
+    Register and configure middleware for the FastAPI application.
+    
+    Sets up request ID, timing, authentication, security headers, API trailing-slash normalization, CORS, a scoped request-size limit for plugin endpoints, trusted-host validation (enforced only in non-debug when `SHU_ALLOWED_HOSTS` is set), and conditionally enables rate limiting based on settings. Middleware ordering is preserved; rate limiting is added after authentication so it can apply user-aware limits.
+    """
 
     settings = get_settings_instance()
 
@@ -396,9 +400,26 @@ def setup_middleware(app: FastAPI) -> None:
     elif not settings.debug:
         logger.warning("TrustedHostMiddleware not enforcing host validation; set SHU_ALLOWED_HOSTS for non-dev deployments")
 
+    # Rate limiting middleware (applied after authentication to have user context)
+    if settings.enable_rate_limiting:
+        try:
+            app.add_middleware(RateLimitMiddleware)
+            logger.info("Rate limiting middleware enabled")
+        except Exception as e:
+            logger.warning("Failed to add RateLimitMiddleware: %s", e)
+
 
 def setup_exception_handlers(app: FastAPI) -> None:
-    """Configure exception handlers."""
+    """
+    Register custom exception handlers on the FastAPI application.
+    
+    Adds handlers for ShuException, HTTPException, and Exception that log errors with contextual request information,
+    generate error IDs for server-side errors, and return structured JSON error responses. In development or debug modes
+    handlers include additional diagnostic details such as traceback and request info.
+    
+    Parameters:
+        app (FastAPI): The FastAPI application instance to configure.
+    """
 
     settings = get_settings_instance()
 

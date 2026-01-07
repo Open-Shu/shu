@@ -5,16 +5,23 @@ This module provides middleware for request tracking, timing, and other
 cross-cutting concerns.
 """
 
+from __future__ import annotations
+
+import logging
 import time
 import uuid
+from collections.abc import Callable
+from typing import Optional, TYPE_CHECKING
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
-from typing import Callable, Set
-import logging
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
+
+if TYPE_CHECKING:
+    from .rate_limiting import RateLimitService
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +162,17 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip authentication for public endpoints
+        """
+        Authenticate incoming requests, validate user status against the database, and attach the resolved user context to request.state for downstream authorization.
+        
+        Supports "Bearer <jwt>" and "ApiKey <key>" authorization. For Bearer tokens, validates the JWT and marks the request for a token refresh if the token is near expiry. For ApiKey auth, validates the configured global API key, marks the request.state.api_key_authenticated flag, and maps the API key to a configured user email. In all authenticated flows, verifies the corresponding user exists and is active in the database, then stores up-to-date user information on request.state.user. If authentication succeeds, forwards the request to the next handler; if authentication fails, returns an appropriate JSON error response. When a token refresh is required, the response will include the "X-Token-Refresh-Needed": "true" header.
+        
+        Returns:
+            Response: The downstream handler's response on successful authentication, or a JSON error response with one of:
+              - 401 Unauthorized for missing/invalid credentials or missing user mapping,
+              - 400 Bad Request if the user account is inactive,
+              - 500 Internal Server Error for database/validation errors.
+        """
         if self._is_public_path(request.url.path):
             return await call_next(request)
 
@@ -276,3 +294,161 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         return response
 
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Middleware to apply rate limiting to API endpoints.
+
+    Applies per-user rate limiting with configurable exclusions for
+    public endpoints (health checks, public config, etc.).
+
+    Rate limit headers are added to all responses:
+    - RateLimit-Limit: Maximum requests allowed
+    - RateLimit-Remaining: Remaining requests in current window
+    - RateLimit-Reset: Seconds until rate limit resets
+    - Retry-After: Seconds to wait (only on 429 responses)
+    """
+
+    def __init__(self, app, excluded_paths: Optional[set[str]] = None) -> None:
+        """
+        Initialize the RateLimitMiddleware and configure paths excluded from rate limiting.
+        
+        Sets up a lazy holder for the rate limit service, a default set of public endpoints that bypass rate limiting, and a list of path prefixes to exclude.
+        
+        Parameters:
+            excluded_paths (Optional[Set[str]]): Optional set of exact request paths to exclude from rate limiting.
+                If omitted, defaults to common public endpoints such as "/docs", "/redoc", "/openapi.json",
+                health check routes, and the public config endpoint.
+        """
+        super().__init__(app)
+        self._rate_limit_service: Optional["RateLimitService"] = None
+
+        # Default excluded paths (public endpoints that don't need rate limiting)
+        self.excluded_paths: set[str] = excluded_paths or {
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/api/v1/health/liveness",
+            "/api/v1/health/readiness",
+            "/api/v1/config/public",
+        }
+
+        # Excluded prefixes
+        self.excluded_prefixes: list[str] = [
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/api/v1/health/",
+        ]
+
+    def _get_rate_limit_service(self) -> "RateLimitService":
+        """
+        Lazily initialize and return the rate limit service instance.
+        
+        Returns:
+            The rate limit service instance used to check and manage API limits.
+        """
+        if self._rate_limit_service is None:
+            from .rate_limiting import get_rate_limit_service
+            self._rate_limit_service = get_rate_limit_service()
+        return self._rate_limit_service
+
+    def _is_excluded(self, path: str) -> bool:
+        """
+        Determine whether a request path is excluded from rate limiting.
+        
+        Parameters:
+            path (str): Request path to evaluate.
+        
+        Returns:
+            bool: `True` if the path is exactly in the excluded paths or begins with any excluded prefix, `False` otherwise.
+        """
+        if path in self.excluded_paths:
+            return True
+        for prefix in self.excluded_prefixes:
+            if path.startswith(prefix):
+                return True
+        return False
+
+    def _get_user_id(self, request: Request) -> Optional[str]:
+        """Extract user ID from request state."""
+        user = getattr(request.state, "user", None)
+        if user and isinstance(user, dict):
+            return user.get("user_id")
+        return None
+
+    def _get_client_ip(self, request: Request) -> str:
+        """
+        Determine the client's IP address to use for anonymous rate limiting.
+        
+        Parameters:
+            request (Request): The incoming request from which headers and the client host are read.
+        
+        Returns:
+            client_ip (str): IP address string chosen for rate-limiting (may come from proxy headers or the request's client host).
+        """
+        from .rate_limiting import get_client_ip
+        return get_client_ip(request.headers, request.client.host if request.client else None)
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip rate limiting for excluded paths
+        """
+        Enforce per-user or IP-based rate limits for incoming requests.
+        
+        Skips enforcement for configured excluded paths or when the rate limit service is disabled. Determines an identifier from the authenticated user ID, falling back to the client IP. If the request exceeds the allowed rate, returns a 429 JSON response containing a retry_after value and rate-limit headers. Otherwise forwards the request to the next handler and attaches rate-limit headers from the rate limit service to the returned response.
+        
+        Parameters:
+            request (Request): The incoming HTTP request.
+            call_next (Callable): The next request handler to invoke.
+        
+        Returns:
+            Response: A 429 JSON error response when the rate limit is exceeded, or the downstream response with rate-limit headers added.
+        """
+        if self._is_excluded(request.url.path):
+            return await call_next(request)
+
+        rate_limit_service = self._get_rate_limit_service()
+
+        # Skip if rate limiting is disabled
+        if not rate_limit_service.enabled:
+            return await call_next(request)
+
+        # Get identifier (user ID or IP for anonymous)
+        user_id = self._get_user_id(request)
+        identifier = user_id or f"ip:{self._get_client_ip(request)}"
+
+        # Check rate limit
+        result = await rate_limit_service.check_api_limit(identifier)
+
+        if not result.allowed:
+            # Rate limit exceeded
+            logger.warning(
+                "Rate limit exceeded",
+                extra={
+                    "identifier": identifier,
+                    "path": request.url.path,
+                    "method": request.method,
+                    "retry_after": result.retry_after_seconds,
+                }
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": {
+                        "message": "Rate limit exceeded. Please try again later.",
+                        "code": "RATE_LIMIT_EXCEEDED",
+                        "details": {
+                            "retry_after": result.retry_after_seconds,
+                        },
+                    }
+                },
+                headers=result.to_headers(),
+            )
+
+        # Process request
+        response = await call_next(request)
+
+        # Add rate limit headers to successful responses
+        for header, value in result.to_headers().items():
+            response.headers[header] = value
+
+        return response

@@ -1,5 +1,3 @@
-import NotImplemented from './NotImplemented';
-
 import React, { useMemo, useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
@@ -696,8 +694,7 @@ const handleEditProvider = (provider) => {
                   </Typography>
 
                   <Typography variant="body2" color="text.secondary" gutterBottom>
-                    <strong>Rate Limit:</strong> {provider.rate_limit_rpm} RPM
-                          <NotImplemented label="Not enforced yet" />
+                    <strong>Rate Limit:</strong> {provider.rate_limit_rpm ?? 0} RPM / {provider.rate_limit_tpm?.toLocaleString() ?? '—'} TPM
                   </Typography>
 
                   {provider.budget_limit_monthly && (

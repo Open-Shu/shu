@@ -68,12 +68,81 @@ class InMemoryRedisClient:
         return self._data[key].get(field)
     
     async def expire(self, key: str, seconds: int) -> bool:
-        """Set expiration for a key."""
+        """
+        Set a time-to-live for a key.
+        
+        Records an expiration timestamp seconds from now for the given key; this does not check whether the key currently exists.
+        
+        Parameters:
+            key (str): The key to expire.
+            seconds (int): Number of seconds from now when the key should expire.
+        
+        Returns:
+            bool: `True` if the expiration was set.
+        """
         self._expiry[key] = time.time() + seconds
         return True
+
+    async def incr(self, key: str) -> int:
+        """
+        Increase the integer value stored at key by one.
+        
+        If the key does not exist or has expired it is treated as 0. Numeric string values are coerced to int before incrementing. The new value is stored and returned.
+        Returns:
+            int: New integer value stored at the key after increment.
+        """
+        return await self.incrby(key, 1)
+
+    async def incrby(self, key: str, amount: int) -> int:
+        """
+        Increment the numeric value stored at key by the given amount.
+        
+        If the key has an expiration and is expired, the key is removed before the increment. If the existing value is a string it will be converted to an integer. The resulting value is stored back at the key.
+        
+        Parameters:
+            key (str): The key whose value will be incremented.
+            amount (int): The amount to add to the key's current value.
+        
+        Returns:
+            int: The new value after applying the increment.
+        
+        Raises:
+            ValueError: If the stored value is a string that cannot be parsed as an integer.
+            TypeError: If the stored value is not an int or str (e.g., dict from hset).
+        """
+        # Check expiration first
+        if key in self._expiry and time.time() > self._expiry[key]:
+            del self._data[key]
+            del self._expiry[key]
+
+        current = self._data.get(key, 0)
+        
+        # Handle type checking with Redis-like error messages
+        if isinstance(current, int):
+            pass  # Already an int, proceed
+        elif isinstance(current, str):
+            try:
+                current = int(current)
+            except ValueError as err:
+                raise ValueError("ERR value is not an integer or out of range") from err
+        else:
+            # Dict, list, or other incompatible type (e.g., from hset)
+            raise TypeError("WRONGTYPE Operation against a key holding the wrong kind of value")
+        
+        new_value = current + amount
+        self._data[key] = new_value
+        return new_value
     
     async def delete(self, *keys: str) -> int:
-        """Delete keys."""
+        """
+        Remove one or more keys from the in-memory store.
+        
+        Parameters:
+        	keys (str): One or more key names to delete.
+        
+        Returns:
+        	deleted (int): Number of keys that were removed. Expiration entries associated with removed keys are also cleared.
+        """
         deleted = 0
         for key in keys:
             if key in self._data:

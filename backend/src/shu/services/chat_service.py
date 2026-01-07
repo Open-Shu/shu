@@ -61,6 +61,9 @@ class ModelExecutionInputs:
     context_messages: ChatContext
     source_metadata: List[Dict]
     knowledge_base_id: Optional[str]
+    # Per-provider rate limits
+    rate_limit_rpm: int = 60
+    rate_limit_tpm: int = 60000
 
 
 class ChatService:
@@ -175,7 +178,21 @@ class ChatService:
         recent_messages_limit: Optional[int] = None,
     ) -> ModelExecutionInputs:
         """
-        Build context and resolve provider/model for a specific model configuration.
+        Resolve the provider and model for a given model configuration and build the chat context and metadata required to execute that model.
+        
+        Parameters:
+            base_conversation (Conversation): Conversation to use as the execution context.
+            turn_context (PreparedTurnContext): Prepared user turn containing the inserted user message and recent conversation messages.
+            model_configuration (ModelConfiguration): Model configuration to resolve (contains provider and model references).
+            current_user (User): User performing the action, used for access and context resolution.
+            rag_rewrite_mode (RagRewriteMode): RAG rewrite mode to apply when constructing the message context.
+            recent_messages_limit (Optional[int]): When provided, limits the number of recent messages included in the constructed context.
+        
+        Returns:
+            ModelExecutionInputs: Resolved inputs for executing the model, including provider_id, model, context_messages, source_metadata, knowledge_base_id, and per-provider rate limits (`rate_limit_rpm`, `rate_limit_tpm`). Rate limits are taken from the provider when available and default to 60 RPM and 60000 TPM.
+        
+        Raises:
+            LLMProviderError: If the model configuration is missing a provider or model reference, or if the provider or model is not found or not active.
         """
         provider_id = model_configuration.llm_provider_id
         if not provider_id:
@@ -212,6 +229,8 @@ class ChatService:
             context_messages=chat_context,
             source_metadata=source_metadata,
             knowledge_base_id=turn_context.knowledge_base_id,
+            rate_limit_rpm=provider.rate_limit_rpm or 60,
+            rate_limit_tpm=provider.rate_limit_tpm or 60000,
         )
 
     @staticmethod

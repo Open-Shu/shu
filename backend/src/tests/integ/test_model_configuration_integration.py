@@ -53,9 +53,9 @@ MODEL_DATA = {
     "max_output_tokens": 4096,
     "supports_streaming": True,
     "supports_functions": True,
-    "cost_per_input_token": 0.000005,  # Fixed field name
-    "cost_per_output_token": 0.000015,  # Fixed field name
-    "is_active": True  # Added missing field
+    "cost_per_input_token": 0.000005,
+    "cost_per_output_token": 0.000015,
+    "is_active": True
 }
 
 PROMPT_DATA = {

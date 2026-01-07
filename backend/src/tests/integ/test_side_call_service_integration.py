@@ -64,7 +64,17 @@ async def _ensure_local_provider_type(db) -> None:
 
 
 async def _create_local_side_call_model_config(client, db, auth_headers) -> Dict[str, Any]:
-    """Create provider, model, and model configuration suited for side-call tests."""
+    """
+    Create a test local provider, a model, and a side-call model configuration for integration tests.
+    
+    Creates a local provider and a model via the API, then creates a model-configuration suitable for side-call testing, and returns the created objects.
+    
+    Returns:
+        result (Dict[str, Any]): A dictionary with keys:
+            - "provider": The created provider object as returned by the API.
+            - "model": The created model object as returned by the API.
+            - "config": The created model configuration object as returned by the API.
+    """
     await _ensure_local_provider_type(db)
     suffix = uuid.uuid4().hex[:8]
 
@@ -77,7 +87,6 @@ async def _create_local_side_call_model_config(client, db, auth_headers) -> Dict
         "supports_vision": False,
         "rate_limit_rpm": 1200,
         "rate_limit_tpm": 60000,
-        "budget_limit_monthly": 0,
     }
     provider_response = await client.post(
         "/api/v1/llm/providers", json=provider_payload, headers=auth_headers

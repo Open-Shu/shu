@@ -17,6 +17,10 @@ SHU-355 Changes:
 - Creates document_projects table for project associations
 - Adds indexes for entity_id, entity_type, and project_name lookups
 - Adds unique constraints to prevent duplicate entries
+
+SHU-416 Changes:
+- Removes cost_per_input_token and cost_per_output_token from llm_providers table
+  (token costs belong on models, not providers)
 """
 
 from alembic import op
@@ -46,6 +50,21 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """
+    Apply the migration that updates document-related schema, adds new tables and indexes, and removes provider-level token cost columns.
+    
+    This migration performs the following changes in an idempotent manner:
+    - Adds columns to the `documents` table: `synopsis`, `synopsis_embedding`, `document_type`, `capability_manifest`, `profiling_status` (default 'pending'), `profiling_error`, and `relational_context`.
+    - Adds columns to the `document_chunks` table: `summary`, `keywords`, and `topics`.
+    - Creates the `document_queries` table with query text/embedding and timestamps.
+    - Creates the `document_participants` table with participant metadata, a uniqueness constraint on (document_id, entity_name, role), and an index on `entity_type`.
+    - Creates the `document_projects` table with project association metadata and a uniqueness constraint on (document_id, project_name).
+    - Creates vector indexes for embedding columns when the pgvector extension is available (ivfflat with cosine operator class).
+    - Creates GIN indexes for JSONB columns (`capability_manifest`, `keywords`, `topics`, `relational_context`) to improve containment queries.
+    - Removes `cost_per_input_token` and `cost_per_output_token` from `llm_providers`.
+    
+    All creations and drops are guarded by existence checks to ensure safe, repeatable application.
+    """
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
@@ -235,8 +254,20 @@ def upgrade() -> None:
             """
         )
 
+    # ========================================================================
+    # Part 7: Remove cost fields from llm_providers (SHU-416)
+    # Token costs belong on models, not providers
+    # ========================================================================
+    drop_column_if_exists(inspector, "llm_providers", "cost_per_input_token")
+    drop_column_if_exists(inspector, "llm_providers", "cost_per_output_token")
+
 
 def downgrade() -> None:
+    """
+    Revert the schema changes applied by the corresponding upgrade migration.
+    
+    Drops indexes created for document-related features, removes the document_projects, document_participants, and document_queries tables, and drops columns added to document_chunks and documents. Finally, restores the llm_providers columns `cost_per_input_token` and `cost_per_output_token` to revert the SHU-416 change.
+    """
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
@@ -270,3 +301,13 @@ def downgrade() -> None:
     drop_column_if_exists(inspector, "documents", "document_type")
     drop_column_if_exists(inspector, "documents", "synopsis_embedding")
     drop_column_if_exists(inspector, "documents", "synopsis")
+
+    # Re-add cost columns to llm_providers (SHU-416 rollback)
+    add_column_if_not_exists(
+        inspector, "llm_providers",
+        sa.Column("cost_per_input_token", sa.Numeric(precision=12, scale=10), nullable=True)
+    )
+    add_column_if_not_exists(
+        inspector, "llm_providers",
+        sa.Column("cost_per_output_token", sa.Numeric(precision=12, scale=10), nullable=True)
+    )
