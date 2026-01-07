@@ -233,6 +233,10 @@ export default function ExperienceEditor() {
             return;
         }
 
+        // Validate and coerce maxRunSeconds to prevent NaN
+        const parsedMaxRunSeconds = parseInt(maxRunSeconds, 10);
+        const safeMaxRunSeconds = Number.isFinite(parsedMaxRunSeconds) ? parsedMaxRunSeconds : null;
+
         const payload = {
             name,
             description: description || null,
@@ -243,7 +247,7 @@ export default function ExperienceEditor() {
             model_name: modelName || null,
             prompt_id: promptId || null,
             inline_prompt_template: inlinePromptTemplate || null,
-            max_run_seconds: parseInt(maxRunSeconds, 10),
+            max_run_seconds: safeMaxRunSeconds,
             include_previous_run: includePreviousRun,
             steps: steps.map((step, index) => ({
                 step_key: step.step_key || `step_${index}`,

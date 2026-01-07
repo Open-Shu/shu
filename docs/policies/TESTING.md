@@ -19,6 +19,11 @@ Shu uses a **custom integration test framework** for API/database integration te
 | Purpose | Test pure logic, models, utilities | Test API workflows end-to-end |
 | Run Command | `python -m pytest backend/src/tests/unit` | `python -m tests.integ.run_all_integration_tests` |
 
+**Frontend Unit Tests:**
+- Framework: Jest (via react-scripts)
+- Location: `frontend/src/components/__tests__/`
+- Run Command: `cd frontend && npm test -- --watchAll=false`
+
 ### When to Use Unit Tests (pytest)
 
 Unit tests are appropriate for:
@@ -356,6 +361,11 @@ The testing system now has two components:
    - No database or API dependencies
    - Standard pytest with `conftest.py` for model registration
    - Run via `python -m pytest backend/src/tests/unit`
+
+3. **Frontend Unit Tests** (`frontend/src/components/__tests__/`)
+   - Used for React component testing
+   - Jest framework via react-scripts
+   - Run via `cd frontend && npm test -- --watchAll=false`
 
 This dual approach provides the best of both worlds: pytest's excellent test discovery and assertion introspection for unit tests, while maintaining the custom framework's event loop control for integration tests.
 

@@ -57,6 +57,11 @@
       }
     ]
   },
+  "jest": {
+    "transformIgnorePatterns": [
+      "node_modules/(?!(axios)/)"
+    ]
+  },
   "browserslist": {
     "production": [
       ">0.2%",

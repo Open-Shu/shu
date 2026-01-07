@@ -31,11 +31,13 @@ import {
     TouchApp as ManualIcon,
     Event as CronIcon,
     History as HistoryIcon,
+    AutoAwesome as ExperiencesIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import ExperienceRunDialog from './ExperienceRunDialog';
+import PageHelpHeader from './PageHelpHeader';
 
 // Visibility chip colors
 const visibilityColors = {
@@ -240,6 +242,19 @@ export default function ExperiencesAdmin() {
 
     return (
         <Box p={3}>
+            <PageHelpHeader
+                title="Experiences"
+                description="Create automated workflows that combine plugins, knowledge bases, and AI synthesis. Build signature experiences like Morning Briefing that can be scheduled or run manually to streamline your daily tasks."
+                icon={<ExperiencesIcon />}
+                tips={[
+                    'Start by creating a simple experience with one or two steps to understand the workflow',
+                    'Use plugins to gather data (emails, calendar events, documents) and knowledge bases for context',
+                    'Draft experiences are saved automatically - publish them when ready for others to use',
+                    'Scheduled experiences can run automatically using cron expressions or simple intervals',
+                    'Experience runs are logged with full input/output history for debugging and review',
+                ]}
+            />
+
             {/* Header */}
             <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
                 <Box>

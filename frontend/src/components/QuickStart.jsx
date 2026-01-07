@@ -30,6 +30,7 @@ import {
   WbSunny as BriefingIcon,
   CheckCircle as CheckIcon,
   Description as DocumentsIcon,
+  AutoAwesome as ExperiencesIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
@@ -201,6 +202,14 @@ const QuickStart = () => {
       path: '/admin/feeds',
       priority: 'Step 6',
       statusKey: 'plugin_feed_created',
+    },
+    {
+      title: 'Experiences',
+      description: 'Create automated workflows that combine plugins, knowledge bases, and AI synthesis. Build signature experiences like Morning Briefing.',
+      icon: <ExperiencesIcon />,
+      path: '/admin/experiences',
+      priority: 'Step 7',
+      statusKey: 'experience_created',
     },
   ];
 
