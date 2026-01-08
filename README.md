@@ -478,9 +478,16 @@ See the testing guide for current commands and scope:
 
 - docs/policies/TESTING.md
 
-Typical local run:
+Typical local runs:
 ```bash
+# Backend integration tests
 python -m tests.integ.run_all_integration_tests
+
+# Backend unit tests
+python -m pytest backend/src/tests/unit
+
+# Frontend unit tests
+cd frontend && npm test -- --watchAll=false
 ```
 
 ### Run Specific Test Categories

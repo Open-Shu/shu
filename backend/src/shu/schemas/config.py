@@ -30,4 +30,5 @@ class SetupStatus(BaseModel):
     documents_added: bool
     plugins_enabled: bool
     plugin_feed_created: bool
+    experience_created: bool
 

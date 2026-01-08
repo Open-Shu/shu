@@ -176,6 +176,10 @@ class ExperiencesSchedulerService:
                 len(all_users),
             )
             
+            # Per-experience counters
+            run_count = 0
+            failure_count = 0
+            
             # Execute for each user
             for user in all_users:
 
@@ -183,7 +187,7 @@ class ExperiencesSchedulerService:
                     result = await self.execute_experience(exp, user.id)
                     
                     if result.get("status") == "completed":
-                        user_runs += 1
+                        run_count += 1
                         logger.debug(
                             "Experience completed for user | experience=%s user=%s run_id=%s",
                             exp.id,
@@ -191,7 +195,7 @@ class ExperiencesSchedulerService:
                             result.get("run_id"),
                         )
                     else:
-                        user_failures += 1
+                        failure_count += 1
                         # Log at debug level - silent failure for missing provider connections
                         logger.debug(
                             "Experience failed for user (silent) | experience=%s user=%s error=%s",
@@ -201,7 +205,7 @@ class ExperiencesSchedulerService:
                         )
                         
                 except Exception as e:
-                    user_failures += 1
+                    failure_count += 1
                     # Log at debug level for silent failure
                     logger.debug(
                         "Experience execution error for user (silent) | experience=%s user=%s error=%s",
@@ -220,15 +224,20 @@ class ExperiencesSchedulerService:
             logger.info(
                 "Experience batch complete | experience=%s runs=%d failures=%d next_run=%s",
                 exp.id,
-                user_runs,
-                user_failures,
+                run_count,
+                failure_count,
                 exp.next_run_at,
             )
+            
+            # Accumulate into global totals after logging per-experience counts
+            user_runs += run_count
+            user_failures += failure_count
         
         return {
             "due": len(due_experiences),
             "user_runs": user_runs,
             "user_failures": user_failures,
+            "no_users": 0,
         }
 
 

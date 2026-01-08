@@ -10,6 +10,13 @@ A React-based interface for the Shu Backend API.
 - **Query Tester**: Test vector similarity and hybrid search queries
 - **Health Monitor**: Real-time system health monitoring
 
+## Frontend Unit Tests (Jest)
+
+- Location: `frontend/src/components/__tests__/`
+- Run: `cd frontend && npm test -- --watchAll=false`
+- Purpose: React component testing with React Testing Library
+- Framework: Jest via react-scripts with Material-UI and React Router mocking
+
 ## Setup
 
 1. **Install Dependencies**:

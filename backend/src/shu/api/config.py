@@ -17,6 +17,7 @@ from ..models import (
     Document,
     PluginDefinition,
     PluginFeed,
+    Experience,
 )
 
 router = APIRouter(prefix="/config", tags=["configuration"])
@@ -72,6 +73,7 @@ async def get_setup_status(
             select(func.count()).select_from(Document).correlate(None).scalar_subquery().label("documents"),
             select(func.count()).select_from(PluginDefinition).where(PluginDefinition.enabled == True).correlate(None).scalar_subquery().label("plugins"),
             select(func.count()).select_from(PluginFeed).correlate(None).scalar_subquery().label("feeds"),
+            select(func.count()).select_from(Experience).correlate(None).scalar_subquery().label("experiences"),
         )
     )
     row = result.one()
@@ -83,6 +85,7 @@ async def get_setup_status(
         documents_added=row.documents > 0,
         plugins_enabled=row.plugins > 0,
         plugin_feed_created=row.feeds > 0,
+        experience_created=row.experiences > 0,
     )
 
     return SuccessResponse(data=status)
