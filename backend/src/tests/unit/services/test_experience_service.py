@@ -642,27 +642,3 @@ class TestExperienceExport:
         assert len(cleaned["items"]) == 2  # None item removed
         assert cleaned["items"][1]["id"] == 2
         assert "name" not in cleaned["items"][1]  # None name removed
-
-    def test_export_trigger_config_with_placeholders(self, service):
-        """Test trigger config placeholder replacement."""
-        # Test with timezone
-        config = {
-            "cron": "0 8 * * *",
-            "timezone": "America/New_York"
-        }
-        
-        result = service._export_trigger_config_with_placeholders(config)
-        
-        assert result["cron"] == "0 8 * * *"
-        assert result["timezone"] == "{{ user_timezone }}"
-        
-        # Test with None config
-        result = service._export_trigger_config_with_placeholders(None)
-        assert result is None
-        
-        # Test with config without timezone
-        config = {"cron": "0 8 * * *"}
-        result = service._export_trigger_config_with_placeholders(config)
-        assert result["cron"] == "0 8 * * *"
-        assert "timezone" not in result
-

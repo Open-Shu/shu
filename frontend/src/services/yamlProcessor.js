@@ -81,8 +81,10 @@ class YAMLProcessor {
     // Replace each placeholder with its corresponding value
     Object.entries(values).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {
+        // Escape regex special characters in the key
+        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         // Create regex to match the specific placeholder with optional whitespace
-        const placeholderRegex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
+        const placeholderRegex = new RegExp(`\\{\\{\\s*${escapedKey}\\s*\\}\\}`, 'g');
         
         // Convert value to string for substitution
         const stringValue = typeof value === 'string' ? value : String(value);
@@ -134,8 +136,15 @@ class YAMLProcessor {
     // Validate each step has required fields
     if (payload.steps.length > 0) {
       payload.steps.forEach((step, index) => {
-        if (!step.step_key || !step.step_type) {
-          throw new Error(`Step ${index + 1} is missing required fields: step_key and step_type`);
+        const missingFields = [];
+        if (!step.step_key) missingFields.push('step_key');
+        if (!step.step_type) missingFields.push('step_type');
+        
+        if (missingFields.length > 0) {
+          const fieldList = missingFields.length === 1 
+            ? `missing required field: ${missingFields[0]}`
+            : `missing required fields: ${missingFields.join(', ')}`;
+          throw new Error(`Step ${index + 1} ${fieldList}`);
         }
       });
     }

@@ -850,6 +850,11 @@ class ExperienceService:
         safe_name = "".join(c for c in experience.name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_name = '-'.join(word for word in safe_name.split() if word)  # Handle multiple spaces
         safe_name = safe_name.lower()
+        
+        # If safe_name is empty after sanitization, use a fallback
+        if not safe_name:
+            safe_name = f"experience-{experience.id}" if hasattr(experience, 'id') and experience.id else "experience"
+        
         return f"{safe_name}-experience.yaml"
 
     def export_experience_to_yaml(self, experience: ExperienceResponse) -> Tuple[str, str]:
@@ -936,28 +941,6 @@ class ExperienceService:
 """
         
         return header + yaml_content, self.generate_safe_file_name(experience)
-
-    def _export_trigger_config_with_placeholders(self, trigger_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """
-        Export trigger config with placeholders for user-specific values.
-        
-        Args:
-            trigger_config: Original trigger configuration
-            
-        Returns:
-            Trigger config with placeholders
-        """
-        if not trigger_config:
-            return None
-            
-        # Make a copy to avoid modifying the original
-        config = trigger_config.copy()
-        
-        # Replace timezone with placeholder if present
-        if "timezone" in config:
-            config["timezone"] = "{{ user_timezone }}"
-            
-        return config
 
     def _remove_none_values(self, data: Any) -> Any:
         """
