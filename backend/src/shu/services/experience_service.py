@@ -8,6 +8,7 @@ including CRUD operations, template validation, and required scopes computation.
 from typing import List, Optional, Dict, Any, Tuple, TypeVar, Callable
 from datetime import datetime
 import uuid
+import yaml
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, inspect as sa_inspect
@@ -839,6 +840,124 @@ class ExperienceService:
             experiences=summaries,
             total=total
         )
+
+    # =========================================================================
+    # Export Functionality
+    # =========================================================================
+
+    def generate_safe_file_name(self, experience: ExperienceResponse):
+        # Create filename based on experience name
+        safe_name = "".join(c for c in experience.name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_name = '-'.join(word for word in safe_name.split() if word)  # Handle multiple spaces
+        safe_name = safe_name.lower()
+        
+        # If safe_name is empty after sanitization, use a fallback
+        if not safe_name:
+            safe_name = f"experience-{experience.id}" if hasattr(experience, 'id') and experience.id else "experience"
+        
+        return f"{safe_name}-experience.yaml"
+
+    def export_experience_to_yaml(self, experience: ExperienceResponse) -> Tuple[str, str]:
+        """
+        Export an experience to YAML format with placeholders for user-specific values.
+        
+        Args:
+            experience: Experience response object to export
+            
+        Returns:
+            YAML string with placeholders for sharing
+        """
+        # Build the YAML structure
+        yaml_data = {
+            "experience_yaml_version": 1,
+            "id": f"{experience.name.lower().replace(' ', '-')}-v{experience.version}",
+            "name": experience.name,
+            "description": experience.description,
+            "version": experience.version,
+            "visibility": "draft",  # Experiences will always be imported / exported as draft, the user can then publish it when they confirmed they run correctly.
+            "trigger_type": "{{ trigger_type }}",
+            "trigger_config": "{{ trigger_config }}",
+            "include_previous_run": experience.include_previous_run,
+            "llm_provider_id": "{{ selected_provider }}",  # Placeholder for user selection
+            "model_name": "{{ selected_model }}",  # Placeholder for user selection
+            "inline_prompt_template": experience.inline_prompt_template,
+            "max_run_seconds": "{{ max_run_seconds }}",
+            "token_budget": None,  # We need to revisit this, rate limiting is already handled on LLM and plugin level.
+            "steps": []
+        }
+        
+        # Add steps
+        for step in sorted(experience.steps, key=lambda s: s.order):
+
+            # TODO: To export a KB step, we would need to export the KB. We might tackle that in the future, but not for now.
+            if step.step_type == StepType.KNOWLEDGE_BASE:
+                continue
+
+            step_data = {
+                "step_key": step.step_key,
+                "step_type": step.step_type.value,
+                "order": step.order
+            }
+
+            # Add step-type specific fields
+            if step.step_type == StepType.PLUGIN:
+                step_data["plugin_name"] = step.plugin_name
+                step_data["plugin_op"] = step.plugin_op
+
+            # Add optional fields if present
+            if step.params_template:
+                step_data["params_template"] = step.params_template
+            if step.condition_template:
+                step_data["condition_template"] = step.condition_template
+                
+            yaml_data["steps"].append(step_data)
+        
+        # Remove None values to keep YAML clean
+        yaml_data = self._remove_none_values(yaml_data)
+        
+        # Convert to YAML with proper formatting
+        yaml_content = yaml.dump(
+            yaml_data,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            indent=2,
+            width=120
+        )
+        
+        # Add header comment
+        header = f"""# Experience Export: {experience.name}
+# Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# 
+# This YAML file contains placeholders for user-specific values:
+# - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
+# - {{ trigger_config }}: The actual trigger value, depending on the schedule type
+# - {{ selected_provider }}: Choose your LLM provider
+# - {{ selected_model }}: Choose your model
+# - {{ max_run_seconds }}: The total amount of time the experience is allowed to run
+#
+# To import this experience, use the Experience Import wizard in Shu.
+
+"""
+        
+        return header + yaml_content, self.generate_safe_file_name(experience)
+
+    def _remove_none_values(self, data: Any) -> Any:
+        """
+        Recursively remove None values from a data structure.
+        
+        Args:
+            data: Data structure to clean
+            
+        Returns:
+            Cleaned data structure
+        """
+        if isinstance(data, dict):
+            return {k: self._remove_none_values(v) for k, v in data.items() if v is not None}
+        elif isinstance(data, list):
+            return [self._remove_none_values(item) for item in data if item is not None]
+        else:
+            return data
 
     # =========================================================================
     # Private Helpers

@@ -37,6 +37,7 @@ import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import ExperienceRunDialog from './ExperienceRunDialog';
+import ExportExperienceButton from './ExportExperienceButton';
 import PageHelpHeader from './PageHelpHeader';
 
 // Visibility chip colors
@@ -127,6 +128,12 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                                     <HistoryIcon fontSize="small" />
                                 </IconButton>
                             </Tooltip>
+                            <ExportExperienceButton
+                                experienceId={experience.id}
+                                experienceName={experience.name}
+                                variant="icon"
+                                size="small"
+                            />
                             <Tooltip title="Edit experience">
                                 <IconButton
                                     size="small"
