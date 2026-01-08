@@ -925,9 +925,11 @@ class ExperienceService:
 # Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # 
 # This YAML file contains placeholders for user-specific values:
+# - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
+# - {{ trigger_config }}: The actual trigger value, depending on the schedule type
 # - {{ selected_provider }}: Choose your LLM provider
 # - {{ selected_model }}: Choose your model
-# - {{ user_timezone }}: Your timezone (auto-filled during import)
+# - {{ max_run_seconds }}: The total amount of time the experience is allowed to run
 #
 # To import this experience, use the Experience Import wizard in Shu.
 
