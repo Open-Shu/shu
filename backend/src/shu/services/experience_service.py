@@ -878,8 +878,8 @@ class ExperienceService:
             "trigger_type": "{{ trigger_type }}",
             "trigger_config": "{{ trigger_config }}",
             "include_previous_run": experience.include_previous_run,
-            "llm_provider_id": "{{ selected_provider }}",  # Placeholder for user selection
-            "model_name": "{{ selected_model }}",  # Placeholder for user selection
+            "llm_provider_id": "{{ llm_provider_id }}",  # Placeholder for user selection
+            "model_name": "{{ model_name }}",  # Placeholder for user selection
             "inline_prompt_template": experience.inline_prompt_template,
             "max_run_seconds": "{{ max_run_seconds }}",
             "token_budget": None,  # We need to revisit this, rate limiting is already handled on LLM and plugin level.
@@ -925,6 +925,11 @@ class ExperienceService:
             width=120
         )
         
+        # Fix placeholders by removing quotes around them
+        # This ensures trigger_config and max_run_seconds are treated as proper data types
+        yaml_content = yaml_content.replace('"{{ trigger_config }}"', '{{ trigger_config }}').replace("'{{ trigger_config }}'", "{{ trigger_config }}")
+        yaml_content = yaml_content.replace('"{{ max_run_seconds }}"', '{{ max_run_seconds }}').replace("'{{ max_run_seconds }}'", "{{ max_run_seconds }}")
+
         # Add header comment
         header = f"""# Experience Export: {experience.name}
 # Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -932,8 +937,8 @@ class ExperienceService:
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
 # - {{ trigger_config }}: The actual trigger value, depending on the schedule type
-# - {{ selected_provider }}: Choose your LLM provider
-# - {{ selected_model }}: Choose your model
+# - {{ llm_provider_id }}: Choose your LLM provider
+# - {{ model_name }}: Choose your model
 # - {{ max_run_seconds }}: The total amount of time the experience is allowed to run
 #
 # To import this experience, use the Experience Import wizard in Shu.

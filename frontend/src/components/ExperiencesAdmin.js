@@ -32,12 +32,14 @@ import {
     Event as CronIcon,
     History as HistoryIcon,
     AutoAwesome as ExperiencesIcon,
+    FileUpload as ImportIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import ExperienceRunDialog from './ExperienceRunDialog';
 import ExportExperienceButton from './ExportExperienceButton';
+import ImportExperienceWizard from './ImportExperienceWizard';
 import PageHelpHeader from './PageHelpHeader';
 
 // Visibility chip colors
@@ -196,6 +198,7 @@ export default function ExperiencesAdmin() {
     const navigate = useNavigate();
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [runDialogExperience, setRunDialogExperience] = useState(null);
+    const [importWizardOpen, setImportWizardOpen] = useState(false);
 
     // Fetch experiences
     const { data, isLoading, isFetching, error, refetch } = useQuery(
@@ -227,6 +230,23 @@ export default function ExperiencesAdmin() {
 
     const handleCreate = () => {
         navigate('/admin/experiences/new');
+    };
+
+    const handleImport = () => {
+        setImportWizardOpen(true);
+    };
+
+    const handleImportSuccess = (createdExperience) => {
+        // Refresh the experiences list
+        queryClient.invalidateQueries(['experiences', 'list']);
+        // Close the import wizard
+        setImportWizardOpen(false);
+        // Optionally navigate to the created experience
+        navigate(`/admin/experiences/${createdExperience.id}/edit`);
+    };
+
+    const handleImportClose = () => {
+        setImportWizardOpen(false);
     };
 
     const handleDelete = (experience) => {
@@ -279,6 +299,21 @@ export default function ExperiencesAdmin() {
                         onClick={handleCreate}
                     >
                         New Experience
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        startIcon={<ImportIcon />}
+                        onClick={handleImport}
+                        sx={{
+                            borderColor: 'primary.main',
+                            color: 'primary.main',
+                            '&:hover': {
+                                borderColor: 'primary.dark',
+                                backgroundColor: 'primary.50',
+                            },
+                        }}
+                    >
+                        Import Experience
                     </Button>
                     <Tooltip title="Refresh list">
                         <Button
@@ -341,13 +376,41 @@ export default function ExperiencesAdmin() {
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                                 Create your first experience to get started
                             </Typography>
-                            <Button
-                                variant="contained"
-                                startIcon={<AddIcon />}
-                                onClick={handleCreate}
+                            <Box
+                                sx={{
+                                flex: 1,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                textAlign: 'center',
+                                }}
                             >
-                                New Experience
-                            </Button>
+                                <Stack direction="row" spacing={1}>
+                                    <Button
+                                        variant="contained"
+                                        startIcon={<AddIcon />}
+                                        onClick={handleCreate}
+                                    >
+                                        New Experience
+                                    </Button>
+                                    <Button
+                                        variant="outlined"
+                                        startIcon={<ImportIcon />}
+                                        onClick={handleImport}
+                                        sx={{
+                                            borderColor: 'primary.main',
+                                            color: 'primary.main',
+                                            '&:hover': {
+                                                borderColor: 'primary.dark',
+                                                backgroundColor: 'primary.50',
+                                            },
+                                        }}
+                                    >
+                                        Import Experience
+                                    </Button>
+                                </Stack>
+                            </Box>
                         </Box>
                     ) : (
                         experiences.map((exp) => (
@@ -386,6 +449,17 @@ export default function ExperiencesAdmin() {
                     steps={runDialogExperience.steps || []}
                 />
             )}
+
+            {/* Import Experience Wizard */}
+            <ImportExperienceWizard
+                open={importWizardOpen}
+                onClose={handleImportClose}
+                onSuccess={handleImportSuccess}
+                onError={(error) => {
+                    console.error('Import failed:', error);
+                    // Keep wizard open to show error - the wizard handles error display
+                }}
+            />
         </Box>
     );
 }
