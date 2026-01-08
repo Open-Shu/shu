@@ -37,6 +37,7 @@ import { promptAPI } from '../api/prompts';
 import ExperienceStepBuilder from './ExperienceStepBuilder';
 import ExperienceRunDialog from './ExperienceRunDialog';
 import ExperienceRunsList from './ExperienceRunsList';
+import ExportExperienceButton from './ExportExperienceButton';
 import TemplateVariableHints from './TemplateVariableHints';
 
 export default function ExperienceEditor() {
@@ -341,6 +342,14 @@ export default function ExperienceEditor() {
                             color="success"
                             size="small"
                             onDelete={() => setSnackbar({ ...snackbar, open: false })}
+                        />
+                    )}
+                    {!isNew && (
+                        <ExportExperienceButton
+                            experienceId={experienceId}
+                            experienceName={name}
+                            variant="button"
+                            size="medium"
                         />
                     )}
                     <Button

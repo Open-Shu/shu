@@ -6,6 +6,7 @@ including CRUD operations, run management, and user dashboard data.
 """
 
 from fastapi import APIRouter, Depends, Path, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
@@ -508,6 +509,78 @@ async def run_experience(
             "Connection": "keep-alive",
         }
     )
+
+
+@router.get(
+    "/{experience_id}/export",
+    summary="Export experience as YAML",
+    description="Export an experience configuration as a downloadable YAML file with placeholders for user-specific values."
+)
+async def export_experience(
+    experience_id: str = Path(..., description="Experience ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Export an experience as YAML with placeholders for sharing.
+    
+    Converts experience database record to YAML format with placeholders
+    for user-specific values like timezone, provider, and model.
+    """
+    logger.info("API: Export experience", extra={
+        "experience_id": experience_id,
+        "user_id": current_user.id
+    })
+    
+    try:
+        service = ExperienceService(db)
+        is_admin = current_user.can_manage_users()
+        
+        # Get the experience with visibility check
+        experience = await service.get_experience(
+            experience_id=experience_id,
+            user_id=current_user.id,
+            is_admin=is_admin
+        )
+        
+        if not experience:
+            return ShuResponse.error(
+                message=f"Experience '{experience_id}' not found or access denied",
+                code="EXPERIENCE_NOT_FOUND",
+                status_code=404
+            )
+        
+        # Export to YAML
+        yaml_content, file_name = service.export_experience_to_yaml(experience)
+        
+        logger.info("API: Exported experience to YAML", extra={
+            "experience_id": experience_id,
+            "export_filename": file_name
+        })
+        
+        return Response(
+            content=yaml_content,
+            media_type="application/x-yaml",
+            headers={
+                "Content-Disposition": f"attachment; filename={file_name}",
+                "Content-Type": "application/x-yaml; charset=utf-8"
+            }
+        )
+        
+    except ShuException as e:
+        logger.error("API: Failed to export experience", extra={"error": str(e)}, exc_info=True)
+        return ShuResponse.error(
+            message=str(e),
+            code="EXPERIENCE_EXPORT_ERROR",
+            status_code=e.status_code
+        )
+    except Exception as e:
+        logger.error("API: Unexpected error exporting experience", extra={"error": str(e)}, exc_info=True)
+        return ShuResponse.error(
+            message="Internal server error",
+            code="INTERNAL_SERVER_ERROR",
+            status_code=500
+        )
 
 
 @router.get(
