@@ -1,12 +1,13 @@
+/**
+ * @jest-environment jsdom
+ */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import ExportExperienceButton from '../ExportExperienceButton';
-import { experiencesAPI } from '../../services/api';
 
-// Mock the API
+// Mock the API and utils BEFORE importing the component
 jest.mock('../../services/api', () => ({
     experiencesAPI: {
         export: jest.fn(),
@@ -14,28 +15,21 @@ jest.mock('../../services/api', () => ({
     formatError: jest.fn((error) => error.message || 'Unknown error'),
 }));
 
-// Mock URL.createObjectURL and revokeObjectURL
-global.URL.createObjectURL = jest.fn(() => 'mock-blob-url');
-global.URL.revokeObjectURL = jest.fn();
+jest.mock('../../utils/downloadHelpers', () => ({
+    downloadResponseAsFile: jest.fn(),
+    generateSafeFilename: jest.fn((name) => name.toLowerCase().replace(/\s+/g, '-')),
+}));
 
-// Mock document.createElement and appendChild/removeChild
-const mockLink = {
-    href: '',
-    download: '',
-    click: jest.fn(),
-};
-const originalCreateElement = document.createElement;
-document.createElement = jest.fn((tagName) => {
-    if (tagName === 'a') {
-        return mockLink;
-    }
-    return originalCreateElement.call(document, tagName);
-});
+jest.mock('../../utils/log', () => ({
+    log: {
+        info: jest.fn(),
+        error: jest.fn(),
+    },
+}));
 
-const mockAppendChild = jest.fn();
-const mockRemoveChild = jest.fn();
-document.body.appendChild = mockAppendChild;
-document.body.removeChild = mockRemoveChild;
+// Import the component AFTER mocking its dependencies
+import ExportExperienceButton from '../ExportExperienceButton';
+import { experiencesAPI } from '../../services/api';
 
 const createTestQueryClient = () => new QueryClient({
     defaultOptions: {
@@ -62,17 +56,14 @@ describe('ExportExperienceButton', () => {
         jest.clearAllMocks();
     });
 
-    afterAll(() => {
-        document.createElement = originalCreateElement;
-    });
-
     it('renders icon button by default', () => {
         render(
-            <ExportExperienceButton
-                experienceId="test-id"
-                experienceName="Test Experience"
-            />,
-            { wrapper: TestWrapper }
+            <TestWrapper>
+                <ExportExperienceButton
+                    experienceId="test-id"
+                    experienceName="Test Experience"
+                />
+            </TestWrapper>
         );
 
         const button = screen.getByRole('button');
@@ -81,12 +72,13 @@ describe('ExportExperienceButton', () => {
 
     it('renders button variant when specified', () => {
         render(
-            <ExportExperienceButton
-                experienceId="test-id"
-                experienceName="Test Experience"
-                variant="button"
-            />,
-            { wrapper: TestWrapper }
+            <TestWrapper>
+                <ExportExperienceButton
+                    experienceId="test-id"
+                    experienceName="Test Experience"
+                    variant="button"
+                />
+            </TestWrapper>
         );
 
         const button = screen.getByRole('button', { name: /export/i });
@@ -99,11 +91,12 @@ describe('ExportExperienceButton', () => {
         experiencesAPI.export.mockResolvedValue({ data: mockBlob });
 
         render(
-            <ExportExperienceButton
-                experienceId="test-id"
-                experienceName="Test Experience"
-            />,
-            { wrapper: TestWrapper }
+            <TestWrapper>
+                <ExportExperienceButton
+                    experienceId="test-id"
+                    experienceName="Test Experience"
+                />
+            </TestWrapper>
         );
 
         const button = screen.getByRole('button');
@@ -116,12 +109,13 @@ describe('ExportExperienceButton', () => {
 
     it('is disabled when disabled prop is true', () => {
         render(
-            <ExportExperienceButton
-                experienceId="test-id"
-                experienceName="Test Experience"
-                disabled={true}
-            />,
-            { wrapper: TestWrapper }
+            <TestWrapper>
+                <ExportExperienceButton
+                    experienceId="test-id"
+                    experienceName="Test Experience"
+                    disabled={true}
+                />
+            </TestWrapper>
         );
 
         const button = screen.getByRole('button');
