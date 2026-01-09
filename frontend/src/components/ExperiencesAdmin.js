@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
     Box,
     Button,
@@ -213,6 +213,7 @@ export default function ExperiencesAdmin() {
     const [runDialogExperience, setRunDialogExperience] = useState(null);
     const [importWizardOpen, setImportWizardOpen] = useState(false);
     const [prePopulatedYAML, setPrePopulatedYAML] = useState('');
+    const [showFirstTimeAlert, setShowFirstTimeAlert] = useState(false);
 
     // Fetch experiences
     const { data, isLoading, isFetching, error, refetch } = useQuery(
@@ -226,6 +227,11 @@ export default function ExperiencesAdmin() {
         // Sort by name
         return items.sort((a, b) => a.name.localeCompare(b.name));
     }, [data]);
+
+    // Manage first-time alert visibility based on experiences
+    useEffect(() => {
+        setShowFirstTimeAlert(experiences.length === 0);
+    }, [experiences]);
 
     // Delete mutation
     const deleteMutation = useMutation(
@@ -315,11 +321,11 @@ export default function ExperiencesAdmin() {
             />
 
             {/* Alert for first-time users */}
-            {experiences.length === 0 && (
+            {showFirstTimeAlert && experiences.length === 0 && (
                 <Alert
                     severity="info"
                     sx={{ mb: 2 }}
-                    onClose={() => setSearchParams({})}
+                    onClose={() => setShowFirstTimeAlert(false)}
                 >
                     Click the pulsing <ImportIcon fontSize="small" sx={{ verticalAlign: 'middle', mx: 0.5 }} /> button to import the "Morning Briefing" experience and get started quickly.
                 </Alert>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box,
     Typography,
@@ -39,15 +39,22 @@ const YAMLInputStep = ({
     });
     const [placeholders, setPlaceholders] = useState([]);
     const [isPrePopulated, setIsPrePopulated] = useState(false);
+    const initializedRef = useRef(false);
+
+    // Stable callback for onYAMLChange to avoid stale references
+    const stableOnYAMLChange = useCallback((content) => {
+        onYAMLChange(content);
+    }, [onYAMLChange]);
 
     // Initialize with pre-populated YAML if provided
     useEffect(() => {
-        if (prePopulatedYAML && !yamlContent) {
+        if (prePopulatedYAML && !initializedRef.current) {
             setIsPrePopulated(true);
-            onYAMLChange(prePopulatedYAML);
+            stableOnYAMLChange(prePopulatedYAML);
+            initializedRef.current = true;
             log.info('Pre-populated YAML content loaded', { length: prePopulatedYAML.length });
         }
-    }, [prePopulatedYAML, yamlContent]); // Removed onYAMLChange from dependencies
+    }, [prePopulatedYAML, stableOnYAMLChange]);
 
     // Validate YAML content whenever it changes
     const validateYAML = useCallback((content) => {
