@@ -20,6 +20,7 @@ import {
     TextField,
     Tooltip,
     Typography,
+    Alert,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -35,12 +36,21 @@ import {
     FileUpload as ImportIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import ExperienceRunDialog from './ExperienceRunDialog';
 import ExportExperienceButton from './ExportExperienceButton';
 import ImportExperienceWizard from './ImportExperienceWizard';
 import PageHelpHeader from './PageHelpHeader';
+import { MORNING_BRIEFING_YAML } from '../utils/morningBriefingTemplate';
+import { keyframes } from '@mui/system';
+
+// Pulsing animation for highlighting the import button
+const pulseAnimation = keyframes`
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.4); }
+  50% { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(25, 118, 210, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25, 118, 210, 0); }
+`;
 
 // Visibility chip colors
 const visibilityColors = {
@@ -196,9 +206,13 @@ const DeleteConfirmDialog = ({ open, experience, onClose, onConfirm, isDeleting 
 export default function ExperiencesAdmin() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const highlightImport = searchParams.get('action') === 'import-morning-briefing';
+    
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [runDialogExperience, setRunDialogExperience] = useState(null);
     const [importWizardOpen, setImportWizardOpen] = useState(false);
+    const [prePopulatedYAML, setPrePopulatedYAML] = useState('');
 
     // Fetch experiences
     const { data, isLoading, isFetching, error, refetch } = useQuery(
@@ -233,6 +247,18 @@ export default function ExperiencesAdmin() {
     };
 
     const handleImport = () => {
+        // Pre-populate with Morning Briefing YAML if this is the first time (no experiences) or if coming from Quick Start
+        if (experiences.length === 0 || highlightImport) {
+            setPrePopulatedYAML(MORNING_BRIEFING_YAML);
+        } else {
+            setPrePopulatedYAML('');
+        }
+        
+        // Clear the highlight param when opening the wizard
+        if (highlightImport) {
+            setSearchParams({});
+        }
+        
         setImportWizardOpen(true);
     };
 
@@ -252,6 +278,7 @@ export default function ExperiencesAdmin() {
 
     const handleImportClose = () => {
         setImportWizardOpen(false);
+        setPrePopulatedYAML('');
     };
 
     const handleDelete = (experience) => {
@@ -287,6 +314,17 @@ export default function ExperiencesAdmin() {
                 ]}
             />
 
+            {/* Alert for first-time users */}
+            {experiences.length === 0 && (
+                <Alert
+                    severity="info"
+                    sx={{ mb: 2 }}
+                    onClose={() => setSearchParams({})}
+                >
+                    Click the pulsing <ImportIcon fontSize="small" sx={{ verticalAlign: 'middle', mx: 0.5 }} /> button to import the "Morning Briefing" experience and get started quickly.
+                </Alert>
+            )}
+
             {/* Header */}
             <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
                 <Box>
@@ -309,7 +347,17 @@ export default function ExperiencesAdmin() {
                         variant="outlined"
                         startIcon={<ImportIcon />}
                         onClick={handleImport}
-                        sx={{
+                        title={experiences.length === 0 ? 'Click to import Morning Briefing experience' : 'Import Experience'}
+                        sx={experiences.length === 0 ? {
+                            animation: `${pulseAnimation} 1.5s ease-in-out infinite`,
+                            borderColor: 'primary.main',
+                            color: 'primary.contrastText',
+                            bgcolor: 'primary.light',
+                            '&:hover': {
+                                borderColor: 'primary.dark',
+                                bgcolor: 'primary.main',
+                            },
+                        } : {
                             borderColor: 'primary.main',
                             color: 'primary.main',
                             '&:hover': {
@@ -403,12 +451,15 @@ export default function ExperiencesAdmin() {
                                         variant="outlined"
                                         startIcon={<ImportIcon />}
                                         onClick={handleImport}
+                                        title="Click to import Morning Briefing experience"
                                         sx={{
+                                            animation: `${pulseAnimation} 1.5s ease-in-out infinite`,
                                             borderColor: 'primary.main',
-                                            color: 'primary.main',
+                                            color: 'primary.contrastText',
+                                            bgcolor: 'primary.light',
                                             '&:hover': {
                                                 borderColor: 'primary.dark',
-                                                backgroundColor: 'primary.50',
+                                                bgcolor: 'primary.main',
                                             },
                                         }}
                                     >
@@ -460,6 +511,7 @@ export default function ExperiencesAdmin() {
                 open={importWizardOpen}
                 onClose={handleImportClose}
                 onSuccess={handleImportSuccess}
+                prePopulatedYAML={prePopulatedYAML}
                 onError={(error) => {
                     console.error('Import failed:', error);
                     // Keep wizard open to show error - the wizard handles error display
