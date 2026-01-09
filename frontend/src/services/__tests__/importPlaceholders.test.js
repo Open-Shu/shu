@@ -134,7 +134,7 @@ trigger_type: manual
             const placeholders = ['max_run_seconds', 'trigger_type'];
             const defaults = getDefaultPlaceholderValues(placeholders);
             
-            expect(defaults.max_run_seconds).toBe(120);
+            expect(defaults.max_run_seconds).toBe(30);
             expect(defaults.trigger_type).toBeUndefined(); // No default for trigger_type
         });
     });
@@ -237,7 +237,7 @@ trigger_type: {{ trigger_type }}
             expect(config.required).toBe(true);
             expect(config.min).toBe(10);
             expect(config.max).toBe(600);
-            expect(config.default).toBe(120);
+            expect(config.default).toBe(30);
         });
     });
 });
