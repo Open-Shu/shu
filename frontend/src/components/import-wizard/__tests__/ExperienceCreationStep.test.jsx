@@ -54,7 +54,7 @@ const renderWithProviders = (component) => {
 describe('ExperienceCreationStep', () => {
     const defaultProps = {
         yamlContent: 'name: Test\ndescription: Test experience',
-        resolvedValues: { selected_provider: 'openai', selected_model: 'gpt-4' },
+        resolvedValues: { llm_provider_id: 'openai', model_name: 'gpt-4' },
         onCreationComplete: jest.fn(),
         onRetry: jest.fn(),
     };

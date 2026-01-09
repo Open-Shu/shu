@@ -242,7 +242,12 @@ export default function ExperiencesAdmin() {
         // Close the import wizard
         setImportWizardOpen(false);
         // Optionally navigate to the created experience
-        navigate(`/admin/experiences/${createdExperience.id}/edit`);
+        if (createdExperience?.id) {
+            navigate(`/admin/experiences/${createdExperience.id}/edit`);
+        } else {
+            // Safe fallback to experiences list if id is missing
+            navigate('/admin/experiences');
+        }
     };
 
     const handleImportClose = () => {

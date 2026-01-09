@@ -569,8 +569,6 @@ class TestExperienceExport:
         assert isinstance(yaml_content, str)
         assert len(yaml_content) > 0
 
-        print(yaml_content)
-        
         # Verify basic structure by checking for expected content
         # (Don't parse YAML with placeholders as they're not valid YAML syntax)
         assert "experience_yaml_version: 1" in yaml_content
@@ -590,9 +588,6 @@ class TestExperienceExport:
         assert "step_key: emails" in yaml_content
         assert "step_key: calendar" in yaml_content
         assert "plugin_name: gmail" in yaml_content
-        assert "plugin_name: calendar" in yaml_content
-
-        assert "step_key: calendar" in yaml_content
         assert "plugin_name: calendar" in yaml_content
         assert "days_ahead: 1" in yaml_content
 

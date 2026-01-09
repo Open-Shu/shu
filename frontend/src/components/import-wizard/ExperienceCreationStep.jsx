@@ -135,7 +135,7 @@ const ExperienceCreationStep = ({
                 message: formattedError,
                 type: 'unknown',
                 canRetry: true,
-                suggestions: []
+                suggestions: null
             };
 
             // Categorize error types for better user guidance
@@ -340,12 +340,12 @@ const ExperienceCreationStep = ({
                                 Error Details:
                             </Typography>
                             <Typography variant="body2">
-                                {typeof error === 'object' ? error.message : error}
+                                {typeof error === 'object' && error ? error.message : error}
                             </Typography>
                         </Alert>
 
                         {/* Enhanced error guidance based on error type */}
-                        {typeof error === 'object' && error.suggestions && error.suggestions.length > 0 && (
+                        {typeof error === 'object' && error && error.suggestions && error.suggestions.length > 0 && (
                             <Alert severity="info" sx={{ mb: 3 }}>
                                 <Typography variant="body2" fontWeight="medium" gutterBottom>
                                     {error.type === 'network' ? 'Network Issues:' :
@@ -366,7 +366,7 @@ const ExperienceCreationStep = ({
                         )}
 
                         {/* General troubleshooting tips for non-enhanced errors */}
-                        {(typeof error !== 'object' || !error.suggestions) && (
+                        {(typeof error !== 'object' || !error || !error.suggestions || error.suggestions.length === 0) && (
                             <Alert severity="info" sx={{ mb: 3 }}>
                                 <Typography variant="body2" fontWeight="medium" gutterBottom>
                                     Troubleshooting Tips:

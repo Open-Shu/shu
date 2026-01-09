@@ -58,8 +58,9 @@ const PlaceholderFormStep = ({
 
     // Handle value changes for individual placeholders
     const handleValueChange = useCallback((placeholderName, newValue) => {
-        onValuesChange(prevValues => ({ ...prevValues, [placeholderName]: newValue }));
-    }, [onValuesChange]);
+        const updated = { ...values, [placeholderName]: newValue };
+        onValuesChange(updated);
+    }, [onValuesChange, values]);
 
     // Render form field for a placeholder
     const renderPlaceholderField = (placeholderName) => {

@@ -95,7 +95,7 @@ export function validatePlaceholderValues(placeholders, values) {
         
         // Type-specific validation
         switch (config.type) {
-            case 'number':
+            case 'number': {
                 const num = parseInt(value, 10);
                 if (!Number.isFinite(num)) {
                     errors[placeholder] = `${config.label} must be a valid number`;
@@ -105,15 +105,17 @@ export function validatePlaceholderValues(placeholders, values) {
                     errors[placeholder] = `${config.label} must be at most ${config.max}`;
                 }
                 break;
+            }
                 
-            case 'dropdown':
+            case 'dropdown': {
                 const validValues = config.options.map(opt => opt.value);
                 if (!validValues.includes(value)) {
                     errors[placeholder] = `${config.label} must be one of: ${validValues.join(', ')}`;
                 }
                 break;
+            }
                 
-            case 'dynamic':
+            case 'dynamic': {
                 // Special validation for trigger_config based on trigger_type
                 if (placeholder === 'trigger_config') {
                     const triggerType = values['trigger_type'];
@@ -124,6 +126,7 @@ export function validatePlaceholderValues(placeholders, values) {
                     }
                 }
                 break;
+            }
         }
     }
     
@@ -168,7 +171,6 @@ export function replacePlaceholders(yamlContent, values) {
             
             // Handle different value types
             let replacementValue;
-            console.log("VALUE: " + value, typeof value)
             if (typeof value === 'object' && value !== null) {
                 // For objects like trigger_config, convert to proper YAML object
                 if (Object.keys(value).length === 0) {

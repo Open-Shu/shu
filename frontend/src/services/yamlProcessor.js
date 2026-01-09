@@ -116,10 +116,10 @@ class YAMLProcessor {
     };
 
     // Do not include these in the payload if they are blank or placeholders
-    if (yamlData.llm_provider_id !== '' && yamlData.llm_provider_id !== undefined && !yamlData.llm_provider_id.trim().startsWith("{{")) {
+    if (typeof yamlData.llm_provider_id === 'string' && yamlData.llm_provider_id.trim() !== '' && !yamlData.llm_provider_id.trim().startsWith("{{")) {
       payload.llm_provider_id = yamlData.llm_provider_id;
     }
-    if (yamlData.model_name !== '' && yamlData.model_name !== undefined && !yamlData.model_name.trim().startsWith("{{")) {
+    if (typeof yamlData.model_name === 'string' && yamlData.model_name.trim() !== '' && !yamlData.model_name.trim().startsWith("{{")) {
       payload.model_name = yamlData.model_name;
     }
 

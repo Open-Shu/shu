@@ -72,20 +72,28 @@ const LLMProviderSelector = ({
 
     const handleProviderChange = (e) => {
         const newProviderId = e.target.value;
-        onProviderChange(newProviderId);
+        if (typeof onProviderChange === 'function') {
+            onProviderChange(newProviderId);
+        }
         // Reset model when provider changes
-        onModelChange('');
+        if (typeof onModelChange === 'function') {
+            onModelChange('');
+        }
     };
 
     const handleModelChange = (e) => {
-        onModelChange(e.target.value);
+        if (typeof onModelChange === 'function') {
+            onModelChange(e.target.value);
+        }
     };
 
     return (
         <Stack spacing={2}>
             <FormControl fullWidth error={!!validationErrors.llm_provider_id}>
-                <InputLabel>{providerLabel} {required ? '*' : ''}</InputLabel>
+                <InputLabel id="llm-provider-label">{providerLabel} {required ? '*' : ''}</InputLabel>
                 <Select
+                    id="llm-provider"
+                    labelId="llm-provider-label"
                     value={providerId}
                     label={`${providerLabel} ${required ? '*' : ''}`}
                     onChange={handleProviderChange}
@@ -109,8 +117,10 @@ const LLMProviderSelector = ({
 
             {providerId ? (
                 <FormControl fullWidth error={!!validationErrors.model_name}>
-                    <InputLabel>{modelLabel} *</InputLabel>
+                    <InputLabel id="llm-model-label">{modelLabel} *</InputLabel>
                     <Select
+                        id="llm-model"
+                        labelId="llm-model-label"
                         value={modelName}
                         label={`${modelLabel} *`}
                         onChange={handleModelChange}
