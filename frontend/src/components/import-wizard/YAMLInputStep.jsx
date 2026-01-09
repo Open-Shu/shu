@@ -134,6 +134,7 @@ const YAMLInputStep = ({
                     <Typography variant="body2">
                         This YAML has been pre-populated from the Quick Start guide. 
                         You can edit it or proceed to the next step.
+                        If this is your first time setting up an experience, we recommend you leave everything as is.
                     </Typography>
                 </Alert>
             )}

@@ -45,10 +45,17 @@ const PlaceholderFormStep = ({
 
     // Validate placeholder values whenever they change
     const validatePlaceholders = useCallback((currentValues) => {
-        const validation = validatePlaceholderValues(placeholders, currentValues);
-        setValidationErrors(validation.errors);
-        onValidationChange(validation.isValid);
-        return validation.isValid;
+        try {
+            const validation = validatePlaceholderValues(placeholders, currentValues);
+            setValidationErrors(validation.errors);
+            onValidationChange(validation.isValid);
+            return validation.isValid;
+        } catch (error) {
+            log.error('Placeholder validation error', { error: error.message });
+            setValidationErrors({ _general: 'Validation error occurred' });
+            onValidationChange(false);
+            return false;
+        }
     }, [placeholders, onValidationChange]);
 
     // Validate whenever values change
@@ -58,9 +65,8 @@ const PlaceholderFormStep = ({
 
     // Handle value changes for individual placeholders
     const handleValueChange = useCallback((placeholderName, newValue) => {
-        const updated = { ...values, [placeholderName]: newValue };
-        onValuesChange(updated);
-    }, [onValuesChange, values]);
+        onValuesChange(prevValues => ({ ...prevValues, [placeholderName]: newValue }));
+    }, [onValuesChange]);
 
     // Render form field for a placeholder
     const renderPlaceholderField = (placeholderName) => {
@@ -166,11 +172,17 @@ const PlaceholderFormStep = ({
         if (placeholder === 'trigger_type') {
             groupedPlaceholders.push('trigger_type');
             processedPlaceholders.add('trigger_type');
-            processedPlaceholders.add('trigger_config'); // Skip trigger_config as it's handled together
+            // Only mark trigger_config as processed if it's actually in the placeholders
+            if (supportedPlaceholders.includes('trigger_config')) {
+                processedPlaceholders.add('trigger_config');
+            }
         } else if (placeholder === 'llm_provider_id') {
             groupedPlaceholders.push('llm_provider_id');
             processedPlaceholders.add('llm_provider_id');
-            processedPlaceholders.add('model_name'); // Skip model_name as it's handled together
+            // Only mark model_name as processed if it's actually in the placeholders
+            if (supportedPlaceholders.includes('model_name')) {
+                processedPlaceholders.add('model_name');
+            }
         } else if (!processedPlaceholders.has(placeholder)) {
             groupedPlaceholders.push(placeholder);
             processedPlaceholders.add(placeholder);
@@ -282,6 +294,9 @@ const PlaceholderFormStep = ({
                     </Typography>
                     <Typography component="li" variant="body2">
                         Trigger configuration determines when the experience runs automatically
+                    </Typography>
+                    <Typography component="li" variant="body2">
+                        The maximum runtime dictates how long the experience is allowed to run before automatically interrupting
                     </Typography>
                 </Box>
             </Alert>

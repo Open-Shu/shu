@@ -878,8 +878,8 @@ class ExperienceService:
             "trigger_type": "{{ trigger_type }}",
             "trigger_config": "{{ trigger_config }}",
             "include_previous_run": experience.include_previous_run,
-            "llm_provider_id": "{{ llm_provider_id }}",  # Placeholder for user selection
-            "model_name": "{{ model_name }}",  # Placeholder for user selection
+            "llm_provider_id": "{{ llm_provider_id }}" if not experience.llm_provider_id is None else None,  # Placeholder for user selection
+            "model_name": "{{ model_name }}" if not experience.model_name is None else None,  # Placeholder for user selection
             "inline_prompt_template": experience.inline_prompt_template,
             "max_run_seconds": "{{ max_run_seconds }}",
             "token_budget": None,  # We need to revisit this, rate limiting is already handled on LLM and plugin level.

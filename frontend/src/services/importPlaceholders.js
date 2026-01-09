@@ -43,7 +43,7 @@ export const SUPPORTED_IMPORT_PLACEHOLDERS = {
         required: true,
         min: 10,
         max: 600,
-        default: 120
+        default: 30
     }
 };
 
