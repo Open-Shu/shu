@@ -4,7 +4,7 @@ This living document captures Shu’ technical trajectory. The summary below lin
 
 - ## Current Status (code snapshot)
   - **Overall**: Core foundations are in place (auth/RBAC, KB ingestion/RAG, multi-provider LLM + streaming chat, plugin v1 with host capabilities, feeds scheduler and admin UI). Workflow engine, analytics, and marketplace/team layers are not implemented.
-  - **Phase Alignment**: Phase 1 (Foundation Hardening) is largely complete; Phase 2 (Adaptive Deployment) is in progress with Docker Compose stack live and Kubernetes manifests drafted; Phase 3 (Agentic Platform) is mostly TODO with only host HTTP client and LLM parameter normalization complete; Phases 4-6 are aspirational with no active implementation.
+  - **Phase Alignment**: Phase 1 (Foundation Hardening) is largely complete; Phase 2 (Adaptive Deployment) is in progress with Docker Compose stack live and Kubernetes manifests drafted; Phase 3 (Agentic Platform) is mostly TODO with only host HTTP client and LLM parameter normalization complete.
   - **Auth & Security**: Google SSO + password auth; RBAC enforced; JWT/API key support; secrets/OAuth encryption present. Audit coverage for plugins/feeds is partial, and per-user “run as” enforcement for feeds still lacks full governance.
   - **LLM & Chat**: Streaming chat works with multiple providers. Chat-initiated plugin execution exists for declared `chat_callable_ops`; assistant-side function-calling/orchestration is not yet present.
   - **Knowledge Base & Ingestion**: KB ingestion and RAG with full-document escalation are live; attachments and plugin feeds ingest into KBs. Team/tenant KBs beyond per-user scope are not implemented.
