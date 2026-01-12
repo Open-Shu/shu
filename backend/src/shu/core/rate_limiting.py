@@ -171,6 +171,14 @@ class TokenBucketRateLimiter:
         # Fixed-window algorithm: calculate window size and current window key
         # For per-minute limits, window is capacity/refill_rate
         # E.g., 2 RPM: capacity=2, refill=0.0333, window = 2/0.0333 = 60s
+        #
+        # Design note: 60-second minimum window is enforced for operational stability.
+        # This ensures rate limit windows align with typical per-minute configurations
+        # and prevents excessive cache key churn from very short windows. Standard
+        # configurations (e.g., 100 requests/minute with refill=100/60) naturally
+        # produce ~60s windows. Shorter windows would create more cache entries and
+        # increase backend load without meaningful benefit for typical API rate limiting.
+        # If sub-minute windows are needed, this minimum can be made configurable.
         window_s = max(60, int(cap / rps))
         window_key = f"{bucket_key}:fw:{int(time.time()) // window_s}"
 

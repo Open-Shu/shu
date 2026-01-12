@@ -45,13 +45,19 @@ class TokenBucketLimiter:
         rps = max(1, int(refill_per_second if refill_per_second is not None else self.refill_per_second))
 
         # Fixed-window algorithm matching core rate limiting
+        # Note: minimum window of 1 second; plugin rate limiting typically uses
+        # per-minute configurations where cap/rps naturally yields ~60s windows
         window_s = max(1, int(cap / rps))
         window_key = f"{key}:fw:{int(time.time())//window_s}"
         
         try:
             # Atomic increment-first pattern to avoid TOCTOU race condition
             new_count = await cache.incr(window_key, cost)
-            await cache.expire(window_key, window_s)
+            
+            # Set expiry only when key was just created (new_count == cost means first increment)
+            # This avoids racing and resetting TTLs on subsequent increments
+            if new_count == cost:
+                await cache.expire(window_key, window_s)
             
             if new_count <= cap:
                 return True, 0
