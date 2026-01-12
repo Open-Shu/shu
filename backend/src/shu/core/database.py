@@ -305,13 +305,13 @@ async def get_redis_client():
         This function delegates to the cache_backend module's internal
         Redis client management. It will be removed in a future release.
     
-    Falls back to in-memory storage if Redis is unavailable.
+    Note: InMemoryRedisClient fallback has been removed. Use get_cache_backend()
+    for cache operations that work with both Redis and in-memory backends.
     
     Returns:
-        An async Redis client instance or InMemoryRedisClient fallback.
+        An async Redis client instance.
     """
     from .cache_backend import _get_redis_client, CacheConnectionError
-    from .in_memory_redis import InMemoryRedisClient
     
     settings = get_settings_instance()
     
@@ -338,10 +338,13 @@ async def get_redis_client():
                 f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
             ) from e
         
-        logger.warning("Failed to connect to Redis, falling back to in-memory storage", extra={
+        logger.error("Redis connection failed and InMemoryRedisClient has been removed", extra={
             "redis_url": settings.redis_url,
             "error": str(e)
         })
         
-        # Create in-memory Redis client as fallback
-        return InMemoryRedisClient()
+        # InMemoryRedisClient has been removed - use get_cache_backend() instead
+        raise DatabaseConnectionError(
+            f"Redis connection failed and InMemoryRedisClient fallback has been removed: {e}. "
+            f"Please use get_cache_backend() from cache_backend.py instead."
+        ) from e

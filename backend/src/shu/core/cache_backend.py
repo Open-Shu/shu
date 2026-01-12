@@ -825,7 +825,6 @@ class RedisCacheBackend:
             return result > 0
         except AttributeError as e:
             # Fallback for clients that don't have exists method
-            # (like InMemoryRedisClient)
             try:
                 result = await self._client.get(key)
                 return result is not None
