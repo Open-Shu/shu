@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from sqlalchemy import and_, select
 
 from ...core.config import get_settings_instance
-from ...core.database import get_db_session, get_redis_client
+from ...core.database import get_db_session
 from ...models.provider_credential import ProviderCredential
 from .base import ImmutableCapabilityMixin
 from .http_capability import HttpCapability
