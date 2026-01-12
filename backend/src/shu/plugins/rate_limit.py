@@ -45,9 +45,9 @@ class TokenBucketLimiter:
         rps = max(1, int(refill_per_second if refill_per_second is not None else self.refill_per_second))
 
         # Fixed-window algorithm matching core rate limiting
-        # Note: minimum window of 1 second; plugin rate limiting typically uses
-        # per-minute configurations where cap/rps naturally yields ~60s windows
-        window_s = max(1, int(cap / rps))
+        # Design note: 60-second minimum window is enforced for operational stability,
+        # matching the core rate_limiting.py implementation. See core module for rationale.
+        window_s = max(60, int(cap / rps))
         window_key = f"{key}:fw:{int(time.time())//window_s}"
         
         try:
