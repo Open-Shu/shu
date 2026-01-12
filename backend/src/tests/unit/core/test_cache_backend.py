@@ -977,3 +977,292 @@ class TestBackendSubstitutability:
         
         await cache_backend.set("key", "new_value", ttl_seconds=-1)
         assert await cache_backend.exists("key") is False
+
+
+# =============================================================================
+# Factory and Dependency Injection Tests
+# =============================================================================
+
+
+class TestProperty6FactorySingleton:
+    """
+    Property 6: Factory returns singleton
+    
+    *For any* number of calls to `get_cache_backend()`, the same instance
+    SHALL be returned.
+    
+    **Validates: Requirements 4.5**
+    
+    Feature: unified-cache-interface, Property 6: Factory returns singleton
+    """
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(num_calls=st.integers(min_value=2, max_value=10))
+    async def test_factory_returns_singleton(self, num_calls: int):
+        """
+        Property test: Multiple calls to get_cache_backend() return the same instance.
+        
+        Feature: unified-cache-interface, Property 6: Factory returns singleton
+        **Validates: Requirements 4.5**
+        """
+        from shu.core.cache_backend import get_cache_backend, reset_cache_backend
+        
+        # Reset to ensure clean state for each test case
+        reset_cache_backend()
+        
+        # Get the backend multiple times
+        backends = []
+        for _ in range(num_calls):
+            backend = await get_cache_backend()
+            backends.append(backend)
+        
+        # All instances should be the same object
+        first_backend = backends[0]
+        for i, backend in enumerate(backends[1:], start=2):
+            assert backend is first_backend, (
+                f"Call {i} returned different instance than call 1"
+            )
+        
+        # Clean up
+        reset_cache_backend()
+    
+    @pytest.mark.asyncio
+    async def test_factory_returns_same_instance_across_calls(self):
+        """Unit test: get_cache_backend() returns the same instance."""
+        from shu.core.cache_backend import get_cache_backend, reset_cache_backend
+        
+        reset_cache_backend()
+        
+        backend1 = await get_cache_backend()
+        backend2 = await get_cache_backend()
+        backend3 = await get_cache_backend()
+        
+        assert backend1 is backend2
+        assert backend2 is backend3
+        
+        reset_cache_backend()
+    
+    @pytest.mark.asyncio
+    async def test_reset_clears_singleton(self):
+        """Unit test: reset_cache_backend() clears the singleton."""
+        from shu.core.cache_backend import get_cache_backend, reset_cache_backend
+        
+        reset_cache_backend()
+        
+        backend1 = await get_cache_backend()
+        reset_cache_backend()
+        backend2 = await get_cache_backend()
+        
+        # After reset, a new instance should be created
+        # Note: They may be equal in value but should be different objects
+        # unless the same backend type is created
+        assert backend1 is not backend2
+        
+        reset_cache_backend()
+
+
+class TestBackendSelectionLogic:
+    """
+    Tests for backend selection logic in the factory.
+    
+    **Validates: Requirements 4.1, 4.2, 4.3**
+    
+    Feature: unified-cache-interface, Backend Selection
+    """
+    
+    @pytest.mark.asyncio
+    async def test_returns_inmemory_when_no_redis_url(self):
+        """Unit test: Factory returns InMemoryCacheBackend when no Redis URL configured."""
+        from shu.core.cache_backend import (
+            get_cache_backend, reset_cache_backend, InMemoryCacheBackend
+        )
+        from unittest.mock import patch, MagicMock
+        
+        reset_cache_backend()
+        
+        # Mock settings to have no Redis URL and redis_required=False
+        mock_settings = MagicMock()
+        mock_settings.redis_url = ""
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = True
+        
+        with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+            backend = await get_cache_backend()
+            assert isinstance(backend, InMemoryCacheBackend)
+        
+        reset_cache_backend()
+    
+    @pytest.mark.asyncio
+    async def test_returns_inmemory_when_redis_unreachable_with_fallback(self):
+        """Unit test: Factory returns InMemoryCacheBackend when Redis unreachable and fallback enabled."""
+        from shu.core.cache_backend import (
+            get_cache_backend, reset_cache_backend, InMemoryCacheBackend,
+            CacheConnectionError, _get_redis_client
+        )
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        reset_cache_backend()
+        
+        # Mock settings with Redis URL but fallback enabled
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_socket_timeout = 5
+        mock_settings.redis_connection_timeout = 5
+        
+        # Mock _get_redis_client to raise CacheConnectionError
+        async def mock_get_redis_client_error():
+            raise CacheConnectionError("Connection refused")
+        
+        with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+            with patch('shu.core.cache_backend._get_redis_client', mock_get_redis_client_error):
+                backend = await get_cache_backend()
+                assert isinstance(backend, InMemoryCacheBackend)
+        
+        reset_cache_backend()
+    
+    @pytest.mark.asyncio
+    async def test_raises_error_when_redis_required_but_unreachable(self):
+        """Unit test: Factory raises error when Redis required but unreachable."""
+        from shu.core.cache_backend import (
+            get_cache_backend, reset_cache_backend, CacheConnectionError
+        )
+        from unittest.mock import patch, MagicMock
+        
+        reset_cache_backend()
+        
+        # Mock settings with Redis required
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_required = True
+        mock_settings.redis_fallback_enabled = False
+        mock_settings.redis_socket_timeout = 5
+        mock_settings.redis_connection_timeout = 5
+        
+        # Mock _get_redis_client to raise CacheConnectionError
+        async def mock_get_redis_client_error():
+            raise CacheConnectionError("Connection refused")
+        
+        with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+            with patch('shu.core.cache_backend._get_redis_client', mock_get_redis_client_error):
+                with pytest.raises(CacheConnectionError):
+                    await get_cache_backend()
+        
+        reset_cache_backend()
+    
+    @pytest.mark.asyncio
+    async def test_raises_error_when_fallback_disabled_and_redis_unreachable(self):
+        """Unit test: Factory raises error when fallback disabled and Redis unreachable."""
+        from shu.core.cache_backend import (
+            get_cache_backend, reset_cache_backend, CacheConnectionError
+        )
+        from unittest.mock import patch, MagicMock
+        
+        reset_cache_backend()
+        
+        # Mock settings with fallback disabled and a non-default Redis URL
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://custom-redis:6379"  # Non-default URL
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = False
+        mock_settings.redis_socket_timeout = 5
+        mock_settings.redis_connection_timeout = 5
+        
+        # Mock _get_redis_client to raise CacheConnectionError
+        async def mock_get_redis_client_error():
+            raise CacheConnectionError("Connection refused")
+        
+        with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+            with patch('shu.core.cache_backend._get_redis_client', mock_get_redis_client_error):
+                with pytest.raises(CacheConnectionError):
+                    await get_cache_backend()
+        
+        reset_cache_backend()
+    
+    @pytest.mark.asyncio
+    async def test_returns_redis_backend_when_redis_available(self):
+        """Unit test: Factory returns RedisCacheBackend when Redis is available."""
+        from shu.core.cache_backend import (
+            get_cache_backend, reset_cache_backend, RedisCacheBackend
+        )
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        reset_cache_backend()
+        
+        # Mock settings with a non-default Redis URL
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://custom-redis:6379"  # Non-default URL
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_socket_timeout = 5
+        mock_settings.redis_connection_timeout = 5
+        
+        # Mock Redis client
+        mock_redis_client = MagicMock()
+        mock_redis_client.ping = AsyncMock(return_value=True)
+        
+        async def mock_get_redis_client_success():
+            return mock_redis_client
+        
+        with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+            with patch('shu.core.cache_backend._get_redis_client', mock_get_redis_client_success):
+                backend = await get_cache_backend()
+                assert isinstance(backend, RedisCacheBackend)
+        
+        reset_cache_backend()
+
+
+class TestDependencyInjection:
+    """
+    Tests for dependency injection support.
+    
+    **Validates: Requirements 4.4**
+    
+    Feature: unified-cache-interface, Dependency Injection
+    """
+    
+    def test_dependency_returns_cached_backend_if_available(self):
+        """Unit test: get_cache_backend_dependency returns cached backend."""
+        from shu.core.cache_backend import (
+            get_cache_backend_dependency, reset_cache_backend,
+            InMemoryCacheBackend, CacheBackend
+        )
+        import shu.core.cache_backend as cache_module
+        
+        reset_cache_backend()
+        
+        # Set up a cached backend
+        cached_backend = InMemoryCacheBackend()
+        cache_module._cache_backend = cached_backend
+        
+        # Dependency should return the cached backend
+        result = get_cache_backend_dependency()
+        assert result is cached_backend
+        
+        reset_cache_backend()
+    
+    def test_dependency_returns_inmemory_if_no_cached_backend(self):
+        """Unit test: get_cache_backend_dependency returns InMemoryCacheBackend if no cached backend."""
+        from shu.core.cache_backend import (
+            get_cache_backend_dependency, reset_cache_backend,
+            InMemoryCacheBackend
+        )
+        
+        reset_cache_backend()
+        
+        # No cached backend, should return InMemoryCacheBackend
+        result = get_cache_backend_dependency()
+        assert isinstance(result, InMemoryCacheBackend)
+        
+        reset_cache_backend()
+    
+    def test_dependency_is_synchronous(self):
+        """Unit test: get_cache_backend_dependency is synchronous (not async)."""
+        from shu.core.cache_backend import get_cache_backend_dependency
+        import asyncio
+        
+        # Should not be a coroutine
+        result = get_cache_backend_dependency()
+        assert not asyncio.iscoroutine(result)

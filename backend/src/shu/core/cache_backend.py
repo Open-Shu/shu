@@ -672,24 +672,35 @@ class RedisCacheBackend:
         - Atomic incr/decr operations
     
     Example:
-        from shu.core.database import get_redis_client
+        # Preferred: Use the factory function
+        from shu.core.cache_backend import get_cache_backend
         
-        redis_client = await get_redis_client()
-        backend = RedisCacheBackend(redis_client)
+        backend = await get_cache_backend()
         await backend.set("key", "value", ttl_seconds=300)
         value = await backend.get("key")
+        
+        # Or with dependency injection in FastAPI:
+        from shu.core.cache_backend import get_cache_backend_dependency, CacheBackend
+        
+        async def my_endpoint(
+            cache: CacheBackend = Depends(get_cache_backend_dependency)
+        ):
+            await cache.set("key", "value", ttl_seconds=300)
     
     Note:
-        The Redis client should be obtained from `get_redis_client()` in
-        `database.py`, which handles connection configuration and fallback.
+        The Redis client is managed internally by this module. Use
+        `get_cache_backend()` to obtain a properly configured backend
+        instance rather than constructing RedisCacheBackend directly.
     """
     
     def __init__(self, redis_client: Any):
         """Initialize with an existing Redis client.
         
         Args:
-            redis_client: An async Redis client instance. This should be
-                obtained from `get_redis_client()` in `database.py`.
+            redis_client: An async Redis client instance. This is typically
+                created internally by `get_cache_backend()`. External code
+                should use the factory function instead of constructing
+                this class directly.
         """
         self._client = redis_client
     

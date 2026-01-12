@@ -288,65 +288,60 @@ class _DatabaseManagerProxy:
 # For backward compatibility
 db_manager = _DatabaseManagerProxy()
 
-# Redis client management
-_redis_client = None
+# Redis client management - DEPRECATED
+# Redis client management has been moved to cache_backend.py
+# This function is kept for backward compatibility during migration.
+# Use get_cache_backend() from cache_backend.py for new code.
+# This will be removed in a future cleanup task (Task 13.2).
 
 async def get_redis_client():
     """
     Get Redis client for caching and progress tracking.
     
+    .. deprecated::
+        This function is deprecated. Use `get_cache_backend()` from
+        `shu.core.cache_backend` instead for cache operations.
+        
+        This function delegates to the cache_backend module's internal
+        Redis client management. It will be removed in a future release.
+    
     Falls back to in-memory storage if Redis is unavailable.
+    
+    Returns:
+        An async Redis client instance or InMemoryRedisClient fallback.
     """
-    global _redis_client
-
-    if _redis_client is None:
-        settings = get_settings_instance()
-
-        try:
-            _redis_client = redis.from_url(
-                settings.redis_url,
-                decode_responses=True,
-                socket_timeout=settings.redis_socket_timeout,
-                socket_connect_timeout=settings.redis_connection_timeout
-            )
-
-            # Test connection - this will raise an exception if Redis is not available
-            await _redis_client.ping()
-            logger.info("Redis client initialized successfully", extra={
-                "redis_url": settings.redis_url,
-                "connection_timeout": settings.redis_connection_timeout,
-                "socket_timeout": settings.redis_socket_timeout
-            })
-
-        except Exception as e:
-            if settings.redis_required:
-                logger.error("Redis is required but connection failed", extra={
-                    "redis_url": settings.redis_url,
-                    "error": str(e)
-                })
-                raise DatabaseConnectionError(
-                    f"Redis connection failed: {e}. "
-                    f"Please ensure Redis is running and accessible at {settings.redis_url}"
-                ) from e
-            
-            if not settings.redis_fallback_enabled:
-                logger.error("Redis fallback is disabled and Redis connection failed", extra={
-                    "redis_url": settings.redis_url,
-                    "error": str(e)
-                })
-                raise DatabaseConnectionError(
-                    f"Redis connection failed: {e}. "
-                    f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
-                ) from e
-            
-            logger.warning("Failed to connect to Redis, falling back to in-memory storage", extra={
+    from .cache_backend import _get_redis_client, CacheConnectionError
+    from .in_memory_redis import InMemoryRedisClient
+    
+    settings = get_settings_instance()
+    
+    try:
+        return await _get_redis_client()
+    except CacheConnectionError as e:
+        if settings.redis_required:
+            logger.error("Redis is required but connection failed", extra={
                 "redis_url": settings.redis_url,
                 "error": str(e)
             })
-            
-            # Create in-memory Redis client as fallback
-            from .in_memory_redis import InMemoryRedisClient
-            _redis_client = InMemoryRedisClient()
-            logger.info("Using in-memory Redis fallback for progress tracking")
-
-    return _redis_client
+            raise DatabaseConnectionError(
+                f"Redis connection failed: {e}. "
+                f"Please ensure Redis is running and accessible at {settings.redis_url}"
+            ) from e
+        
+        if not settings.redis_fallback_enabled:
+            logger.error("Redis fallback is disabled and Redis connection failed", extra={
+                "redis_url": settings.redis_url,
+                "error": str(e)
+            })
+            raise DatabaseConnectionError(
+                f"Redis connection failed and fallback is disabled: {e}. "
+                f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
+            ) from e
+        
+        logger.warning("Failed to connect to Redis, falling back to in-memory storage", extra={
+            "redis_url": settings.redis_url,
+            "error": str(e)
+        })
+        
+        # Create in-memory Redis client as fallback
+        return InMemoryRedisClient()
