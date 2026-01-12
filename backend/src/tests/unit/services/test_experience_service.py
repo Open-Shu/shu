@@ -452,6 +452,8 @@ class TestUpdateExperience:
         existing_exp.include_previous_run = False
         existing_exp.llm_provider_id = None
         existing_exp.model_name = None
+        existing_exp.model_configuration_id = None
+        existing_exp.model_configuration = None
         existing_exp.prompt_id = None
         existing_exp.inline_prompt_template = None
         existing_exp.max_run_seconds = 120
@@ -508,8 +510,7 @@ class TestExperienceExport:
                 "timezone": "America/Chicago"
             },
             include_previous_run=True,
-            llm_provider_id="openai-provider",
-            model_name="gpt-4o",
+            model_configuration_id="test-model-config-id",
             prompt_id=None,
             inline_prompt_template="Summarize the following information:\n\nEmails: {{ emails }}\nCalendar: {{ calendar }}",
             max_run_seconds=120,
@@ -551,7 +552,7 @@ class TestExperienceExport:
                     updated_at=datetime.now()
                 )
             ],
-            llm_provider=None,
+            model_configuration=None,
             prompt=None,
             step_count=2,
             last_run_at=None,
@@ -580,8 +581,7 @@ class TestExperienceExport:
         # Verify placeholders are unquoted (this was the fix)
         assert "trigger_type: '{{ trigger_type }}'" in yaml_content
         assert "trigger_config: {{ trigger_config }}" in yaml_content
-        assert "llm_provider_id: '{{ llm_provider_id }}'" in yaml_content
-        assert "model_name: '{{ model_name }}'" in yaml_content
+        assert "model_configuration_id: '{{ model_configuration_id }}'" in yaml_content
         assert "max_run_seconds: {{ max_run_seconds }}" in yaml_content
         
         # Verify steps are exported correctly

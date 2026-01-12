@@ -27,11 +27,13 @@ from ..core.config import ConfigurationManager, get_settings_instance
 from ..core.logging import get_logger
 from ..llm.service import LLMService
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
+from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
 from ..schemas.query import QueryRequest
 from ..services.plugin_execution import execute_plugin
 from ..services.rag_query_processing import execute_rag_queries
 from ..services.query_service import QueryService
+from ..services.model_configuration_service import ModelConfigurationService
 from .chat_types import ChatContext
 
 logger = get_logger(__name__)
@@ -93,6 +95,52 @@ class ExperienceExecutor:
             undefined=DebugUndefined,
         )
     
+    async def _load_model_configuration(
+        self,
+        model_configuration_id: str,
+        current_user: User,
+    ) -> ModelConfiguration:
+        """
+        Load and validate model configuration for experience execution.
+        
+        Args:
+            model_configuration_id: ID of the model configuration to load
+            current_user: Current user for access validation
+            
+        Returns:
+            ModelConfiguration: Loaded and validated model configuration
+            
+        Raises:
+            ValueError: If model configuration is not found, inactive, or has inactive provider
+        """
+        model_config_service = ModelConfigurationService(self.db)
+        
+        # Load model configuration with full relationships for validation
+        model_config = await model_config_service.get_model_configuration(
+            model_configuration_id,
+            include_relationships=True,
+            current_user=current_user
+        )
+        
+        if not model_config:
+            raise ValueError(f"Model configuration {model_configuration_id} not found or access denied")
+        
+        if not model_config.is_active:
+            raise ValueError(f"Model configuration '{model_config.name}' is not active")
+        
+        # Validate that the underlying provider is active
+        if not model_config.llm_provider or not model_config.llm_provider.is_active:
+            raise ValueError(f"Model configuration '{model_config.name}' has inactive provider")
+        
+        logger.debug(
+            "Loaded model configuration for experience execution | config=%s provider=%s model=%s",
+            model_config.name,
+            model_config.llm_provider.name,
+            model_config.model_name,
+        )
+        
+        return model_config
+    
     async def execute_streaming(
         self,
         experience: Experience,
@@ -108,6 +156,25 @@ class ExperienceExecutor:
         - synthesis_started, content_delta (LLM tokens)
         - run_completed or error
         """
+        # Load model configuration if specified
+        model_config: Optional[ModelConfiguration] = None
+        if experience.model_configuration_id:
+            try:
+                model_config = await self._load_model_configuration(
+                    experience.model_configuration_id,
+                    current_user
+                )
+            except ValueError as e:
+                # Model configuration validation failed - fail the run immediately
+                run = await self._create_run(experience, user_id, input_params)
+                await self._finalize_run(
+                    run, "failed", {}, {},
+                    error_message=str(e),
+                    model_config=model_config
+                )
+                yield ExperienceEvent(ExperienceEventType.ERROR, {"message": str(e)})
+                return
+        
         run = await self._create_run(experience, user_id, input_params)
         yield ExperienceEvent(ExperienceEventType.RUN_STARTED, {"run_id": run.id, "experience_id": experience.id})
         
@@ -140,7 +207,8 @@ class ExperienceExecutor:
                     )
                     await self._finalize_run(
                         run, "failed", step_states, step_outputs,
-                        error_message=error_msg
+                        error_message=error_msg,
+                        model_config=model_config
                     )
                     yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
                     return
@@ -148,7 +216,7 @@ class ExperienceExecutor:
                 # LLM Synthesis
                 yield ExperienceEvent(ExperienceEventType.SYNTHESIS_STARTED, {})
                 
-                async for chunk in self._synthesize_with_llm_streaming(experience, context):
+                async for chunk in self._synthesize_with_llm_streaming(experience, context, current_user, model_config):
                     if isinstance(chunk, dict):
                         result_metadata = chunk
                     else:
@@ -158,7 +226,8 @@ class ExperienceExecutor:
                 # Finalize
                 await self._finalize_run(
                     run, "succeeded", step_states, step_outputs,
-                    result_content=final_content, result_metadata=result_metadata
+                    result_content=final_content, result_metadata=result_metadata,
+                    model_config=model_config
                 )
                 yield ExperienceEvent(ExperienceEventType.RUN_COMPLETED, {
                     "run_id": run.id,
@@ -167,13 +236,13 @@ class ExperienceExecutor:
             
         except asyncio.TimeoutError:
             error_msg = f"Experience execution timed out after {timeout_seconds}s"
-            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg)
+            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg, model_config=model_config)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
             
         except Exception as e:
             error_msg = f"Experience execution failed: {str(e)}"
             logger.exception("Experience execution failed", extra={"experience_id": experience.id})
-            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg)
+            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg, model_config=model_config)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
     
     async def execute(
@@ -304,13 +373,13 @@ class ExperienceExecutor:
         run = ExperienceRun(
             experience_id=experience.id,
             user_id=user_id,
-            model_provider_id=experience.llm_provider_id,
-            model_name=experience.model_name,
+            model_configuration_id=experience.model_configuration_id,
             status="running",
             started_at=datetime.now(timezone.utc),
             input_params=input_params,
             step_states={},
             step_outputs={},
+            result_metadata={},  # Will be populated during finalization
         )
         self.db.add(run)
         await self.db.commit()
@@ -326,19 +395,36 @@ class ExperienceExecutor:
         result_content: Optional[str] = None,
         result_metadata: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
+        model_config: Optional[ModelConfiguration] = None,
     ) -> None:
-        """Update run with final state."""
+        """Update run with final state including model configuration snapshot."""
         run.status = status
         run.finished_at = datetime.now(timezone.utc)
         # Sanitize JSON fields to ensure all datetime objects are converted to strings
         run.step_states = _sanitize_for_json(step_states)
         run.step_outputs = _sanitize_for_json(step_outputs)
+        
         if result_content:
             run.result_content = result_content
-        if result_metadata:
-            run.result_metadata = _sanitize_for_json(result_metadata)
+        
         if error_message:
             run.error_message = error_message
+        
+        # Build comprehensive result metadata including model config snapshot
+        final_metadata = result_metadata or {}
+        
+        if model_config:
+            final_metadata["model_configuration"] = {
+                "id": model_config.id,
+                "name": model_config.name,
+                "description": model_config.description,
+                "provider_id": model_config.llm_provider_id,
+                "provider_name": model_config.llm_provider.name if model_config.llm_provider else None,
+                "model_name": model_config.model_name,
+                "parameter_overrides": model_config.parameter_overrides,
+            }
+        
+        run.result_metadata = _sanitize_for_json(final_metadata)
         await self.db.commit()
 
     async def _get_previous_run(
@@ -556,55 +642,144 @@ class ExperienceExecutor:
         self,
         experience: Experience,
         context: Dict[str, Any],
+        current_user: User,
+        model_config: Optional[ModelConfiguration] = None,
     ) -> AsyncGenerator[Any, None]:
         """
-        Render prompt and stream LLM synthesis.
+        Render prompt and stream LLM synthesis using model configuration.
         
-        Uses all step outputs as the User Message, and the template as System Prompt.
+        Implements prompt resolution priority: inline > experience > model config
+        Applies parameter overrides from model configuration.
+        
+        Args:
+            experience: Experience being executed
+            context: Template context with step outputs
+            current_user: Current user for access validation
+            model_config: Pre-loaded model configuration (optional, will load if not provided)
         """
-        if not experience.llm_provider_id or not experience.model_name:
-            # No LLM configured
+        if not experience.model_configuration_id:
+            # No LLM configured - return default prompt
             yield self._build_default_prompt(context)
             yield {"model": None, "tokens": {}}
             return
-            
-        # Get system prompt content from template
+        
+        # Use provided model config or load it if not provided
+        if model_config is None:
+            try:
+                model_config = await self._load_model_configuration(
+                    experience.model_configuration_id,
+                    current_user
+                )
+            except ValueError as e:
+                # Model configuration validation failed
+                logger.error(
+                    "Model configuration validation failed during synthesis | experience=%s error=%s",
+                    experience.id,
+                    str(e)
+                )
+                # Return default prompt and indicate error in metadata
+                yield self._build_default_prompt(context)
+                yield {
+                    "model": None,
+                    "tokens": {},
+                    "error": str(e),
+                    "model_configuration_id": experience.model_configuration_id
+                }
+                return
+        
+        # Determine system prompt using priority: inline > experience prompt > model config prompt
         system_prompt_content = ""
+        prompt_source = "none"
+        
         if experience.inline_prompt_template:
             system_prompt_content = self._render_template(experience.inline_prompt_template, context)
+            prompt_source = "inline"
         elif experience.prompt:
             system_prompt_content = self._render_template(experience.prompt.content, context)
+            prompt_source = "experience"
+        elif model_config.prompt:
+            system_prompt_content = self._render_template(model_config.prompt.content, context)
+            prompt_source = "model_config"
         
-        # Build user message content from steps
+        # Build user message from step outputs
         user_content = self._build_default_prompt(context)
 
-        # Get LLM client
+        # Get LLM client using model configuration
         llm_service = LLMService(self.db)
-        client = await llm_service.get_client(experience.llm_provider_id)
+        client = await llm_service.get_client(model_config.llm_provider_id)
         
         try:
+            # Build messages for LLM
             messages = ChatContext.from_dicts(
                 [{"role": "user", "content": user_content}],
                 system_prompt=system_prompt_content
             )
             
+            # Apply parameter overrides from model configuration
+            llm_params = {
+                "model": model_config.model_name,
+                "stream": True,
+            }
+            
+            # Apply parameter overrides if they exist
+            if model_config.parameter_overrides:
+                logger.debug(
+                    "Applying parameter overrides from model configuration | config=%s overrides=%s",
+                    model_config.name,
+                    model_config.parameter_overrides
+                )
+                llm_params.update(model_config.parameter_overrides)
+            
+            logger.debug(
+                "Starting LLM synthesis | experience=%s model_config=%s provider=%s model=%s prompt_source=%s",
+                experience.id,
+                model_config.name,
+                model_config.llm_provider.name,
+                model_config.model_name,
+                prompt_source
+            )
+            
+            # Stream LLM response
             stream_gen = await client.chat_completion(
                 messages=messages,
-                model=experience.model_name,
-                stream=True,
+                **llm_params
             )
             
             async for event in stream_gen:
                 if event.type == "content_delta":
                     yield event.content
                 elif event.type == "final_message":
+                    # Build comprehensive metadata including model configuration details
                     yield {
-                        "model": experience.model_name,
-                        "provider_id": experience.llm_provider_id,
+                        "model": model_config.model_name,
+                        "provider_id": model_config.llm_provider_id,
+                        "provider_name": model_config.llm_provider.name,
+                        "model_configuration_id": model_config.id,
+                        "model_configuration_name": model_config.name,
+                        "prompt_source": prompt_source,
                         "system_prompt_content": system_prompt_content,
                         "user_content": user_content,
+                        "parameter_overrides": model_config.parameter_overrides,
+                        "tokens": getattr(event, "tokens", {}),
                     }
                     
+        except Exception as e:
+            logger.exception(
+                "LLM synthesis failed | experience=%s model_config=%s error=%s",
+                experience.id,
+                model_config.name,
+                str(e)
+            )
+            # Return default prompt and error metadata
+            yield self._build_default_prompt(context)
+            yield {
+                "model": model_config.model_name,
+                "provider_id": model_config.llm_provider_id,
+                "model_configuration_id": model_config.id,
+                "model_configuration_name": model_config.name,
+                "error": str(e),
+                "tokens": {}
+            }
         finally:
             try:
                 await client.close()

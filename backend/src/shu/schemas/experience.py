@@ -141,8 +141,7 @@ class ExperienceBase(BaseModel):
     include_previous_run: bool = Field(default=False, description="Include previous run output in context")
 
     # LLM configuration
-    llm_provider_id: Optional[str] = Field(None, description="LLM provider to use")
-    model_name: Optional[str] = Field(None, max_length=100, description="Model name")
+    model_configuration_id: Optional[str] = Field(None, description="Model configuration to use for LLM synthesis")
 
     # Prompt configuration
     prompt_id: Optional[str] = Field(None, description="Reference to shared prompt")
@@ -178,8 +177,7 @@ class ExperienceUpdate(BaseModel):
     trigger_type: Optional[TriggerType] = None
     trigger_config: Optional[Dict[str, Any]] = None
     include_previous_run: Optional[bool] = None
-    llm_provider_id: Optional[str] = None
-    model_name: Optional[str] = Field(None, max_length=100)
+    model_configuration_id: Optional[str] = None
     prompt_id: Optional[str] = None
     inline_prompt_template: Optional[str] = None
     max_run_seconds: Optional[int] = Field(None, ge=1, le=600)
@@ -212,7 +210,7 @@ class ExperienceResponse(ExperienceBase):
 
     # Expanded relationships
     steps: List[ExperienceStepResponse] = Field(default_factory=list)
-    llm_provider: Optional[Dict[str, Any]] = None
+    model_configuration: Optional[Dict[str, Any]] = Field(None, description="Model configuration details when include_relationships=True")
     prompt: Optional[Dict[str, Any]] = None
 
     # Computed
@@ -256,9 +254,8 @@ class ExperienceRunResponse(BaseModel):
     user_id: str
     previous_run_id: Optional[str] = None
 
-    # Model snapshot
-    model_provider_id: Optional[str] = None
-    model_name: Optional[str] = None
+    # Model configuration used for this run (snapshot at execution time)
+    model_configuration_id: Optional[str] = Field(None, description="Model configuration ID used for this run")
 
     # Status
     status: RunStatus
@@ -270,7 +267,7 @@ class ExperienceRunResponse(BaseModel):
     step_states: Optional[Dict[str, Any]] = None
     step_outputs: Optional[Dict[str, Any]] = None
     result_content: Optional[str] = None
-    result_metadata: Optional[Dict[str, Any]] = None
+    result_metadata: Optional[Dict[str, Any]] = Field(None, description="Includes model configuration snapshot and execution metadata")
 
     # Error
     error_message: Optional[str] = None

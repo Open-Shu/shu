@@ -390,8 +390,7 @@ class TestRunManagement:
         """Test run creation."""
         experience = MagicMock()
         experience.id = "exp-123"
-        experience.llm_provider_id = "provider-1"
-        experience.model_name = "gpt-4"
+        experience.model_configuration_id = "config-1"
         
         executor.db.add = MagicMock()
         executor.db.commit = AsyncMock()
@@ -406,7 +405,7 @@ class TestRunManagement:
         assert run.user_id == "user-123"
         assert run.input_params == {"query": "test"}
         assert run.status == "running"
-        assert run.model_name == "gpt-4"
+        assert run.model_configuration_id == "config-1"
     
     @pytest.mark.asyncio
     async def test_finalize_run_success(self, executor):
@@ -567,3 +566,227 @@ class TestPreviousRunBacklink:
         result = await executor._get_previous_run("exp-123", "user-123")
         
         assert result is None
+
+
+class TestModelConfigurationLoading:
+    """Tests for _load_model_configuration method."""
+    
+    @pytest.fixture
+    def executor(self):
+        """Create an executor with mocked dependencies."""
+        db = AsyncMock()
+        config_manager = MagicMock()
+        return ExperienceExecutor(db, config_manager)
+    
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock user."""
+        user = MagicMock()
+        user.id = "user-123"
+        user.email = "test@example.com"
+        return user
+    
+    @pytest.fixture
+    def mock_model_config(self):
+        """Create a mock model configuration."""
+        config = MagicMock()
+        config.id = "config-123"
+        config.name = "Test Config"
+        config.is_active = True
+        config.llm_provider = MagicMock()
+        config.llm_provider.name = "OpenAI"
+        config.llm_provider.is_active = True
+        config.model_name = "gpt-4"
+        return config
+    
+    @pytest.mark.asyncio
+    async def test_load_model_configuration_success(self, executor, mock_user, mock_model_config):
+        """Test successful model configuration loading."""
+        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+            mock_service = AsyncMock()
+            mock_service_class.return_value = mock_service
+            mock_service.get_model_configuration.return_value = mock_model_config
+            
+            result = await executor._load_model_configuration("config-123", mock_user)
+            
+            assert result == mock_model_config
+            mock_service.get_model_configuration.assert_called_once_with(
+                "config-123",
+                include_relationships=True,
+                current_user=mock_user
+            )
+    
+    @pytest.mark.asyncio
+    async def test_load_model_configuration_not_found(self, executor, mock_user):
+        """Test when model configuration is not found."""
+        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+            mock_service = AsyncMock()
+            mock_service_class.return_value = mock_service
+            mock_service.get_model_configuration.return_value = None
+            
+            with pytest.raises(ValueError, match="Model configuration config-123 not found or access denied"):
+                await executor._load_model_configuration("config-123", mock_user)
+    
+    @pytest.mark.asyncio
+    async def test_load_model_configuration_inactive(self, executor, mock_user, mock_model_config):
+        """Test when model configuration is inactive."""
+        mock_model_config.is_active = False
+        
+        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+            mock_service = AsyncMock()
+            mock_service_class.return_value = mock_service
+            mock_service.get_model_configuration.return_value = mock_model_config
+            
+            with pytest.raises(ValueError, match="Model configuration 'Test Config' is not active"):
+                await executor._load_model_configuration("config-123", mock_user)
+    
+    @pytest.mark.asyncio
+    async def test_load_model_configuration_inactive_provider(self, executor, mock_user, mock_model_config):
+        """Test when model configuration has inactive provider."""
+        mock_model_config.llm_provider.is_active = False
+        
+        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+            mock_service = AsyncMock()
+            mock_service_class.return_value = mock_service
+            mock_service.get_model_configuration.return_value = mock_model_config
+            
+            with pytest.raises(ValueError, match="Model configuration 'Test Config' has inactive provider"):
+                await executor._load_model_configuration("config-123", mock_user)
+    
+    @pytest.mark.asyncio
+    async def test_load_model_configuration_no_provider(self, executor, mock_user, mock_model_config):
+        """Test when model configuration has no provider."""
+        mock_model_config.llm_provider = None
+        
+        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+            mock_service = AsyncMock()
+            mock_service_class.return_value = mock_service
+            mock_service.get_model_configuration.return_value = mock_model_config
+            
+            with pytest.raises(ValueError, match="Model configuration 'Test Config' has inactive provider"):
+                await executor._load_model_configuration("config-123", mock_user)
+
+
+class TestModelConfigurationOptimization:
+    """Tests for model configuration optimization in synthesis."""
+    
+    @pytest.fixture
+    def executor(self):
+        """Create an executor with mocked dependencies."""
+        db = AsyncMock()
+        config_manager = MagicMock()
+        return ExperienceExecutor(db, config_manager)
+    
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock user."""
+        user = MagicMock()
+        user.id = "user-123"
+        user.email = "test@example.com"
+        return user
+    
+    @pytest.fixture
+    def mock_experience(self):
+        """Create a mock experience with model configuration."""
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.model_configuration_id = "config-123"
+        experience.inline_prompt_template = None
+        experience.prompt = None
+        return experience
+    
+    @pytest.fixture
+    def mock_model_config(self):
+        """Create a mock model configuration."""
+        config = MagicMock()
+        config.id = "config-123"
+        config.name = "Test Config"
+        config.is_active = True
+        config.llm_provider = MagicMock()
+        config.llm_provider.name = "OpenAI"
+        config.llm_provider.is_active = True
+        config.llm_provider_id = "provider-123"
+        config.model_name = "gpt-4"
+        config.parameter_overrides = {"temperature": 0.7}
+        config.prompt = None
+        return config
+    
+    @pytest.mark.asyncio
+    async def test_synthesize_with_preloaded_model_config(self, executor, mock_user, mock_experience, mock_model_config):
+        """Test that _synthesize_with_llm_streaming uses preloaded model config without loading again."""
+        context = {"steps": {}}
+        
+        # Mock the LLM service and client
+        with patch('shu.services.experience_executor.LLMService') as mock_llm_service_class:
+            mock_llm_service = AsyncMock()
+            mock_llm_service_class.return_value = mock_llm_service
+            
+            mock_client = AsyncMock()
+            mock_llm_service.get_client.return_value = mock_client
+            
+            # Mock the chat completion to return a simple response
+            async def mock_chat_completion(**kwargs):
+                # Simulate streaming response
+                yield MagicMock(type="content_delta", content="Hello")
+                yield MagicMock(type="final_message", tokens={"prompt": 10, "completion": 5})
+            
+            mock_client.chat_completion.return_value = mock_chat_completion()
+            mock_client.close = AsyncMock()
+            
+            # Mock _load_model_configuration to track if it's called
+            with patch.object(executor, '_load_model_configuration') as mock_load_config:
+                # Call synthesis with preloaded model config
+                results = []
+                async for chunk in executor._synthesize_with_llm_streaming(
+                    mock_experience, context, mock_user, mock_model_config
+                ):
+                    results.append(chunk)
+                
+                # Verify that _load_model_configuration was NOT called since we passed the config
+                mock_load_config.assert_not_called()
+                
+                # Verify that the LLM service was used correctly
+                mock_llm_service.get_client.assert_called_once_with("provider-123")
+                mock_client.chat_completion.assert_called_once()
+                
+                # Verify the results contain expected content
+                assert len(results) >= 2  # At least content and metadata
+                assert any("Hello" in str(result) for result in results)
+                assert any(isinstance(result, dict) and "model" in result for result in results)
+    
+    @pytest.mark.asyncio
+    async def test_synthesize_without_preloaded_model_config(self, executor, mock_user, mock_experience, mock_model_config):
+        """Test that _synthesize_with_llm_streaming loads model config when not provided."""
+        context = {"steps": {}}
+        
+        # Mock the LLM service and client
+        with patch('shu.services.experience_executor.LLMService') as mock_llm_service_class:
+            mock_llm_service = AsyncMock()
+            mock_llm_service_class.return_value = mock_llm_service
+            
+            mock_client = AsyncMock()
+            mock_llm_service.get_client.return_value = mock_client
+            
+            # Mock the chat completion to return a simple response
+            async def mock_chat_completion(**kwargs):
+                yield MagicMock(type="content_delta", content="Hello")
+                yield MagicMock(type="final_message", tokens={"prompt": 10, "completion": 5})
+            
+            mock_client.chat_completion.return_value = mock_chat_completion()
+            mock_client.close = AsyncMock()
+            
+            # Mock _load_model_configuration to return our mock config
+            with patch.object(executor, '_load_model_configuration', return_value=mock_model_config) as mock_load_config:
+                # Call synthesis without preloaded model config
+                results = []
+                async for chunk in executor._synthesize_with_llm_streaming(
+                    mock_experience, context, mock_user
+                ):
+                    results.append(chunk)
+                
+                # Verify that _load_model_configuration WAS called since we didn't pass the config
+                mock_load_config.assert_called_once_with("config-123", mock_user)
+                
+                # Verify that the LLM service was used correctly
+                mock_llm_service.get_client.assert_called_once_with("provider-123")
+                mock_client.chat_completion.assert_called_once()

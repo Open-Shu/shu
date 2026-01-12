@@ -53,9 +53,8 @@ class Experience(BaseModel):
     # Whether to include previous run output in context (backlink for continuity)
     include_previous_run = Column(Boolean, default=False, nullable=False)
 
-    # LLM Configuration
-    llm_provider_id = Column(String, ForeignKey("llm_providers.id", ondelete="SET NULL"), nullable=True)
-    model_name = Column(String(100), nullable=True)
+    # LLM Configuration - using Model Configuration instead of direct provider reference
+    model_configuration_id = Column(String, ForeignKey("model_configurations.id", ondelete="SET NULL"), nullable=True)
 
     # Prompt: can reference shared Prompt OR store inline template
     prompt_id = Column(String, ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True)
@@ -82,7 +81,7 @@ class Experience(BaseModel):
         cascade="all, delete-orphan"
     )
     runs = relationship("ExperienceRun", back_populates="experience", cascade="all, delete-orphan")
-    llm_provider = relationship("LLMProvider")
+    model_configuration = relationship("ModelConfiguration")
     prompt = relationship("Prompt")
     parent_version = relationship("Experience", remote_side="Experience.id")
     creator = relationship("User", foreign_keys=[created_by])
@@ -241,9 +240,8 @@ class ExperienceRun(BaseModel):
     # Backlink to previous run (for experience continuity when include_previous_run=True)
     previous_run_id = Column(String, ForeignKey("experience_runs.id", ondelete="SET NULL"), nullable=True)
 
-    # Model used for this run (snapshot at execution time)
-    model_provider_id = Column(String, nullable=True)
-    model_name = Column(String(100), nullable=True)
+    # Model configuration used for this run (snapshot at execution time)
+    model_configuration_id = Column(String, nullable=True)
 
     # Status tracking
     status = Column(String(20), default="pending", nullable=False, index=True)
