@@ -157,6 +157,7 @@ const YAMLInputStep = ({
                     onChange={handleYAMLChange}
                     placeholder="Paste your YAML configuration here..."
                     variant="outlined"
+                    inputProps={{ 'aria-label': 'YAML configuration' }}
                     InputProps={{
                         sx: {
                             fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
@@ -204,8 +205,8 @@ const YAMLInputStep = ({
                                 // Handle enhanced error objects with line/column info
                                 if (typeof error === 'object' && error.type === 'yaml_parsing') {
                                     return (
-                                        <Box key={index} sx={{ mb: 1 }}>
-                                            <Typography component="li" variant="body2" color="error.main">
+                                        <Box component="li" key={index} sx={{ mb: 1 }}>
+                                            <Typography variant="body2" color="error.main">
                                                 <strong>Line {error.line}, Column {error.column}:</strong> {error.reason}
                                             </Typography>
                                             {error.context && (
@@ -257,13 +258,15 @@ const YAMLInputStep = ({
                 )}
 
                 {/* Plugin Requirements */}
-                {validationResult.pluginValidation && validationResult.pluginValidation.requiredPlugins.length > 0 && (
+                {validationResult.pluginValidation?.requiredPlugins && 
+                 Array.isArray(validationResult.pluginValidation.requiredPlugins) && 
+                 validationResult.pluginValidation.requiredPlugins.length > 0 && (
                     <Alert severity="info" sx={{ mb: 2 }}>
                         <Typography variant="body2" fontWeight="medium" gutterBottom>
                             Required Plugins ({validationResult.pluginValidation.requiredPlugins.length}):
                         </Typography>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
-                            {validationResult.pluginValidation.requiredPlugins.map((plugin) => (
+                            {validationResult.pluginValidation?.requiredPlugins?.map((plugin) => (
                                 <Chip
                                     key={plugin}
                                     label={plugin}
