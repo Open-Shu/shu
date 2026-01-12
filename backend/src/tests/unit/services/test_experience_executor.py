@@ -494,7 +494,7 @@ class TestDatetimeFormatting:
             assert "Monday" in result
             assert "January 15, 2024" in result
             assert "7:30 PM" in result or "19:30" in result
-            assert "UTC" in result or "(Invalid/Timezone)" in result
+            assert "UTC" in result
 
     @pytest.mark.asyncio
     async def test_get_user_formatted_datetime_no_preferences(self, executor):

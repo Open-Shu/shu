@@ -35,7 +35,7 @@ inline_prompt_template: |
   - Highlight important action items and urgent matters first
   - Group by category (email priorities, meetings, chat highlights)
   - Keep it concise but comprehensive
-  - Use markdown tables for sections to make them more readible
+  - Use markdown tables for sections to make them more readable
   - Use clearly labeled section headers for each category
   - Email instructions:
     - Flag likely spam/bulk emails under a separate "Likely Spam" section with brief reasons

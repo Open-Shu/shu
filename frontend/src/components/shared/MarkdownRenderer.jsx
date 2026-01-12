@@ -22,7 +22,7 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
       a: ({ href, children, ...props }) => {
         const docTarget = parseDocumentHref?.(href);
         const handleLinkClick = (event) => {
-          if (docTarget) {
+          if (docTarget && typeof onOpenDocument === 'function') {
             event.preventDefault();
             onOpenDocument(docTarget);
           }
