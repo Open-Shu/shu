@@ -22,7 +22,7 @@ try:
     import jsonschema  # type: ignore
 except Exception:  # noqa: BLE001
     jsonschema = None  # type: ignore
-from ..core.database import get_redis_client  # type: ignore
+from ..core.cache_backend import get_cache_backend  # type: ignore
 
 
 from ..core.config import get_settings_instance  # type: ignore
@@ -224,9 +224,9 @@ class Executor:
         if daily_limit <= 0 and monthly_limit <= 0:
             return
         try:
-            redis = await get_redis_client()
+            cache = await get_cache_backend()
         except Exception:
-            # If we cannot get a client and quotas are configured, be safe and allow (documented limitation)
+            # If we cannot get a cache backend and quotas are configured, be safe and allow (documented limitation)
             logger.exception("Quota enforcement unavailable; proceeding without quotas")
             return
 
@@ -244,8 +244,8 @@ class Executor:
         # Read current counts
         day_key = f"quota:d:{bucket}"
         month_key = f"quota:m:{bucket}"
-        day_raw = await redis.get(day_key)
-        month_raw = await redis.get(month_key)
+        day_raw = await cache.get(day_key)
+        month_raw = await cache.get(month_key)
         day_count = int(day_raw) if day_raw is not None else 0
         month_count = int(month_raw) if month_raw is not None else 0
 
@@ -268,27 +268,27 @@ class Executor:
             }
             raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "monthly", "reset_in": reset_in_month}, headers=headers)
 
-        # Consume one from both windows (idempotent setex keeps expiry to end of period)
+        # Consume one from both windows (use set with TTL to keep expiry to end of period)
         if daily_limit > 0:
-            await redis.setex(day_key, reset_in_day, str(day_count + 1))
+            await cache.set(day_key, str(day_count + 1), ttl_seconds=reset_in_day)
         if monthly_limit > 0:
-            await redis.setex(month_key, reset_in_month, str(month_count + 1))
+            await cache.set(month_key, str(month_count + 1), ttl_seconds=reset_in_month)
 
     async def _acquire_provider_concurrency(self, *, provider: str, limit: int) -> bool:
         if limit <= 0:
             return True
         try:
-            redis = await get_redis_client()
+            cache = await get_cache_backend()
         except Exception:
             logger.exception("Concurrency enforcement unavailable; allowing request")
             return True
         key = f"conc:{provider}"
         try:
-            n = await redis.incr(key)
+            n = await cache.incr(key)
             # set short TTL to auto-recover from crashes
-            await redis.expire(key, 30)
+            await cache.expire(key, 30)
             if int(n) > int(limit):
-                await redis.decr(key)
+                await cache.decr(key)
                 return False
             return True
         except Exception:
@@ -297,8 +297,8 @@ class Executor:
 
     async def _release_provider_concurrency(self, *, provider: str) -> None:
         try:
-            redis = await get_redis_client()
-            await redis.decr(f"conc:{provider}")
+            cache = await get_cache_backend()
+            await cache.decr(f"conc:{provider}")
         except Exception:
             pass
 
