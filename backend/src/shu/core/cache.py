@@ -161,11 +161,24 @@ class ConfigCache:
         
         Note: With CacheBackend, we can't easily count keys by namespace,
         so this returns basic information.
+        
+        Returns:
+            Dict containing cache_ttl, backend_type, and optionally an error field
+            if the backend could not be acquired.
         """
-        return {
-            'cache_ttl': self._cache_ttl,
-            'backend_type': type(await self._get_backend()).__name__,
-        }
+        try:
+            backend = await self._get_backend()
+            return {
+                'cache_ttl': self._cache_ttl,
+                'backend_type': type(backend).__name__,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get cache backend for stats: {e}")
+            return {
+                'cache_ttl': self._cache_ttl,
+                'backend_type': None,
+                'error': str(e),
+            }
 
 
 # Global cache instance

@@ -103,7 +103,7 @@ class TestTokenBucketRateLimiter:
         """
         Create a mock CacheBackend for testing rate limiting.
         
-        The mock implements async `get`, `incr`, and `expire` operations backed by an internal `_store` dict.
+        The mock implements async `get`, `incr`, `decr`, and `expire` operations backed by an internal `_store` dict.
         
         Returns:
             AsyncMock: A mock CacheBackend instance with the required methods.
@@ -120,12 +120,18 @@ class TestTokenBucketRateLimiter:
             cache._store[key] = cache._store.get(key, 0) + amount
             return cache._store[key]
 
+        async def mock_decr(key, amount=1):
+            """Decrement the integer value stored for key and return the updated value."""
+            cache._store[key] = cache._store.get(key, 0) - amount
+            return cache._store[key]
+
         async def mock_expire(key, seconds):
             """Simulate setting a TTL on a key."""
             return True
 
         cache.get = mock_get
         cache.incr = mock_incr
+        cache.decr = mock_decr
         cache.expire = mock_expire
         return cache
     
@@ -172,7 +178,6 @@ class TestTokenBucketRateLimiter:
     async def test_fixed_window_algorithm_works_correctly(self, mock_cache_backend):
         """Fixed-window algorithm correctly tracks requests within time windows."""
         from shu.core.rate_limiting import TokenBucketRateLimiter
-        import time
 
         with patch.object(TokenBucketRateLimiter, "_get_cache", return_value=mock_cache_backend):
             limiter = TokenBucketRateLimiter(
@@ -181,8 +186,8 @@ class TestTokenBucketRateLimiter:
                 refill_per_second=1,  # 5 requests per 5 seconds
             )
 
-            # Mock time to control window boundaries
-            with patch('time.time', return_value=1000):
+            # Mock time to control window boundaries - patch the exact module reference
+            with patch('shu.core.rate_limiting.time.time', return_value=1000):
                 # First 5 requests should be allowed
                 for i in range(5):
                     result = await limiter.check(key="user:123")

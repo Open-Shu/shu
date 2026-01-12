@@ -49,18 +49,15 @@ class TokenBucketLimiter:
         window_key = f"{key}:fw:{int(time.time())//window_s}"
         
         try:
-            # First read current counter to check capacity before incrementing
-            current_raw = await cache.get(window_key)
-            current = int(current_raw) if current_raw is not None else 0
-            projected = current + cost
-
-            # Only increment if within capacity
-            if projected <= cap:
-                await cache.incr(window_key, cost)
-                await cache.expire(window_key, window_s)
+            # Atomic increment-first pattern to avoid TOCTOU race condition
+            new_count = await cache.incr(window_key, cost)
+            await cache.expire(window_key, window_s)
+            
+            if new_count <= cap:
                 return True, 0
             
-            # Denied: do not increment
+            # Over capacity - decrement back and deny
+            await cache.decr(window_key, cost)
             return False, window_s
         except Exception as e:
             logger.error("Rate limiter failure; allowing request. err=%s", e)

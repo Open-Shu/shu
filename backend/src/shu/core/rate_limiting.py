@@ -180,28 +180,30 @@ class TokenBucketRateLimiter:
         )
 
         try:
-            # First read current counter to check capacity before incrementing
-            current_raw = await cache.get(window_key)
-            current = int(current_raw) if current_raw is not None else 0
-            projected = current + cost
+            # Atomic increment-first pattern to avoid TOCTOU race condition
+            # Increment first, then check if we exceeded capacity
+            new_count = await cache.incr(window_key, cost)
+            
+            # Set expiry only when key was just created (new_count == cost means first increment)
+            if new_count == cost:
+                await cache.expire(window_key, window_s)
 
             logger.debug(
-                "Fixed-window rate limit check: key=%s, current=%d, projected=%d, capacity=%d",
-                window_key, current, projected, cap
+                "Fixed-window rate limit check: key=%s, new_count=%d, capacity=%d",
+                window_key, new_count, cap
             )
 
-            # Only increment if within capacity
-            if projected <= cap:
-                await cache.incr(window_key, cost)
-                await cache.expire(window_key, window_s)
+            # Check if within capacity after increment
+            if new_count <= cap:
                 return RateLimitResult(
                     allowed=True,
-                    remaining=cap - projected,
+                    remaining=cap - new_count,
                     limit=cap,
                     reset_seconds=window_s,
                 )
 
-            # Denied: do not increment, return denied result
+            # Over capacity - decrement back and deny
+            await cache.decr(window_key, cost)
             return RateLimitResult(
                 allowed=False,
                 retry_after_seconds=window_s,

@@ -32,12 +32,18 @@ class TestPluginTokenBucketLimiter:
             cache._store[key] = cache._store.get(key, 0) + amount
             return cache._store[key]
 
+        async def mock_decr(key, amount=1):
+            """Decrement the integer value stored for key and return the updated value."""
+            cache._store[key] = cache._store.get(key, 0) - amount
+            return cache._store[key]
+
         async def mock_expire(key, seconds):
             """Simulate setting a TTL on a key."""
             return True
 
         cache.get = mock_get
         cache.incr = mock_incr
+        cache.decr = mock_decr
         cache.expire = mock_expire
         return cache
     
