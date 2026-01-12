@@ -601,10 +601,10 @@ class InMemoryCacheBackend:
                     try:
                         current_value = int(value_str)
                         current_expiry = expiry
-                    except ValueError:
+                    except ValueError as e:
                         raise CacheTypeError(
                             f"Value for key '{key}' is not a valid integer: {value_str!r}"
-                        )
+                        ) from e
             
             new_value = current_value + amount
             self._data[key] = (str(new_value), current_expiry)
@@ -646,10 +646,10 @@ class InMemoryCacheBackend:
                     try:
                         current_value = int(value_str)
                         current_expiry = expiry
-                    except ValueError:
+                    except ValueError as e:
                         raise CacheTypeError(
                             f"Value for key '{key}' is not a valid integer: {value_str!r}"
-                        )
+                        ) from e
             
             new_value = current_value - amount
             self._data[key] = (str(new_value), current_expiry)
@@ -1011,7 +1011,7 @@ async def _create_redis_client() -> Any:
         raise CacheConnectionError(
             f"Redis connection failed: {e}",
             details={"redis_url": settings.redis_url, "error": str(e)}
-        )
+        ) from e
 
 
 async def _get_redis_client() -> Any:
@@ -1095,7 +1095,7 @@ async def get_cache_backend() -> CacheBackend:
             raise CacheConnectionError(
                 f"Redis is required but connection failed: {e}. "
                 f"Please ensure Redis is running and accessible at {settings.redis_url}"
-            )
+            ) from e
         
         if not settings.redis_fallback_enabled:
             logger.error("Redis fallback is disabled and Redis connection failed", extra={
@@ -1105,7 +1105,7 @@ async def get_cache_backend() -> CacheBackend:
             raise CacheConnectionError(
                 f"Redis connection failed and fallback is disabled: {e}. "
                 f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
-            )
+            ) from e
         
         # Fall back to in-memory
         logger.warning(
