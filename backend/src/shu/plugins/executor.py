@@ -49,6 +49,12 @@ class _DenyImportsFinder(MetaPathFinder):
 class _DenyHttpImportsCtx:
     """Context manager to install/remove the deny-imports finder safely.
     Also patches importlib.import_module to deny disallowed names even if preloaded in sys.modules.
+
+    IMPORTANT: This context manager modifies global state (sys.meta_path and importlib.import_module).
+    It is NOT safe for concurrent use across threads. In async contexts, background tasks spawned
+    during plugin execution may still be affected by the import deny policy until the context exits.
+    Host capabilities that spawn background tasks should import all required modules BEFORE creating
+    the task to avoid import failures.
     """
     def __init__(self):
         self._finder: Optional[_DenyImportsFinder] = None
@@ -95,12 +101,14 @@ class _DenyHttpImportsCtx:
         except Exception:
             pass
         try:
-            if self._finder is not None:
-                if sys.meta_path and sys.meta_path[0] is self._finder:
-                    sys.meta_path.pop(0)
-                else:
-                    if self._finder in sys.meta_path:
-                        sys.meta_path.remove(self._finder)
+            # Remove our specific finder instance by identity, not by position.
+            # This is safer if multiple contexts are nested or if sys.meta_path
+            # was modified by other code during execution.
+            if self._finder is not None and self._finder in sys.meta_path:
+                sys.meta_path.remove(self._finder)
+        except (ValueError, AttributeError):
+            # Finder already removed or sys.meta_path in unexpected state
+            pass
         except Exception:
             pass
         self._finder = None
@@ -219,7 +227,11 @@ class Executor:
 
     async def _enforce_quotas(self, *, bucket: str, daily_limit: int, monthly_limit: int) -> None:
         """Check and consume per-user/per-plugin quotas (daily/monthly).
+
         Raises HTTPException(429) with detail {error: quota_exceeded, period, reset_in} when exceeded.
+
+        Uses atomic Lua scripts to avoid race conditions where concurrent requests
+        could both read the same count and both increment, potentially exceeding the quota.
         """
         if daily_limit <= 0 and monthly_limit <= 0:
             return
@@ -241,16 +253,52 @@ class Executor:
             next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
         reset_in_month = max(1, int((next_month_start - now).total_seconds()))
 
-        # Read current counts
         day_key = f"quota:d:{bucket}"
         month_key = f"quota:m:{bucket}"
-        day_raw = await redis.get(day_key)
-        month_raw = await redis.get(month_key)
-        day_count = int(day_raw) if day_raw is not None else 0
-        month_count = int(month_raw) if month_raw is not None else 0
 
-        # Would exceed?
-        if daily_limit > 0 and day_count >= daily_limit:
+        # Lua script: atomically check and increment quota
+        # Returns: 0 = success (incremented), 1 = daily exceeded, 2 = monthly exceeded
+        # Args: daily_limit, monthly_limit, day_ttl, month_ttl
+        lua_script = """
+        local day_key = KEYS[1]
+        local month_key = KEYS[2]
+        local daily_limit = tonumber(ARGV[1])
+        local monthly_limit = tonumber(ARGV[2])
+        local day_ttl = tonumber(ARGV[3])
+        local month_ttl = tonumber(ARGV[4])
+
+        local day_count = tonumber(redis.call('GET', day_key) or '0')
+        local month_count = tonumber(redis.call('GET', month_key) or '0')
+
+        -- Check limits before incrementing
+        if daily_limit > 0 and day_count >= daily_limit then
+            return 1
+        end
+        if monthly_limit > 0 and month_count >= monthly_limit then
+            return 2
+        end
+
+        -- Increment and set TTL
+        if daily_limit > 0 then
+            redis.call('SETEX', day_key, day_ttl, tostring(day_count + 1))
+        end
+        if monthly_limit > 0 then
+            redis.call('SETEX', month_key, month_ttl, tostring(month_count + 1))
+        end
+        return 0
+        """
+
+        try:
+            result = await redis.eval(
+                lua_script, 2, day_key, month_key,
+                str(daily_limit), str(monthly_limit), str(reset_in_day), str(reset_in_month)
+            )
+            result_code = int(result)
+        except Exception:
+            logger.exception("Quota check failed; proceeding without quota enforcement")
+            return
+
+        if result_code == 1:
             headers = {
                 "Retry-After": str(reset_in_day),
                 "RateLimit-Limit": f"{daily_limit};w=86400",
@@ -258,8 +306,7 @@ class Executor:
                 "RateLimit-Reset": str(reset_in_day),
             }
             raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "daily", "reset_in": reset_in_day}, headers=headers)
-        if monthly_limit > 0 and month_count >= monthly_limit:
-            # Approximate month window in seconds for header context
+        if result_code == 2:
             headers = {
                 "Retry-After": str(reset_in_month),
                 "RateLimit-Limit": f"{monthly_limit};w={reset_in_month + 1}",
@@ -268,13 +315,14 @@ class Executor:
             }
             raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "monthly", "reset_in": reset_in_month}, headers=headers)
 
-        # Consume one from both windows (idempotent setex keeps expiry to end of period)
-        if daily_limit > 0:
-            await redis.setex(day_key, reset_in_day, str(day_count + 1))
-        if monthly_limit > 0:
-            await redis.setex(month_key, reset_in_month, str(month_count + 1))
-
     async def _acquire_provider_concurrency(self, *, provider: str, limit: int) -> bool:
+        """Acquire a provider concurrency slot using atomic Lua script.
+
+        Returns True if slot acquired, False if at capacity.
+        Uses a Lua script to make the check-and-increment atomic, avoiding
+        race conditions where concurrent requests could both be rejected
+        even though one should have been allowed.
+        """
         if limit <= 0:
             return True
         try:
@@ -283,14 +331,20 @@ class Executor:
             logger.exception("Concurrency enforcement unavailable; allowing request")
             return True
         key = f"conc:{provider}"
+        # Lua script: atomically check current value and increment only if under limit
+        # Returns 1 if slot acquired, 0 if at capacity
+        lua_script = """
+        local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+        if current < tonumber(ARGV[1]) then
+            redis.call('INCR', KEYS[1])
+            redis.call('EXPIRE', KEYS[1], 30)
+            return 1
+        end
+        return 0
+        """
         try:
-            n = await redis.incr(key)
-            # set short TTL to auto-recover from crashes
-            await redis.expire(key, 30)
-            if int(n) > int(limit):
-                await redis.decr(key)
-                return False
-            return True
+            result = await redis.eval(lua_script, 1, key, str(limit))
+            return int(result) == 1
         except Exception:
             logger.exception("Concurrency counter failed; allowing request")
             return True
