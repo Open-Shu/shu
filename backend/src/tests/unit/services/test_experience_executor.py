@@ -65,6 +65,9 @@ class TestContextBuilding:
         experience = MagicMock()
         experience.include_previous_run = False
         
+        # Mock the datetime formatting method
+        executor._get_user_formatted_datetime = AsyncMock(return_value="Monday, January 15, 2024 at 2:30 PM EST")
+        
         context = await executor._build_initial_context(
             experience=experience,
             user_id="user-123",
@@ -77,7 +80,7 @@ class TestContextBuilding:
         assert context["input"] == {"query": "test"}
         assert context["steps"] == {}
         assert context["previous_run"] is None
-        assert isinstance(context["now"], datetime)
+        assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
     
     @pytest.mark.asyncio
     async def test_build_context_with_previous_run(self, executor, mock_user):
@@ -91,6 +94,7 @@ class TestContextBuilding:
         previous_run.finished_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
         
         executor._get_previous_run = AsyncMock(return_value=previous_run)
+        executor._get_user_formatted_datetime = AsyncMock(return_value="Monday, January 15, 2024 at 2:30 PM EST")
         
         context = await executor._build_initial_context(
             experience=experience,
@@ -101,6 +105,7 @@ class TestContextBuilding:
         
         assert context["previous_run"]["result_content"] == "Previous summary"
         assert context["previous_run"]["step_outputs"] == {"old_step": {"data": 123}}
+        assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
 
 
 class TestTemplateRendering:
@@ -438,6 +443,95 @@ class TestRunManagement:
         
         assert run.status == "failed"
         assert run.error_message == "Something went wrong"
+
+
+class TestDatetimeFormatting:
+    """Tests for user timezone datetime formatting."""
+    
+    @pytest.fixture
+    def executor(self):
+        """Create an executor with mocked dependencies."""
+        db = AsyncMock()
+        config_manager = MagicMock()
+        return ExperienceExecutor(db, config_manager)
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_with_timezone(self, executor):
+        """Test datetime formatting with user timezone preference."""
+        # Mock user preferences query result
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = "America/New_York"
+        executor.db.execute.return_value = mock_result
+
+        # Mock datetime.now to return a fixed time for consistent testing
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)  # Monday 7:30 PM UTC
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should format in Eastern Time (UTC-5 in January)
+            # 7:30 PM UTC = 2:30 PM EST on Monday
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "2:30 PM" in result or "14:30" in result  # Handle different time formats
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_fallback_to_utc(self, executor):
+        """Test datetime formatting falls back to UTC when user timezone is invalid."""
+        # Mock user preferences query result with invalid timezone
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = "Invalid/Timezone"
+        executor.db.execute.return_value = mock_result
+
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should fall back to UTC and include timezone info
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "7:30 PM" in result or "19:30" in result
+            assert "UTC" in result or "(Invalid/Timezone)" in result
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_no_preferences(self, executor):
+        """Test datetime formatting when user has no timezone preferences."""
+        # Mock user preferences query result returning None
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        executor.db.execute.return_value = mock_result
+
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should use UTC as default
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "7:30 PM" in result or "19:30" in result
+            assert "UTC" in result
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_db_error(self, executor):
+        """Test datetime formatting when database query fails."""
+        # Mock database error
+        executor.db.execute.side_effect = Exception("Database error")
+
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should handle error gracefully and fall back to UTC
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "UTC" in result
 
 
 class TestPreviousRunBacklink:

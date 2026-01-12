@@ -26,7 +26,30 @@ trigger_config: {{ trigger_config }}
 include_previous_run: false
 llm_provider_id: '{{ llm_provider_id }}'
 model_name: '{{ model_name }}'
-inline_prompt_template: "Synthesize a morning briefing for {{ user.display_name }} based on the \`gmail_digest\`, \`calendar_events\`, and \`gchat_digest\` data.\\n\\n  ## Instructions\\n  - Review all emails, calendar events, and chat messages\\n  - Highlight important action items and urgent matters first\\n  - Group by category (email priorities, meetings, chat highlights)\\n  - Flag likely spam/bulk emails under a separate \\"Likely Spam\\" section with brief reasons\\n  - Keep it concise but comprehensive\\n\\n  Please synthesize this information into a clear, actionable morning briefing."
+inline_prompt_template: |
+  Synthesize a morning briefing (current date and time {{ now }}) for user {{ user.display_name }} based on the \`gmail_digest\`, \`calendar_events\`, and \`gchat_digest\` data.
+
+  ## Instructions
+  - Mention the user the morning briefing was created for, along with the current date and time
+  - Review all emails, calendar events, and chat messages
+  - Highlight important action items and urgent matters first
+  - Group by category (email priorities, meetings, chat highlights)
+  - Keep it concise but comprehensive
+  - Use markdown tables for sections to make them more readible
+  - Use clearly labeled section headers for each category
+  - Email instructions:
+    - Flag likely spam/bulk emails under a separate "Likely Spam" section with brief reasons
+  - Calendar instructions:
+    - Start times for calendar events can be found in \`start.dateTime\`, with timezones being \`start.timeZone\`
+    - Titles of events can be found under \`summary\`
+    - List the current and following days events, breaking down each day into their separate sections
+    - If there are no events, say "No events today"
+  - Chat instructions:
+    - The chat messages are in \`messages\`
+    - The chat sender are in \`sender.displayName\`
+
+  Please synthesize this information into a clear, actionable morning briefing.
+
 max_run_seconds: {{ max_run_seconds }}
 steps:
 - step_key: gmail_digest

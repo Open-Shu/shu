@@ -20,12 +20,15 @@ import {
 import {
     PlayArrow as RunIcon,
 } from '@mui/icons-material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useTheme } from '@mui/material/styles';
 import { experiencesAPI } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
+import MarkdownRenderer from './shared/MarkdownRenderer';
 
 export default function ExperienceRunDialog({ open, onClose, experienceId, experienceName, steps = [] }) {
+    const theme = useTheme();
+    const isDarkMode = theme.palette.mode === 'dark';
+    
     const [status, setStatus] = useState('pending'); // pending, running, completed, failed
     const [logs, setLogs] = useState([]); // List of parsed events for debugging
     const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error } }
@@ -228,9 +231,10 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                             }}
                         >
                             {llmContent ? (
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                    {llmContent}
-                                </ReactMarkdown>
+                                <MarkdownRenderer
+                                    content={llmContent}
+                                    isDarkMode={isDarkMode}
+                                />
                             ) : (
                                 <Typography color="text.secondary" variant="body2" fontStyle="italic">
                                     {status === 'running' ? 'Waiting for steps to complete...' : 'No output generated.'}
