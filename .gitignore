@@ -22,9 +22,12 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# hide dot-folders unless explicitly included
+# hide dot-files and dot-folders unless explicitly included
 .*/
+.*
 !.github/
+!.env.example
+!.dockerignore
 
 # Virtual environments
 venv/
@@ -32,11 +35,6 @@ env/
 ENV/
 env.bak/
 venv.bak/
-
-# Environment variables
-.env
-.env.local
-.env.*.local
 
 # IDE and Editor files
 *.swp
@@ -47,9 +45,7 @@ venv.bak/
 # Testing
 # Test framework cache (removed - using custom framework)
 # .pytest_cache/
-.coverage
 htmlcov/
-.cache
 nosetests.xml
 tests/testing.log
 coverage.xml

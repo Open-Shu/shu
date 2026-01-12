@@ -4,12 +4,10 @@
 
 This document describes the target, end-state vision for Shu rather than the current implementation.
 It is intentionally forward-looking and uses future-tense language for capabilities that are not yet fully built.
-For the current implementation status and known gaps, see:
-- docs/SHU_TECHNICAL_ROADMAP.md
 
 ## Executive Summary
 
-Shu is an open-source, living operating system for work: proactive organizational intelligence that maps your teams, initiatives, and customers, stitches signals from every tool you connect, and executes through self-hosted (including Ollama) or cloud LLMs while keeping data ownership and auditability firmly in your hands.
+Shu is an open-source, living operating system for work: proactive organizational intelligence that maps your teams, initiatives, and customers, stitches signals from every tool you connect, and executes through self-hosted or cloud LLMs while keeping data ownership and auditability firmly in your hands.
 
 Plugins are the heartbeat of Shu. With a standard contract and workflow engine, teams will be able to wire in CRM, source control, finance, compliance, HRIS, or bespoke internal platforms and watch Shu build continuously refreshed profiles across people, projects, and accounts. Those profiles will fuel agents that deliver decision-ready context, nudges, and automations right where work happens—Slack, email, dashboards, or custom surfaces. A cross-functional coordination experience is just one expression; the same architecture will also power sales deal desks, engineering program control towers, or compliance command centers by swapping in the relevant connectors and playbooks.
 

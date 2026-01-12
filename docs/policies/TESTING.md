@@ -5,7 +5,7 @@
 
 ## Executive Summary
 
-Shu uses a **custom integration test framework** for API/database integration tests, and **pytest** for isolated unit tests. The integration framework addresses async event loop conflicts from pytest-asyncio. This dual approach allows fast unit testing without database dependencies while maintaining robust integration coverage.
+Shu uses a **custom integration test framework** for API/database integration tests, and **pytest** for isolated unit tests. For foundational abstractions requiring correctness guarantees, we use **Hypothesis** for property-based testing. The integration framework addresses async event loop conflicts from pytest-asyncio. This approach allows fast unit testing without database dependencies while maintaining robust integration coverage.
 
 ## Unit Tests vs Integration Tests
 
@@ -71,7 +71,68 @@ class TestDocument:
         assert doc.is_processed is True
 ```
 
+### Property-Based Testing (Hypothesis)
+
+For testing foundational abstractions where correctness must hold across all inputs, we use **Hypothesis** for property-based testing (PBT). This complements example-based unit tests by automatically generating hundreds of test cases to find edge cases.
+
+**When to Use Property-Based Tests:**
+
+- Protocol/interface implementations (e.g., CacheBackend)
+- Serialization/deserialization (JSON round-trips, parsing)
+- Data transformations where invariants must hold
+- Any code where "for all X, property Y holds" is the requirement
+
+**When NOT to Use Property-Based Tests:**
+
+- API endpoint tests (use integration tests)
+- CRUD operations (use example-based tests)
+- Tests requiring specific database state
+- UI/workflow tests
+
+**Configuration:**
+
+- Library: `hypothesis` (already in requirements.txt)
+- Minimum iterations: 100 per property test
+- Location: `backend/src/tests/unit/<module>/test_<name>.py`
+
+**Example Property Test:**
+
+```python
+from hypothesis import given, strategies as st, settings
+import pytest
+
+@pytest.mark.asyncio
+@settings(max_examples=100)
+@given(key=st.text(min_size=1, max_size=200))
+async def test_get_returns_none_for_missing_keys(key: str):
+    """
+    Property: For any key not set, get() returns None.
+    Feature: unified-cache-interface, Property 1
+    **Validates: Requirements 1.3**
+    """
+    backend = InMemoryCacheBackend()
+    result = await backend.get(key)
+    assert result is None
+```
+
+**Property Test Annotation Requirements:**
+
+- Include feature name and property number in docstring
+- Reference the requirement being validated
+- Use `@settings(max_examples=100)` minimum
+
+**Run Property Tests:**
+
+```bash
+# Run all unit tests including property tests
+python -m pytest backend/src/tests/unit -v
+
+# Run specific property test file
+python -m pytest backend/src/tests/unit/core/test_cache_backend.py -v
+```
+
 ### Known Issues (testing system)
+
 - No dedicated security vulnerability testing suite; limited edge-case coverage
 - Negative tests rely on developers explicitly logging expected errors
 - Some suite docs list outdated test counts; use `python -m tests.integ.run_all_integration_tests --list-suites` as the source of truth
@@ -395,9 +456,10 @@ These notes describe why the custom integration framework was introduced and wha
 
 ## Conclusion
 
-Shu uses a dual testing approach:
+Shu uses a multi-layered testing approach:
 
 1. **Integration tests** (custom framework) for API/database workflows
 2. **Unit tests** (pytest) for fast, isolated logic tests
+3. **Property-based tests** (Hypothesis) for foundational abstractions requiring correctness guarantees
 
-The custom integration framework avoids pytest-asyncio event loop conflicts while pytest provides excellent ergonomics for synchronous unit tests. Dedicated security vulnerability testing still needs to be added before any production deployment.
+The custom integration framework avoids pytest-asyncio event loop conflicts while pytest provides excellent ergonomics for synchronous unit tests. Property-based testing with Hypothesis catches edge cases in protocols and serialization that example-based tests would miss. Dedicated security vulnerability testing still needs to be added before any production deployment.
