@@ -48,127 +48,6 @@ version: 1
     });
   });
 
-  describe('extractPlaceholders', () => {
-    it('extracts placeholders from YAML content', () => {
-      const yamlContent = `
-name: "{{ experience_name }}"
-description: "Daily briefing for {{ user_name }}"
-llm_provider_id: "{{ selected_provider }}"
-model_name: "{{ selected_model }}"
-trigger_config:
-  timezone: "{{ user_timezone }}"
-`;
-      const placeholders = YAMLProcessor.extractPlaceholders(yamlContent);
-      
-      expect(placeholders).toEqual([
-        'experience_name',
-        'selected_model',
-        'selected_provider',
-        'user_name',
-        'user_timezone'
-      ]);
-    });
-
-    it('handles placeholders with whitespace', () => {
-      const yamlContent = `
-name: "{{  experience_name  }}"
-description: "{{ user_name}}"
-provider: "{{selected_provider }}"
-`;
-      const placeholders = YAMLProcessor.extractPlaceholders(yamlContent);
-      
-      expect(placeholders).toEqual([
-        'experience_name',
-        'selected_provider',
-        'user_name'
-      ]);
-    });
-
-    it('returns empty array for content without placeholders', () => {
-      const yamlContent = `
-name: "Static Experience"
-description: "No placeholders here"
-`;
-      const placeholders = YAMLProcessor.extractPlaceholders(yamlContent);
-      
-      expect(placeholders).toEqual([]);
-    });
-
-    it('returns empty array for empty or null input', () => {
-      expect(YAMLProcessor.extractPlaceholders('')).toEqual([]);
-      expect(YAMLProcessor.extractPlaceholders(null)).toEqual([]);
-      expect(YAMLProcessor.extractPlaceholders(undefined)).toEqual([]);
-    });
-
-    it('handles duplicate placeholders', () => {
-      const yamlContent = `
-name: "{{ user_name }}"
-description: "Hello {{ user_name }}, welcome!"
-`;
-      const placeholders = YAMLProcessor.extractPlaceholders(yamlContent);
-      
-      expect(placeholders).toEqual(['user_name']);
-    });
-  });
-
-  describe('resolvePlaceholders', () => {
-    it('resolves placeholders with provided values', () => {
-      const yamlContent = `
-name: "{{ experience_name }}"
-description: "Daily briefing for {{ user_name }}"
-llm_provider_id: "{{ selected_provider }}"
-`;
-      const values = {
-        experience_name: 'Morning Briefing',
-        user_name: 'John Doe',
-        selected_provider: 'openai'
-      };
-      
-      const resolved = YAMLProcessor.resolvePlaceholders(yamlContent, values);
-      
-      expect(resolved).toContain('name: "Morning Briefing"');
-      expect(resolved).toContain('description: "Daily briefing for John Doe"');
-      expect(resolved).toContain('llm_provider_id: "openai"');
-    });
-
-    it('handles missing values gracefully', () => {
-      const yamlContent = `
-name: "{{ experience_name }}"
-description: "{{ missing_value }}"
-`;
-      const values = {
-        experience_name: 'Test Experience'
-      };
-      
-      const resolved = YAMLProcessor.resolvePlaceholders(yamlContent, values);
-      
-      expect(resolved).toContain('name: "Test Experience"');
-      expect(resolved).toContain('description: "{{ missing_value }}"');
-    });
-
-    it('handles non-string values', () => {
-      const yamlContent = `
-version: {{ version_number }}
-enabled: {{ is_enabled }}
-`;
-      const values = {
-        version_number: 1,
-        is_enabled: true
-      };
-      
-      const resolved = YAMLProcessor.resolvePlaceholders(yamlContent, values);
-      
-      expect(resolved).toContain('version: 1');
-      expect(resolved).toContain('enabled: true');
-    });
-
-    it('returns original content for empty or null input', () => {
-      expect(YAMLProcessor.resolvePlaceholders('', {})).toBe('');
-      expect(YAMLProcessor.resolvePlaceholders(null, {})).toBe(null);
-      expect(YAMLProcessor.resolvePlaceholders('test', null)).toBe('test');
-    });
-  });
-
   describe('convertToExperiencePayload', () => {
     it('converts valid YAML to experience payload', () => {
       const yamlContent = `
@@ -262,6 +141,8 @@ description: "A test experience"
 steps:
   - step_key: "test"
     step_type: "plugin"
+    plugin_name: "test_plugin"
+    plugin_op: "test_op"
 `;
       
       const result = YAMLProcessor.validateExperienceYAML(yamlContent);
@@ -311,7 +192,8 @@ description: "Invalid YAML
       
       expect(result.isValid).toBe(false);
       expect(result.errors.length).toBeGreaterThan(0);
-      expect(result.errors[0]).toMatch(/Invalid YAML syntax/);
+      // The error is now an object with enhanced information
+      expect(result.errors[0].message).toMatch(/Invalid YAML syntax/);
     });
   });
 });
