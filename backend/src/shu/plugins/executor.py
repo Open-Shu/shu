@@ -49,6 +49,12 @@ class _DenyImportsFinder(MetaPathFinder):
 class _DenyHttpImportsCtx:
     """Context manager to install/remove the deny-imports finder safely.
     Also patches importlib.import_module to deny disallowed names even if preloaded in sys.modules.
+
+    IMPORTANT: This context manager modifies global state (sys.meta_path and importlib.import_module).
+    It is NOT safe for concurrent use across threads. In async contexts, background tasks spawned
+    during plugin execution may still be affected by the import deny policy until the context exits.
+    Host capabilities that spawn background tasks should import all required modules BEFORE creating
+    the task to avoid import failures.
     """
     def __init__(self):
         self._finder: Optional[_DenyImportsFinder] = None
