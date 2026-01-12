@@ -644,6 +644,96 @@ async def process_user_event(event: UserEvent):
 - **Privacy Alerts**: Unauthorized data access attempts
 - **Business Alerts**: Significant drops in user engagement
 
+## **25. Cache Usage Standards**
+
+### **25.1. CacheBackend Interface (REQUIRED)**
+- **ALL caching operations** must use the unified `CacheBackend` interface
+- **NO direct Redis client usage** for caching purposes
+- **NO custom cache implementations** - use provided backends only
+- **ALWAYS use dependency injection** for CacheBackend access
+
+```python
+# CORRECT: Use CacheBackend interface
+from fastapi import Depends
+from shu.core.cache_backend import CacheBackend, get_cache_backend_dependency
+
+async def some_endpoint(
+    cache: CacheBackend = Depends(get_cache_backend_dependency)
+):
+    value = await cache.get("my_key")
+    await cache.set("my_key", "my_value", ttl_seconds=300)
+
+# CORRECT: Service with CacheBackend dependency
+class SomeService:
+    def __init__(self, cache: CacheBackend):
+        self.cache = cache
+
+# WRONG: Direct Redis usage
+from shu.core.database import get_redis_client
+redis = get_redis_client()  # NEVER DO THIS FOR CACHING
+
+# WRONG: Custom cache implementation
+class MyCustomCache:  # NEVER DO THIS
+    pass
+```
+
+### **25.2. Backend Selection**
+- **Automatic selection** based on `SHU_REDIS_URL` configuration
+- **Redis backend**: Used when `SHU_REDIS_URL` is set and Redis is reachable
+- **In-memory backend**: Used for development or when Redis is unavailable
+- **Transparent fallback**: Application works identically with both backends
+
+### **25.3. Key Namespacing**
+- **ALWAYS namespace cache keys** to prevent collisions
+- **Use consistent namespace patterns** for different consumers
+
+```python
+# Standard namespace patterns:
+# Plugin cache: tool_cache:{plugin_name}:{user_id}:{key}
+# Rate limiting: rl:{type}:{identifier}
+# Configuration: config:{service}:{key}
+# General cache: cache:{service}:{key}
+
+# CORRECT: Namespaced keys
+await cache.set(f"tool_cache:{plugin_name}:{user_id}:last_sync", timestamp)
+await cache.set(f"rl:api:user:{user_id}", "10")
+await cache.set(f"config:rag:{kb_id}", json.dumps(config))
+
+# WRONG: Non-namespaced keys
+await cache.set("last_sync", timestamp)  # NEVER DO THIS
+await cache.set("user_limit", "10")      # NEVER DO THIS
+```
+
+### **25.4. When to Use @lru_cache vs CacheBackend**
+
+**Use `@lru_cache` for:**
+- **Pure functions** with deterministic outputs
+- **Expensive computations** that don't change during process lifetime
+- **Configuration parsing** or constant data
+- **Single-process caching** where data loss on restart is acceptable
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def parse_complex_config(config_string: str) -> Dict:
+    """Parse configuration - result never changes for same input"""
+    return expensive_parsing_operation(config_string)
+
+@lru_cache(maxsize=1)
+def get_system_constants() -> Dict:
+    """Load system constants - same for entire process lifetime"""
+    return load_constants_from_file()
+```
+
+**Use `CacheBackend` for:**
+- **User-specific data** that needs persistence across requests
+- **Shared state** between multiple processes or instances
+- **TTL-based expiration** requirements
+- **Rate limiting** or quota tracking
+- **Plugin data** or user preferences
+- **Any data that should survive process restarts**
+
 ## **Quick Reference for LLMs**
 
 When developing, prioritize:
@@ -664,3 +754,4 @@ When developing, prioritize:
 15. **Performance**: <500ms queries, <2s agent processing, caching
 16. **Privacy**: Data isolation, access control, audit logging
 17. **Monitoring**: Structured logging, health metrics, alerting
+18. **Caching**: Use CacheBackend interface, namespace keys, graceful error handling

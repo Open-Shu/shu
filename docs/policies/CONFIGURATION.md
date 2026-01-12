@@ -308,10 +308,14 @@ service = SomeService(db, config_manager)  # Service receives config_manager
 - `SHU_DEFAULT_CHUNK_SIZE`: Default chunk size in characters (default: `1000`)
 - `SHU_DEFAULT_CHUNK_OVERLAP`: Default chunk overlap in characters (default: `200`)
 
-#### Performance Configuration
-- `SHU_BATCH_SIZE`: Batch size for processing (default: `10`)
-- `SHU_MAX_WORKERS`: Maximum number of worker threads (default: `4`)
-- `SHU_CACHE_TTL`: Cache time-to-live in seconds (default: `3600`)
+#### Cache Configuration
+- `SHU_REDIS_URL`: Redis connection string for cache backend (optional)
+  - **When set and Redis is reachable**: Uses RedisCacheBackend for all caching operations
+  - **When set but Redis is unreachable**: Falls back to InMemoryCacheBackend with warning log
+  - **When not set**: Uses InMemoryCacheBackend for all caching operations
+  - **Format**: `redis://localhost:6379/0` or `redis://user:password@host:port/db`
+  - **Impact**: Affects plugin cache, rate limiting, configuration cache, and quota tracking
+  - **Deployment flexibility**: Same application code works with or without Redis
 
 #### Sync Configuration
 - `SHU_SYNC_TIMEOUT`: Default timeout for sync operations in seconds (default: `3600`)

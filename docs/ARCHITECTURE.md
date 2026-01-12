@@ -31,6 +31,15 @@ Use this section to locate live systems quickly and avoid reinventing them. Each
   - Settings: src/shu/core/config.py (SHU_OAUTH_ENCRYPTION_KEY, etc.)
 
 
+- Cache System
+  - Unified Interface: src/shu/core/cache_backend.py (CacheBackend protocol, get_cache_backend factory)
+  - Redis Backend: RedisCacheBackend (production/multi-node deployments)
+  - In-Memory Backend: InMemoryCacheBackend (development/single-node)
+  - Backend Selection: Automatic based on SHU_REDIS_URL configuration
+  - Usage: Plugin cache, rate limiting, configuration cache, quota tracking
+  - Standards: docs/policies/DEVELOPMENT_STANDARDS.md Section 25
+
+
 - API Routers (FastAPI)
   - Aggregation: src/shu/main.py (includes routers; see app.include_router calls)
   - Plugins/Feeds/Executions: src/shu/api/plugins.py
