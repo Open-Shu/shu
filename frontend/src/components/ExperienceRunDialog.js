@@ -236,9 +236,27 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                                     isDarkMode={isDarkMode}
                                 />
                             ) : (
-                                <Typography color="text.secondary" variant="body2" fontStyle="italic">
-                                    {status === 'running' ? 'Waiting for steps to complete...' : 'No output generated.'}
-                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    {status === 'running' && (
+                                        <CircularProgress size={16} />
+                                    )}
+                                    <Typography color="text.secondary" variant="body2" fontStyle="italic">
+                                        {status === 'running' 
+                                            ? (() => {
+                                                // Check if all steps are complete (succeeded, failed, or skipped)
+                                                const allStepsComplete = steps.length > 0 && steps.every(step => {
+                                                    const state = stepStates[step.step_key];
+                                                    return state && ['succeeded', 'failed', 'skipped'].includes(state.status);
+                                                });
+                                                
+                                                return allStepsComplete 
+                                                    ? 'Generating AI response...' 
+                                                    : 'Executing workflow steps...';
+                                            })()
+                                            : 'No output generated.'
+                                        }
+                                    </Typography>
+                                </Box>
                             )}
                         </Paper>
                     </Box>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -20,6 +21,7 @@ import {
   Delete as DeleteIcon,
   Lock as LockIcon,
   Storage as KnowledgeBaseIcon,
+  Dashboard as DashboardIcon,
 } from '@mui/icons-material';
 import { alpha, useTheme } from '@mui/material/styles';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -44,6 +46,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
 }) {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === 'dark';
+  const navigate = useNavigate();
 
   return (
     <Paper
@@ -58,6 +61,15 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
       }}
     >
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Button
+          fullWidth
+          variant="outlined"
+          startIcon={<DashboardIcon />}
+          onClick={() => navigate('/dashboard')}
+          sx={{ minHeight: 44 }}
+        >
+          Dashboard
+        </Button>
         <Button
           fullWidth
           variant="contained"
