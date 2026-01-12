@@ -220,6 +220,7 @@ class Executor:
     async def _enforce_quotas(self, *, bucket: str, daily_limit: int, monthly_limit: int) -> None:
         """Check and consume per-user/per-plugin quotas (daily/monthly).
         Raises HTTPException(429) with detail {error: quota_exceeded, period, reset_in} when exceeded.
+        Uses atomic increment to avoid TOCTOU race conditions.
         """
         if daily_limit <= 0 and monthly_limit <= 0:
             return
@@ -241,38 +242,57 @@ class Executor:
             next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
         reset_in_month = max(1, int((next_month_start - now).total_seconds()))
 
-        # Read current counts
         day_key = f"quota:d:{bucket}"
         month_key = f"quota:m:{bucket}"
-        day_raw = await cache.get(day_key)
-        month_raw = await cache.get(month_key)
-        day_count = int(day_raw) if day_raw is not None else 0
-        month_count = int(month_raw) if month_raw is not None else 0
 
-        # Would exceed?
-        if daily_limit > 0 and day_count >= daily_limit:
-            headers = {
-                "Retry-After": str(reset_in_day),
-                "RateLimit-Limit": f"{daily_limit};w=86400",
-                "RateLimit-Remaining": "0",
-                "RateLimit-Reset": str(reset_in_day),
-            }
-            raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "daily", "reset_in": reset_in_day}, headers=headers)
-        if monthly_limit > 0 and month_count >= monthly_limit:
-            # Approximate month window in seconds for header context
-            headers = {
-                "Retry-After": str(reset_in_month),
-                "RateLimit-Limit": f"{monthly_limit};w={reset_in_month + 1}",
-                "RateLimit-Remaining": "0",
-                "RateLimit-Reset": str(reset_in_month),
-            }
-            raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "monthly", "reset_in": reset_in_month}, headers=headers)
-
-        # Consume one from both windows (use set with TTL to keep expiry to end of period)
+        # Atomic increment-first pattern to avoid TOCTOU race condition
+        # Check daily quota
         if daily_limit > 0:
-            await cache.set(day_key, str(day_count + 1), ttl_seconds=reset_in_day)
+            new_day_count = await cache.incr(day_key)
+            # Set expiry only when key was just created
+            if new_day_count == 1:
+                await cache.expire(day_key, reset_in_day)
+            
+            if new_day_count > daily_limit:
+                # Over quota - decrement back and deny
+                try:
+                    await cache.decr(day_key)
+                except Exception as decr_err:
+                    logger.error("Failed to decrement daily quota counter after exceeding limit: key=%s, err=%s", day_key, decr_err)
+                headers = {
+                    "Retry-After": str(reset_in_day),
+                    "RateLimit-Limit": f"{daily_limit};w=86400",
+                    "RateLimit-Remaining": "0",
+                    "RateLimit-Reset": str(reset_in_day),
+                }
+                raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "daily", "reset_in": reset_in_day}, headers=headers)
+
+        # Check monthly quota
         if monthly_limit > 0:
-            await cache.set(month_key, str(month_count + 1), ttl_seconds=reset_in_month)
+            new_month_count = await cache.incr(month_key)
+            # Set expiry only when key was just created
+            if new_month_count == 1:
+                await cache.expire(month_key, reset_in_month)
+            
+            if new_month_count > monthly_limit:
+                # Over quota - decrement back and deny
+                try:
+                    await cache.decr(month_key)
+                except Exception as decr_err:
+                    logger.error("Failed to decrement monthly quota counter after exceeding limit: key=%s, err=%s", month_key, decr_err)
+                # Also decrement daily if we incremented it
+                if daily_limit > 0:
+                    try:
+                        await cache.decr(day_key)
+                    except Exception as decr_err:
+                        logger.error("Failed to decrement daily quota counter after monthly limit exceeded: key=%s, err=%s", day_key, decr_err)
+                headers = {
+                    "Retry-After": str(reset_in_month),
+                    "RateLimit-Limit": f"{monthly_limit};w={reset_in_month + 1}",
+                    "RateLimit-Remaining": "0",
+                    "RateLimit-Reset": str(reset_in_month),
+                }
+                raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "monthly", "reset_in": reset_in_month}, headers=headers)
 
     async def _acquire_provider_concurrency(self, *, provider: str, limit: int) -> bool:
         if limit <= 0:

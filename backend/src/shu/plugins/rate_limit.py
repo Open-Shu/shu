@@ -57,7 +57,13 @@ class TokenBucketLimiter:
                 return True, 0
             
             # Over capacity - decrement back and deny
-            await cache.decr(window_key, cost)
+            try:
+                await cache.decr(window_key, cost)
+            except Exception as decr_err:
+                logger.error(
+                    "Failed to decrement rate limit counter after exceeding capacity: key=%s, bucket=%s, err=%s",
+                    window_key, bucket, decr_err
+                )
             return False, window_s
         except Exception as e:
             logger.error("Rate limiter failure; allowing request. err=%s", e)

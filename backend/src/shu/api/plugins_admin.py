@@ -1,5 +1,5 @@
 """
-Plugins API (admin): registry controls, limits, upload, delete, limits stats, sync
+Plugins API (admin): registry controls, limits, upload, delete, sync
 Preserves original paths under /plugins/admin and /plugins/upload
 """
 from __future__ import annotations
