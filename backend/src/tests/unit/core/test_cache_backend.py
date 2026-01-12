@@ -103,6 +103,27 @@ class MockRedisClient:
             raise ValueError("ERR value is not an integer or out of range")
         self._data[key] = str(new_value)
         return new_value
+    
+    async def decr(self, key: str) -> int:
+        """Decrement a value by 1."""
+        return await self.decrby(key, 1)
+    
+    async def decrby(self, key: str, amount: int) -> int:
+        """Decrement a value by amount."""
+        # Check expiration first
+        if key in self._expiry and time.time() > self._expiry[key]:
+            del self._data[key]
+            del self._expiry[key]
+        
+        current = self._data.get(key, "0")
+        if isinstance(current, int):
+            current = str(current)
+        try:
+            new_value = int(current) - amount
+        except ValueError:
+            raise ValueError("ERR value is not an integer or out of range")
+        self._data[key] = str(new_value)
+        return new_value
 
 
 # Strategy for generating valid cache keys

@@ -729,7 +729,7 @@ class RedisCacheBackend:
             raise CacheConnectionError(
                 f"Failed to get key '{key}' from Redis",
                 details={"key": key, "error": str(e)}
-            )
+            ) from e
     
     async def set(
         self,
@@ -774,7 +774,7 @@ class RedisCacheBackend:
             raise CacheConnectionError(
                 f"Failed to set key '{key}' in Redis",
                 details={"key": key, "error": str(e)}
-            )
+            ) from e
     
     async def delete(self, key: str) -> bool:
         """Delete a key from the cache.
@@ -801,7 +801,7 @@ class RedisCacheBackend:
             raise CacheConnectionError(
                 f"Failed to delete key '{key}' from Redis",
                 details={"key": key, "error": str(e)}
-            )
+            ) from e
     
     async def exists(self, key: str) -> bool:
         """Check if a key exists in the cache.
@@ -823,24 +823,24 @@ class RedisCacheBackend:
             # Redis exists returns the count of existing keys
             result = await self._client.exists(key)
             return result > 0
-        except AttributeError:
+        except AttributeError as e:
             # Fallback for clients that don't have exists method
             # (like InMemoryRedisClient)
             try:
                 result = await self._client.get(key)
                 return result is not None
-            except Exception as e:
-                logger.error(f"Redis EXISTS fallback failed for key '{key}': {e}")
+            except Exception as inner_e:
+                logger.error(f"Redis EXISTS fallback failed for key '{key}': {inner_e}")
                 raise CacheConnectionError(
                     f"Failed to check existence of key '{key}' in Redis",
-                    details={"key": key, "error": str(e)}
-                )
+                    details={"key": key, "error": str(inner_e)}
+                ) from inner_e
         except Exception as e:
             logger.error(f"Redis EXISTS failed for key '{key}': {e}")
             raise CacheConnectionError(
                 f"Failed to check existence of key '{key}' in Redis",
                 details={"key": key, "error": str(e)}
-            )
+            ) from e
     
     async def expire(self, key: str, ttl_seconds: int) -> bool:
         """Set or update the TTL for an existing key.
@@ -872,7 +872,7 @@ class RedisCacheBackend:
             raise CacheConnectionError(
                 f"Failed to set expiration for key '{key}' in Redis",
                 details={"key": key, "ttl_seconds": ttl_seconds, "error": str(e)}
-            )
+            ) from e
     
     async def incr(self, key: str, amount: int = 1) -> int:
         """Increment a numeric value.
@@ -906,19 +906,19 @@ class RedisCacheBackend:
             raise CacheTypeError(
                 f"Value for key '{key}' is not a valid integer",
                 details={"key": key, "error": str(e)}
-            )
+            ) from e
         except Exception as e:
             error_str = str(e).lower()
             if "not an integer" in error_str or "wrongtype" in error_str:
                 raise CacheTypeError(
                     f"Value for key '{key}' is not a valid integer",
                     details={"key": key, "error": str(e)}
-                )
+                ) from e
             logger.error(f"Redis INCR failed for key '{key}': {e}")
             raise CacheConnectionError(
                 f"Failed to increment key '{key}' in Redis",
                 details={"key": key, "amount": amount, "error": str(e)}
-            )
+            ) from e
     
     async def decr(self, key: str, amount: int = 1) -> int:
         """Decrement a numeric value.
@@ -942,31 +942,29 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
         
         try:
-            # Redis doesn't have a native decrby, so we use incrby with negative amount
             if amount == 1:
-                # Use incr with -1 for single decrement
-                result = await self._client.incrby(key, -1)
+                result = await self._client.decr(key)
             else:
-                result = await self._client.incrby(key, -amount)
+                result = await self._client.decrby(key, amount)
             return int(result)
         except ValueError as e:
             # Redis returns an error if the value is not an integer
             raise CacheTypeError(
                 f"Value for key '{key}' is not a valid integer",
                 details={"key": key, "error": str(e)}
-            )
+            ) from e
         except Exception as e:
             error_str = str(e).lower()
             if "not an integer" in error_str or "wrongtype" in error_str:
                 raise CacheTypeError(
                     f"Value for key '{key}' is not a valid integer",
                     details={"key": key, "error": str(e)}
-                )
+                ) from e
             logger.error(f"Redis DECR failed for key '{key}': {e}")
             raise CacheConnectionError(
                 f"Failed to decrement key '{key}' in Redis",
                 details={"key": key, "amount": amount, "error": str(e)}
-            )
+            ) from e
 
 
 # =============================================================================
