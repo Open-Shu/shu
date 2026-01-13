@@ -138,75 +138,6 @@ cache_key_strategy = st.text(
 )
 
 
-class InMemoryTestBackend:
-    """Minimal in-memory backend for testing protocol compliance.
-    
-    This is a simple implementation used only for testing the protocol.
-    The actual InMemoryCacheBackend will be implemented in a later task.
-    """
-    
-    def __init__(self):
-        self._data: dict[str, str] = {}
-    
-    async def get(self, key: str) -> str | None:
-        """Get a value by key, returns None if not found."""
-        return self._data.get(key)
-    
-    async def set(
-        self,
-        key: str,
-        value: str,
-        ttl_seconds: int | None = None,
-    ) -> bool:
-        """Set a value (TTL ignored in this minimal implementation)."""
-        self._data[key] = value
-        return True
-    
-    async def delete(self, key: str) -> bool:
-        """Delete a key."""
-        if key in self._data:
-            del self._data[key]
-            return True
-        return False
-    
-    async def exists(self, key: str) -> bool:
-        """Check if key exists."""
-        return key in self._data
-    
-    async def expire(self, key: str, ttl_seconds: int) -> bool:
-        """Set TTL (no-op in this minimal implementation)."""
-        return key in self._data
-    
-    async def incr(self, key: str, amount: int = 1) -> int:
-        """Increment a value."""
-        current = self._data.get(key, "0")
-        new_value = int(current) + amount
-        self._data[key] = str(new_value)
-        return new_value
-    
-    async def decr(self, key: str, amount: int = 1) -> int:
-        """Decrement a value."""
-        current = self._data.get(key, "0")
-        new_value = int(current) - amount
-        self._data[key] = str(new_value)
-        return new_value
-
-
-@pytest.fixture
-def test_backend() -> InMemoryTestBackend:
-    """Provide a fresh test backend for each test."""
-    return InMemoryTestBackend()
-
-
-class TestCacheBackendProtocol:
-    """Tests for CacheBackend protocol compliance."""
-    
-    def test_inmemory_test_backend_implements_protocol(self, test_backend: InMemoryTestBackend):
-        """Verify that InMemoryTestBackend implements CacheBackend protocol."""
-        # Using runtime_checkable protocol
-        assert isinstance(test_backend, CacheBackend)
-
-
 class TestProperty1GetReturnsNoneForMissingKeys:
     """
     Property 1: Get returns None for missing keys
@@ -230,7 +161,7 @@ class TestProperty1GetReturnsNoneForMissingKeys:
         **Validates: Requirements 1.3**
         """
         # Create a fresh backend for each test case
-        backend = InMemoryTestBackend()
+        backend = InMemoryCacheBackend(cleanup_interval_seconds=0)
         
         # The key has never been set, so get should return None
         result = await backend.get(key)
@@ -238,25 +169,25 @@ class TestProperty1GetReturnsNoneForMissingKeys:
         assert result is None, f"Expected None for missing key '{key}', got {result!r}"
     
     @pytest.mark.asyncio
-    async def test_get_returns_none_for_empty_backend(self, test_backend: InMemoryTestBackend):
+    async def test_get_returns_none_for_empty_backend(self, inmemory_backend: InMemoryCacheBackend):
         """Unit test: get() returns None on an empty backend."""
-        result = await test_backend.get("any_key")
+        result = await inmemory_backend.get("any_key")
         assert result is None
     
     @pytest.mark.asyncio
-    async def test_get_returns_none_after_delete(self, test_backend: InMemoryTestBackend):
+    async def test_get_returns_none_after_delete(self, inmemory_backend: InMemoryCacheBackend):
         """Unit test: get() returns None after a key is deleted."""
         # Set a key
-        await test_backend.set("test_key", "test_value")
+        await inmemory_backend.set("test_key", "test_value")
         
         # Verify it exists
-        assert await test_backend.get("test_key") == "test_value"
+        assert await inmemory_backend.get("test_key") == "test_value"
         
         # Delete it
-        await test_backend.delete("test_key")
+        await inmemory_backend.delete("test_key")
         
         # Now get should return None
-        result = await test_backend.get("test_key")
+        result = await inmemory_backend.get("test_key")
         assert result is None
 
 

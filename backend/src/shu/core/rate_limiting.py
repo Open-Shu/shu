@@ -1,8 +1,9 @@
 """
 Rate limiting service for Shu.
 
-Provides a unified rate limiting interface with Redis and in-memory backends.
-Supports both RPM (requests per minute) and TPM (tokens per minute) limiting.
+Provides a unified rate limiting interface using the CacheBackend abstraction.
+Supports both RPM (requests per minute) and TPM (tokens per minute) limiting
+with a fixed-window algorithm that works identically across all cache backends.
 
 Design follows SOLID principles:
 - Single Responsibility: Each class has one purpose
@@ -16,7 +17,9 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Optional, Protocol
+
+from .cache_backend import get_cache_backend, CacheBackend
 
 logger = logging.getLogger(__name__)
 
@@ -91,50 +94,11 @@ class RateLimiter(Protocol):
         ...
 
 
-# Lua script for token bucket: refill then try to consume tokens.
-# KEYS[1]=bucket_key, ARGV[1]=now_ms, ARGV[2]=capacity, ARGV[3]=refill_tokens_per_ms, ARGV[4]=cost
-TOKEN_BUCKET_LUA = """
-local key = KEYS[1]
-local now = tonumber(ARGV[1])
-local capacity = tonumber(ARGV[2])
-local rate = tonumber(ARGV[3])
-local cost = tonumber(ARGV[4])
-local state = redis.call('HMGET', key, 'tokens', 'ts')
-local tokens = tonumber(state[1])
-local ts = tonumber(state[2])
-if tokens == nil then
-  tokens = capacity
-  ts = now
-else
-  local delta = math.max(0, now - ts)
-  tokens = math.min(capacity, tokens + (delta * rate))
-  ts = now
-end
-local allowed = 0
-local retry_ms = 0
-if tokens >= cost then
-  tokens = tokens - cost
-  allowed = 1
-else
-  if rate > 0 then
-    retry_ms = math.ceil((cost - tokens) / rate)
-  else
-    retry_ms = 1000
-  end
-end
-redis.call('HMSET', key, 'tokens', tokens, 'ts', ts)
--- TTL of 1 hour (3600000ms) for cleanup of abandoned buckets
--- The bucket state must persist across the entire rate limit window and beyond
--- to prevent users from bypassing limits by waiting for key expiration
-redis.call('PEXPIRE', key, 3600000)
-return {allowed, math.ceil(tokens), retry_ms, capacity}
-"""
-
-
 class TokenBucketRateLimiter:
-    """Token bucket rate limiter with Redis backend and in-memory fallback.
+    """Fixed-window rate limiter using CacheBackend.
 
-    Uses atomic Lua script for Redis, fixed-window fallback for in-memory.
+    Uses a fixed-window algorithm that works identically across all cache backends.
+    This replaces the previous token bucket + Lua script approach for consistency.
     """
 
     def __init__(
@@ -146,52 +110,38 @@ class TokenBucketRateLimiter:
         """Initialize rate limiter.
 
         Args:
-            namespace: Redis key namespace (e.g., "rl:api", "rl:auth")
-            capacity: Maximum tokens in bucket (burst capacity)
+            namespace: Cache key namespace (e.g., "rl:api", "rl:auth")
+            capacity: Maximum tokens in window (burst capacity)
             refill_per_second: Tokens added per second (sustained rate, can be fractional)
         """
         self.namespace = namespace
         self.capacity = max(1, int(capacity))
         # Allow fractional refill rates for per-minute limits (e.g., 2 RPM = 0.0333 tokens/sec)
         self.refill_per_second = max(0.001, float(refill_per_second))
-        self._redis: Optional[Any] = None
+        self._cache: Optional[CacheBackend] = None
     
-    async def _get_redis(self) -> Any:
+    async def _get_cache(self) -> CacheBackend:
         """
-        Lazily obtain and cache the Redis client used by this limiter.
-        
-        Calls get_redis_client() on first access and stores the resulting client for reuse on subsequent calls.
+        Lazily obtain and cache the CacheBackend used by this limiter.
         
         Returns:
-            redis_client (Any): The cached Redis client instance.
+            CacheBackend: The cached backend instance.
         """
-        if self._redis is None:
-            from .database import get_redis_client
-            self._redis = await get_redis_client()
-        return self._redis
+        if self._cache is None:
+            self._cache = await get_cache_backend()
+        return self._cache
     
     def _key(self, bucket: str) -> str:
         """
-        Build a namespaced Redis key for the given limiter bucket.
+        Build a namespaced cache key for the given limiter bucket.
         
         Parameters:
             bucket (str): Bucket identifier appended to the rate limiter namespace.
         
         Returns:
-            str: Redis key in the form "<namespace>:<bucket>".
+            str: Cache key in the form "<namespace>:<bucket>".
         """
         return f"{self.namespace}:{bucket}"
-    
-    @staticmethod
-    def _is_in_memory(redis_client: Any) -> bool:
-        """
-        Detects whether the provided Redis client is an in-memory or fake implementation.
-        
-        Returns:
-            True if the client's class name contains "InMemory" or "Fake", False otherwise.
-        """
-        clsname = redis_client.__class__.__name__
-        return "InMemory" in clsname or "Fake" in clsname
 
     async def check(
         self,
@@ -201,7 +151,7 @@ class TokenBucketRateLimiter:
         refill_per_second: Optional[float] = None,
     ) -> RateLimitResult:
         """
-        Determine whether a request is allowed and consume the requested tokens from the corresponding rate limit bucket.
+        Determine whether a request is allowed using fixed-window algorithm.
         
         Parameters:
             key (str): Unique identifier for the rate limit bucket.
@@ -210,138 +160,74 @@ class TokenBucketRateLimiter:
             refill_per_second (Optional[float]): Optional override for the refill rate; may be fractional.
         
         Returns:
-            RateLimitResult: Result containing `allowed` and rate-limit metadata (`remaining`, `limit`, `reset_seconds`, `retry_after_seconds`).
+            RateLimitResult: Result containing `allowed` and rate-limit metadata.
         """
-        redis = await self._get_redis()
-        now_ms = int(time.time() * 1000)
+        cache = await self._get_cache()
         bucket_key = self._key(key)
         cap = max(1, int(capacity if capacity is not None else self.capacity))
         # Support fractional refill rates for per-minute limits
         rps = max(0.001, float(refill_per_second if refill_per_second is not None else self.refill_per_second))
-        rate_per_ms = rps / 1000.0
 
-        # In-memory fallback: fixed-window
-        if self._is_in_memory(redis):
-            return await self._check_in_memory(redis, bucket_key, cost, cap, rps)
-
-        # Redis: atomic token bucket via Lua
-        return await self._check_redis(redis, bucket_key, now_ms, cost, cap, rate_per_ms, rps)
-
-    async def _check_in_memory(
-        self,
-        redis: Any,
-        bucket_key: str,
-        cost: int,
-        capacity: int,
-        refill_per_second: float,
-    ) -> RateLimitResult:
-        """
-        Fixed-window fallback rate limiter used when Redis scripting is unavailable.
-        
-        Calculates a window size from capacity and refill_per_second (minimum 60 seconds), increments a counter for the current window by `cost`, and grants or denies the request based on whether the windowed count exceeds `capacity`.
-        
-        Parameters:
-            redis (Any): Redis-like client providing `incrby` and `expire`.
-            bucket_key (str): Base key identifying the rate-limited bucket.
-            cost (int): Number of tokens to consume for this request (1 for RPM, >1 for token-costing TPM).
-            capacity (int): Maximum tokens allowed per window.
-            refill_per_second (float): Token refill rate per second used to derive the window duration.
-        
-        Returns:
-            RateLimitResult: Result containing `allowed`, `remaining`, `limit`, `reset_seconds`, and `retry_after_seconds` when denied.
-        """
+        # Fixed-window algorithm: calculate window size and current window key
         # For per-minute limits, window is capacity/refill_rate
         # E.g., 2 RPM: capacity=2, refill=0.0333, window = 2/0.0333 = 60s
-        window_s = max(60, int(capacity / max(0.001, refill_per_second)))
+        #
+        # Design note: 60-second minimum window is enforced for operational stability.
+        # This ensures rate limit windows align with typical per-minute configurations
+        # and prevents excessive cache key churn from very short windows. Standard
+        # configurations (e.g., 100 requests/minute with refill=100/60) naturally
+        # produce ~60s windows. Shorter windows would create more cache entries and
+        # increase backend load without meaningful benefit for typical API rate limiting.
+        # If sub-minute windows are needed, this minimum can be made configurable.
+        window_s = max(60, int(cap / rps))
         window_key = f"{bucket_key}:fw:{int(time.time()) // window_s}"
 
         logger.debug(
-            "In-memory rate limit check: key=%s, cost=%d, capacity=%d, window_s=%d",
-            window_key, cost, capacity, window_s
+            "Fixed-window rate limit check: key=%s, cost=%d, capacity=%d, window_s=%d",
+            window_key, cost, cap, window_s
         )
 
         try:
-            # First read current counter to check capacity before incrementing
-            current_raw = await redis.get(window_key)
-            current = int(current_raw) if current_raw is not None else 0
-            projected = current + cost
+            # Atomic increment-first pattern to avoid TOCTOU race condition
+            # Increment first, then check if we exceeded capacity
+            new_count = await cache.incr(window_key, cost)
+            
+            # Set expiry only when key was just created (new_count == cost means first increment)
+            if new_count == cost:
+                await cache.expire(window_key, window_s)
 
             logger.debug(
-                "In-memory rate limit check: key=%s, current=%d, projected=%d, capacity=%d",
-                window_key, current, projected, capacity
+                "Fixed-window rate limit check: key=%s, new_count=%d, capacity=%d",
+                window_key, new_count, cap
             )
 
-            # Only increment if within capacity
-            if projected <= capacity:
-                await redis.incrby(window_key, cost)
-                await redis.expire(window_key, window_s)
+            # Check if within capacity after increment
+            if new_count <= cap:
                 return RateLimitResult(
                     allowed=True,
-                    remaining=capacity - projected,
-                    limit=capacity,
+                    remaining=cap - new_count,
+                    limit=cap,
                     reset_seconds=window_s,
                 )
 
-            # Denied: do not increment, return denied result
+            # Over capacity - decrement back and deny
+            try:
+                await cache.decr(window_key, cost)
+            except Exception as decr_err:
+                logger.error(
+                    "Failed to decrement rate limit counter after exceeding capacity: key=%s, cost=%d, err=%s",
+                    window_key, cost, decr_err
+                )
             return RateLimitResult(
                 allowed=False,
                 retry_after_seconds=window_s,
                 remaining=0,
-                limit=capacity,
+                limit=cap,
                 reset_seconds=window_s,
             )
-        except Exception as e:
-            logger.exception("In-memory rate limiter failure; allowing request: %s", e)
-            return RateLimitResult(allowed=True, remaining=capacity, limit=capacity)
-
-    async def _check_redis(
-        self,
-        redis: Any,
-        bucket_key: str,
-        now_ms: int,
-        cost: int,
-        capacity: int,
-        rate_per_ms: float,
-        refill_per_second: float,
-    ) -> RateLimitResult:
-        """
-        Perform a token-bucket check using the Redis backend and return the resulting rate limit metadata.
-        
-        Calls a Redis Lua script to attempt consuming `cost` tokens from the bucket identified by `bucket_key` using `rate_per_ms` as the refill rate. If the Redis call fails, falls back to the in-memory fixed-window check and returns its result.
-        
-        Parameters:
-            redis: Redis client used to execute the Lua script.
-            bucket_key (str): Key identifying the token bucket in Redis.
-            now_ms (int): Current time in milliseconds passed to the script.
-            cost (int): Number of tokens to consume for this request.
-            capacity (int): Maximum number of tokens the bucket can hold.
-            rate_per_ms (float): Refill rate expressed in tokens per millisecond.
-            refill_per_second (float): Refill rate expressed in tokens per second; used by the in-memory fallback.
-        
-        Returns:
-            RateLimitResult: Result describing whether the request is allowed, remaining tokens, total limit, retry-after seconds when denied, and seconds until the bucket is fully reset.
-        """
-        try:
-            res = await redis.eval(TOKEN_BUCKET_LUA, 1, bucket_key, now_ms, capacity, rate_per_ms, cost)
-            allowed_int, tokens_left, retry_ms, _ = int(res[0]), int(res[1]), int(res[2]), int(res[3])
-            allowed = allowed_int == 1
-
-            # Calculate reset time (time until bucket is full again)
-            tokens_needed = capacity - tokens_left
-            reset_ms = int(tokens_needed / rate_per_ms) if rate_per_ms > 0 else 60000
-
-            return RateLimitResult(
-                allowed=allowed,
-                retry_after_seconds=max(1, int((retry_ms + 999) // 1000)) if not allowed else 0,
-                remaining=max(0, tokens_left),
-                limit=capacity,
-                reset_seconds=max(1, int((reset_ms + 999) // 1000)),
-            )
-        except Exception as e:
-            logger.warning("Rate limiter Lua failed (%s); falling back to fixed-window", e)
-            return await self._check_in_memory(
-                redis, bucket_key, cost, capacity, refill_per_second
-            )
+        except Exception:
+            logger.exception("Rate limiter failure; allowing request")
+            return RateLimitResult(allowed=True, remaining=cap, limit=cap)
 
 
 class RateLimitService:
@@ -353,6 +239,7 @@ class RateLimitService:
     - LLM rate limiting (RPM and TPM for LLM calls)
 
     Uses dependency injection for settings, follows SOLID principles.
+    All rate limiting uses fixed-window algorithm via CacheBackend.
     """
 
     def __init__(self, settings: Optional[Any] = None):

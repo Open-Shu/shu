@@ -93,6 +93,11 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
 
     Note: Tasks queue in memory if concurrency limit is reached. Tasks are lost
     on server restart. See SHU-211 for migration to persistent work queue.
+
+    IMPORTANT: All imports are done BEFORE creating the background task to avoid
+    conflicts with the plugin executor's import deny context. The deny context
+    blocks 'shu.*' imports during plugin execution, and background tasks created
+    during that window would fail if they tried to import shu modules lazily.
     """
     from ..core.config import get_settings_instance
 
@@ -100,19 +105,23 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
     if not settings.enable_document_profiling:
         return
 
+    # Import all dependencies BEFORE creating the background task.
+    # This ensures imports happen in the calling context (host.kb capability)
+    # rather than in the background task which may run while the plugin
+    # executor's import deny context is still active.
+    from ..core.database import get_async_session_local
+    from ..core.config import get_config_manager
+    from .side_call_service import SideCallService
+    from .profiling_orchestrator import ProfilingOrchestrator
+
     semaphore = _get_profiling_semaphore()
+    session_local = get_async_session_local()
+    config_manager = get_config_manager()
 
     async def _run_profiling():
         async with semaphore:
             try:
-                from ..core.database import get_async_session_local
-                from ..core.config import get_config_manager
-                from .side_call_service import SideCallService
-                from .profiling_orchestrator import ProfilingOrchestrator
-
-                session_local = get_async_session_local()
                 async with session_local() as bg_session:
-                    config_manager = get_config_manager()
                     side_call_service = SideCallService(bg_session, config_manager)
                     orchestrator = ProfilingOrchestrator(bg_session, settings, side_call_service)
                     result = await orchestrator.run_for_document(document_id)

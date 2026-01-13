@@ -22,7 +22,7 @@ try:
     import jsonschema  # type: ignore
 except Exception:  # noqa: BLE001
     jsonschema = None  # type: ignore
-from ..core.database import get_redis_client  # type: ignore
+from ..core.cache_backend import get_cache_backend, CacheBackend
 
 
 from ..core.config import get_settings_instance  # type: ignore
@@ -49,6 +49,12 @@ class _DenyImportsFinder(MetaPathFinder):
 class _DenyHttpImportsCtx:
     """Context manager to install/remove the deny-imports finder safely.
     Also patches importlib.import_module to deny disallowed names even if preloaded in sys.modules.
+
+    IMPORTANT: This context manager modifies global state (sys.meta_path and importlib.import_module).
+    It is NOT safe for concurrent use across threads. In async contexts, background tasks spawned
+    during plugin execution may still be affected by the import deny policy until the context exits.
+    Host capabilities that spawn background tasks should import all required modules BEFORE creating
+    the task to avoid import failures.
     """
     def __init__(self):
         self._finder: Optional[_DenyImportsFinder] = None
@@ -220,13 +226,14 @@ class Executor:
     async def _enforce_quotas(self, *, bucket: str, daily_limit: int, monthly_limit: int) -> None:
         """Check and consume per-user/per-plugin quotas (daily/monthly).
         Raises HTTPException(429) with detail {error: quota_exceeded, period, reset_in} when exceeded.
+        Uses atomic increment to avoid TOCTOU race conditions.
         """
         if daily_limit <= 0 and monthly_limit <= 0:
             return
         try:
-            redis = await get_redis_client()
+            cache = await get_cache_backend()
         except Exception:
-            # If we cannot get a client and quotas are configured, be safe and allow (documented limitation)
+            # If we cannot get a cache backend and quotas are configured, be safe and allow (documented limitation)
             logger.exception("Quota enforcement unavailable; proceeding without quotas")
             return
 
@@ -241,54 +248,89 @@ class Executor:
             next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
         reset_in_month = max(1, int((next_month_start - now).total_seconds()))
 
-        # Read current counts
         day_key = f"quota:d:{bucket}"
         month_key = f"quota:m:{bucket}"
-        day_raw = await redis.get(day_key)
-        month_raw = await redis.get(month_key)
-        day_count = int(day_raw) if day_raw is not None else 0
-        month_count = int(month_raw) if month_raw is not None else 0
 
-        # Would exceed?
-        if daily_limit > 0 and day_count >= daily_limit:
-            headers = {
-                "Retry-After": str(reset_in_day),
-                "RateLimit-Limit": f"{daily_limit};w=86400",
-                "RateLimit-Remaining": "0",
-                "RateLimit-Reset": str(reset_in_day),
-            }
-            raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "daily", "reset_in": reset_in_day}, headers=headers)
-        if monthly_limit > 0 and month_count >= monthly_limit:
-            # Approximate month window in seconds for header context
-            headers = {
-                "Retry-After": str(reset_in_month),
-                "RateLimit-Limit": f"{monthly_limit};w={reset_in_month + 1}",
-                "RateLimit-Remaining": "0",
-                "RateLimit-Reset": str(reset_in_month),
-            }
-            raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": "monthly", "reset_in": reset_in_month}, headers=headers)
-
-        # Consume one from both windows (idempotent setex keeps expiry to end of period)
+        # Check daily quota
         if daily_limit > 0:
-            await redis.setex(day_key, reset_in_day, str(day_count + 1))
+            await self._check_and_consume_quota(
+                cache=cache,
+                key=day_key,
+                limit=daily_limit,
+                reset_in=reset_in_day,
+                period="daily",
+                window_seconds=86400,
+            )
+
+        # Check monthly quota
         if monthly_limit > 0:
-            await redis.setex(month_key, reset_in_month, str(month_count + 1))
+            try:
+                await self._check_and_consume_quota(
+                    cache=cache,
+                    key=month_key,
+                    limit=monthly_limit,
+                    reset_in=reset_in_month,
+                    period="monthly",
+                    window_seconds=reset_in_month + 1,
+                )
+            except HTTPException:
+                # Monthly quota exceeded - rollback daily increment if we made one
+                if daily_limit > 0:
+                    try:
+                        await cache.decr(day_key)
+                    except Exception as decr_err:
+                        logger.error("Failed to decrement daily quota counter after monthly limit exceeded: key=%s, err=%s", day_key, decr_err)
+                raise
+
+    async def _check_and_consume_quota(
+        self,
+        *,
+        cache: "CacheBackend",
+        key: str,
+        limit: int,
+        reset_in: int,
+        period: str,
+        window_seconds: int,
+    ) -> None:
+        """Atomically check and consume a single quota counter.
+        
+        Uses increment-first pattern to avoid TOCTOU race conditions.
+        Raises HTTPException(429) if quota is exceeded.
+        """
+        new_count = await cache.incr(key)
+        # Set expiry only when key was just created (to avoid extending TTL on existing counters)
+        if new_count == 1:
+            await cache.expire(key, reset_in)
+        
+        if new_count > limit:
+            # Over quota - decrement back and deny
+            try:
+                await cache.decr(key)
+            except Exception as decr_err:
+                logger.error("Failed to decrement %s quota counter after exceeding limit: key=%s, err=%s", period, key, decr_err)
+            headers = {
+                "Retry-After": str(reset_in),
+                "RateLimit-Limit": f"{limit};w={window_seconds}",
+                "RateLimit-Remaining": "0",
+                "RateLimit-Reset": str(reset_in),
+            }
+            raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": period, "reset_in": reset_in}, headers=headers)
 
     async def _acquire_provider_concurrency(self, *, provider: str, limit: int) -> bool:
         if limit <= 0:
             return True
         try:
-            redis = await get_redis_client()
+            cache = await get_cache_backend()
         except Exception:
             logger.exception("Concurrency enforcement unavailable; allowing request")
             return True
         key = f"conc:{provider}"
         try:
-            n = await redis.incr(key)
+            n = await cache.incr(key)
             # set short TTL to auto-recover from crashes
-            await redis.expire(key, 30)
+            await cache.expire(key, 30)
             if int(n) > int(limit):
-                await redis.decr(key)
+                await cache.decr(key)
                 return False
             return True
         except Exception:
@@ -297,8 +339,8 @@ class Executor:
 
     async def _release_provider_concurrency(self, *, provider: str) -> None:
         try:
-            redis = await get_redis_client()
-            await redis.decr(f"conc:{provider}")
+            cache = await get_cache_backend()
+            await cache.decr(f"conc:{provider}")
         except Exception:
             pass
 

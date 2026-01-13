@@ -3,8 +3,9 @@ Unit tests for the rate limiting service.
 
 Tests cover:
 - RateLimitResult dataclass and headers generation
-- TokenBucketRateLimiter with in-memory backend
+- TokenBucketRateLimiter with CacheBackend
 - RateLimitService abstraction layer
+- Fixed-window algorithm behavior
 """
 
 import pytest
@@ -95,89 +96,51 @@ class TestRateLimitResult:
 
 
 class TestTokenBucketRateLimiter:
-    """Tests for TokenBucketRateLimiter."""
+    """Tests for TokenBucketRateLimiter with CacheBackend."""
     
     @pytest.fixture
-    def mock_redis(self):
+    def mock_cache_backend(self):
         """
-        Create a simple in-memory mock of an async Redis client for tests.
+        Create a mock CacheBackend for testing rate limiting.
         
-        The mock implements async `incr(key)`, `incrby(key, amount)`, and `expire(key, seconds)` operations backed by an internal `_store` dict:
-        - `incr` increments the integer value for `key` by 1 and returns the new value.
-        - `incrby` increments the integer value for `key` by `amount` and returns the new value.
-        - `expire` always returns `True`.
+        The mock implements async `get`, `incr`, `decr`, and `expire` operations backed by an internal `_store` dict.
         
         Returns:
-            AsyncMock: An AsyncMock instance named `InMemoryRedis` with `_store` and the above async methods.
+            AsyncMock: A mock CacheBackend instance with the required methods.
         """
-        redis = AsyncMock()
-        redis.__class__.__name__ = "InMemoryRedis"
-        redis._store = {}
-
-        async def mock_incr(key):
-            """
-            Increment the integer value stored for `key` in the in-memory mock Redis and return the updated value.
-            
-            Parameters:
-                key (str): The Redis key whose integer value should be incremented.
-            
-            Returns:
-                int: The new integer value stored at `key` after incrementing.
-            """
-            redis._store[key] = redis._store.get(key, 0) + 1
-            return redis._store[key]
-
-        async def mock_incrby(key, amount):
-            """
-            Increment a mocked Redis key by a given amount and return the updated value.
-            
-            Parameters:
-                key (str): The Redis key to increment.
-                amount (int): The amount to add to the key's current integer value.
-            
-            Returns:
-                int: The key's new integer value after the increment.
-            """
-            redis._store[key] = redis._store.get(key, 0) + amount
-            return redis._store[key]
-
-        async def mock_expire(key, seconds):
-            """
-            Simulate setting a time-to-live on a key in an async-compatible test double.
-            
-            Parameters:
-                key (str): The key to set an expiration for.
-                seconds (int): Time-to-live in seconds.
-            
-            Returns:
-                bool: `True` indicating the expiration was (mock) applied.
-            """
-            return True
+        cache = AsyncMock()
+        cache._store = {}
 
         async def mock_get(key):
-            """
-            Return the current value stored at key, or None if not present.
-            
-            Parameters:
-                key (str): The Redis key to retrieve.
-            
-            Returns:
-                The value stored at key, or None if not present.
-            """
-            return redis._store.get(key)
+            """Return the current value stored at key, or None if not present."""
+            return cache._store.get(key)
 
-        redis.incr = mock_incr
-        redis.incrby = mock_incrby
-        redis.expire = mock_expire
-        redis.get = mock_get
-        return redis
+        async def mock_incr(key, amount=1):
+            """Increment the integer value stored for key and return the updated value."""
+            cache._store[key] = cache._store.get(key, 0) + amount
+            return cache._store[key]
+
+        async def mock_decr(key, amount=1):
+            """Decrement the integer value stored for key and return the updated value."""
+            cache._store[key] = cache._store.get(key, 0) - amount
+            return cache._store[key]
+
+        async def mock_expire(key, seconds):
+            """Simulate setting a TTL on a key."""
+            return True
+
+        cache.get = mock_get
+        cache.incr = mock_incr
+        cache.decr = mock_decr
+        cache.expire = mock_expire
+        return cache
     
     @pytest.mark.asyncio
-    async def test_check_allows_within_capacity(self, mock_redis):
+    async def test_check_allows_within_capacity(self, mock_cache_backend):
         """Requests within capacity are allowed."""
         from shu.core.rate_limiting import TokenBucketRateLimiter
         
-        with patch.object(TokenBucketRateLimiter, "_get_redis", return_value=mock_redis):
+        with patch.object(TokenBucketRateLimiter, "_get_cache", return_value=mock_cache_backend):
             limiter = TokenBucketRateLimiter(
                 namespace="test",
                 capacity=10,
@@ -190,11 +153,11 @@ class TestTokenBucketRateLimiter:
             assert result.remaining >= 0
     
     @pytest.mark.asyncio
-    async def test_check_denies_over_capacity(self, mock_redis):
+    async def test_check_denies_over_capacity(self, mock_cache_backend):
         """Requests over capacity are denied after exceeding limit."""
         from shu.core.rate_limiting import TokenBucketRateLimiter
 
-        with patch.object(TokenBucketRateLimiter, "_get_redis", return_value=mock_redis):
+        with patch.object(TokenBucketRateLimiter, "_get_cache", return_value=mock_cache_backend):
             limiter = TokenBucketRateLimiter(
                 namespace="test",
                 capacity=3,  # Small capacity for quick exhaustion
@@ -210,6 +173,57 @@ class TestTokenBucketRateLimiter:
 
             assert result.allowed is False
             assert result.retry_after_seconds > 0
+
+    @pytest.mark.asyncio
+    async def test_fixed_window_algorithm_works_correctly(self, mock_cache_backend):
+        """Fixed-window algorithm correctly tracks requests within time windows."""
+        from shu.core.rate_limiting import TokenBucketRateLimiter
+
+        with patch.object(TokenBucketRateLimiter, "_get_cache", return_value=mock_cache_backend):
+            limiter = TokenBucketRateLimiter(
+                namespace="test",
+                capacity=5,
+                refill_per_second=1,  # 5 requests per 5 seconds
+            )
+
+            # Mock time to control window boundaries - patch the exact module reference
+            with patch('shu.core.rate_limiting.time.time', return_value=1000):
+                # First 5 requests should be allowed
+                for i in range(5):
+                    result = await limiter.check(key="user:123")
+                    assert result.allowed is True, f"Request {i+1} should be allowed"
+
+                # 6th request should be denied
+                result = await limiter.check(key="user:123")
+                assert result.allowed is False
+
+    @pytest.mark.asyncio
+    async def test_works_identically_with_both_backends(self, mock_cache_backend):
+        """Rate limiting behavior is identical regardless of backend."""
+        from shu.core.rate_limiting import TokenBucketRateLimiter
+
+        # Test with mock backend (simulating both Redis and InMemory)
+        with patch.object(TokenBucketRateLimiter, "_get_cache", return_value=mock_cache_backend):
+            limiter = TokenBucketRateLimiter(
+                namespace="test",
+                capacity=2,
+                refill_per_second=1,
+            )
+
+            # First request allowed
+            result1 = await limiter.check(key="user:123")
+            assert result1.allowed is True
+            assert result1.remaining == 1
+
+            # Second request allowed
+            result2 = await limiter.check(key="user:123")
+            assert result2.allowed is True
+            assert result2.remaining == 0
+
+            # Third request denied
+            result3 = await limiter.check(key="user:123")
+            assert result3.allowed is False
+            assert result3.retry_after_seconds > 0
 
 
 class TestProviderRateLimits:

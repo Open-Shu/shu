@@ -1,5 +1,5 @@
 """
-Plugins API (admin): registry controls, limits, upload, delete, limits stats, sync
+Plugins API (admin): registry controls, limits, upload, delete, sync
 Preserves original paths under /plugins/admin and /plugins/upload
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from ..auth.models import User
 from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
 from ..models.plugin_registry import PluginDefinition
-from ..services.limits_stats import get_limits_stats
+
 from ..plugins.registry import REGISTRY
 from ..plugins.installer import validate_and_extract, install_plugin, InstallError
 from ..core.config import get_settings_instance
@@ -153,18 +153,6 @@ async def admin_set_plugin_limits(
     await db.refresh(row)
     return ShuResponse.success({"name": name, "limits": row.limits or {}})
 
-
-@router.get("/admin/limits/stats", response_model=SuccessResponse[dict])
-async def admin_get_limits_stats(
-    prefix: str = Query("quota:", description="Key prefix to scan"),
-    limit: int = Query(50, description="Max entries"),
-    admin: User = Depends(require_power_user),
-):
-    try:
-        stats = await get_limits_stats(prefix=prefix, limit=limit)
-        return ShuResponse.success(stats)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"redis_unavailable: {e}")
 
 
 @router.post("/admin/sync", response_model=SuccessResponse[dict])
