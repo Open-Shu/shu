@@ -95,52 +95,6 @@ class ExperienceExecutor:
             undefined=DebugUndefined,
         )
     
-    async def _load_model_configuration(
-        self,
-        model_configuration_id: str,
-        current_user: User,
-    ) -> ModelConfiguration:
-        """
-        Load and validate model configuration for experience execution.
-        
-        Args:
-            model_configuration_id: ID of the model configuration to load
-            current_user: Current user for access validation
-            
-        Returns:
-            ModelConfiguration: Loaded and validated model configuration
-            
-        Raises:
-            ValueError: If model configuration is not found, inactive, or has inactive provider
-        """
-        model_config_service = ModelConfigurationService(self.db)
-        
-        # Load model configuration with full relationships for validation
-        model_config = await model_config_service.get_model_configuration(
-            model_configuration_id,
-            include_relationships=True,
-            current_user=current_user
-        )
-        
-        if not model_config:
-            raise ValueError(f"Model configuration {model_configuration_id} not found or access denied")
-        
-        if not model_config.is_active:
-            raise ValueError(f"Model configuration '{model_config.name}' is not active")
-        
-        # Validate that the underlying provider is active
-        if not model_config.llm_provider or not model_config.llm_provider.is_active:
-            raise ValueError(f"Model configuration '{model_config.name}' has inactive provider")
-        
-        logger.debug(
-            "Loaded model configuration for experience execution | config=%s provider=%s model=%s",
-            model_config.name,
-            model_config.llm_provider.name,
-            model_config.model_name,
-        )
-        
-        return model_config
-    
     async def execute_streaming(
         self,
         experience: Experience,
@@ -160,19 +114,37 @@ class ExperienceExecutor:
         model_config: Optional[ModelConfiguration] = None
         if experience.model_configuration_id:
             try:
-                model_config = await self._load_model_configuration(
+                model_config_service = ModelConfigurationService(self.db)
+                model_config = await model_config_service.validate_model_configuration_for_use(
                     experience.model_configuration_id,
-                    current_user
+                    current_user=current_user,
+                    include_relationships=True
                 )
-            except ValueError as e:
-                # Model configuration validation failed - fail the run immediately
+            except Exception as e:
+                # This should not happen due to pre-validation, but handle gracefully
+                from ..core.exceptions import ModelConfigurationError
+                
+                error_message = str(e) if isinstance(e, ModelConfigurationError) else f"Failed to load model configuration: {str(e)}"
+                
+                logger.error(
+                    "Unexpected model configuration error after validation | experience=%s config_id=%s user=%s error=%s",
+                    experience.id,
+                    experience.model_configuration_id,
+                    current_user.email,
+                    error_message
+                )
+                
                 run = await self._create_run(experience, user_id, input_params)
                 await self._finalize_run(
                     run, "failed", {}, {},
-                    error_message=str(e),
-                    model_config=model_config
+                    error_message=error_message,
+                    model_config=None
                 )
-                yield ExperienceEvent(ExperienceEventType.ERROR, {"message": str(e)})
+                yield ExperienceEvent(ExperienceEventType.ERROR, {
+                    "message": error_message,
+                    "error_type": type(e).__name__,
+                    "config_id": experience.model_configuration_id
+                })
                 return
         
         run = await self._create_run(experience, user_id, input_params)
@@ -666,23 +638,32 @@ class ExperienceExecutor:
         # Use provided model config or load it if not provided
         if model_config is None:
             try:
-                model_config = await self._load_model_configuration(
+                model_config_service = ModelConfigurationService(self.db)
+                model_config = await model_config_service.validate_model_configuration_for_use(
                     experience.model_configuration_id,
-                    current_user
+                    current_user=current_user,
+                    include_relationships=True
                 )
-            except ValueError as e:
-                # Model configuration validation failed
+            except Exception as e:
+                # Model configuration validation failed during synthesis
+                from ..core.exceptions import ModelConfigurationError
+                
+                error_message = str(e) if isinstance(e, ModelConfigurationError) else f"Failed to load model configuration: {str(e)}"
+                
                 logger.error(
-                    "Model configuration validation failed during synthesis | experience=%s error=%s",
+                    "Model configuration validation failed during synthesis | experience=%s config_id=%s error=%s",
                     experience.id,
-                    str(e)
+                    experience.model_configuration_id,
+                    error_message
                 )
+                
                 # Return default prompt and indicate error in metadata
                 yield self._build_default_prompt(context)
                 yield {
                     "model": None,
                     "tokens": {},
-                    "error": str(e),
+                    "error": error_message,
+                    "error_type": type(e).__name__,
                     "model_configuration_id": experience.model_configuration_id
                 }
                 return

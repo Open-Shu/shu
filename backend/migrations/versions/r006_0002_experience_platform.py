@@ -237,6 +237,8 @@ def downgrade() -> None:
     # Drop indexes first
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user_finished")
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user")
+    op.execute("DROP INDEX IF EXISTS ix_experiences_visibility")
+    op.execute("DROP INDEX IF EXISTS ix_experiences_active_version")
     op.execute("DROP INDEX IF EXISTS ix_experiences_next_run_at")
     op.execute("DROP INDEX IF EXISTS ix_experiences_model_configuration_id")
 

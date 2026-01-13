@@ -568,8 +568,8 @@ class TestPreviousRunBacklink:
         assert result is None
 
 
-class TestModelConfigurationLoading:
-    """Tests for _load_model_configuration method."""
+class TestModelConfigurationValidation:
+    """Tests for model configuration validation in executor."""
     
     @pytest.fixture
     def executor(self):
@@ -600,71 +600,146 @@ class TestModelConfigurationLoading:
         return config
     
     @pytest.mark.asyncio
-    async def test_load_model_configuration_success(self, executor, mock_user, mock_model_config):
-        """Test successful model configuration loading."""
-        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
-            mock_service = AsyncMock()
-            mock_service_class.return_value = mock_service
-            mock_service.get_model_configuration.return_value = mock_model_config
-            
-            result = await executor._load_model_configuration("config-123", mock_user)
-            
-            assert result == mock_model_config
-            mock_service.get_model_configuration.assert_called_once_with(
-                "config-123",
-                include_relationships=True,
-                current_user=mock_user
-            )
-    
-    @pytest.mark.asyncio
-    async def test_load_model_configuration_not_found(self, executor, mock_user):
-        """Test when model configuration is not found."""
-        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
-            mock_service = AsyncMock()
-            mock_service_class.return_value = mock_service
-            mock_service.get_model_configuration.return_value = None
-            
-            with pytest.raises(ValueError, match="Model configuration config-123 not found or access denied"):
-                await executor._load_model_configuration("config-123", mock_user)
-    
-    @pytest.mark.asyncio
-    async def test_load_model_configuration_inactive(self, executor, mock_user, mock_model_config):
-        """Test when model configuration is inactive."""
-        mock_model_config.is_active = False
+    async def test_model_configuration_validation_success(self, executor, mock_user, mock_model_config):
+        """Test successful model configuration validation during execution."""
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
         
         with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
             mock_service = AsyncMock()
             mock_service_class.return_value = mock_service
-            mock_service.get_model_configuration.return_value = mock_model_config
+            mock_service.validate_model_configuration_for_use.return_value = mock_model_config
             
-            with pytest.raises(ValueError, match="Model configuration 'Test Config' is not active"):
-                await executor._load_model_configuration("config-123", mock_user)
+            # Mock other dependencies for execute_streaming
+            with patch.object(executor, '_create_run') as mock_create_run, \
+                 patch.object(executor, '_build_initial_context') as mock_build_context, \
+                 patch.object(executor, '_execute_steps_loop') as mock_execute_steps, \
+                 patch.object(executor, '_synthesize_with_llm_streaming') as mock_synthesize, \
+                 patch.object(executor, '_finalize_run') as mock_finalize:
+                
+                mock_run = MagicMock()
+                mock_run.id = "run-123"
+                mock_create_run.return_value = mock_run
+                mock_build_context.return_value = {}
+                
+                # Mock async generators
+                async def mock_steps_gen():
+                    yield MagicMock(type="step_completed")
+                
+                async def mock_synthesis_gen():
+                    yield "Hello"
+                    yield {"model": "gpt-4"}
+                
+                mock_execute_steps.return_value = mock_steps_gen()
+                mock_synthesize.return_value = mock_synthesis_gen()
+                
+                # Execute streaming to test model config validation
+                events = []
+                async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                    events.append(event)
+                    if len(events) >= 3:  # Just get a few events to test validation
+                        break
+                
+                # Verify model configuration validation was called
+                mock_service.validate_model_configuration_for_use.assert_called_once_with(
+                    "config-123",
+                    current_user=mock_user,
+                    include_relationships=True
+                )
     
     @pytest.mark.asyncio
-    async def test_load_model_configuration_inactive_provider(self, executor, mock_user, mock_model_config):
-        """Test when model configuration has inactive provider."""
-        mock_model_config.llm_provider.is_active = False
+    async def test_model_configuration_validation_not_found(self, executor, mock_user):
+        """Test when model configuration is not found during execution."""
+        from shu.core.exceptions import ModelConfigurationNotFoundError
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
         
         with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
             mock_service = AsyncMock()
             mock_service_class.return_value = mock_service
-            mock_service.get_model_configuration.return_value = mock_model_config
+            mock_service.validate_model_configuration_for_use.side_effect = ModelConfigurationNotFoundError("config-123")
             
-            with pytest.raises(ValueError, match="Model configuration 'Test Config' has inactive provider"):
-                await executor._load_model_configuration("config-123", mock_user)
+            with patch.object(executor, '_create_run') as mock_create_run, \
+                 patch.object(executor, '_finalize_run') as mock_finalize:
+                
+                mock_run = MagicMock()
+                mock_run.id = "run-123"
+                mock_create_run.return_value = mock_run
+                
+                # Execute streaming and expect error event
+                events = []
+                async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                    events.append(event)
+                
+                # Should have error event
+                error_events = [e for e in events if e.type == "error"]
+                assert len(error_events) > 0
+                assert "Model configuration 'config-123' not found" in error_events[0].data["message"]
     
     @pytest.mark.asyncio
-    async def test_load_model_configuration_no_provider(self, executor, mock_user, mock_model_config):
-        """Test when model configuration has no provider."""
-        mock_model_config.llm_provider = None
+    async def test_model_configuration_validation_inactive(self, executor, mock_user):
+        """Test when model configuration is inactive during execution."""
+        from shu.core.exceptions import ModelConfigurationInactiveError
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
         
         with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
             mock_service = AsyncMock()
             mock_service_class.return_value = mock_service
-            mock_service.get_model_configuration.return_value = mock_model_config
+            mock_service.validate_model_configuration_for_use.side_effect = ModelConfigurationInactiveError("Test Config", "config-123")
             
-            with pytest.raises(ValueError, match="Model configuration 'Test Config' has inactive provider"):
-                await executor._load_model_configuration("config-123", mock_user)
+            with patch.object(executor, '_create_run') as mock_create_run, \
+                 patch.object(executor, '_finalize_run') as mock_finalize:
+                
+                mock_run = MagicMock()
+                mock_run.id = "run-123"
+                mock_create_run.return_value = mock_run
+                
+                # Execute streaming and expect error event
+                events = []
+                async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                    events.append(event)
+                
+                # Should have error event
+                error_events = [e for e in events if e.type == "error"]
+                assert len(error_events) > 0
+                assert "Model configuration 'Test Config' is not active" in str(error_events[0].data["message"])
+    
+    @pytest.mark.asyncio
+    async def test_model_configuration_validation_inactive_provider(self, executor, mock_user):
+        """Test when model configuration has inactive provider during execution."""
+        from shu.core.exceptions import ModelConfigurationProviderInactiveError
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
+        
+        with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+            mock_service = AsyncMock()
+            mock_service_class.return_value = mock_service
+            mock_service.validate_model_configuration_for_use.side_effect = ModelConfigurationProviderInactiveError("Test Config", "Test Provider")
+            
+            with patch.object(executor, '_create_run') as mock_create_run, \
+                 patch.object(executor, '_finalize_run') as mock_finalize:
+                
+                mock_run = MagicMock()
+                mock_run.id = "run-123"
+                mock_create_run.return_value = mock_run
+                
+                # Execute streaming and expect error event
+                events = []
+                async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                    events.append(event)
+                
+                # Should have error event
+                error_events = [e for e in events if e.type == "error"]
+                assert len(error_events) > 0
+                assert "cannot be used because its underlying LLM provider is inactive" in str(error_events[0].data["message"])
 
 
 class TestModelConfigurationOptimization:
@@ -733,26 +808,21 @@ class TestModelConfigurationOptimization:
             mock_client.chat_completion.return_value = mock_chat_completion()
             mock_client.close = AsyncMock()
             
-            # Mock _load_model_configuration to track if it's called
-            with patch.object(executor, '_load_model_configuration') as mock_load_config:
-                # Call synthesis with preloaded model config
-                results = []
-                async for chunk in executor._synthesize_with_llm_streaming(
-                    mock_experience, context, mock_user, mock_model_config
-                ):
-                    results.append(chunk)
-                
-                # Verify that _load_model_configuration was NOT called since we passed the config
-                mock_load_config.assert_not_called()
-                
-                # Verify that the LLM service was used correctly
-                mock_llm_service.get_client.assert_called_once_with("provider-123")
-                mock_client.chat_completion.assert_called_once()
-                
-                # Verify the results contain expected content
-                assert len(results) >= 2  # At least content and metadata
-                assert any("Hello" in str(result) for result in results)
-                assert any(isinstance(result, dict) and "model" in result for result in results)
+            # Call synthesis with preloaded model config
+            results = []
+            async for chunk in executor._synthesize_with_llm_streaming(
+                mock_experience, context, mock_user, mock_model_config
+            ):
+                results.append(chunk)
+            
+            # Verify that the LLM service was used correctly
+            mock_llm_service.get_client.assert_called_once_with("provider-123")
+            mock_client.chat_completion.assert_called_once()
+            
+            # Verify the results contain expected content
+            assert len(results) >= 2  # At least content and metadata
+            assert any("Hello" in str(result) for result in results)
+            assert any(isinstance(result, dict) and "model" in result for result in results)
     
     @pytest.mark.asyncio
     async def test_synthesize_without_preloaded_model_config(self, executor, mock_user, mock_experience, mock_model_config):
@@ -775,8 +845,12 @@ class TestModelConfigurationOptimization:
             mock_client.chat_completion.return_value = mock_chat_completion()
             mock_client.close = AsyncMock()
             
-            # Mock _load_model_configuration to return our mock config
-            with patch.object(executor, '_load_model_configuration', return_value=mock_model_config) as mock_load_config:
+            # Mock ModelConfigurationService to return our mock config
+            with patch('shu.services.experience_executor.ModelConfigurationService') as mock_service_class:
+                mock_service = AsyncMock()
+                mock_service_class.return_value = mock_service
+                mock_service.validate_model_configuration_for_use.return_value = mock_model_config
+                
                 # Call synthesis without preloaded model config
                 results = []
                 async for chunk in executor._synthesize_with_llm_streaming(
@@ -784,8 +858,12 @@ class TestModelConfigurationOptimization:
                 ):
                     results.append(chunk)
                 
-                # Verify that _load_model_configuration WAS called since we didn't pass the config
-                mock_load_config.assert_called_once_with("config-123", mock_user)
+                # Verify that validate_model_configuration_for_use WAS called since we didn't pass the config
+                mock_service.validate_model_configuration_for_use.assert_called_once_with(
+                    "config-123", 
+                    current_user=mock_user,
+                    include_relationships=True
+                )
                 
                 # Verify that the LLM service was used correctly
                 mock_llm_service.get_client.assert_called_once_with("provider-123")

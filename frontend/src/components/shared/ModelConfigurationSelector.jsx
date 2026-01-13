@@ -160,6 +160,33 @@ const ModelConfigurationSelector = ({
                             </Box>
                         )}
 
+                        {/* Show knowledge bases information if configured */}
+                        {selectedConfiguration.knowledge_bases && 
+                         selectedConfiguration.knowledge_bases.length > 0 && (
+                            <Box sx={{ mt: 1 }}>
+                                <Typography variant="caption" color="textSecondary" display="block">
+                                    Knowledge Bases ({selectedConfiguration.knowledge_bases.length}):
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5, mb: 1 }}>
+                                    {selectedConfiguration.knowledge_bases.map((kb) => (
+                                        <Chip
+                                            key={kb.id}
+                                            label={kb.name}
+                                            size="small"
+                                            variant="outlined"
+                                            color="info"
+                                        />
+                                    ))}
+                                </Box>
+                                <Alert severity="info" sx={{ mt: 1 }}>
+                                    <Typography variant="body2">
+                                        These knowledge bases are configured for this model but are not automatically queried. 
+                                        To use them, add specific knowledge base query steps to your experience workflow below.
+                                    </Typography>
+                                </Alert>
+                            </Box>
+                        )}
+
                         {/* Show parameter overrides if available */}
                         {selectedConfiguration.parameter_overrides && 
                          Object.keys(selectedConfiguration.parameter_overrides).length > 0 && (

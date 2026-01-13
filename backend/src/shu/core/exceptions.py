@@ -497,3 +497,49 @@ class PromptAlreadyExistsError(ShuException):
             status_code=409,
             details=details or {"prompt_name": prompt_name},
         )
+
+
+# Model Configuration-specific exceptions
+class ModelConfigurationError(ShuException):
+    """Base exception for model configuration-related errors."""
+    pass
+
+
+class ModelConfigurationNotFoundError(ModelConfigurationError):
+    """Exception raised when a model configuration is not found."""
+
+    def __init__(self, config_id: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"Model configuration '{config_id}' not found",
+            error_code="MODEL_CONFIGURATION_NOT_FOUND",
+            status_code=404,
+            details=details or {"config_id": config_id},
+        )
+
+
+class ModelConfigurationInactiveError(ModelConfigurationError):
+    """Exception raised when a model configuration is inactive."""
+
+    def __init__(self, config_name: str, config_id: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"Model configuration '{config_name}' is not active and cannot be used for execution",
+            error_code="MODEL_CONFIGURATION_INACTIVE",
+            status_code=400,
+            details=details or {"config_id": config_id, "config_name": config_name},
+        )
+
+
+class ModelConfigurationProviderInactiveError(ModelConfigurationError):
+    """Exception raised when a model configuration's underlying provider is inactive."""
+
+    def __init__(self, config_name: str, provider_name: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
+        message = f"Model configuration '{config_name}' cannot be used because its underlying LLM provider is inactive"
+        if provider_name:
+            message += f" (provider: '{provider_name}')"
+        
+        super().__init__(
+            message=message,
+            error_code="MODEL_CONFIGURATION_PROVIDER_INACTIVE",
+            status_code=400,
+            details=details or {"config_name": config_name, "provider_name": provider_name},
+        )

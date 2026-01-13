@@ -108,38 +108,31 @@ class ExperienceService:
         current_user: Optional['User'] = None
     ) -> None:
         """
-        Validate that model configuration exists, is active, and user has access.
-        
+        Validate that a model configuration exists and is accessible to the current user.
+
         Args:
-            model_configuration_id: Model configuration ID to validate
+            model_configuration_id: ID of the model configuration to validate
             current_user: Current user for access validation
-            
+
         Raises:
-            ValidationError: If configuration is invalid, inactive, or user lacks access
+            NotFoundError: If model configuration is not found
+            ValidationError: If user lacks access to the model configuration
         """
-        from .model_configuration_service import ModelConfigurationService
-        
-        model_config_service = ModelConfigurationService(self.db)
-        model_config = await model_config_service.get_model_configuration(
-            model_configuration_id,
-            include_relationships=False,  # We only need basic validation
-            current_user=current_user
-        )
-        
-        if not model_config:
-            if current_user:
-                # If user is provided but config is None, it could be access denied or not found
-                # Check if config exists at all (without user filtering)
-                result = await self.db.execute(
-                    select(ModelConfiguration).where(ModelConfiguration.id == model_configuration_id)
-                )
-                raw_config = result.scalar_one_or_none()
-                if raw_config:
-                    raise ValidationError(f"Access denied to model configuration '{model_configuration_id}'")
-            raise ValidationError(f"Model configuration '{model_configuration_id}' not found")
-        
-        if not model_config.is_active:
-            raise ValidationError(f"Model configuration '{model_config.name}' is not active")
+        try:
+            from .model_configuration_service import ModelConfigurationService
+            model_config_service = ModelConfigurationService(self.db)
+            await model_config_service.validate_model_configuration_for_use(
+                model_configuration_id, 
+                current_user=current_user,
+                include_relationships=True
+            )
+        except Exception as e:
+            # Re-raise model configuration errors as ValidationError for API consistency
+            from ..core.exceptions import ModelConfigurationError
+            if isinstance(e, ModelConfigurationError):
+                raise ValidationError(str(e))
+            else:
+                raise ValidationError(f"Model configuration validation failed: {str(e)}")
 
     # =========================================================================
     # CRUD Operations
@@ -298,9 +291,9 @@ class ExperienceService:
         if update_data.model_configuration_id is not None:
             if update_data.model_configuration_id:  # Not empty string or None
                 await self._validate_model_configuration(
-                    update_data.model_configuration_id, 
-                    current_user
-                )
+                update_data.model_configuration_id, 
+                current_user
+            )
 
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={'steps'})

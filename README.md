@@ -301,7 +301,9 @@ Once running, access the generated API documentation:
 ├── knowledge-bases/            # Knowledge base management (CRUD)
 ├── source-types/              # Available source types and validation
 ├── sync/                      # Document synchronization and job management
-└── query/                     # Search and retrieval operations
+├── query/                     # Search and retrieval operations
+├── experiences/               # Experience workflow management (CRUD and execution)
+└── model-configurations/      # Model configuration management
 ```
 
 ## React Admin Panel
@@ -311,6 +313,7 @@ The Shu React Admin Panel provides a web interface for managing the system:
 ### Features
 - **Dashboard**: System overview with health monitoring and quick statistics
 - **Knowledge Base Management**: Create, edit, and delete knowledge bases
+- **Experience Management**: Create, configure, and execute workflow experiences
 - **Sync Job Monitoring**: Real-time monitoring and management of sync operations
 - **Query Tester**: Interactive testing of vector similarity and hybrid search
 - **Health Monitor**: System health monitoring
