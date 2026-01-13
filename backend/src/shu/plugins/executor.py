@@ -31,18 +31,86 @@ from .base import ExecuteContext, PluginResult, Plugin
 logger = logging.getLogger(__name__)
 
 
+# Trusted module prefixes that are allowed to import shu.* even during plugin execution.
+# These are host capabilities and core services that plugins call through the host API.
+_TRUSTED_MODULE_PREFIXES = (
+    "shu.plugins.host.",      # Host capabilities (kb, http, auth, etc.)
+    "shu.services.",          # Core services called by host capabilities
+    "shu.core.",              # Core infrastructure (database, config, logging)
+    "shu.processors.",        # Text extraction, etc.
+    "shu.knowledge.",         # Knowledge base utilities
+    "shu.models.",            # SQLAlchemy models
+)
+
+
 class _DenyImportsFinder(MetaPathFinder):
-    # Deny direct HTTP clients and host-internal imports from plugins at runtime.
-    deny = {"requests", "httpx", "urllib3", "urllib.request", "shu"}
+    """Import finder that blocks certain imports during plugin execution.
+    
+    This finder is installed into sys.meta_path during plugin execution to prevent
+    plugins from importing:
+    - Direct HTTP clients (requests, httpx, urllib3) - must use host.http
+    - Internal shu.* modules - must use host capabilities
+    
+    However, trusted host code (host capabilities, services, etc.) IS allowed to
+    import shu.* modules. This is determined by inspecting the call stack.
+    """
+    # Deny direct HTTP clients from plugins at runtime.
+    deny_always = {"requests", "httpx", "urllib3", "urllib.request"}
+    # Deny shu.* imports only from untrusted (plugin) code
+    deny_from_plugins = {"shu"}
+
+    def _is_called_from_trusted_code(self) -> bool:
+        """Check if the import is being called from trusted host code.
+        
+        Walks the call stack to find the module that initiated the import.
+        If any frame in the stack is from a trusted module prefix, allow the import.
+        
+        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
+        Short-circuits as soon as a trusted frame is found.
+        """
+        import sys
+        # Walk frames directly - more efficient than traceback.extract_stack()
+        # which creates FrameSummary objects for every frame
+        try:
+            frame = sys._getframe(2)  # Skip this method and find_spec/caller
+        except ValueError:
+            return False
+        
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            # Quick check: only inspect frames from shu modules
+            if "/shu/" in filename:
+                for prefix in _TRUSTED_MODULE_PREFIXES:
+                    # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
+                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
+                    if path_fragment in filename:
+                        return True
+                    # Also check for exact module file matches
+                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
+                    if filename.endswith(path_fragment_exact + ".py"):
+                        return True
+            frame = frame.f_back
+        return False
 
     def find_spec(self, fullname, path, target=None):  # type: ignore[override]
         # Block exact and submodule imports under denylisted packages
         name = str(fullname)
-        for p in self.deny:
+        
+        # Always block HTTP clients - no exceptions
+        for p in self.deny_always:
             if name == p or name.startswith(p + "."):
                 raise ImportError(
                     f"Import of '{fullname}' is denied by host policy. Use host.http instead."
                 )
+        
+        # Block shu.* imports only from plugin code, not from trusted host code
+        for p in self.deny_from_plugins:
+            if name == p or name.startswith(p + "."):
+                if not self._is_called_from_trusted_code():
+                    raise ImportError(
+                        f"Import of '{fullname}' is denied by host policy. Use host.http instead."
+                    )
+        
         return None
 
 
@@ -50,25 +118,61 @@ class _DenyHttpImportsCtx:
     """Context manager to install/remove the deny-imports finder safely.
     Also patches importlib.import_module to deny disallowed names even if preloaded in sys.modules.
 
-    IMPORTANT: This context manager modifies global state (sys.meta_path and importlib.import_module).
-    It is NOT safe for concurrent use across threads. In async contexts, background tasks spawned
-    during plugin execution may still be affected by the import deny policy until the context exits.
-    Host capabilities that spawn background tasks should import all required modules BEFORE creating
-    the task to avoid import failures.
+    The deny policy allows trusted host code (host capabilities, services, etc.) to import
+    shu.* modules while blocking plugin code from doing so. HTTP client imports are always
+    blocked regardless of caller.
     """
     def __init__(self):
         self._finder: Optional[_DenyImportsFinder] = None
         self._orig_import_module = None
 
     @staticmethod
+    def _is_called_from_trusted_code() -> bool:
+        """Check if the import is being called from trusted host code.
+        
+        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
+        """
+        import sys
+        try:
+            frame = sys._getframe(2)
+        except ValueError:
+            return False
+        
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            if "/shu/" in filename:
+                for prefix in _TRUSTED_MODULE_PREFIXES:
+                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
+                    if path_fragment in filename:
+                        return True
+                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
+                    if filename.endswith(path_fragment_exact + ".py"):
+                        return True
+            frame = frame.f_back
+        return False
+
+    @staticmethod
     def _is_denied(name: str) -> bool:
+        """Check if an import should be denied.
+        
+        HTTP clients are always denied. shu.* imports are denied only from plugin code.
+        """
         try:
             n = str(name)
         except Exception:
             n = ""
-        for p in _DenyImportsFinder.deny:
+        
+        # Always deny HTTP clients
+        for p in _DenyImportsFinder.deny_always:
             if n == p or n.startswith(p + "."):
                 return True
+        
+        # Deny shu.* only from plugin code
+        for p in _DenyImportsFinder.deny_from_plugins:
+            if n == p or n.startswith(p + "."):
+                if not _DenyHttpImportsCtx._is_called_from_trusted_code():
+                    return True
+        
         return False
 
     def __enter__(self):
@@ -82,7 +186,7 @@ class _DenyHttpImportsCtx:
             orig_import = self._orig_import_module
 
             def _guard(name, package=None):  # type: ignore[no-redef]
-                if self._is_denied(name):
+                if _DenyHttpImportsCtx._is_denied(name):
                     raise ImportError(
                         f"Import of '{name}' is denied by host policy. Use host.http instead."
                     )
