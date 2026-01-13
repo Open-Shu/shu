@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
+import redis.asyncio as redis
+
 logger = logging.getLogger(__name__)
 
 
@@ -990,3 +992,604 @@ class InMemoryQueueBackend:
             }
         )
         return True
+
+
+# =============================================================================
+# RedisQueueBackend Implementation
+# =============================================================================
+
+
+class RedisQueueBackend:
+    """Redis-backed queue implementation for horizontally-scaled deployments.
+    
+    Uses Redis lists (LPUSH/BRPOP) for the main queue, enabling multiple
+    worker replicas to compete for jobs. A processing sorted set tracks
+    jobs that have been dequeued but not yet acknowledged, with scores
+    representing visibility timeout expiration timestamps.
+    
+    Queue Structure:
+        - queue:{name} - Redis list for pending jobs (FIFO)
+        - queue:{name}:processing - Sorted set for in-flight jobs
+          (score = visibility timeout expiration timestamp)
+        - queue:{name}:scheduled - Sorted set for delayed jobs
+          (score = execute_at timestamp)
+        - queue:{name}:job:{id} - Hash storing job data while in processing
+    
+    This backend is suitable for:
+        - Multi-node deployments with multiple worker replicas
+        - Horizontal scaling with competing consumers
+        - Production containerized environments
+        - Deployments requiring job persistence across restarts
+    
+    Features:
+        - BRPOP for efficient blocking wait without polling
+        - Atomic operations prevent race conditions
+        - Visibility timeout with automatic redelivery
+        - Scheduled job support with sorted sets
+    
+    Thread Safety:
+        Redis handles concurrency natively. Multiple workers can safely
+        compete for jobs from the same queue.
+    
+    Example:
+        # Preferred: Use the factory function
+        from shu.core.queue_backend import get_queue_backend
+        
+        backend = await get_queue_backend()
+        job = Job(queue_name="tasks", payload={"action": "process"})
+        await backend.enqueue(job)
+        
+        # Worker dequeues and processes
+        job = await backend.dequeue("tasks", timeout_seconds=5)
+        if job:
+            try:
+                await process_job(job)
+                await backend.acknowledge(job)
+            except Exception:
+                await backend.reject(job, requeue=True)
+    
+    Note:
+        The Redis client is managed internally by this module. Use
+        `get_queue_backend()` to obtain a properly configured backend
+        instance rather than constructing RedisQueueBackend directly.
+    """
+    
+    def __init__(self, redis_client: Any):
+        """Initialize with an existing Redis client.
+        
+        Args:
+            redis_client: An async Redis client instance. This is typically
+                created internally by `get_queue_backend()`. External code
+                should use the factory function instead of constructing
+                this class directly.
+        """
+        self._client = redis_client
+    
+    def _queue_key(self, queue_name: str) -> str:
+        """Get the Redis key for the main queue list."""
+        return f"queue:{queue_name}"
+    
+    def _processing_key(self, queue_name: str) -> str:
+        """Get the Redis key for the processing sorted set."""
+        return f"queue:{queue_name}:processing"
+    
+    def _scheduled_key(self, queue_name: str) -> str:
+        """Get the Redis key for the scheduled sorted set."""
+        return f"queue:{queue_name}:scheduled"
+    
+    def _job_key(self, queue_name: str, job_id: str) -> str:
+        """Get the Redis key for storing job data while in processing."""
+        return f"queue:{queue_name}:job:{job_id}"
+    
+    async def _restore_expired_jobs(self, queue_name: str) -> int:
+        """Move expired processing jobs back to the queue.
+        
+        Jobs that have exceeded their visibility timeout are restored
+        to the front of the queue for reprocessing.
+        
+        Args:
+            queue_name: The queue to check for expired jobs.
+        
+        Returns:
+            Number of jobs restored.
+        """
+        now = time.time()
+        processing_key = self._processing_key(queue_name)
+        queue_key = self._queue_key(queue_name)
+        
+        try:
+            # Get all expired jobs (score <= now)
+            expired_job_ids = await self._client.zrangebyscore(
+                processing_key,
+                "-inf",
+                now,
+            )
+            
+            if not expired_job_ids:
+                return 0
+            
+            restored_count = 0
+            for job_id in expired_job_ids:
+                # Get the job data
+                job_key = self._job_key(queue_name, job_id)
+                job_json = await self._client.get(job_key)
+                
+                if job_json:
+                    # Add back to front of queue (RPUSH to add to end, but we want front)
+                    # Use LPUSH to add to front for priority reprocessing
+                    await self._client.rpush(queue_key, job_json)
+                    restored_count += 1
+                    logger.debug(
+                        "Restored expired job to queue",
+                        extra={"job_id": job_id, "queue_name": queue_name}
+                    )
+                
+                # Remove from processing set and delete job data
+                await self._client.zrem(processing_key, job_id)
+                await self._client.delete(job_key)
+            
+            return restored_count
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to restore expired jobs: {e}",
+                extra={"queue_name": queue_name, "error": str(e)}
+            )
+            return 0
+    
+    async def _move_scheduled_jobs(self, queue_name: str) -> int:
+        """Move scheduled jobs that are ready to the main queue.
+        
+        Jobs whose execute_at timestamp has passed are moved from the
+        scheduled sorted set to the main queue.
+        
+        Args:
+            queue_name: The queue to check for ready scheduled jobs.
+        
+        Returns:
+            Number of jobs moved.
+        """
+        now = time.time()
+        scheduled_key = self._scheduled_key(queue_name)
+        queue_key = self._queue_key(queue_name)
+        
+        try:
+            # Get all ready jobs (score <= now)
+            ready_jobs = await self._client.zrangebyscore(
+                scheduled_key,
+                "-inf",
+                now,
+            )
+            
+            if not ready_jobs:
+                return 0
+            
+            moved_count = 0
+            for job_json in ready_jobs:
+                # Add to main queue
+                await self._client.lpush(queue_key, job_json)
+                # Remove from scheduled set
+                await self._client.zrem(scheduled_key, job_json)
+                moved_count += 1
+                logger.debug(
+                    "Moved scheduled job to queue",
+                    extra={"queue_name": queue_name}
+                )
+            
+            return moved_count
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to move scheduled jobs: {e}",
+                extra={"queue_name": queue_name, "error": str(e)}
+            )
+            return 0
+    
+    async def enqueue(self, job: Job) -> bool:
+        """Add a job to the queue.
+        
+        Places the job at the end of the specified queue using LPUSH.
+        Jobs are dequeued from the other end using BRPOP (FIFO order).
+        
+        Args:
+            job: The job to enqueue.
+        
+        Returns:
+            True if the job was successfully enqueued.
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+            QueueOperationError: If the job cannot be serialized.
+        """
+        try:
+            job_json = job.to_json()
+        except JobSerializationError as e:
+            raise QueueOperationError(
+                f"Failed to enqueue job: {e.message}",
+                details={"job_id": job.id, "error": str(e)}
+            ) from e
+        
+        queue_key = self._queue_key(job.queue_name)
+        
+        try:
+            await self._client.lpush(queue_key, job_json)
+            logger.debug(
+                "Job enqueued",
+                extra={"job_id": job.id, "queue_name": job.queue_name}
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"Redis LPUSH failed for queue '{job.queue_name}': {e}",
+                extra={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to enqueue job to queue '{job.queue_name}'",
+                details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            ) from e
+    
+    async def dequeue(
+        self,
+        queue_name: str,
+        timeout_seconds: Optional[int] = None,
+    ) -> Optional[Job]:
+        """Remove and return the next job from the queue.
+        
+        Uses BRPOP for efficient blocking wait. When a job is dequeued,
+        it is added to the processing sorted set with a score equal to
+        the visibility timeout expiration timestamp.
+        
+        Args:
+            queue_name: The queue to dequeue from.
+            timeout_seconds: How long to wait for a job.
+                - If None, returns immediately (non-blocking).
+                - If 0, blocks indefinitely until a job is available.
+                - If positive, blocks for up to that many seconds.
+        
+        Returns:
+            The next job with attempts incremented, or None if no job
+            is available within the timeout.
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+        """
+        queue_key = self._queue_key(queue_name)
+        processing_key = self._processing_key(queue_name)
+        
+        try:
+            # First, restore any expired jobs and move scheduled jobs
+            await self._restore_expired_jobs(queue_name)
+            await self._move_scheduled_jobs(queue_name)
+            
+            # Dequeue using BRPOP or RPOP
+            if timeout_seconds is None:
+                # Non-blocking: use RPOP
+                result = await self._client.rpop(queue_key)
+            elif timeout_seconds == 0:
+                # Block indefinitely: use BRPOP with 0 timeout
+                result = await self._client.brpop(queue_key, timeout=0)
+                if result:
+                    result = result[1]  # BRPOP returns (key, value)
+            else:
+                # Block with timeout: use BRPOP
+                result = await self._client.brpop(queue_key, timeout=timeout_seconds)
+                if result:
+                    result = result[1]  # BRPOP returns (key, value)
+            
+            if not result:
+                return None
+            
+            # Parse the job
+            try:
+                job = Job.from_json(result)
+            except JobSerializationError as e:
+                logger.error(
+                    f"Failed to deserialize job from queue: {e}",
+                    extra={"queue_name": queue_name, "error": str(e)}
+                )
+                # Skip this malformed job
+                return None
+            
+            # Increment attempts
+            job.attempts += 1
+            
+            # Add to processing set with visibility timeout
+            expiry = time.time() + job.visibility_timeout
+            await self._client.zadd(processing_key, {job.id: expiry})
+            
+            # Store job data for potential redelivery
+            job_key = self._job_key(queue_name, job.id)
+            await self._client.set(
+                job_key,
+                job.to_json(),
+                ex=job.visibility_timeout + 60  # Extra buffer for cleanup
+            )
+            
+            logger.debug(
+                "Job dequeued",
+                extra={
+                    "job_id": job.id,
+                    "queue_name": queue_name,
+                    "attempts": job.attempts,
+                }
+            )
+            return job
+            
+        except Exception as e:
+            logger.error(
+                f"Redis dequeue failed for queue '{queue_name}': {e}",
+                extra={"queue_name": queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to dequeue from queue '{queue_name}'",
+                details={"queue_name": queue_name, "error": str(e)}
+            ) from e
+    
+    async def acknowledge(self, job: Job) -> bool:
+        """Acknowledge successful processing of a job.
+        
+        Removes the job from the processing set and deletes the stored
+        job data, preventing it from being redelivered after visibility
+        timeout expires.
+        
+        Args:
+            job: The job to acknowledge.
+        
+        Returns:
+            True if the job was acknowledged, False if not found
+            (e.g., already acknowledged or visibility timeout expired).
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+        """
+        processing_key = self._processing_key(job.queue_name)
+        job_key = self._job_key(job.queue_name, job.id)
+        
+        try:
+            # Remove from processing set
+            removed = await self._client.zrem(processing_key, job.id)
+            
+            # Delete stored job data
+            await self._client.delete(job_key)
+            
+            if removed > 0:
+                logger.debug(
+                    "Job acknowledged",
+                    extra={"job_id": job.id, "queue_name": job.queue_name}
+                )
+                return True
+            
+            logger.debug(
+                "Job not found for acknowledgment",
+                extra={"job_id": job.id, "queue_name": job.queue_name}
+            )
+            return False
+            
+        except Exception as e:
+            logger.error(
+                f"Redis acknowledge failed for job '{job.id}': {e}",
+                extra={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to acknowledge job '{job.id}'",
+                details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            ) from e
+    
+    async def reject(
+        self,
+        job: Job,
+        requeue: bool = True,
+    ) -> bool:
+        """Reject a job, optionally requeueing it for retry.
+        
+        Removes the job from the processing set. If requeue is True and
+        the job hasn't exceeded max_attempts, it is returned to the queue.
+        
+        Args:
+            job: The job to reject.
+            requeue: If True, the job is returned to the queue
+                (if under max_attempts). If False, the job is discarded.
+        
+        Returns:
+            True if the operation succeeded.
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+        """
+        processing_key = self._processing_key(job.queue_name)
+        job_key = self._job_key(job.queue_name, job.id)
+        queue_key = self._queue_key(job.queue_name)
+        
+        try:
+            # Remove from processing set
+            await self._client.zrem(processing_key, job.id)
+            
+            # Delete stored job data
+            await self._client.delete(job_key)
+            
+            if requeue and job.attempts < job.max_attempts:
+                # Requeue the job
+                await self._client.lpush(queue_key, job.to_json())
+                logger.debug(
+                    "Job rejected and requeued",
+                    extra={
+                        "job_id": job.id,
+                        "queue_name": job.queue_name,
+                        "attempts": job.attempts,
+                    }
+                )
+            else:
+                if requeue:
+                    logger.warning(
+                        "Job rejected and discarded (max attempts exceeded)",
+                        extra={
+                            "job_id": job.id,
+                            "queue_name": job.queue_name,
+                            "attempts": job.attempts,
+                            "max_attempts": job.max_attempts,
+                        }
+                    )
+                else:
+                    logger.debug(
+                        "Job rejected and discarded",
+                        extra={"job_id": job.id, "queue_name": job.queue_name}
+                    )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(
+                f"Redis reject failed for job '{job.id}': {e}",
+                extra={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to reject job '{job.id}'",
+                details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            ) from e
+    
+    async def peek(
+        self,
+        queue_name: str,
+        limit: int = 10,
+    ) -> List[Job]:
+        """View jobs in the queue without removing them.
+        
+        Returns jobs from the front of the queue without affecting their
+        state. Uses LRANGE to peek at the queue contents.
+        
+        Args:
+            queue_name: The queue to peek.
+            limit: Maximum number of jobs to return. Default is 10.
+        
+        Returns:
+            List of jobs (may be empty if queue is empty).
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+        """
+        queue_key = self._queue_key(queue_name)
+        
+        try:
+            # First restore any expired jobs and move scheduled jobs
+            await self._restore_expired_jobs(queue_name)
+            await self._move_scheduled_jobs(queue_name)
+            
+            # LRANGE returns elements from start to end (inclusive)
+            # For FIFO queue with LPUSH/RPOP, newest items are at index 0
+            # We want oldest items (at the end), so we use negative indices
+            # -limit to -1 gives us the last 'limit' items
+            job_jsons = await self._client.lrange(queue_key, -limit, -1)
+            
+            jobs = []
+            for job_json in job_jsons:
+                try:
+                    jobs.append(Job.from_json(job_json))
+                except JobSerializationError:
+                    # Skip malformed jobs
+                    continue
+            
+            return jobs
+            
+        except Exception as e:
+            logger.error(
+                f"Redis peek failed for queue '{queue_name}': {e}",
+                extra={"queue_name": queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to peek queue '{queue_name}'",
+                details={"queue_name": queue_name, "error": str(e)}
+            ) from e
+    
+    async def queue_length(self, queue_name: str) -> int:
+        """Get the number of jobs waiting in the queue.
+        
+        Returns the count of jobs that are ready to be dequeued. Does not
+        include jobs that are currently being processed (in-flight).
+        
+        Args:
+            queue_name: The queue to check.
+        
+        Returns:
+            Number of jobs in the queue (not including processing jobs).
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+        """
+        queue_key = self._queue_key(queue_name)
+        
+        try:
+            # First restore any expired jobs and move scheduled jobs
+            await self._restore_expired_jobs(queue_name)
+            await self._move_scheduled_jobs(queue_name)
+            
+            length = await self._client.llen(queue_key)
+            return length
+            
+        except Exception as e:
+            logger.error(
+                f"Redis queue_length failed for queue '{queue_name}': {e}",
+                extra={"queue_name": queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to get length of queue '{queue_name}'",
+                details={"queue_name": queue_name, "error": str(e)}
+            ) from e
+    
+    async def schedule(
+        self,
+        job: Job,
+        delay_seconds: int,
+    ) -> bool:
+        """Schedule a job to be enqueued after a delay.
+        
+        The job is added to a scheduled sorted set with a score equal to
+        the execute_at timestamp. A background process or the dequeue
+        operation moves ready jobs to the main queue.
+        
+        Args:
+            job: The job to schedule.
+            delay_seconds: Seconds to wait before enqueueing. Must be
+                positive.
+        
+        Returns:
+            True if the job was scheduled.
+        
+        Raises:
+            QueueConnectionError: If the Redis server is unreachable.
+            ValueError: If delay_seconds is not positive.
+        """
+        if delay_seconds <= 0:
+            raise ValueError("delay_seconds must be positive")
+        
+        try:
+            job_json = job.to_json()
+        except JobSerializationError as e:
+            raise QueueOperationError(
+                f"Failed to schedule job: {e.message}",
+                details={"job_id": job.id, "error": str(e)}
+            ) from e
+        
+        scheduled_key = self._scheduled_key(job.queue_name)
+        execute_at = time.time() + delay_seconds
+        
+        try:
+            await self._client.zadd(scheduled_key, {job_json: execute_at})
+            logger.debug(
+                "Job scheduled",
+                extra={
+                    "job_id": job.id,
+                    "queue_name": job.queue_name,
+                    "delay_seconds": delay_seconds,
+                }
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(
+                f"Redis schedule failed for job '{job.id}': {e}",
+                extra={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            )
+            raise QueueConnectionError(
+                f"Failed to schedule job '{job.id}'",
+                details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
+            ) from e

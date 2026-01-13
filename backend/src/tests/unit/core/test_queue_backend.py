@@ -10,7 +10,9 @@ Feature: queue-backend-interface
 import pytest
 from hypothesis import given, strategies as st, settings
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+import asyncio
+import time
 
 from shu.core.queue_backend import (
     Job,
@@ -20,7 +22,205 @@ from shu.core.queue_backend import (
     QueueOperationError,
     JobSerializationError,
     InMemoryQueueBackend,
+    RedisQueueBackend,
 )
+
+
+# =============================================================================
+# Mock Redis Client for Queue Operations
+# =============================================================================
+
+
+class MockRedisClientForQueue:
+    """Mock Redis client for testing RedisQueueBackend.
+    
+    This mock implements the same interface as the real Redis client
+    to allow testing RedisQueueBackend without a real Redis server.
+    It simulates Redis lists, sorted sets, and key-value operations.
+    """
+    
+    def __init__(self):
+        # Lists: key -> list of values
+        self._lists: Dict[str, list] = {}
+        # Sorted sets: key -> {member: score}
+        self._zsets: Dict[str, Dict[str, float]] = {}
+        # Key-value store: key -> value
+        self._data: Dict[str, str] = {}
+        # Expiry times: key -> expiry_timestamp
+        self._expiry: Dict[str, float] = {}
+        # For blocking operations
+        self._events: Dict[str, asyncio.Event] = {}
+    
+    def _check_expiry(self, key: str) -> bool:
+        """Check if a key has expired and clean up if so. Returns True if expired."""
+        if key in self._expiry and time.time() > self._expiry[key]:
+            if key in self._data:
+                del self._data[key]
+            if key in self._expiry:
+                del self._expiry[key]
+            return True
+        return False
+    
+    def _get_event(self, key: str) -> asyncio.Event:
+        """Get or create an event for the key."""
+        if key not in self._events:
+            self._events[key] = asyncio.Event()
+        return self._events[key]
+    
+    # List operations
+    async def lpush(self, key: str, *values: str) -> int:
+        """Push values to the left (head) of a list."""
+        if key not in self._lists:
+            self._lists[key] = []
+        for value in values:
+            self._lists[key].insert(0, value)
+        # Signal any waiting brpop
+        event = self._get_event(key)
+        event.set()
+        return len(self._lists[key])
+    
+    async def rpush(self, key: str, *values: str) -> int:
+        """Push values to the right (tail) of a list."""
+        if key not in self._lists:
+            self._lists[key] = []
+        for value in values:
+            self._lists[key].append(value)
+        # Signal any waiting brpop
+        event = self._get_event(key)
+        event.set()
+        return len(self._lists[key])
+    
+    async def rpop(self, key: str) -> Optional[str]:
+        """Pop a value from the right (tail) of a list."""
+        if key not in self._lists or not self._lists[key]:
+            return None
+        return self._lists[key].pop()
+    
+    async def brpop(self, key: str, timeout: int = 0) -> Optional[tuple]:
+        """Blocking pop from the right of a list."""
+        # Try immediate pop first
+        if key in self._lists and self._lists[key]:
+            value = self._lists[key].pop()
+            return (key, value)
+        
+        # If timeout is 0, we should block indefinitely, but for tests
+        # we'll use a reasonable timeout to avoid hanging
+        if timeout == 0:
+            timeout = 30  # 30 seconds max for tests
+        
+        deadline = time.time() + timeout
+        event = self._get_event(key)
+        
+        while time.time() < deadline:
+            event.clear()
+            if key in self._lists and self._lists[key]:
+                value = self._lists[key].pop()
+                return (key, value)
+            
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            
+            try:
+                await asyncio.wait_for(event.wait(), timeout=min(remaining, 0.1))
+            except asyncio.TimeoutError:
+                pass
+        
+        return None
+    
+    async def lrange(self, key: str, start: int, end: int) -> list:
+        """Get a range of elements from a list."""
+        if key not in self._lists:
+            return []
+        lst = self._lists[key]
+        # Handle negative indices
+        if end == -1:
+            end = len(lst)
+        else:
+            end = end + 1  # Redis end is inclusive
+        if start < 0:
+            start = max(0, len(lst) + start)
+        return lst[start:end]
+    
+    async def llen(self, key: str) -> int:
+        """Get the length of a list."""
+        if key not in self._lists:
+            return 0
+        return len(self._lists[key])
+    
+    # Sorted set operations
+    async def zadd(self, key: str, mapping: Dict[str, float]) -> int:
+        """Add members to a sorted set with scores."""
+        if key not in self._zsets:
+            self._zsets[key] = {}
+        added = 0
+        for member, score in mapping.items():
+            if member not in self._zsets[key]:
+                added += 1
+            self._zsets[key][member] = score
+        return added
+    
+    async def zrem(self, key: str, *members: str) -> int:
+        """Remove members from a sorted set."""
+        if key not in self._zsets:
+            return 0
+        removed = 0
+        for member in members:
+            if member in self._zsets[key]:
+                del self._zsets[key][member]
+                removed += 1
+        return removed
+    
+    async def zrangebyscore(
+        self,
+        key: str,
+        min_score: str,
+        max_score: float,
+    ) -> list:
+        """Get members with scores in a range."""
+        if key not in self._zsets:
+            return []
+        
+        min_val = float('-inf') if min_score == "-inf" else float(min_score)
+        max_val = float('inf') if max_score == "+inf" else float(max_score)
+        
+        result = []
+        for member, score in self._zsets[key].items():
+            if min_val <= score <= max_val:
+                result.append(member)
+        return result
+    
+    # Key-value operations
+    async def get(self, key: str) -> Optional[str]:
+        """Get a value by key."""
+        self._check_expiry(key)
+        return self._data.get(key)
+    
+    async def set(self, key: str, value: str, ex: Optional[int] = None) -> bool:
+        """Set a key-value pair with optional expiration."""
+        self._data[key] = value
+        if ex:
+            self._expiry[key] = time.time() + ex
+        elif key in self._expiry:
+            del self._expiry[key]
+        return True
+    
+    async def delete(self, *keys: str) -> int:
+        """Delete one or more keys."""
+        deleted = 0
+        for key in keys:
+            if key in self._data:
+                del self._data[key]
+                deleted += 1
+            if key in self._expiry:
+                del self._expiry[key]
+            if key in self._lists:
+                del self._lists[key]
+                deleted += 1
+            if key in self._zsets:
+                del self._zsets[key]
+                deleted += 1
+        return deleted
 
 
 # =============================================================================
@@ -266,6 +466,32 @@ def inmemory_queue_backend() -> InMemoryQueueBackend:
 
 
 # =============================================================================
+# Fixtures for RedisQueueBackend
+# =============================================================================
+
+
+@pytest.fixture
+def redis_queue_backend() -> RedisQueueBackend:
+    """Provide a fresh RedisQueueBackend with mock client for each test."""
+    mock_client = MockRedisClientForQueue()
+    return RedisQueueBackend(mock_client)
+
+
+@pytest.fixture(params=["inmemory", "redis"])
+def queue_backend(request) -> QueueBackend:
+    """Parametrized fixture providing both backend implementations.
+    
+    This allows running the same tests against both InMemoryQueueBackend
+    and RedisQueueBackend to verify backend substitutability.
+    """
+    if request.param == "inmemory":
+        return InMemoryQueueBackend(cleanup_interval_seconds=0)
+    else:
+        mock_client = MockRedisClientForQueue()
+        return RedisQueueBackend(mock_client)
+
+
+# =============================================================================
 # InMemoryQueueBackend Protocol Compliance Tests
 # =============================================================================
 
@@ -278,6 +504,21 @@ class TestInMemoryQueueBackendProtocol:
     ):
         """Verify that InMemoryQueueBackend implements QueueBackend protocol."""
         assert isinstance(inmemory_queue_backend, QueueBackend)
+
+
+# =============================================================================
+# RedisQueueBackend Protocol Compliance Tests
+# =============================================================================
+
+
+class TestRedisQueueBackendProtocol:
+    """Tests for RedisQueueBackend protocol compliance."""
+    
+    def test_redis_queue_backend_implements_protocol(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Verify that RedisQueueBackend implements QueueBackend protocol."""
+        assert isinstance(redis_queue_backend, QueueBackend)
 
 
 # =============================================================================
@@ -730,3 +971,532 @@ class TestProperty7ThreadSafeConcurrentOperations:
         
         # Processing set should be empty
         assert len(inmemory_queue_backend._processing[queue_name]) == 0
+
+
+# =============================================================================
+# Parametrized Property Tests for Both Backends (Backend Substitutability)
+# =============================================================================
+
+
+class TestProperty2EnqueueDequeueRoundTripParametrized:
+    """
+    Property 2: Enqueue-dequeue round-trip (Parametrized for both backends)
+    
+    *For any* queue backend (Redis or InMemory), any queue name, and any valid Job,
+    if the job is enqueued and then dequeued, the dequeued job SHALL have the same
+    id, queue_name, and payload as the original (with attempts incremented by 1).
+    
+    **Validates: Requirements 2.5, 10.1**
+    
+    Feature: queue-backend-interface, Property 2: Enqueue-dequeue round-trip
+    """
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(job=job_strategy)
+    async def test_enqueue_dequeue_round_trip_inmemory(self, job: Job):
+        """
+        Property test: For any valid Job with InMemoryQueueBackend, enqueue then dequeue
+        returns a job with the same id, queue_name, and payload (attempts incremented by 1).
+        
+        Feature: queue-backend-interface, Property 2: Enqueue-dequeue round-trip
+        **Validates: Requirements 10.1**
+        """
+        backend = InMemoryQueueBackend(cleanup_interval_seconds=0)
+        original_attempts = job.attempts
+        
+        # Enqueue the job
+        result = await backend.enqueue(job)
+        assert result is True, "enqueue() should return True"
+        
+        # Dequeue the job
+        dequeued = await backend.dequeue(job.queue_name)
+        
+        # Verify the job was dequeued
+        assert dequeued is not None, "dequeue() should return a job"
+        
+        # Verify id, queue_name, and payload are preserved
+        assert dequeued.id == job.id, f"ID mismatch: {dequeued.id} != {job.id}"
+        assert dequeued.queue_name == job.queue_name, f"queue_name mismatch: {dequeued.queue_name} != {job.queue_name}"
+        assert dequeued.payload == job.payload, f"payload mismatch: {dequeued.payload} != {job.payload}"
+        
+        # Verify attempts is incremented by 1
+        assert dequeued.attempts == original_attempts + 1, (
+            f"attempts should be incremented by 1: {dequeued.attempts} != {original_attempts + 1}"
+        )
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(job=job_strategy)
+    async def test_enqueue_dequeue_round_trip_redis(self, job: Job):
+        """
+        Property test: For any valid Job with RedisQueueBackend, enqueue then dequeue
+        returns a job with the same id, queue_name, and payload (attempts incremented by 1).
+        
+        Feature: queue-backend-interface, Property 2: Enqueue-dequeue round-trip
+        **Validates: Requirements 2.5, 10.1**
+        """
+        mock_client = MockRedisClientForQueue()
+        backend = RedisQueueBackend(mock_client)
+        original_attempts = job.attempts
+        
+        # Enqueue the job
+        result = await backend.enqueue(job)
+        assert result is True, "enqueue() should return True"
+        
+        # Dequeue the job
+        dequeued = await backend.dequeue(job.queue_name)
+        
+        # Verify the job was dequeued
+        assert dequeued is not None, "dequeue() should return a job"
+        
+        # Verify id, queue_name, and payload are preserved
+        assert dequeued.id == job.id, f"ID mismatch: {dequeued.id} != {job.id}"
+        assert dequeued.queue_name == job.queue_name, f"queue_name mismatch: {dequeued.queue_name} != {job.queue_name}"
+        assert dequeued.payload == job.payload, f"payload mismatch: {dequeued.payload} != {job.payload}"
+        
+        # Verify attempts is incremented by 1
+        assert dequeued.attempts == original_attempts + 1, (
+            f"attempts should be incremented by 1: {dequeued.attempts} != {original_attempts + 1}"
+        )
+    
+    @pytest.mark.asyncio
+    async def test_enqueue_dequeue_preserves_all_fields_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: enqueue then dequeue preserves all job fields (InMemory)."""
+        job = Job(
+            queue_name="test_queue",
+            payload={"key": "value", "nested": {"a": 1}},
+            max_attempts=5,
+            visibility_timeout=600,
+        )
+        
+        await inmemory_queue_backend.enqueue(job)
+        dequeued = await inmemory_queue_backend.dequeue("test_queue")
+        
+        assert dequeued is not None
+        assert dequeued.id == job.id
+        assert dequeued.queue_name == job.queue_name
+        assert dequeued.payload == job.payload
+        assert dequeued.max_attempts == job.max_attempts
+        assert dequeued.visibility_timeout == job.visibility_timeout
+        assert dequeued.attempts == job.attempts + 1
+    
+    @pytest.mark.asyncio
+    async def test_enqueue_dequeue_preserves_all_fields_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: enqueue then dequeue preserves all job fields (Redis)."""
+        job = Job(
+            queue_name="test_queue",
+            payload={"key": "value", "nested": {"a": 1}},
+            max_attempts=5,
+            visibility_timeout=600,
+        )
+        
+        await redis_queue_backend.enqueue(job)
+        dequeued = await redis_queue_backend.dequeue("test_queue")
+        
+        assert dequeued is not None
+        assert dequeued.id == job.id
+        assert dequeued.queue_name == job.queue_name
+        assert dequeued.payload == job.payload
+        assert dequeued.max_attempts == job.max_attempts
+        assert dequeued.visibility_timeout == job.visibility_timeout
+        assert dequeued.attempts == job.attempts + 1
+    
+    @pytest.mark.asyncio
+    async def test_dequeue_empty_queue_returns_none_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: dequeue from empty queue returns None (InMemory)."""
+        result = await inmemory_queue_backend.dequeue("empty_queue_test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_dequeue_empty_queue_returns_none_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: dequeue from empty queue returns None (Redis)."""
+        result = await redis_queue_backend.dequeue("empty_queue_test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_fifo_order_preserved_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: jobs are dequeued in FIFO order (InMemory)."""
+        queue_name = "fifo_test_queue"
+        jobs = [
+            Job(queue_name=queue_name, payload={"order": i})
+            for i in range(5)
+        ]
+        
+        for job in jobs:
+            await inmemory_queue_backend.enqueue(job)
+        
+        for i, expected_job in enumerate(jobs):
+            dequeued = await inmemory_queue_backend.dequeue(queue_name)
+            assert dequeued is not None
+            assert dequeued.id == expected_job.id
+            assert dequeued.payload["order"] == i
+    
+    @pytest.mark.asyncio
+    async def test_fifo_order_preserved_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: jobs are dequeued in FIFO order (Redis)."""
+        queue_name = "fifo_test_queue"
+        jobs = [
+            Job(queue_name=queue_name, payload={"order": i})
+            for i in range(5)
+        ]
+        
+        for job in jobs:
+            await redis_queue_backend.enqueue(job)
+        
+        for i, expected_job in enumerate(jobs):
+            dequeued = await redis_queue_backend.dequeue(queue_name)
+            assert dequeued is not None
+            assert dequeued.id == expected_job.id
+            assert dequeued.payload["order"] == i
+
+
+class TestProperty3VisibilityTimeoutExpirationParametrized:
+    """
+    Property 3: Visibility timeout expiration (Parametrized for both backends)
+    
+    *For any* queue backend, when a job is dequeued but not acknowledged
+    within its visibility_timeout, the job SHALL become available for
+    dequeue again.
+    
+    **Validates: Requirements 2.5, 3.3, 10.3**
+    
+    Feature: queue-backend-interface, Property 3: Visibility timeout expiration
+    """
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(
+        queue_name=queue_name_strategy,
+        payload=payload_strategy,
+    )
+    async def test_visibility_timeout_expiration_inmemory(self, queue_name: str, payload: Dict[str, Any]):
+        """
+        Property test: For any job dequeued but not acknowledged with InMemoryQueueBackend,
+        after visibility timeout expires, the job becomes available for dequeue again.
+        
+        Feature: queue-backend-interface, Property 3: Visibility timeout expiration
+        **Validates: Requirements 3.3, 10.3**
+        """
+        backend = InMemoryQueueBackend(cleanup_interval_seconds=0)
+        
+        # Create a job with a short visibility timeout
+        job = Job(
+            queue_name=queue_name,
+            payload=payload,
+            visibility_timeout=10,  # 10 seconds
+        )
+        
+        # Enqueue the job
+        await backend.enqueue(job)
+        
+        # Dequeue the job (moves to processing set)
+        dequeued = await backend.dequeue(queue_name)
+        assert dequeued is not None
+        assert dequeued.id == job.id
+        
+        # Immediately after dequeue, the job should NOT be available
+        second_dequeue = await backend.dequeue(queue_name)
+        assert second_dequeue is None, "Job should not be available while in processing"
+        
+        # Manually expire the job by modifying the internal state
+        with backend._lock:
+            if job.id in backend._processing[queue_name]:
+                job_json, _ = backend._processing[queue_name][job.id]
+                backend._processing[queue_name][job.id] = (job_json, time.time() - 1)
+        
+        # After visibility timeout expires, job should be available again
+        redelivered = await backend.dequeue(queue_name)
+        assert redelivered is not None, "Job should be redelivered after visibility timeout"
+        assert redelivered.id == job.id, "Redelivered job should have same ID"
+        assert redelivered.attempts == dequeued.attempts + 1
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(
+        queue_name=queue_name_strategy,
+        payload=payload_strategy,
+    )
+    async def test_visibility_timeout_expiration_redis(self, queue_name: str, payload: Dict[str, Any]):
+        """
+        Property test: For any job dequeued but not acknowledged with RedisQueueBackend,
+        after visibility timeout expires, the job becomes available for dequeue again.
+        
+        Feature: queue-backend-interface, Property 3: Visibility timeout expiration
+        **Validates: Requirements 2.5, 10.3**
+        """
+        mock_client = MockRedisClientForQueue()
+        backend = RedisQueueBackend(mock_client)
+        
+        # Create a job with a short visibility timeout
+        job = Job(
+            queue_name=queue_name,
+            payload=payload,
+            visibility_timeout=10,  # 10 seconds
+        )
+        
+        # Enqueue the job
+        await backend.enqueue(job)
+        
+        # Dequeue the job (moves to processing set)
+        dequeued = await backend.dequeue(queue_name)
+        assert dequeued is not None
+        assert dequeued.id == job.id
+        
+        # Immediately after dequeue, the job should NOT be available
+        second_dequeue = await backend.dequeue(queue_name)
+        assert second_dequeue is None, "Job should not be available while in processing"
+        
+        # Manually expire the job by modifying the processing set score
+        processing_key = backend._processing_key(queue_name)
+        await mock_client.zadd(processing_key, {job.id: time.time() - 1})
+        
+        # After visibility timeout expires, job should be available again
+        redelivered = await backend.dequeue(queue_name)
+        assert redelivered is not None, "Job should be redelivered after visibility timeout"
+        assert redelivered.id == job.id, "Redelivered job should have same ID"
+        assert redelivered.attempts == dequeued.attempts + 1
+    
+    @pytest.mark.asyncio
+    async def test_visibility_timeout_with_real_time_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Visibility timeout works with real time passage (InMemory)."""
+        queue_name = "visibility_test_queue"
+        job = Job(queue_name=queue_name, payload={"key": "value"}, visibility_timeout=1)
+        await inmemory_queue_backend.enqueue(job)
+        
+        # Dequeue the job
+        dequeued = await inmemory_queue_backend.dequeue(queue_name)
+        assert dequeued is not None
+        
+        # Immediately, job should not be available
+        assert await inmemory_queue_backend.dequeue(queue_name) is None
+        
+        # Wait for visibility timeout to expire
+        await asyncio.sleep(1.2)
+        
+        # Job should now be available again
+        redelivered = await inmemory_queue_backend.dequeue(queue_name)
+        assert redelivered is not None
+        assert redelivered.id == job.id
+        assert redelivered.attempts == 2  # Original 0 + first dequeue + redelivery
+    
+    @pytest.mark.asyncio
+    async def test_visibility_timeout_with_real_time_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Visibility timeout works with real time passage (Redis)."""
+        queue_name = "visibility_test_queue"
+        job = Job(queue_name=queue_name, payload={"key": "value"}, visibility_timeout=1)
+        await redis_queue_backend.enqueue(job)
+        
+        # Dequeue the job
+        dequeued = await redis_queue_backend.dequeue(queue_name)
+        assert dequeued is not None
+        
+        # Immediately, job should not be available
+        assert await redis_queue_backend.dequeue(queue_name) is None
+        
+        # Wait for visibility timeout to expire
+        await asyncio.sleep(1.2)
+        
+        # Job should now be available again
+        redelivered = await redis_queue_backend.dequeue(queue_name)
+        assert redelivered is not None
+        assert redelivered.id == job.id
+        assert redelivered.attempts == 2  # Original 0 + first dequeue + redelivery
+    
+    @pytest.mark.asyncio
+    async def test_acknowledged_job_not_redelivered_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Acknowledged jobs are not redelivered even after timeout (InMemory)."""
+        queue_name = "ack_test_queue"
+        job = Job(queue_name=queue_name, payload={"key": "value"}, visibility_timeout=1)
+        await inmemory_queue_backend.enqueue(job)
+        
+        # Dequeue and acknowledge
+        dequeued = await inmemory_queue_backend.dequeue(queue_name)
+        assert dequeued is not None
+        await inmemory_queue_backend.acknowledge(dequeued)
+        
+        # Wait for visibility timeout to expire
+        await asyncio.sleep(1.2)
+        
+        # Job should not be available (was acknowledged)
+        result = await inmemory_queue_backend.dequeue(queue_name)
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_acknowledged_job_not_redelivered_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Acknowledged jobs are not redelivered even after timeout (Redis)."""
+        queue_name = "ack_test_queue"
+        job = Job(queue_name=queue_name, payload={"key": "value"}, visibility_timeout=1)
+        await redis_queue_backend.enqueue(job)
+        
+        # Dequeue and acknowledge
+        dequeued = await redis_queue_backend.dequeue(queue_name)
+        assert dequeued is not None
+        await redis_queue_backend.acknowledge(dequeued)
+        
+        # Wait for visibility timeout to expire
+        await asyncio.sleep(1.2)
+        
+        # Job should not be available (was acknowledged)
+        result = await redis_queue_backend.dequeue(queue_name)
+        assert result is None
+
+
+class TestRedisQueueBackendSpecific:
+    """Tests specific to RedisQueueBackend implementation."""
+    
+    @pytest.mark.asyncio
+    async def test_redis_enqueue_dequeue_basic(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Basic enqueue and dequeue with Redis backend."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        
+        result = await redis_queue_backend.enqueue(job)
+        assert result is True
+        
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        assert dequeued.id == job.id
+        assert dequeued.payload == job.payload
+        assert dequeued.attempts == 1
+    
+    @pytest.mark.asyncio
+    async def test_redis_acknowledge(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Acknowledge removes job from processing."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        await redis_queue_backend.enqueue(job)
+        
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        
+        result = await redis_queue_backend.acknowledge(dequeued)
+        assert result is True
+        
+        # Acknowledging again should return False
+        result = await redis_queue_backend.acknowledge(dequeued)
+        assert result is False
+    
+    @pytest.mark.asyncio
+    async def test_redis_reject_with_requeue(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Reject with requeue returns job to queue."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=3)
+        await redis_queue_backend.enqueue(job)
+        
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        assert dequeued.attempts == 1
+        
+        # Reject with requeue
+        result = await redis_queue_backend.reject(dequeued, requeue=True)
+        assert result is True
+        
+        # Job should be available again
+        requeued = await redis_queue_backend.dequeue("test")
+        assert requeued is not None
+        assert requeued.id == job.id
+        assert requeued.attempts == 2
+    
+    @pytest.mark.asyncio
+    async def test_redis_reject_without_requeue(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Reject without requeue discards job."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        await redis_queue_backend.enqueue(job)
+        
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        
+        # Reject without requeue
+        result = await redis_queue_backend.reject(dequeued, requeue=False)
+        assert result is True
+        
+        # Job should not be available
+        result = await redis_queue_backend.dequeue("test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_redis_peek(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Peek returns jobs without removing them."""
+        jobs = [
+            Job(queue_name="test", payload={"order": i})
+            for i in range(5)
+        ]
+        
+        for job in jobs:
+            await redis_queue_backend.enqueue(job)
+        
+        # Peek should return jobs
+        peeked = await redis_queue_backend.peek("test", limit=3)
+        assert len(peeked) == 3
+        
+        # Queue length should still be 5
+        length = await redis_queue_backend.queue_length("test")
+        assert length == 5
+    
+    @pytest.mark.asyncio
+    async def test_redis_queue_length(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Queue length returns correct count."""
+        queue_name = "length_test"
+        
+        # Empty queue
+        assert await redis_queue_backend.queue_length(queue_name) == 0
+        
+        # Add jobs
+        for i in range(5):
+            job = Job(queue_name=queue_name, payload={"index": i})
+            await redis_queue_backend.enqueue(job)
+        
+        assert await redis_queue_backend.queue_length(queue_name) == 5
+        
+        # Dequeue one
+        await redis_queue_backend.dequeue(queue_name)
+        assert await redis_queue_backend.queue_length(queue_name) == 4
+    
+    @pytest.mark.asyncio
+    async def test_redis_schedule(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Schedule adds job to scheduled set."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        
+        result = await redis_queue_backend.schedule(job, delay_seconds=1)
+        assert result is True
+        
+        # Job should not be immediately available
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is None
+        
+        # Wait for delay
+        await asyncio.sleep(1.1)
+        
+        # Now job should be available (after scheduled jobs are moved)
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        assert dequeued.id == job.id
+    
+    @pytest.mark.asyncio
+    async def test_redis_schedule_invalid_delay(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Schedule with non-positive delay raises ValueError."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        
+        with pytest.raises(ValueError, match="delay_seconds must be positive"):
+            await redis_queue_backend.schedule(job, delay_seconds=0)
+        
+        with pytest.raises(ValueError, match="delay_seconds must be positive"):
+            await redis_queue_backend.schedule(job, delay_seconds=-1)
