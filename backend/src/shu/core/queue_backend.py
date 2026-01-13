@@ -27,12 +27,16 @@ Example usage:
     await backend.enqueue(job)
 """
 
+import asyncio
 import json
 import logging
+import threading
+import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -483,3 +487,506 @@ class QueueBackend(Protocol):
             await backend.schedule(job, delay_seconds=delay)
         """
         ...
+
+
+# =============================================================================
+# InMemoryQueueBackend Implementation
+# =============================================================================
+
+
+class InMemoryQueueBackend:
+    """In-memory queue implementation for single-node deployments.
+    
+    Thread-safe implementation using asyncio primitives for blocking
+    operations and threading locks for data structure access. Implements
+    the Competing Consumers pattern for in-process workers.
+    
+    This backend is suitable for:
+        - Local development environments
+        - Bare-metal single-node installs
+        - Testing and CI/CD pipelines
+        - Simple deployments without Redis dependency
+    
+    Limitations:
+        - Data is NOT shared across processes: Each process has its own
+          isolated queue state. Multiple processes cannot compete for jobs.
+        - Data is LOST on process restart: All queued jobs are lost when
+          the process terminates. No persistence to disk.
+        - NOT suitable for horizontal scaling: Cannot distribute work across
+          multiple worker replicas running in separate processes/containers.
+        - Only works within a single process: Workers must be coroutines
+          or threads within the same Python process.
+    
+    For production deployments requiring horizontal scaling or persistence,
+    use RedisQueueBackend instead.
+    
+    Thread Safety:
+        All operations are protected by a reentrant lock (RLock) to ensure
+        thread-safe access from multiple coroutines and threads.
+    
+    Visibility Timeout:
+        When a job is dequeued, it is moved to a processing set with an
+        expiration timestamp. If not acknowledged within the visibility
+        timeout, the job is automatically restored to the queue for
+        reprocessing. Expired jobs are checked and restored during
+        dequeue operations and periodic cleanup.
+    
+    Example:
+        backend = InMemoryQueueBackend()
+        
+        # Enqueue a job
+        job = Job(queue_name="tasks", payload={"action": "process"})
+        await backend.enqueue(job)
+        
+        # Dequeue and process
+        job = await backend.dequeue("tasks", timeout_seconds=5)
+        if job:
+            try:
+                await process_job(job)
+                await backend.acknowledge(job)
+            except Exception:
+                await backend.reject(job, requeue=True)
+    
+    Attributes:
+        cleanup_interval_seconds: How often to run cleanup of expired
+            visibility timeouts. Set to 0 to disable periodic cleanup
+            (cleanup still happens during dequeue operations).
+    """
+    
+    def __init__(self, cleanup_interval_seconds: int = 60):
+        """Initialize the in-memory queue backend.
+        
+        Args:
+            cleanup_interval_seconds: Interval for periodic cleanup of
+                expired visibility timeouts. Default is 60 seconds.
+                Set to 0 to disable periodic cleanup.
+        """
+        # queue_name -> list of Job JSON strings (FIFO order)
+        self._queues: Dict[str, List[str]] = defaultdict(list)
+        
+        # queue_name -> {job_id: (job_json, expiry_timestamp)}
+        # Tracks jobs that have been dequeued but not yet acknowledged
+        self._processing: Dict[str, Dict[str, Tuple[str, float]]] = defaultdict(dict)
+        
+        # queue_name -> [(execute_at_timestamp, job_json), ...]
+        # Sorted list of scheduled jobs
+        self._scheduled: Dict[str, List[Tuple[float, str]]] = defaultdict(list)
+        
+        # queue_name -> asyncio.Event for signaling new jobs
+        # Used for blocking dequeue operations
+        self._events: Dict[str, asyncio.Event] = {}
+        
+        # Reentrant lock for thread-safe operations
+        self._lock = threading.RLock()
+        
+        # Cleanup configuration
+        self._cleanup_interval = cleanup_interval_seconds
+        self._last_cleanup = time.time()
+    
+    def _get_event(self, queue_name: str) -> asyncio.Event:
+        """Get or create an asyncio.Event for the specified queue.
+        
+        Events are used to signal waiting dequeue operations when new
+        jobs are enqueued.
+        
+        Args:
+            queue_name: The queue to get the event for.
+        
+        Returns:
+            The asyncio.Event for the queue.
+        """
+        if queue_name not in self._events:
+            self._events[queue_name] = asyncio.Event()
+        return self._events[queue_name]
+    
+    def _restore_expired_jobs(self, queue_name: str) -> int:
+        """Move expired processing jobs back to the queue.
+        
+        Jobs that have exceeded their visibility timeout are restored
+        to the front of the queue for reprocessing.
+        
+        This method must be called with self._lock held.
+        
+        Args:
+            queue_name: The queue to check for expired jobs.
+        
+        Returns:
+            Number of jobs restored.
+        """
+        now = time.time()
+        expired = []
+        
+        for job_id, (job_json, expiry) in list(self._processing[queue_name].items()):
+            if now > expiry:
+                expired.append((job_id, job_json))
+        
+        for job_id, job_json in expired:
+            del self._processing[queue_name][job_id]
+            # Add to front of queue for priority reprocessing
+            self._queues[queue_name].insert(0, job_json)
+            logger.debug(
+                "Restored expired job to queue",
+                extra={"job_id": job_id, "queue_name": queue_name}
+            )
+        
+        return len(expired)
+    
+    def _move_scheduled_jobs(self, queue_name: str) -> int:
+        """Move scheduled jobs that are ready to the main queue.
+        
+        Jobs whose execute_at timestamp has passed are moved from the
+        scheduled list to the main queue.
+        
+        This method must be called with self._lock held.
+        
+        Args:
+            queue_name: The queue to check for ready scheduled jobs.
+        
+        Returns:
+            Number of jobs moved.
+        """
+        now = time.time()
+        ready = []
+        remaining = []
+        
+        for execute_at, job_json in self._scheduled[queue_name]:
+            if now >= execute_at:
+                ready.append(job_json)
+            else:
+                remaining.append((execute_at, job_json))
+        
+        self._scheduled[queue_name] = remaining
+        
+        for job_json in ready:
+            self._queues[queue_name].append(job_json)
+            logger.debug(
+                "Moved scheduled job to queue",
+                extra={"queue_name": queue_name}
+            )
+        
+        return len(ready)
+    
+    def _maybe_cleanup(self) -> None:
+        """Perform periodic cleanup if interval has elapsed.
+        
+        This method must be called with self._lock held.
+        """
+        if self._cleanup_interval <= 0:
+            return
+        
+        now = time.time()
+        if now - self._last_cleanup >= self._cleanup_interval:
+            self._last_cleanup = now
+            for queue_name in list(self._processing.keys()):
+                self._restore_expired_jobs(queue_name)
+            for queue_name in list(self._scheduled.keys()):
+                self._move_scheduled_jobs(queue_name)
+    
+    async def enqueue(self, job: Job) -> bool:
+        """Add a job to the queue.
+        
+        Places the job at the end of the specified queue and signals
+        any waiting dequeue operations.
+        
+        Args:
+            job: The job to enqueue.
+        
+        Returns:
+            True if the job was successfully enqueued.
+        
+        Raises:
+            QueueOperationError: If the job cannot be serialized.
+        """
+        try:
+            job_json = job.to_json()
+        except JobSerializationError as e:
+            raise QueueOperationError(
+                f"Failed to enqueue job: {e.message}",
+                details={"job_id": job.id, "error": str(e)}
+            ) from e
+        
+        with self._lock:
+            self._queues[job.queue_name].append(job_json)
+            event = self._get_event(job.queue_name)
+        
+        # Signal waiting dequeue operations (outside lock to avoid deadlock)
+        event.set()
+        
+        logger.debug(
+            "Job enqueued",
+            extra={"job_id": job.id, "queue_name": job.queue_name}
+        )
+        return True
+    
+    async def dequeue(
+        self,
+        queue_name: str,
+        timeout_seconds: Optional[int] = None,
+    ) -> Optional[Job]:
+        """Remove and return the next job from the queue.
+        
+        Supports blocking wait for jobs using asyncio.Event. When a job
+        is dequeued, it is moved to the processing set with a visibility
+        timeout. The job's attempts counter is incremented.
+        
+        Args:
+            queue_name: The queue to dequeue from.
+            timeout_seconds: How long to wait for a job.
+                - If None, returns immediately (non-blocking).
+                - If 0, blocks indefinitely until a job is available.
+                - If positive, blocks for up to that many seconds.
+        
+        Returns:
+            The next job with attempts incremented, or None if no job
+            is available within the timeout.
+        """
+        deadline = None
+        if timeout_seconds is not None and timeout_seconds > 0:
+            deadline = time.time() + timeout_seconds
+        
+        while True:
+            with self._lock:
+                # Perform periodic cleanup
+                self._maybe_cleanup()
+                
+                # Check for expired visibility timeouts
+                self._restore_expired_jobs(queue_name)
+                
+                # Move ready scheduled jobs
+                self._move_scheduled_jobs(queue_name)
+                
+                # Try to get a job from the queue
+                if self._queues[queue_name]:
+                    job_json = self._queues[queue_name].pop(0)
+                    job = Job.from_json(job_json)
+                    job.attempts += 1
+                    
+                    # Add to processing set with visibility timeout
+                    expiry = time.time() + job.visibility_timeout
+                    self._processing[queue_name][job.id] = (job.to_json(), expiry)
+                    
+                    logger.debug(
+                        "Job dequeued",
+                        extra={
+                            "job_id": job.id,
+                            "queue_name": queue_name,
+                            "attempts": job.attempts,
+                        }
+                    )
+                    return job
+                
+                # Get event for waiting
+                event = self._get_event(queue_name)
+            
+            # No job available - check if we should wait
+            if timeout_seconds is None:
+                # Non-blocking mode
+                return None
+            
+            # Calculate remaining wait time
+            if deadline is not None:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None
+            else:
+                # timeout_seconds == 0 means wait indefinitely
+                remaining = None
+            
+            # Clear event and wait for signal
+            event.clear()
+            try:
+                await asyncio.wait_for(event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return None
+    
+    async def acknowledge(self, job: Job) -> bool:
+        """Acknowledge successful processing of a job.
+        
+        Removes the job from the processing set, preventing it from
+        being redelivered after visibility timeout expires.
+        
+        Args:
+            job: The job to acknowledge.
+        
+        Returns:
+            True if the job was acknowledged, False if not found
+            (e.g., already acknowledged or visibility timeout expired).
+        """
+        with self._lock:
+            if job.id in self._processing[job.queue_name]:
+                del self._processing[job.queue_name][job.id]
+                logger.debug(
+                    "Job acknowledged",
+                    extra={"job_id": job.id, "queue_name": job.queue_name}
+                )
+                return True
+        
+        logger.debug(
+            "Job not found for acknowledgment",
+            extra={"job_id": job.id, "queue_name": job.queue_name}
+        )
+        return False
+    
+    async def reject(
+        self,
+        job: Job,
+        requeue: bool = True,
+    ) -> bool:
+        """Reject a job, optionally requeueing it for retry.
+        
+        Removes the job from the processing set. If requeue is True and
+        the job hasn't exceeded max_attempts, it is returned to the queue.
+        
+        Args:
+            job: The job to reject.
+            requeue: If True, the job is returned to the queue
+                (if under max_attempts). If False, the job is discarded.
+        
+        Returns:
+            True if the operation succeeded.
+        """
+        with self._lock:
+            # Remove from processing set
+            if job.id in self._processing[job.queue_name]:
+                del self._processing[job.queue_name][job.id]
+            
+            if requeue and job.attempts < job.max_attempts:
+                # Requeue the job
+                self._queues[job.queue_name].append(job.to_json())
+                event = self._get_event(job.queue_name)
+                logger.debug(
+                    "Job rejected and requeued",
+                    extra={
+                        "job_id": job.id,
+                        "queue_name": job.queue_name,
+                        "attempts": job.attempts,
+                    }
+                )
+            else:
+                event = None
+                if requeue:
+                    logger.warning(
+                        "Job rejected and discarded (max attempts exceeded)",
+                        extra={
+                            "job_id": job.id,
+                            "queue_name": job.queue_name,
+                            "attempts": job.attempts,
+                            "max_attempts": job.max_attempts,
+                        }
+                    )
+                else:
+                    logger.debug(
+                        "Job rejected and discarded",
+                        extra={"job_id": job.id, "queue_name": job.queue_name}
+                    )
+        
+        # Signal waiting dequeue operations if job was requeued
+        if event is not None:
+            event.set()
+        
+        return True
+    
+    async def peek(
+        self,
+        queue_name: str,
+        limit: int = 10,
+    ) -> List[Job]:
+        """View jobs in the queue without removing them.
+        
+        Returns jobs from the front of the queue without affecting their
+        state. Useful for monitoring and debugging.
+        
+        Args:
+            queue_name: The queue to peek.
+            limit: Maximum number of jobs to return. Default is 10.
+        
+        Returns:
+            List of jobs (may be empty if queue is empty).
+        """
+        with self._lock:
+            # First restore any expired jobs and move scheduled jobs
+            self._restore_expired_jobs(queue_name)
+            self._move_scheduled_jobs(queue_name)
+            
+            jobs = []
+            for job_json in self._queues[queue_name][:limit]:
+                try:
+                    jobs.append(Job.from_json(job_json))
+                except JobSerializationError:
+                    # Skip malformed jobs
+                    continue
+            
+            return jobs
+    
+    async def queue_length(self, queue_name: str) -> int:
+        """Get the number of jobs waiting in the queue.
+        
+        Returns the count of jobs that are ready to be dequeued. Does not
+        include jobs that are currently being processed (in-flight).
+        
+        Args:
+            queue_name: The queue to check.
+        
+        Returns:
+            Number of jobs in the queue (not including processing jobs).
+        """
+        with self._lock:
+            # First restore any expired jobs and move scheduled jobs
+            self._restore_expired_jobs(queue_name)
+            self._move_scheduled_jobs(queue_name)
+            
+            return len(self._queues[queue_name])
+    
+    async def schedule(
+        self,
+        job: Job,
+        delay_seconds: int,
+    ) -> bool:
+        """Schedule a job to be enqueued after a delay.
+        
+        The job will not be visible to consumers until the delay has
+        elapsed. Useful for implementing retry backoff or scheduled tasks.
+        
+        Args:
+            job: The job to schedule.
+            delay_seconds: Seconds to wait before enqueueing. Must be
+                positive.
+        
+        Returns:
+            True if the job was scheduled.
+        
+        Raises:
+            ValueError: If delay_seconds is not positive.
+        """
+        if delay_seconds <= 0:
+            raise ValueError("delay_seconds must be positive")
+        
+        try:
+            job_json = job.to_json()
+        except JobSerializationError as e:
+            raise QueueOperationError(
+                f"Failed to schedule job: {e.message}",
+                details={"job_id": job.id, "error": str(e)}
+            ) from e
+        
+        execute_at = time.time() + delay_seconds
+        
+        with self._lock:
+            # Insert in sorted order by execute_at
+            scheduled_list = self._scheduled[job.queue_name]
+            insert_idx = 0
+            for i, (ts, _) in enumerate(scheduled_list):
+                if execute_at < ts:
+                    break
+                insert_idx = i + 1
+            scheduled_list.insert(insert_idx, (execute_at, job_json))
+        
+        logger.debug(
+            "Job scheduled",
+            extra={
+                "job_id": job.id,
+                "queue_name": job.queue_name,
+                "delay_seconds": delay_seconds,
+            }
+        )
+        return True
