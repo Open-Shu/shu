@@ -251,7 +251,7 @@ The Experience API has been updated to use `model_configuration_id` instead of t
 | `experience_id` | string | Reference to experience |
 | `user_id` | string | User who triggered the run |
 | `model_configuration_id` | string | Model configuration used for this run |
-| `status` | string | "running", "succeeded", "failed" |
+| `status` | string | "pending", "running", "succeeded", "failed" |
 | `started_at` | datetime | Run start time |
 | `finished_at` | datetime | Run completion time |
 | `input_params` | object | Input parameters provided |

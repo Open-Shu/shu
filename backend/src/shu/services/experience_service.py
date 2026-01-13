@@ -291,9 +291,9 @@ class ExperienceService:
         if update_data.model_configuration_id is not None:
             if update_data.model_configuration_id:  # Not empty string or None
                 await self._validate_model_configuration(
-                update_data.model_configuration_id, 
-                current_user
-            )
+                    update_data.model_configuration_id, 
+                    current_user
+                )
 
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={'steps'})
@@ -932,7 +932,7 @@ class ExperienceService:
             "trigger_type": "{{ trigger_type }}",
             "trigger_config": "{{ trigger_config }}",
             "include_previous_run": experience.include_previous_run,
-            "model_configuration_id": "{{ model_configuration_id }}" if not experience.model_configuration_id is None else None,  # Placeholder for user selection
+            "model_configuration_id": "{{ model_configuration_id }}" if experience.model_configuration_id is not None else None,  # Placeholder for user selection
             "inline_prompt_template": experience.inline_prompt_template,
             "max_run_seconds": "{{ max_run_seconds }}",
             "token_budget": None,  # We need to revisit this, rate limiting is already handled on LLM and plugin level.
