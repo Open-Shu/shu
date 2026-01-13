@@ -1593,3 +1593,190 @@ class RedisQueueBackend:
                 f"Failed to schedule job '{job.id}'",
                 details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)}
             ) from e
+
+
+# =============================================================================
+# Global State for Singleton Pattern
+# =============================================================================
+
+# Global queue backend instance (singleton)
+_queue_backend: Optional["QueueBackend"] = None
+
+
+# =============================================================================
+# Redis Client Management
+# =============================================================================
+
+
+async def _get_shared_redis_client() -> Any:
+    """Get the shared Redis client from cache_backend.
+    
+    This reuses the same Redis client singleton that cache_backend uses,
+    avoiding duplicate connections to Redis.
+    
+    Returns:
+        An async Redis client instance.
+        
+    Raises:
+        QueueConnectionError: If Redis connection fails.
+    """
+    try:
+        from .cache_backend import _get_redis_client, CacheConnectionError
+        return await _get_redis_client()
+    except CacheConnectionError as e:
+        # Convert CacheConnectionError to QueueConnectionError
+        raise QueueConnectionError(
+            f"Redis connection failed: {e.message}",
+            details=e.details
+        ) from e
+
+
+# =============================================================================
+# Queue Backend Factory
+# =============================================================================
+
+
+async def get_queue_backend() -> QueueBackend:
+    """Get the configured queue backend (singleton).
+    
+    Selection logic:
+    1. If SHU_REDIS_URL is set and Redis is reachable -> RedisQueueBackend
+    2. If SHU_REDIS_URL is set but unreachable and fallback enabled -> InMemoryQueueBackend (with warning)
+    3. If SHU_REDIS_URL is not set -> InMemoryQueueBackend
+    
+    This function is suitable for use in background tasks, schedulers, and
+    other non-FastAPI code. For FastAPI endpoints, prefer using
+    get_queue_backend_dependency() with Depends().
+    
+    Returns:
+        The configured QueueBackend instance.
+        
+    Raises:
+        QueueConnectionError: If Redis is required but unavailable.
+    
+    Example:
+        backend = await get_queue_backend()
+        job = Job(queue_name="tasks", payload={"action": "process"})
+        await backend.enqueue(job)
+    """
+    global _queue_backend
+    
+    if _queue_backend is not None:
+        return _queue_backend
+    
+    from .config import get_settings_instance
+    
+    settings = get_settings_instance()
+    
+    # Check if Redis URL is configured
+    redis_url = settings.redis_url
+    if not redis_url or redis_url == "redis://localhost:6379":
+        # Check if this is a default/unconfigured value
+        # If redis_required is False and no explicit URL, use in-memory
+        if not settings.redis_required:
+            logger.info("No Redis URL configured, using InMemoryQueueBackend")
+            _queue_backend = InMemoryQueueBackend()
+            return _queue_backend
+    
+    # Try to connect to Redis
+    try:
+        redis_client = await _get_shared_redis_client()
+        _queue_backend = RedisQueueBackend(redis_client)
+        logger.info("Using RedisQueueBackend")
+        return _queue_backend
+        
+    except QueueConnectionError as e:
+        if settings.redis_required:
+            logger.error("Redis is required but connection failed", extra={
+                "redis_url": settings.redis_url,
+                "error": str(e)
+            })
+            raise QueueConnectionError(
+                f"Redis is required but connection failed: {e}. "
+                f"Please ensure Redis is running and accessible at {settings.redis_url}"
+            ) from e
+        
+        if not settings.redis_fallback_enabled:
+            logger.error("Redis fallback is disabled and Redis connection failed", extra={
+                "redis_url": settings.redis_url,
+                "error": str(e)
+            })
+            raise QueueConnectionError(
+                f"Redis connection failed and fallback is disabled: {e}. "
+                f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
+            ) from e
+        
+        # Fall back to in-memory
+        logger.warning(
+            "Redis connection failed, falling back to InMemoryQueueBackend",
+            extra={"redis_url": settings.redis_url, "error": str(e)}
+        )
+        _queue_backend = InMemoryQueueBackend()
+        return _queue_backend
+
+
+def get_queue_backend_dependency() -> QueueBackend:
+    """Dependency injection function for QueueBackend.
+    
+    Use this in FastAPI endpoints for better testability and loose coupling.
+    This follows the same pattern as get_cache_backend_dependency().
+    
+    Note: This returns a new InMemoryQueueBackend instance for each call
+    when Redis is not available. For production use with Redis, the
+    RedisQueueBackend wraps a shared Redis client.
+    
+    Example:
+        from fastapi import Depends
+        from shu.core.queue_backend import get_queue_backend_dependency, QueueBackend
+        
+        async def my_endpoint(
+            queue: QueueBackend = Depends(get_queue_backend_dependency)
+        ):
+            job = Job(queue_name="tasks", payload={"action": "process"})
+            await queue.enqueue(job)
+    
+    Returns:
+        A QueueBackend instance.
+    """
+    # For dependency injection, we check if we already have a cached backend
+    # This allows for easier testing and follows DEVELOPMENT_STANDARDS.md
+    global _queue_backend
+    
+    if _queue_backend is not None:
+        return _queue_backend
+    
+    # If no cached backend, return InMemoryQueueBackend
+    # The async get_queue_backend() should be called during app startup
+    # to initialize the proper backend
+    logger.debug("get_queue_backend_dependency called before async initialization, using InMemoryQueueBackend")
+    return InMemoryQueueBackend()
+
+
+async def initialize_queue_backend() -> QueueBackend:
+    """Initialize the queue backend during application startup.
+    
+    This should be called during FastAPI application startup to ensure
+    the queue backend is properly initialized before handling requests.
+    
+    Example:
+        @app.on_event("startup")
+        async def startup():
+            await initialize_queue_backend()
+    
+    Returns:
+        The initialized QueueBackend instance.
+    """
+    return await get_queue_backend()
+
+
+def reset_queue_backend() -> None:
+    """Reset the queue backend singleton (for testing only).
+    
+    This function is intended for use in tests to reset the global state
+    between test cases.
+    
+    Note: This does NOT reset the shared Redis client from cache_backend.
+    Use cache_backend.reset_cache_backend() if you need to reset that too.
+    """
+    global _queue_backend
+    _queue_backend = None

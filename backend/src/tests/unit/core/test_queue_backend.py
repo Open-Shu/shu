@@ -1500,3 +1500,345 @@ class TestRedisQueueBackendSpecific:
         
         with pytest.raises(ValueError, match="delay_seconds must be positive"):
             await redis_queue_backend.schedule(job, delay_seconds=-1)
+
+
+# =============================================================================
+# Property 4: Factory Returns Singleton
+# =============================================================================
+
+
+class TestProperty4FactoryReturnsSingleton:
+    """
+    Property 4: Factory returns singleton
+    
+    *For any* number of calls to `get_queue_backend()` within the same process,
+    the same QueueBackend instance SHALL be returned.
+    
+    **Validates: Requirements 4.4**
+    
+    Feature: queue-backend-interface, Property 4: Factory returns singleton
+    """
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(num_calls=st.integers(min_value=2, max_value=20))
+    async def test_factory_returns_singleton(self, num_calls: int):
+        """
+        Property test: Multiple calls to get_queue_backend() return the same instance.
+        
+        Feature: queue-backend-interface, Property 4: Factory returns singleton
+        **Validates: Requirements 4.4**
+        """
+        from shu.core.queue_backend import get_queue_backend, reset_queue_backend
+        
+        # Reset to ensure clean state for each test case
+        reset_queue_backend()
+        
+        try:
+            # Make multiple calls to get_queue_backend
+            backends = []
+            for _ in range(num_calls):
+                backend = await get_queue_backend()
+                backends.append(backend)
+            
+            # All backends should be the same instance
+            first_backend = backends[0]
+            for i, backend in enumerate(backends[1:], start=2):
+                assert backend is first_backend, (
+                    f"Call {i} returned different instance than call 1"
+                )
+        finally:
+            # Clean up
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_factory_returns_same_instance_across_calls(self):
+        """Unit test: get_queue_backend() returns the same instance."""
+        from shu.core.queue_backend import get_queue_backend, reset_queue_backend
+        
+        reset_queue_backend()
+        
+        try:
+            backend1 = await get_queue_backend()
+            backend2 = await get_queue_backend()
+            backend3 = await get_queue_backend()
+            
+            assert backend1 is backend2
+            assert backend2 is backend3
+        finally:
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_reset_clears_singleton(self):
+        """Unit test: reset_queue_backend() clears the singleton."""
+        from shu.core.queue_backend import get_queue_backend, reset_queue_backend
+        
+        reset_queue_backend()
+        
+        try:
+            backend1 = await get_queue_backend()
+            reset_queue_backend()
+            backend2 = await get_queue_backend()
+            
+            # After reset, a new instance should be created
+            # Note: Both will be InMemoryQueueBackend in test environment,
+            # but they should be different instances
+            assert backend1 is not backend2
+        finally:
+            reset_queue_backend()
+
+
+# =============================================================================
+# Backend Selection Logic Tests
+# =============================================================================
+
+
+class TestBackendSelectionLogic:
+    """
+    Tests for backend selection logic in the factory.
+    
+    **Validates: Requirements 4.1, 4.2**
+    """
+    
+    @pytest.mark.asyncio
+    async def test_factory_returns_inmemory_when_no_redis_url(self):
+        """Unit test: Factory returns InMemoryQueueBackend when no Redis URL configured."""
+        from shu.core.queue_backend import (
+            get_queue_backend, reset_queue_backend, InMemoryQueueBackend
+        )
+        from unittest.mock import patch, MagicMock
+        
+        reset_queue_backend()
+        
+        # Mock settings with no Redis URL
+        mock_settings = MagicMock()
+        mock_settings.redis_url = ""
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = True
+        
+        try:
+            with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+                backend = await get_queue_backend()
+                assert isinstance(backend, InMemoryQueueBackend)
+        finally:
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_factory_returns_inmemory_when_redis_unreachable_and_fallback_enabled(self):
+        """Unit test: Factory returns InMemoryQueueBackend when Redis unreachable and fallback enabled."""
+        from shu.core.queue_backend import (
+            get_queue_backend, reset_queue_backend, InMemoryQueueBackend,
+            QueueConnectionError
+        )
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        reset_queue_backend()
+        
+        # Mock settings with Redis URL but unreachable
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://unreachable:6379"
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_connection_timeout = 1
+        mock_settings.redis_socket_timeout = 1
+        
+        # Mock shared Redis client to fail
+        async def mock_get_shared_redis_client_error():
+            raise QueueConnectionError("Connection refused")
+        
+        try:
+            with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+                with patch('shu.core.queue_backend._get_shared_redis_client', mock_get_shared_redis_client_error):
+                    backend = await get_queue_backend()
+                    assert isinstance(backend, InMemoryQueueBackend)
+        finally:
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_factory_raises_error_when_redis_required_but_unreachable(self):
+        """Unit test: Factory raises error when Redis required but unreachable."""
+        from shu.core.queue_backend import (
+            get_queue_backend, reset_queue_backend, QueueConnectionError
+        )
+        from unittest.mock import patch, MagicMock
+        
+        reset_queue_backend()
+        
+        # Mock settings with Redis required
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://unreachable:6379"
+        mock_settings.redis_required = True
+        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_connection_timeout = 1
+        mock_settings.redis_socket_timeout = 1
+        
+        # Mock shared Redis client to fail
+        async def mock_get_shared_redis_client_error():
+            raise QueueConnectionError("Connection refused")
+        
+        try:
+            with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+                with patch('shu.core.queue_backend._get_shared_redis_client', mock_get_shared_redis_client_error):
+                    with pytest.raises(QueueConnectionError):
+                        await get_queue_backend()
+        finally:
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_factory_raises_error_when_fallback_disabled_and_redis_unreachable(self):
+        """Unit test: Factory raises error when fallback disabled and Redis unreachable."""
+        from shu.core.queue_backend import (
+            get_queue_backend, reset_queue_backend, QueueConnectionError
+        )
+        from unittest.mock import patch, MagicMock
+        
+        reset_queue_backend()
+        
+        # Mock settings with fallback disabled
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://unreachable:6379"
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = False
+        mock_settings.redis_connection_timeout = 1
+        mock_settings.redis_socket_timeout = 1
+        
+        # Mock shared Redis client to fail
+        async def mock_get_shared_redis_client_error():
+            raise QueueConnectionError("Connection refused")
+        
+        try:
+            with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+                with patch('shu.core.queue_backend._get_shared_redis_client', mock_get_shared_redis_client_error):
+                    with pytest.raises(QueueConnectionError):
+                        await get_queue_backend()
+        finally:
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_factory_returns_redis_backend_when_redis_available(self):
+        """Unit test: Factory returns RedisQueueBackend when Redis is available."""
+        from shu.core.queue_backend import (
+            get_queue_backend, reset_queue_backend, RedisQueueBackend
+        )
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        reset_queue_backend()
+        
+        # Mock settings with a non-default Redis URL (to avoid the default URL check)
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://production-redis:6379"
+        mock_settings.redis_required = False
+        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_connection_timeout = 5
+        mock_settings.redis_socket_timeout = 5
+        
+        # Mock shared Redis client that works
+        mock_redis_client = MagicMock()
+        mock_redis_client.ping = AsyncMock(return_value=True)
+        
+        async def mock_get_shared_redis_client_success():
+            return mock_redis_client
+        
+        try:
+            with patch('shu.core.config.get_settings_instance', return_value=mock_settings):
+                with patch('shu.core.queue_backend._get_shared_redis_client', mock_get_shared_redis_client_success):
+                    backend = await get_queue_backend()
+                    assert isinstance(backend, RedisQueueBackend)
+        finally:
+            reset_queue_backend()
+
+
+# =============================================================================
+# Dependency Injection Tests
+# =============================================================================
+
+
+class TestQueueBackendDependency:
+    """Tests for the FastAPI dependency injection function."""
+    
+    def test_dependency_returns_cached_backend_if_available(self):
+        """Unit test: get_queue_backend_dependency returns cached backend."""
+        from shu.core.queue_backend import (
+            get_queue_backend_dependency, reset_queue_backend,
+            InMemoryQueueBackend, QueueBackend
+        )
+        import shu.core.queue_backend as queue_module
+        
+        reset_queue_backend()
+        
+        # Set up a cached backend
+        cached_backend = InMemoryQueueBackend()
+        queue_module._queue_backend = cached_backend
+        
+        try:
+            # Dependency should return the cached backend
+            result = get_queue_backend_dependency()
+            assert result is cached_backend
+        finally:
+            reset_queue_backend()
+    
+    def test_dependency_returns_inmemory_if_no_cached_backend(self):
+        """Unit test: get_queue_backend_dependency returns InMemoryQueueBackend if no cached backend."""
+        from shu.core.queue_backend import (
+            get_queue_backend_dependency, reset_queue_backend,
+            InMemoryQueueBackend
+        )
+        
+        reset_queue_backend()
+        
+        try:
+            # No cached backend, should return InMemoryQueueBackend
+            result = get_queue_backend_dependency()
+            assert isinstance(result, InMemoryQueueBackend)
+        finally:
+            reset_queue_backend()
+    
+    def test_dependency_is_synchronous(self):
+        """Unit test: get_queue_backend_dependency is synchronous (not async)."""
+        from shu.core.queue_backend import get_queue_backend_dependency
+        import asyncio
+        
+        # Should not be a coroutine
+        result = get_queue_backend_dependency()
+        assert not asyncio.iscoroutine(result)
+
+
+# =============================================================================
+# Initialize Queue Backend Tests
+# =============================================================================
+
+
+class TestInitializeQueueBackend:
+    """Tests for the initialize_queue_backend function."""
+    
+    @pytest.mark.asyncio
+    async def test_initialize_returns_backend(self):
+        """Unit test: initialize_queue_backend returns a QueueBackend."""
+        from shu.core.queue_backend import (
+            initialize_queue_backend, reset_queue_backend, QueueBackend
+        )
+        
+        reset_queue_backend()
+        
+        try:
+            backend = await initialize_queue_backend()
+            assert isinstance(backend, QueueBackend)
+        finally:
+            reset_queue_backend()
+    
+    @pytest.mark.asyncio
+    async def test_initialize_sets_singleton(self):
+        """Unit test: initialize_queue_backend sets the singleton."""
+        from shu.core.queue_backend import (
+            initialize_queue_backend, get_queue_backend, reset_queue_backend
+        )
+        
+        reset_queue_backend()
+        
+        try:
+            initialized = await initialize_queue_backend()
+            subsequent = await get_queue_backend()
+            
+            assert initialized is subsequent
+        finally:
+            reset_queue_backend()
