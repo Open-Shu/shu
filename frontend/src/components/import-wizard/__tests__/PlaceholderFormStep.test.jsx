@@ -5,9 +5,8 @@ import PlaceholderFormStep from '../PlaceholderFormStep';
 
 // Mock the API calls
 jest.mock('../../../services/api', () => ({
-    llmAPI: {
-        getProviders: jest.fn(() => Promise.resolve({ data: { items: [] } })),
-        getModels: jest.fn(() => Promise.resolve({ data: { items: [] } })),
+    modelConfigurationsAPI: {
+        list: jest.fn(() => Promise.resolve({ data: { items: [] } })),
     },
     extractDataFromResponse: jest.fn((response) => response.data),
 }));
@@ -35,22 +34,20 @@ jest.mock('../../shared/TriggerConfiguration', () => {
     };
 });
 
-jest.mock('../../shared/LLMProviderSelector', () => {
-    return function MockLLMProviderSelector({ providerId, onProviderChange, validationErrors, required, providerLabel }) {
+jest.mock('../../shared/ModelConfigurationSelector', () => {
+    return function MockModelConfigurationSelector({ modelConfigurationId, onModelConfigurationChange, label, required }) {
         return (
-            <div data-testid="llm-provider-selector">
-                <label htmlFor="llm-provider">{providerLabel} {required ? '*' : ''}</label>
+            <div data-testid="model-configuration-selector">
+                <label htmlFor="model-configuration">{label} {required ? '*' : ''}</label>
                 <select 
-                    id="llm-provider"
-                    value={providerId} 
-                    onChange={(e) => onProviderChange(e.target.value)}
+                    id="model-configuration"
+                    value={modelConfigurationId || ''} 
+                    onChange={(e) => onModelConfigurationChange(e.target.value)}
                 >
                     <option value="">None</option>
-                    <option value="openai">OpenAI</option>
+                    <option value="config-1">Research Assistant</option>
+                    <option value="config-2">Customer Support</option>
                 </select>
-                {validationErrors.llm_provider_id && (
-                    <div>{validationErrors.llm_provider_id}</div>
-                )}
             </div>
         );
     };
@@ -109,9 +106,9 @@ describe('PlaceholderFormStep', () => {
         expect(screen.getByLabelText(/Max Run Time/)).toBeInTheDocument();
     });
 
-    test('handles YAML without LLM placeholders gracefully', () => {
-        // This test specifically addresses the bug where YAML without llm_provider_id
-        // and model_name placeholders would cause the component to fail
+    test('handles YAML without model configuration placeholders gracefully', () => {
+        // This test specifically addresses the bug where YAML without model_configuration_id
+        // placeholder would cause the component to fail
         render(
             <PlaceholderFormStep
                 placeholders={['trigger_type', 'max_run_seconds']}
@@ -127,14 +124,14 @@ describe('PlaceholderFormStep', () => {
         expect(screen.getByLabelText(/Trigger Type/)).toBeInTheDocument();
         expect(screen.getByLabelText(/Max Run Time/)).toBeInTheDocument();
         
-        // Should NOT render LLM provider selector since those placeholders aren't present
-        expect(screen.queryByTestId('llm-provider-selector')).not.toBeInTheDocument();
+        // Should NOT render model configuration selector since that placeholder isn't present
+        expect(screen.queryByTestId('model-configuration-selector')).not.toBeInTheDocument();
     });
 
-    test('renders LLM provider selector only when llm_provider_id placeholder is present', () => {
+    test('renders model configuration selector when model_configuration_id placeholder is present', () => {
         render(
             <PlaceholderFormStep
-                placeholders={['llm_provider_id', 'model_name']}
+                placeholders={['model_configuration_id']}
                 values={{}}
                 onValuesChange={mockOnValuesChange}
                 onValidationChange={mockOnValidationChange}
@@ -143,8 +140,8 @@ describe('PlaceholderFormStep', () => {
         );
 
         expect(screen.getByText('Configure Import Settings')).toBeInTheDocument();
-        expect(screen.getByTestId('llm-provider-selector')).toBeInTheDocument();
-        expect(screen.getByLabelText(/LLM Provider/)).toBeInTheDocument();
+        expect(screen.getByTestId('model-configuration-selector')).toBeInTheDocument();
+        expect(screen.getByLabelText(/Model Configuration/)).toBeInTheDocument();
     });
 
     test('shows warning for unsupported placeholders', () => {

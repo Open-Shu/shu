@@ -116,11 +116,8 @@ class YAMLProcessor {
     };
 
     // Do not include these in the payload if they are blank or placeholders
-    if (typeof yamlData.llm_provider_id === 'string' && yamlData.llm_provider_id.trim() !== '' && !yamlData.llm_provider_id.trim().startsWith("{{")) {
-      payload.llm_provider_id = yamlData.llm_provider_id;
-    }
-    if (typeof yamlData.model_name === 'string' && yamlData.model_name.trim() !== '' && !yamlData.model_name.trim().startsWith("{{")) {
-      payload.model_name = yamlData.model_name;
+    if (typeof yamlData.model_configuration_id === 'string' && yamlData.model_configuration_id.trim() !== '' && !yamlData.model_configuration_id.trim().startsWith("{{")) {
+      payload.model_configuration_id = yamlData.model_configuration_id;
     }
 
     // TODO: Remove empty payload items from the dict so we don't send it to the backend.
@@ -228,13 +225,8 @@ class YAMLProcessor {
         }
       }
 
-      // Validate LLM configuration
-      if (parsed.llm_provider_id && !parsed.model_name) {
-        result.warnings.push('LLM provider specified but no model selected');
-      }
-      if (parsed.model_name && !parsed.llm_provider_id) {
-        result.errors.push('Model specified but no LLM provider selected');
-      }
+      // Model configuration validation - no cross-field validation needed
+      // Model configuration is self-contained
 
     } catch (error) {
       if (error.name === 'YAMLParsingError') {

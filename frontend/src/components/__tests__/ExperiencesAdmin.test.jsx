@@ -92,6 +92,71 @@ describe('ExperiencesAdmin', () => {
         });
     });
 
+    test('displays model configuration information in experience cards', async () => {
+        // Mock API response with experience that has model configuration
+        const mockExperiences = [
+            {
+                id: 'exp-1',
+                name: 'Test Experience',
+                description: 'Test description',
+                visibility: 'published',
+                trigger_type: 'manual',
+                step_count: 2,
+                model_configuration: {
+                    id: 'config-1',
+                    name: 'Research Assistant',
+                    description: 'AI assistant for research tasks'
+                }
+            }
+        ];
+
+        api.experiencesAPI.list.mockResolvedValue({
+            data: { items: mockExperiences }
+        });
+        api.extractDataFromResponse.mockReturnValue({ items: mockExperiences });
+
+        renderWithProviders(<ExperiencesAdmin />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Test Experience')).toBeInTheDocument();
+        });
+
+        // Check that model configuration name is displayed
+        expect(screen.getByText('Research Assistant')).toBeInTheDocument();
+        
+        // Check that model configuration description is displayed
+        expect(screen.getByText('AI assistant for research tasks')).toBeInTheDocument();
+    });
+
+    test('displays "No LLM synthesis configured" when no model configuration', async () => {
+        // Mock API response with experience that has no model configuration
+        const mockExperiences = [
+            {
+                id: 'exp-1',
+                name: 'Test Experience',
+                description: 'Test description',
+                visibility: 'published',
+                trigger_type: 'manual',
+                step_count: 2,
+                model_configuration: null
+            }
+        ];
+
+        api.experiencesAPI.list.mockResolvedValue({
+            data: { items: mockExperiences }
+        });
+        api.extractDataFromResponse.mockReturnValue({ items: mockExperiences });
+
+        renderWithProviders(<ExperiencesAdmin />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Test Experience')).toBeInTheDocument();
+        });
+
+        // Check that "No LLM synthesis configured" is displayed
+        expect(screen.getByText('No LLM synthesis configured')).toBeInTheDocument();
+    });
+
     test('opens import wizard when Import Experience button is clicked', async () => {
         renderWithProviders(<ExperiencesAdmin />);
 

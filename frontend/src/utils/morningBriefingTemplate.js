@@ -9,8 +9,7 @@ export const MORNING_BRIEFING_YAML = `# Experience Export: Morning Briefing
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
 # - {{ trigger_config }}: The actual trigger value, depending on the schedule type
-# - {{ llm_provider_id }}: Choose your LLM provider
-# - {{ model_name }}: Choose your model
+# - {{ model_configuration_id }}: Choose your model configuration for LLM synthesis
 # - {{ max_run_seconds }}: The total amount of time the experience is allowed to run
 #
 # To import this experience, use the Experience Import wizard in Shu.
@@ -24,8 +23,7 @@ visibility: draft
 trigger_type: '{{ trigger_type }}'
 trigger_config: {{ trigger_config }}
 include_previous_run: false
-llm_provider_id: '{{ llm_provider_id }}'
-model_name: '{{ model_name }}'
+model_configuration_id: '{{ model_configuration_id }}'
 inline_prompt_template: |
   Synthesize a morning briefing (current date and time {{ now }}) for user {{ user.display_name }} based on the \`gmail_digest\`, \`calendar_events\`, and \`gchat_digest\` data.
 

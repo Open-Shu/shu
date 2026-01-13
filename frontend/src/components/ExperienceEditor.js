@@ -29,7 +29,6 @@ import {
 } from '@mui/icons-material';
 import {
     experiencesAPI,
-    llmAPI,
     extractDataFromResponse,
     formatError,
 } from '../services/api';
@@ -40,7 +39,7 @@ import ExperienceRunsList from './ExperienceRunsList';
 import ExportExperienceButton from './ExportExperienceButton';
 import TemplateVariableHints from './TemplateVariableHints';
 import TriggerConfiguration from './shared/TriggerConfiguration';
-import LLMProviderSelector from './shared/LLMProviderSelector';
+import ModelConfigurationSelector from './shared/ModelConfigurationSelector';
 
 export default function ExperienceEditor() {
     const { experienceId } = useParams();
@@ -54,8 +53,7 @@ export default function ExperienceEditor() {
     const [visibility, setVisibility] = useState('draft');
     const [triggerType, setTriggerType] = useState('manual');
     const [triggerConfig, setTriggerConfig] = useState({});
-    const [llmProviderId, setLlmProviderId] = useState('');
-    const [modelName, setModelName] = useState('');
+    const [modelConfigurationId, setModelConfigurationId] = useState('');
     const [promptId, setPromptId] = useState('');
     const [inlinePromptTemplate, setInlinePromptTemplate] = useState('');
     const [steps, setSteps] = useState([]);
@@ -109,8 +107,8 @@ export default function ExperienceEditor() {
             setVisibility(exp.visibility || 'draft');
             setTriggerType(exp.trigger_type || 'manual');
             setTriggerConfig(exp.trigger_config || {});
-            setLlmProviderId(exp.llm_provider_id || '');
-            setModelName(exp.model_name || '');
+            // Use model configuration only (no legacy fields)
+            setModelConfigurationId(exp.model_configuration_id || '');
             setPromptId(exp.prompt_id || '');
             setInlinePromptTemplate(exp.inline_prompt_template || '');
             setSteps(exp.steps || []);
@@ -201,9 +199,11 @@ export default function ExperienceEditor() {
             errors.cron = 'Cron expression is required';
         }
 
-        // Validate LLM configuration - if provider is selected, model is required
-        if (llmProviderId && !modelName) {
-            errors.model_name = 'Model is required when LLM provider is selected';
+        // Validate model configuration - only validate if user has selected something
+        // Empty string is valid (means no LLM synthesis)
+        if (modelConfigurationId && modelConfigurationId.trim() === '') {
+            // This shouldn't happen with the selector, but just in case
+            errors.model_configuration_id = 'Invalid model configuration selection';
         }
 
         if (Object.keys(errors).length > 0) {
@@ -221,8 +221,8 @@ export default function ExperienceEditor() {
             visibility,
             trigger_type: triggerType,
             trigger_config: triggerConfig,
-            llm_provider_id: llmProviderId || null,
-            model_name: modelName || null,
+            // Use model configuration (no legacy fields)
+            model_configuration_id: modelConfigurationId || null,
             prompt_id: promptId || null,
             inline_prompt_template: inlinePromptTemplate || null,
             max_run_seconds: safeMaxRunSeconds,
@@ -334,6 +334,12 @@ export default function ExperienceEditor() {
                         startIcon={<RunIcon />}
                         onClick={() => setRunDialogOpen(true)}
                         disabled={isNew || isDirty || isSaving}
+                        title={
+                            isNew ? "Save the experience first" :
+                            isDirty ? "Save changes first" :
+                            isSaving ? "Saving in progress" :
+                            "Run this experience now"
+                        }
                     >
                         Run Now
                     </Button>
@@ -455,75 +461,78 @@ export default function ExperienceEditor() {
                                     LLM Configuration (Optional)
                                 </Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                    Configure the LLM to process step outputs and generate final results.
+                                    Configure the LLM to process step outputs and generate final results. 
+                                    Leave empty if you only want to collect data without AI synthesis.
                                 </Typography>
                                 <Stack spacing={2}>
-                                    <LLMProviderSelector
-                                        providerId={llmProviderId}
-                                        modelName={modelName}
-                                        onProviderChange={(newProviderId) => {
-                                            setLlmProviderId(newProviderId);
+                                    <ModelConfigurationSelector
+                                        modelConfigurationId={modelConfigurationId}
+                                        onModelConfigurationChange={(newConfigId) => {
+                                            setModelConfigurationId(newConfigId);
                                             setIsDirty(true);
-                                            // Clear provider-related validation errors
-                                            if (validationErrors.llm_provider_id) {
+                                            // Clear model configuration validation errors
+                                            if (validationErrors.model_configuration_id) {
                                                 const newErrors = { ...validationErrors };
-                                                delete newErrors.llm_provider_id;
-                                                setValidationErrors(newErrors);
-                                            }
-                                        }}
-                                        onModelChange={(newModelName) => {
-                                            setModelName(newModelName);
-                                            setIsDirty(true);
-                                            // Clear model validation error when model is selected
-                                            if (validationErrors.model_name) {
-                                                const newErrors = { ...validationErrors };
-                                                delete newErrors.model_name;
+                                                delete newErrors.model_configuration_id;
                                                 setValidationErrors(newErrors);
                                             }
                                         }}
                                         validationErrors={validationErrors}
                                         required={false}
                                         showHelperText={true}
-                                        providerLabel="LLM Provider"
-                                        modelLabel="Model"
+                                        label="Model Configuration"
+                                        showDetails={true}
                                     />
-                                    <Divider />
-                                    <FormControl fullWidth>
-                                        <InputLabel>Prompt Template</InputLabel>
-                                        <Select
-                                            value={promptId}
-                                            label="Prompt Template"
-                                            onChange={handleFieldChange(setPromptId, 'prompt_id')}
-                                        >
-                                            <MenuItem value="">
-                                                <em>Use inline prompt</em>
-                                            </MenuItem>
-                                            {prompts.map((p) => (
-                                                <MenuItem key={p.id} value={p.id}>
-                                                    {p.name}
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                    {!promptId && (
+                                    
+                                    {/* Only show prompt options if model configuration is selected */}
+                                    {modelConfigurationId && (
                                         <>
-                                            <TextField
-                                                label="Inline Prompt Template"
-                                                value={inlinePromptTemplate}
-                                                onChange={handleFieldChange(setInlinePromptTemplate, 'inline_prompt_template')}
-                                                fullWidth
-                                                multiline
-                                                rows={20}
-                                                placeholder="Use {{ step_outputs.step_key }} to reference step results"
-                                                helperText="Jinja2 template with access to step_outputs, user, and previous_run"
-                                                inputRef={inlinePromptRef}
-                                            />
-                                            <TemplateVariableHints
-                                                steps={steps}
-                                                includePreviousRun={includePreviousRun}
-                                                onInsert={handleInsertVariable}
-                                            />
+                                            <Divider />
+                                            <FormControl fullWidth>
+                                                <InputLabel>Prompt Template</InputLabel>
+                                                <Select
+                                                    value={promptId}
+                                                    label="Prompt Template"
+                                                    onChange={handleFieldChange(setPromptId, 'prompt_id')}
+                                                >
+                                                    <MenuItem value="">
+                                                        <em>Use model configuration prompt</em>
+                                                    </MenuItem>
+                                                    {prompts.map((p) => (
+                                                        <MenuItem key={p.id} value={p.id}>
+                                                            {p.name}
+                                                        </MenuItem>
+                                                    ))}
+                                                </Select>
+                                            </FormControl>
+                                            {!promptId && (
+                                                <>
+                                                    <TextField
+                                                        label="Inline Prompt Template"
+                                                        value={inlinePromptTemplate}
+                                                        onChange={handleFieldChange(setInlinePromptTemplate, 'inline_prompt_template')}
+                                                        fullWidth
+                                                        multiline
+                                                        rows={20}
+                                                        placeholder="Use {{ step_outputs.step_key }} to reference step results"
+                                                        helperText="Jinja2 template with access to step_outputs, user, and previous_run. Overrides model configuration prompt."
+                                                        inputRef={inlinePromptRef}
+                                                    />
+                                                    <TemplateVariableHints
+                                                        steps={steps}
+                                                        includePreviousRun={includePreviousRun}
+                                                        onInsert={handleInsertVariable}
+                                                    />
+                                                </>
+                                            )}
                                         </>
+                                    )}
+                                    
+                                    {/* Show helpful message when no model configuration is selected */}
+                                    {!modelConfigurationId && (
+                                        <Alert severity="info" sx={{ mt: 1 }}>
+                                            No LLM synthesis configured. This experience will only collect and return step outputs without AI processing.
+                                        </Alert>
                                     )}
                                 </Stack>
                             </Paper>

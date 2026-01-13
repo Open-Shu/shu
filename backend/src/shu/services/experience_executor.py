@@ -716,10 +716,7 @@ class ExperienceExecutor:
             )
             
             # Apply parameter overrides from model configuration
-            llm_params = {
-                "model": model_config.model_name,
-                "stream": True,
-            }
+            model_overrides = {}
             
             # Apply parameter overrides if they exist
             if model_config.parameter_overrides:
@@ -728,7 +725,7 @@ class ExperienceExecutor:
                     model_config.name,
                     model_config.parameter_overrides
                 )
-                llm_params.update(model_config.parameter_overrides)
+                model_overrides.update(model_config.parameter_overrides)
             
             logger.debug(
                 "Starting LLM synthesis | experience=%s model_config=%s provider=%s model=%s prompt_source=%s",
@@ -742,7 +739,9 @@ class ExperienceExecutor:
             # Stream LLM response
             stream_gen = await client.chat_completion(
                 messages=messages,
-                **llm_params
+                model=model_config.model_name,
+                stream=True,
+                model_overrides=model_overrides,
             )
             
             async for event in stream_gen:

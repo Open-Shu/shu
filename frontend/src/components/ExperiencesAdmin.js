@@ -92,6 +92,27 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                                     {experience.description}
                                 </Typography>
                             )}
+                            {/* Model Configuration Display */}
+                            {experience.model_configuration ? (
+                                <Box sx={{ mt: 0.5 }}>
+                                    <Chip
+                                        size="small"
+                                        label={experience.model_configuration.name}
+                                        color="primary"
+                                        variant="outlined"
+                                        sx={{ fontSize: '0.75rem' }}
+                                    />
+                                    {experience.model_configuration.description && (
+                                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                            {experience.model_configuration.description}
+                                        </Typography>
+                                    )}
+                                </Box>
+                            ) : (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                                    No LLM synthesis configured
+                                </Typography>
+                            )}
                         </Stack>
                     </Grid>
 
