@@ -138,12 +138,6 @@ cache_key_strategy = st.text(
 )
 
 
-@pytest.fixture
-def test_backend() -> InMemoryCacheBackend:
-    """Provide a fresh InMemoryCacheBackend for each test."""
-    return InMemoryCacheBackend(cleanup_interval_seconds=0)
-
-
 class TestProperty1GetReturnsNoneForMissingKeys:
     """
     Property 1: Get returns None for missing keys
@@ -175,25 +169,25 @@ class TestProperty1GetReturnsNoneForMissingKeys:
         assert result is None, f"Expected None for missing key '{key}', got {result!r}"
     
     @pytest.mark.asyncio
-    async def test_get_returns_none_for_empty_backend(self, test_backend: InMemoryCacheBackend):
+    async def test_get_returns_none_for_empty_backend(self, inmemory_backend: InMemoryCacheBackend):
         """Unit test: get() returns None on an empty backend."""
-        result = await test_backend.get("any_key")
+        result = await inmemory_backend.get("any_key")
         assert result is None
     
     @pytest.mark.asyncio
-    async def test_get_returns_none_after_delete(self, test_backend: InMemoryCacheBackend):
+    async def test_get_returns_none_after_delete(self, inmemory_backend: InMemoryCacheBackend):
         """Unit test: get() returns None after a key is deleted."""
         # Set a key
-        await test_backend.set("test_key", "test_value")
+        await inmemory_backend.set("test_key", "test_value")
         
         # Verify it exists
-        assert await test_backend.get("test_key") == "test_value"
+        assert await inmemory_backend.get("test_key") == "test_value"
         
         # Delete it
-        await test_backend.delete("test_key")
+        await inmemory_backend.delete("test_key")
         
         # Now get should return None
-        result = await test_backend.get("test_key")
+        result = await inmemory_backend.get("test_key")
         assert result is None
 
 
