@@ -8,7 +8,12 @@ import {
     Stack,
     Alert,
     FormHelperText,
+    Box,
+    Typography,
 } from '@mui/material';
+import { Public as TimezoneIcon } from '@mui/icons-material';
+import RecurringScheduleBuilder from './RecurringScheduleBuilder';
+import TimezoneSelector from './TimezoneSelector';
 
 /**
  * TriggerConfiguration - Shared component for trigger type and configuration
@@ -54,7 +59,7 @@ const TriggerConfiguration = ({
                 >
                     <MenuItem value="manual">Manual</MenuItem>
                     <MenuItem value="scheduled">Scheduled</MenuItem>
-                    <MenuItem value="cron">Cron</MenuItem>
+                    <MenuItem value="cron">Recurring</MenuItem>  // We do not call it cron on the frontend to avoid confusion
                 </Select>
                 {validationErrors.trigger_type && (
                     <FormHelperText>{validationErrors.trigger_type}</FormHelperText>
@@ -62,33 +67,42 @@ const TriggerConfiguration = ({
             </FormControl>
 
             {triggerType === 'scheduled' && (
-                <TextField
-                    label="Scheduled Date/Time"
-                    type="datetime-local"
-                    value={triggerConfig.scheduled_at || ''}
-                    onChange={(e) => handleConfigChange('scheduled_at', e.target.value)}
-                    fullWidth
-                    InputLabelProps={{ shrink: true }}
-                    error={!!validationErrors.scheduled_at}
-                    helperText={
-                        validationErrors.scheduled_at || 
-                        (showHelperText ? "One-time execution at the specified date and time" : undefined)
-                    }
-                />
+                <>
+                    <TextField
+                        label="Scheduled Date/Time"
+                        type="datetime-local"
+                        value={triggerConfig.scheduled_at || ''}
+                        onChange={(e) => handleConfigChange('scheduled_at', e.target.value)}
+                        fullWidth
+                        InputLabelProps={{ shrink: true }}
+                        error={!!validationErrors.scheduled_at}
+                        helperText={
+                            validationErrors.scheduled_at || 
+                            (showHelperText ? "One-time execution at the specified date and time" : undefined)
+                        }
+                    />
+                    <Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                            <TimezoneIcon color="primary" />
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                                Timezone
+                            </Typography>
+                        </Box>
+                        <TimezoneSelector
+                            value={triggerConfig.timezone || ''}
+                            onChange={(timezone) => handleConfigChange('timezone', timezone)}
+                            error={validationErrors.timezone}
+                            helperText="Choose the timezone for the scheduled execution"
+                        />
+                    </Box>
+                </>
             )}
 
             {triggerType === 'cron' && (
-                <TextField
-                    label="Cron Expression"
-                    value={triggerConfig.cron || ''}
-                    onChange={(e) => handleConfigChange('cron', e.target.value)}
-                    fullWidth
-                    placeholder="0 9 * * *"
-                    error={!!validationErrors.cron}
-                    helperText={
-                        validationErrors.cron || 
-                        (showHelperText ? "Standard cron expression (e.g., '0 9 * * *' for daily at 9am)" : undefined)
-                    }
+                <RecurringScheduleBuilder
+                    value={triggerConfig}
+                    onChange={onTriggerConfigChange}
+                    validationErrors={validationErrors}
                 />
             )}
 

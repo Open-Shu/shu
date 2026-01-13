@@ -448,6 +448,14 @@ export default function ExperienceEditor() {
                                     onTriggerConfigChange={(newConfig) => {
                                         setTriggerConfig(newConfig);
                                         setIsDirty(true);
+                                        // Clear validation errors for trigger config fields when they change
+                                        if (validationErrors.scheduled_at || validationErrors.cron || validationErrors.timezone) {
+                                            const newErrors = { ...validationErrors };
+                                            delete newErrors.scheduled_at;
+                                            delete newErrors.cron;
+                                            delete newErrors.timezone;
+                                            setValidationErrors(newErrors);
+                                        }
                                     }}
                                     validationErrors={validationErrors}
                                     required={false}

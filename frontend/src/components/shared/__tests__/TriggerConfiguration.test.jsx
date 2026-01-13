@@ -1,5 +1,36 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+// Mock the RecurringScheduleBuilder component
+jest.mock('../RecurringScheduleBuilder', () => {
+    return function MockRecurringScheduleBuilder({ value, onChange }) {
+        return (
+            <div data-testid="recurring-schedule-builder">
+                <input
+                    data-testid="mock-recurring-input"
+                    value={value.cron || ''}
+                    onChange={(e) => onChange({ ...value, cron: e.target.value })}
+                />
+            </div>
+        );
+    };
+});
+
+// Mock the TimezoneSelector component
+jest.mock('../TimezoneSelector', () => {
+    return function MockTimezoneSelector({ value, onChange }) {
+        return (
+            <div data-testid="timezone-selector">
+                <input
+                    data-testid="mock-timezone-input"
+                    value={value || ''}
+                    onChange={(e) => onChange(e.target.value)}
+                />
+            </div>
+        );
+    };
+});
+
 import TriggerConfiguration from '../TriggerConfiguration';
 
 describe('TriggerConfiguration', () => {
@@ -9,8 +40,6 @@ describe('TriggerConfiguration', () => {
         onTriggerTypeChange: jest.fn(),
         onTriggerConfigChange: jest.fn(),
         validationErrors: {},
-        required: false,
-        showHelperText: true,
     };
 
     beforeEach(() => {
@@ -22,81 +51,127 @@ describe('TriggerConfiguration', () => {
         
         expect(screen.getByRole('combobox')).toBeInTheDocument();
         expect(screen.getByText('Manual')).toBeInTheDocument();
+        expect(screen.getAllByText('Trigger Type')).toHaveLength(2); // Label and legend
     });
 
-    test('shows scheduled date input when scheduled trigger is selected', () => {
-        render(
-            <TriggerConfiguration 
-                {...defaultProps} 
-                triggerType="scheduled"
-                triggerConfig={{ scheduled_at: '2024-01-01T09:00' }}
-            />
-        );
-        
-        expect(screen.getByLabelText('Scheduled Date/Time')).toBeInTheDocument();
-    });
-
-    test('shows cron expression input when cron trigger is selected', () => {
-        render(
-            <TriggerConfiguration 
-                {...defaultProps} 
-                triggerType="cron"
-                triggerConfig={{ cron: '0 9 * * *' }}
-            />
-        );
-        
-        expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
-        expect(screen.getByDisplayValue('0 9 * * *')).toBeInTheDocument();
-    });
-
-    test('shows info alert for manual trigger', () => {
-        render(<TriggerConfiguration {...defaultProps} triggerType="manual" />);
+    test('shows manual trigger info', () => {
+        render(<TriggerConfiguration {...defaultProps} />);
         
         expect(screen.getByText('Manual trigger selected - no additional configuration needed.')).toBeInTheDocument();
     });
 
+    test('shows scheduled trigger configuration', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="scheduled"
+            />
+        );
+        
+        expect(screen.getByLabelText('Scheduled Date/Time')).toBeInTheDocument();
+        expect(screen.getByText('Timezone')).toBeInTheDocument();
+        expect(screen.getByTestId('timezone-selector')).toBeInTheDocument();
+    });
+
+    test('shows recurring trigger configuration', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="cron"
+            />
+        );
+        
+        expect(screen.getByTestId('recurring-schedule-builder')).toBeInTheDocument();
+    });
+
     test('calls onTriggerTypeChange when trigger type changes', () => {
-        render(<TriggerConfiguration {...defaultProps} />);
+        const { container } = render(<TriggerConfiguration {...defaultProps} />);
         
-        const select = screen.getByRole('combobox');
-        fireEvent.mouseDown(select);
-        
-        const scheduledOption = screen.getByText('Scheduled');
-        fireEvent.click(scheduledOption);
+        const select = container.querySelector('.MuiSelect-nativeInput');
+        fireEvent.change(select, { target: { value: 'scheduled' } });
         
         expect(defaultProps.onTriggerTypeChange).toHaveBeenCalledWith('scheduled');
     });
 
-    test('calls onTriggerConfigChange when config changes', () => {
+    test('calls onTriggerConfigChange when scheduled date changes', () => {
         render(
             <TriggerConfiguration 
-                {...defaultProps} 
-                triggerType="cron"
-                triggerConfig={{ cron: '0 9 * * *' }}
-            />
-        );
-        
-        const cronInput = screen.getByLabelText('Cron Expression');
-        fireEvent.change(cronInput, { target: { value: '0 10 * * *' } });
-        
-        expect(defaultProps.onTriggerConfigChange).toHaveBeenCalledWith({ cron: '0 10 * * *' });
-    });
-
-    test('displays validation errors', () => {
-        render(
-            <TriggerConfiguration 
-                {...defaultProps} 
+                {...defaultProps}
                 triggerType="scheduled"
-                validationErrors={{ scheduled_at: 'Date is required' }}
             />
         );
         
-        expect(screen.getByText('Date is required')).toBeInTheDocument();
+        const dateInput = screen.getByLabelText('Scheduled Date/Time');
+        fireEvent.change(dateInput, { target: { value: '2024-01-01T10:00' } });
+        
+        expect(defaultProps.onTriggerConfigChange).toHaveBeenCalledWith({
+            scheduled_at: '2024-01-01T10:00'
+        });
     });
 
-    test('shows required indicator when required is true', () => {
-        render(<TriggerConfiguration {...defaultProps} required={true} />);
+    test('calls onTriggerConfigChange when timezone changes for scheduled trigger', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="scheduled"
+            />
+        );
         
-        expect(screen.getAllByText(/Trigger Type \*/)).toHaveLength(2); // Label and legend
+        const timezoneInput = screen.getByTestId('mock-timezone-input');
+        fireEvent.change(timezoneInput, { target: { value: 'America/New_York' } });
+        
+        expect(defaultProps.onTriggerConfigChange).toHaveBeenCalledWith({
+            timezone: 'America/New_York'
+        });
+    });
+
+    test('shows validation errors', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                validationErrors={{ trigger_type: 'Required field' }}
+            />
+        );
+        
+        expect(screen.getByText('Required field')).toBeInTheDocument();
+    });
+
+    test('shows required indicator when required prop is true', () => {
+        render(<TriggerConfiguration {...defaultProps} required />);
+        
+        expect(screen.getAllByText('Trigger Type *')).toHaveLength(2); // Label and legend
+    });
+
+    test('resets config when trigger type changes', () => {
+        const { container } = render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerConfig={{ scheduled_at: '2024-01-01T10:00' }}
+            />
+        );
+        
+        const select = container.querySelector('.MuiSelect-nativeInput');
+        fireEvent.change(select, { target: { value: 'cron' } });
+        
+        expect(defaultProps.onTriggerConfigChange).toHaveBeenCalledWith({});
+    });
+
+    test('displays existing scheduled configuration', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="scheduled"
+                triggerConfig={{ 
+                    scheduled_at: '2024-01-01T10:00',
+                    timezone: 'America/New_York'
+                }}
+            />
+        );
+        
+        const dateInput = screen.getByLabelText('Scheduled Date/Time');
+        const timezoneInput = screen.getByTestId('mock-timezone-input');
+        
+        expect(dateInput).toHaveValue('2024-01-01T10:00');
+        expect(timezoneInput).toHaveValue('America/New_York');
     });
 });
