@@ -4,10 +4,12 @@ Property-based tests for CacheCapability.
 Feature: unified-cache-interface
 """
 
-import json
+import importlib.util
+import sys
 import pytest
 from hypothesis import given, strategies as st, settings
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 from shu.core.cache_backend import (
     CacheBackend,
@@ -16,62 +18,26 @@ from shu.core.cache_backend import (
     CacheOperationError,
 )
 
+# Import cache_capability module directly to avoid circular import through __init__.py
+# First import the base module which has no problematic dependencies
+_base_spec = importlib.util.spec_from_file_location(
+    "shu.plugins.host.base",
+    Path(__file__).parent.parent.parent.parent / "shu" / "plugins" / "host" / "base.py"
+)
+_base_module = importlib.util.module_from_spec(_base_spec)
+sys.modules["shu.plugins.host.base"] = _base_module
+_base_spec.loader.exec_module(_base_module)
 
-class ImmutableCapabilityMixin:
-    """Mixin that makes capability attributes immutable."""
-    
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError(f"Cannot modify attribute '{name}'")
-    
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError(f"Cannot delete attribute '{name}'")
+# Now import cache_capability
+_cache_spec = importlib.util.spec_from_file_location(
+    "shu.plugins.host.cache_capability",
+    Path(__file__).parent.parent.parent.parent / "shu" / "plugins" / "host" / "cache_capability.py"
+)
+_cache_module = importlib.util.module_from_spec(_cache_spec)
+sys.modules["shu.plugins.host.cache_capability"] = _cache_module
+_cache_spec.loader.exec_module(_cache_module)
 
-
-class CacheCapability(ImmutableCapabilityMixin):
-    """Plugin cache capability with namespace isolation (test copy)."""
-
-    __slots__ = ("_plugin_name", "_user_id", "_backend")
-
-    def __init__(self, *, plugin_name: str, user_id: str, backend: Optional[CacheBackend] = None):
-        object.__setattr__(self, "_plugin_name", plugin_name)
-        object.__setattr__(self, "_user_id", user_id)
-        object.__setattr__(self, "_backend", backend)
-
-    def _make_namespaced_key(self, key: str) -> str:
-        return f"tool_cache:{self._plugin_name}:{self._user_id}:{key}"
-
-    async def _get_backend(self) -> CacheBackend:
-        if self._backend is None:
-            raise RuntimeError("Backend not initialized")
-        return self._backend
-
-    async def set(self, key: str, value: Any, ttl_seconds: int = 300) -> None:
-        namespaced_key = self._make_namespaced_key(key)
-        try:
-            backend = await self._get_backend()
-            serialized = json.dumps(value, default=str)
-            await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
-        except Exception:
-            pass
-
-    async def get(self, key: str) -> Any:
-        namespaced_key = self._make_namespaced_key(key)
-        try:
-            backend = await self._get_backend()
-            raw = await backend.get(namespaced_key)
-            if not raw:
-                return None
-            return json.loads(raw)
-        except Exception:
-            return None
-
-    async def delete(self, key: str) -> None:
-        namespaced_key = self._make_namespaced_key(key)
-        try:
-            backend = await self._get_backend()
-            await backend.delete(namespaced_key)
-        except Exception:
-            pass
+CacheCapability = _cache_module.CacheCapability
 
 
 # Test Strategies
