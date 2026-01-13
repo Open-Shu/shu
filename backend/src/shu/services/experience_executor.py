@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, AsyncGenerator, Dict, List, Optional
+import zoneinfo
 
 from jinja2 import TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
@@ -26,6 +27,7 @@ from ..core.config import ConfigurationManager, get_settings_instance
 from ..core.logging import get_logger
 from ..llm.service import LLMService
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
+from ..models.user_preferences import UserPreferences
 from ..schemas.query import QueryRequest
 from ..services.plugin_execution import execute_plugin
 from ..services.rag_query_processing import execute_rag_queries
@@ -357,6 +359,47 @@ class ExperienceExecutor:
         )
         return result.scalars().first()
 
+    async def _get_user_formatted_datetime(self, user_id: str) -> str:
+        """
+        Get current datetime formatted in user's timezone with weekday.
+        
+        Returns a human-readable format like: "Monday, January 15, 2024 at 2:30 PM PST"
+        Falls back to UTC if user timezone is not available or invalid.
+        """
+        now_utc = datetime.now(timezone.utc)
+        
+        # Try to get user's timezone preference
+        user_tz_str = "UTC"  # Default fallback
+        try:
+            result = await self.db.execute(
+                select(UserPreferences.timezone)
+                .where(UserPreferences.user_id == user_id)
+            )
+            user_timezone = result.scalar_one_or_none()
+            if user_timezone:
+                user_tz_str = user_timezone
+        except Exception as e:
+            logger.warning(f"Failed to get user timezone preference: {e}")
+        
+        # Convert to user's timezone
+        try:
+            user_tz = zoneinfo.ZoneInfo(user_tz_str)
+            now_local = now_utc.astimezone(user_tz)
+        except Exception as e:
+            logger.warning(f"Invalid timezone '{user_tz_str}', falling back to UTC: {e}")
+            now_local = now_utc
+            user_tz_str = "UTC"
+        
+        # Format with weekday and timezone abbreviation
+        # Example: "Monday, January 15, 2024 at 2:30 PM PST"
+        formatted = now_local.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+        
+        # If %Z doesn't give us a nice abbreviation, append the timezone name
+        if not formatted.split()[-1] or formatted.split()[-1] == now_local.strftime("%z"):
+            formatted = now_local.strftime("%A, %B %d, %Y at %I:%M %p") + f" ({user_tz_str})"
+        
+        return formatted
+
     async def _build_initial_context(
         self,
         experience: Experience,
@@ -371,6 +414,8 @@ class ExperienceExecutor:
         if experience.include_previous_run:
             previous_run = await self._get_previous_run(experience.id, user_id)
 
+        formatted_now = await self._get_user_formatted_datetime(user_id)
+
         context = {
             "user": {
                 "id": str(current_user.id),
@@ -380,7 +425,7 @@ class ExperienceExecutor:
             "input": input_params or {},
             "steps": {}, # Starts empty
             "previous_run": None,
-            "now": datetime.now(timezone.utc),
+            "now": formatted_now,
         }
         
         if previous_run:
@@ -556,6 +601,8 @@ class ExperienceExecutor:
                     yield {
                         "model": experience.model_name,
                         "provider_id": experience.llm_provider_id,
+                        "system_prompt_content": system_prompt_content,
+                        "user_content": user_content,
                     }
                     
         finally:
@@ -580,9 +627,9 @@ class ExperienceExecutor:
                 data = step_data.get("data", {})
                 # Try to format data nicely
                 if isinstance(data, dict):
-                    parts.append(json.dumps(data, indent=2, default=str)[:2000])
+                    parts.append(json.dumps(data, indent=2, default=str))
                 else:
-                    parts.append(str(data)[:2000])
+                    parts.append(str(data))
         
         return "\n".join(parts)
 

@@ -18,9 +18,9 @@ import {
   Lock as LockIcon,
   WarningAmber as WarningIcon,
 } from '@mui/icons-material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useTheme } from '@mui/material/styles';
 import { titlePulse } from './styles';
+import MarkdownRenderer from '../../shared/MarkdownRenderer';
 
 const ChatHeader = React.memo(function ChatHeader({
   conversation,
@@ -37,6 +37,9 @@ const ChatHeader = React.memo(function ChatHeader({
   sideCallWarning,
   isMobile = false,
 }) {
+  const theme = useTheme();
+  const isDarkMode = theme.palette.mode === 'dark';
+  
   if (!conversation) {
     return null;
   }
@@ -162,9 +165,10 @@ const ChatHeader = React.memo(function ChatHeader({
       >
         <Box sx={{ maxWidth: 500, p: 1 }}>
           {conversation?.summary_text ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {conversation.summary_text}
-            </ReactMarkdown>
+            <MarkdownRenderer 
+              content={conversation.summary_text} 
+              isDarkMode={isDarkMode}
+            />
           ) : (
             <Typography variant="body2" color="text.secondary">No summary yet</Typography>
           )}

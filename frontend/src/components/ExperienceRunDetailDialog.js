@@ -20,13 +20,16 @@ import {
     Alert,
     Chip,
 } from '@mui/material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useTheme } from '@mui/material/styles';
 import { format } from 'date-fns';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
+import MarkdownRenderer from './shared/MarkdownRenderer';
 
 export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
+    const theme = useTheme();
+    const isDarkMode = theme.palette.mode === 'dark';
+    
     const { data: run, isLoading, error } = useQuery(
         ['experience-run', runId],
         () => experiencesAPI.getRun(runId).then(extractDataFromResponse),
@@ -167,9 +170,10 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
                                 }}
                             >
                                 {run.result_content ? (
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                        {run.result_content}
-                                    </ReactMarkdown>
+                                    <MarkdownRenderer
+                                        content={run.result_content}
+                                        isDarkMode={isDarkMode}
+                                    />
                                 ) : (
                                     <Typography color="text.secondary" variant="body2" fontStyle="italic">
                                         No result content.

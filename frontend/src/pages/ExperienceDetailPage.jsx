@@ -10,9 +10,9 @@ import {
     Typography,
 } from '@mui/material';
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useTheme } from '@mui/material/styles';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import MarkdownRenderer from '../components/shared/MarkdownRenderer';
 
 /**
  * Full-width page displaying a single experience result.
@@ -21,6 +21,10 @@ import { experiencesAPI, extractDataFromResponse, formatError } from '../service
 const ExperienceDetailPage = () => {
     const { experienceId } = useParams();
     const navigate = useNavigate();
+    const theme = useTheme();
+
+    // Detect dark mode from theme
+    const isDarkMode = theme.palette.mode === 'dark';
 
     // Fetch experience details from my-results endpoint
     const {
@@ -91,23 +95,12 @@ const ExperienceDetailPage = () => {
                             bgcolor: 'background.paper',
                             borderRadius: 2,
                             p: 3,
-                            '& img': { maxWidth: '100%' },
-                            '& pre': {
-                                overflow: 'auto',
-                                bgcolor: 'grey.100',
-                                p: 2,
-                                borderRadius: 1,
-                            },
-                            '& code': {
-                                bgcolor: 'grey.100',
-                                px: 0.5,
-                                borderRadius: 0.5,
-                            },
                         }}
                     >
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {experience.result_preview || 'No content available.'}
-                        </ReactMarkdown>
+                        <MarkdownRenderer
+                            content={experience.result_preview}
+                            isDarkMode={isDarkMode}
+                        />
                     </Box>
                 )}
             </Box>
