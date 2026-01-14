@@ -20,6 +20,9 @@ import {
 } from '@mui/icons-material';
 import { modelConfigAPI, extractDataFromResponse } from '../../services/api';
 
+// Constants
+const MODEL_CONFIG_STALE_TIME = 30000; // 30 seconds
+
 /**
  * ModelConfigurationSelector - Component for selecting model configurations
  * 
@@ -48,7 +51,7 @@ const ModelConfigurationSelector = ({
             is_active: true, 
             include_relationships: true 
         }).then(extractDataFromResponse),
-        { staleTime: 30000 }
+        { staleTime: MODEL_CONFIG_STALE_TIME }
     );
 
     const modelConfigurations = useMemo(() => {

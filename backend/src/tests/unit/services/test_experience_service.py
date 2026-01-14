@@ -78,8 +78,7 @@ def mock_experience_response():
         trigger_type=TriggerType.MANUAL,
         trigger_config=None,
         include_previous_run=False,
-        llm_provider_id=None,
-        model_name=None,
+        model_configuration_id=None,
         prompt_id=None,
         inline_prompt_template=None,
         max_run_seconds=120,
@@ -88,7 +87,7 @@ def mock_experience_response():
         is_active_version=True,
         parent_version_id=None,
         steps=[],
-        llm_provider=None,
+        model_configuration=None,
         prompt=None,
         step_count=0,
         last_run_at=None,
@@ -450,8 +449,6 @@ class TestUpdateExperience:
         existing_exp.trigger_type = TriggerType.MANUAL.value
         existing_exp.trigger_config = None
         existing_exp.include_previous_run = False
-        existing_exp.llm_provider_id = None
-        existing_exp.model_name = None
         existing_exp.model_configuration_id = None
         existing_exp.model_configuration = None
         existing_exp.prompt_id = None
@@ -466,7 +463,6 @@ class TestUpdateExperience:
         existing_exp.updated_at = datetime.now()
         existing_exp.steps = []
         existing_exp.runs = []
-        existing_exp.llm_provider = None
         existing_exp.prompt = None
         
         service = ExperienceService(mock_db_session)

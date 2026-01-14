@@ -11,29 +11,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import zoneinfo
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, AsyncGenerator, Dict, List, Optional
-import zoneinfo
 
-from jinja2 import TemplateSyntaxError, UndefinedError
+from jinja2 import DebugUndefined, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..core.config import ConfigurationManager, get_settings_instance
+from ..core.exceptions import ModelConfigurationError
 from ..core.logging import get_logger
 from ..llm.service import LLMService
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
 from ..schemas.query import QueryRequest
-from ..services.plugin_execution import execute_plugin
-from ..services.rag_query_processing import execute_rag_queries
-from ..services.query_service import QueryService
 from ..services.model_configuration_service import ModelConfigurationService
+from ..services.plugin_execution import execute_plugin
+from ..services.query_service import QueryService
+from ..services.rag_query_processing import execute_rag_queries
 from .chat_types import ChatContext
 
 logger = get_logger(__name__)
@@ -82,18 +83,58 @@ class ExperienceExecutor:
     (for scheduled execution) modes.
     """
     
-    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(
+        self,
+        db: AsyncSession,
+        config_manager: ConfigurationManager,
+        model_config_service: Optional[ModelConfigurationService] = None,
+    ):
         self.db = db
         self.config_manager = config_manager
         self.settings = get_settings_instance()
+        self.model_config_service = model_config_service or ModelConfigurationService(db)
         
         # Create sandboxed Jinja2 environment for template rendering
         # Using DebugUndefined to provide better error messages for missing variables
-        from jinja2 import DebugUndefined
         self.jinja_env = SandboxedEnvironment(
             autoescape=False,
             undefined=DebugUndefined,
         )
+    
+    async def _validate_and_load_model_config(
+        self,
+        model_configuration_id: str,
+        current_user: User,
+    ) -> Optional[ModelConfiguration]:
+        """
+        Validate and load model configuration for use.
+        
+        Args:
+            model_configuration_id: ID of the model configuration to load
+            current_user: Current user for access validation
+            
+        Returns:
+            ModelConfiguration if valid, None if validation fails
+            
+        Raises:
+            Does not raise - returns None and logs errors on failure
+        """
+        try:
+            return await self.model_config_service.validate_model_configuration_for_use(
+                model_configuration_id,
+                current_user=current_user,
+                include_relationships=True
+            )
+        except Exception as e:
+            error_message = str(e) if isinstance(e, ModelConfigurationError) else f"Failed to load model configuration: {str(e)}"
+            
+            logger.error(
+                "Model configuration validation failed | config_id=%s user=%s error=%s",
+                model_configuration_id,
+                current_user.email,
+                error_message
+            )
+            return None
     
     async def execute_streaming(
         self,
@@ -113,26 +154,14 @@ class ExperienceExecutor:
         # Load model configuration if specified
         model_config: Optional[ModelConfiguration] = None
         if experience.model_configuration_id:
-            try:
-                model_config_service = ModelConfigurationService(self.db)
-                model_config = await model_config_service.validate_model_configuration_for_use(
-                    experience.model_configuration_id,
-                    current_user=current_user,
-                    include_relationships=True
-                )
-            except Exception as e:
-                # This should not happen due to pre-validation, but handle gracefully
-                from ..core.exceptions import ModelConfigurationError
-                
-                error_message = str(e) if isinstance(e, ModelConfigurationError) else f"Failed to load model configuration: {str(e)}"
-                
-                logger.error(
-                    "Unexpected model configuration error after validation | experience=%s config_id=%s user=%s error=%s",
-                    experience.id,
-                    experience.model_configuration_id,
-                    current_user.email,
-                    error_message
-                )
+            model_config = await self._validate_and_load_model_config(
+                experience.model_configuration_id,
+                current_user
+            )
+            
+            if model_config is None:
+                # Validation failed - create failed run and return error
+                error_message = f"Model configuration validation failed for config_id={experience.model_configuration_id}"
                 
                 run = await self._create_run(experience, user_id, input_params)
                 await self._finalize_run(
@@ -142,7 +171,7 @@ class ExperienceExecutor:
                 )
                 yield ExperienceEvent(ExperienceEventType.ERROR, {
                     "message": error_message,
-                    "error_type": type(e).__name__,
+                    "error_type": "ModelConfigurationError",
                     "config_id": experience.model_configuration_id
                 })
                 return
@@ -637,24 +666,19 @@ class ExperienceExecutor:
         
         # Use provided model config or load it if not provided
         if model_config is None:
-            try:
-                model_config_service = ModelConfigurationService(self.db)
-                model_config = await model_config_service.validate_model_configuration_for_use(
-                    experience.model_configuration_id,
-                    current_user=current_user,
-                    include_relationships=True
-                )
-            except Exception as e:
+            model_config = await self._validate_and_load_model_config(
+                experience.model_configuration_id,
+                current_user
+            )
+            
+            if model_config is None:
                 # Model configuration validation failed during synthesis
-                from ..core.exceptions import ModelConfigurationError
-                
-                error_message = str(e) if isinstance(e, ModelConfigurationError) else f"Failed to load model configuration: {str(e)}"
+                error_message = f"Model configuration validation failed for config_id={experience.model_configuration_id}"
                 
                 logger.error(
-                    "Model configuration validation failed during synthesis | experience=%s config_id=%s error=%s",
+                    "Model configuration validation failed during synthesis | experience=%s config_id=%s",
                     experience.id,
-                    experience.model_configuration_id,
-                    error_message
+                    experience.model_configuration_id
                 )
                 
                 # Return default prompt and indicate error in metadata
@@ -663,7 +687,7 @@ class ExperienceExecutor:
                     "model": None,
                     "tokens": {},
                     "error": error_message,
-                    "error_type": type(e).__name__,
+                    "error_type": "ModelConfigurationError",
                     "model_configuration_id": experience.model_configuration_id
                 }
                 return
