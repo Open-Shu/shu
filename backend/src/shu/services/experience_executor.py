@@ -11,27 +11,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import zoneinfo
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, AsyncGenerator, Dict, List, Optional
-import zoneinfo
 
-from jinja2 import TemplateSyntaxError, UndefinedError
+from jinja2 import DebugUndefined, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..core.config import ConfigurationManager, get_settings_instance
+from ..core.exceptions import ModelConfigurationError
 from ..core.logging import get_logger
 from ..llm.service import LLMService
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
+from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
 from ..schemas.query import QueryRequest
+from ..services.model_configuration_service import ModelConfigurationService
 from ..services.plugin_execution import execute_plugin
-from ..services.rag_query_processing import execute_rag_queries
 from ..services.query_service import QueryService
+from ..services.rag_query_processing import execute_rag_queries
 from .chat_types import ChatContext
 
 logger = get_logger(__name__)
@@ -80,18 +83,58 @@ class ExperienceExecutor:
     (for scheduled execution) modes.
     """
     
-    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(
+        self,
+        db: AsyncSession,
+        config_manager: ConfigurationManager,
+        model_config_service: Optional[ModelConfigurationService] = None,
+    ):
         self.db = db
         self.config_manager = config_manager
         self.settings = get_settings_instance()
+        self.model_config_service = model_config_service or ModelConfigurationService(db)
         
         # Create sandboxed Jinja2 environment for template rendering
         # Using DebugUndefined to provide better error messages for missing variables
-        from jinja2 import DebugUndefined
         self.jinja_env = SandboxedEnvironment(
             autoescape=False,
             undefined=DebugUndefined,
         )
+    
+    async def _validate_and_load_model_config(
+        self,
+        model_configuration_id: str,
+        current_user: User,
+    ) -> Optional[ModelConfiguration]:
+        """
+        Validate and load model configuration for use.
+        
+        Args:
+            model_configuration_id: ID of the model configuration to load
+            current_user: Current user for access validation
+            
+        Returns:
+            ModelConfiguration if valid, None if validation fails
+            
+        Raises:
+            Does not raise - returns None and logs errors on failure
+        """
+        try:
+            return await self.model_config_service.validate_model_configuration_for_use(
+                model_configuration_id,
+                current_user=current_user,
+                include_relationships=True
+            )
+        except Exception as e:
+            error_message = str(e) if isinstance(e, ModelConfigurationError) else f"Failed to load model configuration: {str(e)}"
+            
+            logger.error(
+                "Model configuration validation failed | config_id=%s user=%s error=%s",
+                model_configuration_id,
+                current_user.email,
+                error_message
+            )
+            return None
     
     async def execute_streaming(
         self,
@@ -108,6 +151,31 @@ class ExperienceExecutor:
         - synthesis_started, content_delta (LLM tokens)
         - run_completed or error
         """
+        # Load model configuration if specified
+        model_config: Optional[ModelConfiguration] = None
+        if experience.model_configuration_id:
+            model_config = await self._validate_and_load_model_config(
+                experience.model_configuration_id,
+                current_user
+            )
+            
+            if model_config is None:
+                # Validation failed - create failed run and return error
+                error_message = f"Model configuration validation failed for config_id={experience.model_configuration_id}"
+                
+                run = await self._create_run(experience, user_id, input_params)
+                await self._finalize_run(
+                    run, "failed", {}, {},
+                    error_message=error_message,
+                    model_config=None
+                )
+                yield ExperienceEvent(ExperienceEventType.ERROR, {
+                    "message": error_message,
+                    "error_type": "ModelConfigurationError",
+                    "config_id": experience.model_configuration_id
+                })
+                return
+        
         run = await self._create_run(experience, user_id, input_params)
         yield ExperienceEvent(ExperienceEventType.RUN_STARTED, {"run_id": run.id, "experience_id": experience.id})
         
@@ -140,7 +208,8 @@ class ExperienceExecutor:
                     )
                     await self._finalize_run(
                         run, "failed", step_states, step_outputs,
-                        error_message=error_msg
+                        error_message=error_msg,
+                        model_config=model_config
                     )
                     yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
                     return
@@ -148,7 +217,7 @@ class ExperienceExecutor:
                 # LLM Synthesis
                 yield ExperienceEvent(ExperienceEventType.SYNTHESIS_STARTED, {})
                 
-                async for chunk in self._synthesize_with_llm_streaming(experience, context):
+                async for chunk in self._synthesize_with_llm_streaming(experience, context, current_user, model_config):
                     if isinstance(chunk, dict):
                         result_metadata = chunk
                     else:
@@ -158,7 +227,8 @@ class ExperienceExecutor:
                 # Finalize
                 await self._finalize_run(
                     run, "succeeded", step_states, step_outputs,
-                    result_content=final_content, result_metadata=result_metadata
+                    result_content=final_content, result_metadata=result_metadata,
+                    model_config=model_config
                 )
                 yield ExperienceEvent(ExperienceEventType.RUN_COMPLETED, {
                     "run_id": run.id,
@@ -167,13 +237,13 @@ class ExperienceExecutor:
             
         except asyncio.TimeoutError:
             error_msg = f"Experience execution timed out after {timeout_seconds}s"
-            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg)
+            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg, model_config=model_config)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
             
         except Exception as e:
             error_msg = f"Experience execution failed: {str(e)}"
             logger.exception("Experience execution failed", extra={"experience_id": experience.id})
-            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg)
+            await self._finalize_run(run, "failed", step_states, step_outputs, error_message=error_msg, model_config=model_config)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
     
     async def execute(
@@ -304,13 +374,13 @@ class ExperienceExecutor:
         run = ExperienceRun(
             experience_id=experience.id,
             user_id=user_id,
-            model_provider_id=experience.llm_provider_id,
-            model_name=experience.model_name,
+            model_configuration_id=experience.model_configuration_id,
             status="running",
             started_at=datetime.now(timezone.utc),
             input_params=input_params,
             step_states={},
             step_outputs={},
+            result_metadata={},  # Will be populated during finalization
         )
         self.db.add(run)
         await self.db.commit()
@@ -326,19 +396,36 @@ class ExperienceExecutor:
         result_content: Optional[str] = None,
         result_metadata: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
+        model_config: Optional[ModelConfiguration] = None,
     ) -> None:
-        """Update run with final state."""
+        """Update run with final state including model configuration snapshot."""
         run.status = status
         run.finished_at = datetime.now(timezone.utc)
         # Sanitize JSON fields to ensure all datetime objects are converted to strings
         run.step_states = _sanitize_for_json(step_states)
         run.step_outputs = _sanitize_for_json(step_outputs)
+        
         if result_content:
             run.result_content = result_content
-        if result_metadata:
-            run.result_metadata = _sanitize_for_json(result_metadata)
+        
         if error_message:
             run.error_message = error_message
+        
+        # Build comprehensive result metadata including model config snapshot
+        final_metadata = result_metadata or {}
+        
+        if model_config:
+            final_metadata["model_configuration"] = {
+                "id": model_config.id,
+                "name": model_config.name,
+                "description": model_config.description,
+                "provider_id": model_config.llm_provider_id,
+                "provider_name": model_config.llm_provider.name if model_config.llm_provider else None,
+                "model_name": model_config.model_name,
+                "parameter_overrides": model_config.parameter_overrides,
+            }
+        
+        run.result_metadata = _sanitize_for_json(final_metadata)
         await self.db.commit()
 
     async def _get_previous_run(
@@ -556,55 +643,147 @@ class ExperienceExecutor:
         self,
         experience: Experience,
         context: Dict[str, Any],
+        current_user: User,
+        model_config: Optional[ModelConfiguration] = None,
     ) -> AsyncGenerator[Any, None]:
         """
-        Render prompt and stream LLM synthesis.
+        Render prompt and stream LLM synthesis using model configuration.
         
-        Uses all step outputs as the User Message, and the template as System Prompt.
+        Implements prompt resolution priority: inline > experience > model config
+        Applies parameter overrides from model configuration.
+        
+        Args:
+            experience: Experience being executed
+            context: Template context with step outputs
+            current_user: Current user for access validation
+            model_config: Pre-loaded model configuration (optional, will load if not provided)
         """
-        if not experience.llm_provider_id or not experience.model_name:
-            # No LLM configured
+        if not experience.model_configuration_id:
+            # No LLM configured - return default prompt
             yield self._build_default_prompt(context)
             yield {"model": None, "tokens": {}}
             return
+        
+        # Use provided model config or load it if not provided
+        if model_config is None:
+            model_config = await self._validate_and_load_model_config(
+                experience.model_configuration_id,
+                current_user
+            )
             
-        # Get system prompt content from template
+            if model_config is None:
+                # Model configuration validation failed during synthesis
+                error_message = f"Model configuration validation failed for config_id={experience.model_configuration_id}"
+                
+                logger.error(
+                    "Model configuration validation failed during synthesis | experience=%s config_id=%s",
+                    experience.id,
+                    experience.model_configuration_id
+                )
+                
+                # Return default prompt and indicate error in metadata
+                yield self._build_default_prompt(context)
+                yield {
+                    "model": None,
+                    "tokens": {},
+                    "error": error_message,
+                    "error_type": "ModelConfigurationError",
+                    "model_configuration_id": experience.model_configuration_id
+                }
+                return
+        
+        # Determine system prompt using priority: inline > experience prompt > model config prompt
         system_prompt_content = ""
+        prompt_source = "none"
+        
         if experience.inline_prompt_template:
             system_prompt_content = self._render_template(experience.inline_prompt_template, context)
+            prompt_source = "inline"
         elif experience.prompt:
             system_prompt_content = self._render_template(experience.prompt.content, context)
+            prompt_source = "experience"
+        elif model_config.prompt:
+            system_prompt_content = self._render_template(model_config.prompt.content, context)
+            prompt_source = "model_config"
         
-        # Build user message content from steps
+        # Build user message from step outputs
         user_content = self._build_default_prompt(context)
 
-        # Get LLM client
+        # Get LLM client using model configuration
         llm_service = LLMService(self.db)
-        client = await llm_service.get_client(experience.llm_provider_id)
+        client = await llm_service.get_client(model_config.llm_provider_id)
         
         try:
+            # Build messages for LLM
             messages = ChatContext.from_dicts(
                 [{"role": "user", "content": user_content}],
                 system_prompt=system_prompt_content
             )
             
+            # Apply parameter overrides from model configuration
+            model_overrides = {}
+            
+            # Apply parameter overrides if they exist
+            if model_config.parameter_overrides:
+                logger.debug(
+                    "Applying parameter overrides from model configuration | config=%s overrides=%s",
+                    model_config.name,
+                    model_config.parameter_overrides
+                )
+                model_overrides.update(model_config.parameter_overrides)
+            
+            logger.debug(
+                "Starting LLM synthesis | experience=%s model_config=%s provider=%s model=%s prompt_source=%s",
+                experience.id,
+                model_config.name,
+                model_config.llm_provider.name,
+                model_config.model_name,
+                prompt_source
+            )
+            
+            # Stream LLM response
             stream_gen = await client.chat_completion(
                 messages=messages,
-                model=experience.model_name,
+                model=model_config.model_name,
                 stream=True,
+                model_overrides=model_overrides,
             )
             
             async for event in stream_gen:
                 if event.type == "content_delta":
                     yield event.content
                 elif event.type == "final_message":
+                    # Build comprehensive metadata including model configuration details
                     yield {
-                        "model": experience.model_name,
-                        "provider_id": experience.llm_provider_id,
+                        "model": model_config.model_name,
+                        "provider_id": model_config.llm_provider_id,
+                        "provider_name": model_config.llm_provider.name,
+                        "model_configuration_id": model_config.id,
+                        "model_configuration_name": model_config.name,
+                        "prompt_source": prompt_source,
                         "system_prompt_content": system_prompt_content,
                         "user_content": user_content,
+                        "parameter_overrides": model_config.parameter_overrides,
+                        "tokens": getattr(event, "tokens", {}),
                     }
                     
+        except Exception as e:
+            logger.exception(
+                "LLM synthesis failed | experience=%s model_config=%s error=%s",
+                experience.id,
+                model_config.name,
+                str(e)
+            )
+            # Return default prompt and error metadata
+            yield self._build_default_prompt(context)
+            yield {
+                "model": model_config.model_name,
+                "provider_id": model_config.llm_provider_id,
+                "model_configuration_id": model_config.id,
+                "model_configuration_name": model_config.name,
+                "error": str(e),
+                "tokens": {}
+            }
         finally:
             try:
                 await client.close()

@@ -60,8 +60,7 @@ trigger_config:
   cron: "0 7 * * *"
   timezone: "America/New_York"
 include_previous_run: true
-llm_provider_id: "openai"
-model_name: "gpt-4"
+model_configuration_id: "config-1"
 inline_prompt_template: "Summarize the following..."
 steps:
   - step_key: "emails"
@@ -82,8 +81,7 @@ steps:
           timezone: "America/New_York"
         },
         include_previous_run: true,
-        llm_provider_id: "openai",
-        model_name: "gpt-4",
+        model_configuration_id: "config-1",
         inline_prompt_template: "Summarize the following...",
         steps: [
           {

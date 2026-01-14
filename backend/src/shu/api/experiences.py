@@ -105,7 +105,11 @@ async def create_experience(
     
     try:
         service = ExperienceService(db)
-        result = await service.create_experience(experience_data, created_by=current_user.id)
+        result = await service.create_experience(
+            experience_data, 
+            created_by=current_user.id,
+            current_user=current_user
+        )
         
         logger.info("API: Created experience", extra={
             "experience_id": result.id,
@@ -318,7 +322,11 @@ async def update_experience(
     
     try:
         service = ExperienceService(db)
-        result = await service.update_experience(experience_id, update_data)
+        result = await service.update_experience(
+            experience_id, 
+            update_data,
+            current_user=current_user
+        )
         
         logger.info("API: Updated experience", extra={
             "experience_id": experience_id,

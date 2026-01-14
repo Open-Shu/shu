@@ -5,7 +5,7 @@ This service provides business logic for managing experiences,
 including CRUD operations, template validation, and required scopes computation.
 """
 
-from typing import List, Optional, Dict, Any, Tuple, TypeVar, Callable
+from typing import List, Optional, Dict, Any, Tuple, TypeVar, Callable, TYPE_CHECKING
 from datetime import datetime
 import uuid
 import yaml
@@ -13,6 +13,9 @@ import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
+
+if TYPE_CHECKING:
+    from ..auth.models import User
 
 
 try:
@@ -26,6 +29,7 @@ from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
 from ..models.experience import Experience, ExperienceStep, ExperienceRun
+from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
 from ..schemas.experience import (
     ExperienceCreate, ExperienceUpdate, ExperienceResponse,
@@ -98,6 +102,38 @@ class ExperienceService:
             except Exception:
                 raise ValidationError(f"Invalid timezone: {trigger_config['timezone']}")
 
+    async def _validate_model_configuration(
+        self, 
+        model_configuration_id: str, 
+        current_user: Optional['User'] = None
+    ) -> None:
+        """
+        Validate that a model configuration exists and is accessible to the current user.
+
+        Args:
+            model_configuration_id: ID of the model configuration to validate
+            current_user: Current user for access validation
+
+        Raises:
+            NotFoundError: If model configuration is not found
+            ValidationError: If user lacks access to the model configuration
+        """
+        try:
+            from .model_configuration_service import ModelConfigurationService
+            model_config_service = ModelConfigurationService(self.db)
+            await model_config_service.validate_model_configuration_for_use(
+                model_configuration_id, 
+                current_user=current_user,
+                include_relationships=True
+            )
+        except Exception as e:
+            # Re-raise model configuration errors as ValidationError for API consistency
+            from ..core.exceptions import ModelConfigurationError
+            if isinstance(e, ModelConfigurationError):
+                raise ValidationError(str(e))
+            else:
+                raise ValidationError(f"Model configuration validation failed: {str(e)}")
+
     # =========================================================================
     # CRUD Operations
     # =========================================================================
@@ -105,7 +141,8 @@ class ExperienceService:
     async def create_experience(
         self,
         experience_data: ExperienceCreate,
-        created_by: str
+        created_by: str,
+        current_user: Optional['User'] = None
     ) -> ExperienceResponse:
         """
         Create a new experience with steps.
@@ -113,6 +150,7 @@ class ExperienceService:
         Args:
             experience_data: Experience creation data including steps
             created_by: User ID of the creator (from authenticated user)
+            current_user: Current user for access validation
 
         Returns:
             Created experience
@@ -128,6 +166,13 @@ class ExperienceService:
 
         # Validate trigger config
         self._validate_trigger_config(experience_data.trigger_type, experience_data.trigger_config)
+
+        # Validate model configuration if provided (with user access check)
+        if experience_data.model_configuration_id:
+            await self._validate_model_configuration(
+                experience_data.model_configuration_id, 
+                current_user
+            )
 
         # Validate templates before creating
         if experience_data.inline_prompt_template:
@@ -149,8 +194,7 @@ class ExperienceService:
             trigger_type=experience_data.trigger_type.value,
             trigger_config=experience_data.trigger_config,
             include_previous_run=experience_data.include_previous_run,
-            llm_provider_id=experience_data.llm_provider_id,
-            model_name=experience_data.model_name,
+            model_configuration_id=experience_data.model_configuration_id,
             prompt_id=experience_data.prompt_id,
             inline_prompt_template=experience_data.inline_prompt_template,
             max_run_seconds=experience_data.max_run_seconds,
@@ -167,7 +211,7 @@ class ExperienceService:
             self.db.add(step)
 
         await self.db.commit()
-        await self.db.refresh(experience, ['steps', 'llm_provider', 'prompt'])
+        await self.db.refresh(experience, ['steps', 'model_configuration', 'prompt'])
 
         logger.info(f"Created experience '{experience.name}' with {len(experience_data.steps)} steps")
         return self._experience_to_response(experience)
@@ -207,7 +251,8 @@ class ExperienceService:
     async def update_experience(
         self,
         experience_id: str,
-        update_data: ExperienceUpdate
+        update_data: ExperienceUpdate,
+        current_user: Optional['User'] = None
     ) -> ExperienceResponse:
         """
         Update an existing experience.
@@ -215,6 +260,7 @@ class ExperienceService:
         Args:
             experience_id: Experience ID
             update_data: Update data
+            current_user: Current user for access validation
 
         Returns:
             Updated experience
@@ -240,6 +286,14 @@ class ExperienceService:
                 update_data.inline_prompt_template,
                 "inline_prompt_template"
             )
+
+        # Validate model configuration if being updated (with user access check)
+        if update_data.model_configuration_id is not None:
+            if update_data.model_configuration_id:  # Not empty string or None
+                await self._validate_model_configuration(
+                    update_data.model_configuration_id, 
+                    current_user
+                )
 
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={'steps'})
@@ -302,7 +356,7 @@ class ExperienceService:
                 self.db.add(step)
 
         await self.db.commit()
-        await self.db.refresh(experience, ['steps', 'llm_provider', 'prompt'])
+        await self.db.refresh(experience, ['steps', 'model_configuration', 'prompt'])
 
         logger.info(f"Updated experience '{experience.name}' (ID: {experience_id})")
         return self._experience_to_response(experience)
@@ -878,8 +932,7 @@ class ExperienceService:
             "trigger_type": "{{ trigger_type }}",
             "trigger_config": "{{ trigger_config }}",
             "include_previous_run": experience.include_previous_run,
-            "llm_provider_id": "{{ llm_provider_id }}" if not experience.llm_provider_id is None else None,  # Placeholder for user selection
-            "model_name": "{{ model_name }}" if not experience.model_name is None else None,  # Placeholder for user selection
+            "model_configuration_id": "{{ model_configuration_id }}" if experience.model_configuration_id is not None else None,  # Placeholder for user selection
             "inline_prompt_template": experience.inline_prompt_template,
             "max_run_seconds": "{{ max_run_seconds }}",
             "token_budget": None,  # We need to revisit this, rate limiting is already handled on LLM and plugin level.
@@ -937,8 +990,7 @@ class ExperienceService:
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
 # - {{ trigger_config }}: The actual trigger value, depending on the schedule type
-# - {{ llm_provider_id }}: Choose your LLM provider
-# - {{ model_name }}: Choose your model
+# - {{ model_configuration_id }}: Choose your model configuration
 # - {{ max_run_seconds }}: The total amount of time the experience is allowed to run
 #
 # To import this experience, use the Experience Import wizard in Shu.
@@ -992,7 +1044,7 @@ class ExperienceService:
         """
         options = [
             selectinload(Experience.steps),
-            selectinload(Experience.llm_provider),
+            selectinload(Experience.model_configuration),
         ]
         if include_prompt:
             options.append(selectinload(Experience.prompt))
@@ -1116,6 +1168,19 @@ class ExperienceService:
             return latest.finished_at or latest.created_at
         return None
 
+    def _serialize_model_configuration(self, model_config: 'ModelConfiguration') -> Dict[str, Any]:
+        """Serialize model configuration to dictionary for API response."""
+        if not model_config:
+            return None
+        
+        # Only return essential information for display purposes
+        # Detailed information is stored in run metadata snapshots
+        return {
+            "id": model_config.id,
+            "name": model_config.name,
+            "description": model_config.description,
+        }
+
     def _experience_to_response(self, experience: Experience) -> ExperienceResponse:
         """Convert Experience model to response schema."""
         steps = [
@@ -1152,8 +1217,7 @@ class ExperienceService:
             trigger_type=TriggerType(experience.trigger_type),
             trigger_config=experience.trigger_config,
             include_previous_run=experience.include_previous_run,
-            llm_provider_id=experience.llm_provider_id,
-            model_name=experience.model_name,
+            model_configuration_id=experience.model_configuration_id,
             prompt_id=experience.prompt_id,
             inline_prompt_template=experience.inline_prompt_template,
             max_run_seconds=experience.max_run_seconds,
@@ -1162,7 +1226,7 @@ class ExperienceService:
             is_active_version=experience.is_active_version,
             parent_version_id=experience.parent_version_id,
             steps=steps,
-            llm_provider=experience.llm_provider.to_dict() if experience.llm_provider else None,
+            model_configuration=self._serialize_model_configuration(experience.model_configuration) if experience.model_configuration else None,
             prompt=experience.prompt.to_dict() if experience.prompt else None,
             step_count=len(steps),
             last_run_at=last_run_at,
@@ -1182,8 +1246,7 @@ class ExperienceService:
             experience_id=run.experience_id,
             user_id=run.user_id,
             previous_run_id=run.previous_run_id,
-            model_provider_id=run.model_provider_id,
-            model_name=run.model_name,
+            model_configuration_id=run.model_configuration_id,
             status=RunStatus(run.status),
             started_at=run.started_at,
             finished_at=run.finished_at,

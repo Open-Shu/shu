@@ -162,7 +162,24 @@ export default function ExperienceRunsList({ experienceId }) {
                                             {run.user?.email || run.user_id}
                                         </TableCell>
                                         <TableCell>
-                                            {run.model_name || '-'}
+                                            {run.result_metadata?.model_configuration ? (
+                                                <Box>
+                                                    <Typography variant="body2">
+                                                        {run.result_metadata.model_configuration.name}
+                                                    </Typography>
+                                                    <Typography variant="caption" color="textSecondary">
+                                                        {run.result_metadata.model_configuration.provider_name} - {run.result_metadata.model_configuration.model_name}
+                                                    </Typography>
+                                                </Box>
+                                            ) : run.model_name ? (
+                                                <Typography variant="body2" color="textSecondary">
+                                                    {run.model_name} (Legacy)
+                                                </Typography>
+                                            ) : (
+                                                <Typography variant="body2" color="textSecondary">
+                                                    No LLM used
+                                                </Typography>
+                                            )}
                                         </TableCell>
                                         <TableCell align="right">
                                             <Tooltip title="View Details">

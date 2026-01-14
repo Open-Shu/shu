@@ -12,8 +12,7 @@ describe('importPlaceholders', () => {
             const yamlContent = `
 name: Test Experience
 trigger_type: {{ trigger_type }}
-llm_provider_id: {{ llm_provider_id }}
-model_name: {{ model_name }}
+model_configuration_id: {{ model_configuration_id }}
 max_run_seconds: {{ max_run_seconds }}
 unsupported_placeholder: {{ some_random_placeholder }}
 inline_prompt_template: "Hello {{ user.name }}, here is {{ step_outputs.gmail }}"
@@ -23,8 +22,7 @@ inline_prompt_template: "Hello {{ user.name }}, here is {{ step_outputs.gmail }}
             
             expect(placeholders).toEqual([
                 'trigger_type',
-                'llm_provider_id', 
-                'model_name',
+                'model_configuration_id', 
                 'max_run_seconds'
             ]);
             
@@ -102,17 +100,15 @@ trigger_type: manual
             expect(result.errors.trigger_type).toContain('must be one of');
         });
 
-        test('validates cross-field dependencies', () => {
-            const placeholders = ['llm_provider_id', 'model_name'];
+        test('validates model configuration field', () => {
+            const placeholders = ['model_configuration_id'];
             const values = {
-                llm_provider_id: 'openai',
-                // model_name is missing when provider is selected
+                model_configuration_id: 'config-1',
             };
 
             const result = validatePlaceholderValues(placeholders, values);
-            
-            expect(result.isValid).toBe(false);
-            expect(result.errors.model_name).toContain('required when LLM provider');
+            expect(result.isValid).toBe(true);
+            expect(result.errors).toEqual({});
         });
 
         test('passes validation with valid values', () => {
@@ -144,14 +140,14 @@ trigger_type: manual
             const yamlContent = `
 name: Test Experience
 trigger_type: "{{ trigger_type }}"
-llm_provider_id: "{{ llm_provider_id }}"
+model_configuration_id: "{{ model_configuration_id }}"
 max_run_seconds: "{{ max_run_seconds }}"
 unsupported: "{{ unsupported_placeholder }}"
             `;
 
             const values = {
                 trigger_type: 'manual',
-                llm_provider_id: 'openai',
+                model_configuration_id: 'config-1',
                 max_run_seconds: 120,
                 unsupported_placeholder: 'should_not_replace'
             };
@@ -159,7 +155,7 @@ unsupported: "{{ unsupported_placeholder }}"
             const result = replacePlaceholders(yamlContent, values);
             
             expect(result).toContain('trigger_type: manual');
-            expect(result).toContain('llm_provider_id: openai');
+            expect(result).toContain('model_configuration_id: config-1');
             expect(result).toContain('max_run_seconds: 120');
             
             // Unsupported placeholders should remain unchanged
@@ -206,8 +202,7 @@ trigger_type: {{ trigger_type }}
             const expectedPlaceholders = [
                 'trigger_type',
                 'trigger_config', 
-                'llm_provider_id',
-                'model_name',
+                'model_configuration_id',
                 'max_run_seconds'
             ];
 

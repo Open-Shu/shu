@@ -14,7 +14,7 @@ import {
 } from '../../services/importPlaceholders';
 import { log } from '../../utils/log';
 import TriggerConfiguration from '../shared/TriggerConfiguration';
-import LLMProviderSelector from '../shared/LLMProviderSelector';
+import ModelConfigurationSelector from '../shared/ModelConfigurationSelector';
 
 /**
  * PlaceholderFormStep - Second step of the import wizard for filling placeholder values
@@ -101,27 +101,19 @@ const PlaceholderFormStep = ({
             return null;
         }
 
-        // LLM Provider and Model selection
-        if (placeholderName === 'llm_provider_id') {
+        // Model Configuration selection
+        if (placeholderName === 'model_configuration_id') {
             return (
-                <LLMProviderSelector
+                <ModelConfigurationSelector
                     key={placeholderName}
-                    providerId={currentValue}
-                    modelName={values['model_name'] || ''}
-                    onProviderChange={(newProviderId) => handleValueChange('llm_provider_id', newProviderId)}
-                    onModelChange={(newModelName) => handleValueChange('model_name', newModelName)}
+                    modelConfigurationId={currentValue}
+                    onModelConfigurationChange={(newValue) => handleValueChange('model_configuration_id', newValue)}
                     validationErrors={validationErrors}
                     required={config.required}
+                    label={config.label}
                     showHelperText={true}
-                    providerLabel={config.label}
-                    modelLabel={SUPPORTED_IMPORT_PLACEHOLDERS['model_name']?.label || 'Model'}
                 />
             );
-        }
-
-        // Skip model_name as it's handled by LLMProviderSelector
-        if (placeholderName === 'model_name') {
-            return null;
         }
 
         // Number input
@@ -176,13 +168,9 @@ const PlaceholderFormStep = ({
             if (supportedPlaceholders.includes('trigger_config')) {
                 processedPlaceholders.add('trigger_config');
             }
-        } else if (placeholder === 'llm_provider_id') {
-            groupedPlaceholders.push('llm_provider_id');
-            processedPlaceholders.add('llm_provider_id');
-            // Only mark model_name as processed if it's actually in the placeholders
-            if (supportedPlaceholders.includes('model_name')) {
-                processedPlaceholders.add('model_name');
-            }
+        } else if (placeholder === 'model_configuration_id') {
+            groupedPlaceholders.push('model_configuration_id');
+            processedPlaceholders.add('model_configuration_id');
         } else if (!processedPlaceholders.has(placeholder)) {
             groupedPlaceholders.push(placeholder);
             processedPlaceholders.add(placeholder);
@@ -290,7 +278,7 @@ const PlaceholderFormStep = ({
                         Fields marked with * are required
                     </Typography>
                     <Typography component="li" variant="body2">
-                        LLM configuration is optional - leave blank to create experience without AI processing
+                        Model configuration is optional - leave blank to create experience without AI processing
                     </Typography>
                     <Typography component="li" variant="body2">
                         Trigger configuration determines when the experience runs automatically

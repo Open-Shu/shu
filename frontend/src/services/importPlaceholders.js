@@ -24,16 +24,10 @@ export const SUPPORTED_IMPORT_PLACEHOLDERS = {
         description: 'Configuration for the selected trigger type',
         required: true
     },
-    'llm_provider_id': {
-        type: 'llm_provider',
-        label: 'LLM Provider',
-        description: 'Choose your LLM provider',
-        required: false
-    },
-    'model_name': {
-        type: 'llm_model',
-        label: 'Model',
-        description: 'Choose your model',
+    'model_configuration_id': {
+        type: 'model_configuration',
+        label: 'Model Configuration',
+        description: 'Choose your model configuration for LLM synthesis',
         required: false
     },
     'max_run_seconds': {
@@ -128,11 +122,6 @@ export function validatePlaceholderValues(placeholders, values) {
                 break;
             }
         }
-    }
-    
-    // Cross-field validation
-    if (values['llm_provider_id'] && !values['model_name']) {
-        errors['model_name'] = 'Model is required when LLM provider is selected';
     }
     
     return {
