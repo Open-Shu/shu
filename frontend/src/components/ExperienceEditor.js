@@ -195,8 +195,13 @@ export default function ExperienceEditor() {
             errors.scheduled_at = 'Scheduled date/time is required';
         }
 
-        if (triggerType === 'cron' && !triggerConfig.cron) {
-            errors.cron = 'Cron expression is required';
+        if (triggerType === 'cron') {
+            if (!triggerConfig.cron) {
+                errors.cron = 'Cron expression is required';
+            }
+            if (!triggerConfig.timezone) {
+                errors.timezone = 'Timezone is required for recurring schedules';
+            }
         }
 
         // Validate model configuration - only validate if user has selected something

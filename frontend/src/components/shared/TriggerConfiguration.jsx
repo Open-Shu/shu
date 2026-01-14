@@ -59,7 +59,8 @@ const TriggerConfiguration = ({
                 >
                     <MenuItem value="manual">Manual</MenuItem>
                     <MenuItem value="scheduled">Scheduled</MenuItem>
-                    <MenuItem value="cron">Recurring</MenuItem>  // We do not call it cron on the frontend to avoid confusion
+                    {/* We do not call it cron on the frontend to avoid confusion */}
+                    <MenuItem value="cron">Recurring</MenuItem>
                 </Select>
                 {validationErrors.trigger_type && (
                     <FormHelperText>{validationErrors.trigger_type}</FormHelperText>

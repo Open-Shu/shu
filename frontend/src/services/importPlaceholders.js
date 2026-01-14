@@ -148,10 +148,15 @@ export function getDefaultPlaceholderValues(placeholders) {
 
 /**
  * Replace placeholders in YAML content with actual values
+ * Note: This function strips comment lines to avoid replacing placeholders in comments
  */
 export function replacePlaceholders(yamlContent, values) {
-    let result = yamlContent;
+    // Remove comment lines to avoid replacing placeholders in comments
+    const lines = yamlContent.split('\n');
+    const contentLines = lines.filter(line => !line.trim().startsWith('#'));
+    let result = contentLines.join('\n');
     
+    // Replace placeholders
     for (const [placeholder, value] of Object.entries(values)) {
         if (SUPPORTED_IMPORT_PLACEHOLDERS[placeholder]) {
             // Handle both quoted and unquoted placeholders
@@ -165,8 +170,12 @@ export function replacePlaceholders(yamlContent, values) {
                 if (Object.keys(value).length === 0) {
                     replacementValue = '{}';
                 } else {
-                    // Convert to YAML object format
-                    const yamlLines = Object.entries(value).map(([k, v]) => `  ${k}: ${v}`);
+                    // Convert to YAML object format with proper quoting for string values
+                    const yamlLines = Object.entries(value).map(([k, v]) => {
+                        // Quote string values to prevent YAML parsing issues with special characters
+                        const quotedValue = typeof v === 'string' ? `"${v}"` : v;
+                        return `  ${k}: ${quotedValue}`;
+                    });
                     replacementValue = `\n${yamlLines.join('\n')}`;
                 }
             } else if (typeof value === 'string') {
