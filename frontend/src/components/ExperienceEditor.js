@@ -573,7 +573,10 @@ export default function ExperienceEditor() {
             )}
 
             {activeTab === 1 && (
-                <ExperienceRunsList experienceId={experienceId} />
+                <ExperienceRunsList 
+                    experienceId={experienceId} 
+                    timezone={triggerConfig?.timezone}
+                />
             )}
 
             <ExperienceRunDialog

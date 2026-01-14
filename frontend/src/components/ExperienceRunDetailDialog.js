@@ -25,8 +25,9 @@ import { format } from 'date-fns';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
 import MarkdownRenderer from './shared/MarkdownRenderer';
+import { formatDateTimeFull } from '../utils/timezoneFormatter';
 
-export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
+export default function ExperienceRunDetailDialog({ open, onClose, runId, timezone }) {
     const theme = useTheme();
     const isDarkMode = theme.palette.mode === 'dark';
     
@@ -65,7 +66,10 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
                 Run Details
                 {run && run.started_at && !isNaN(new Date(run.started_at).getTime()) && (
                     <Typography variant="body2" color="text.secondary">
-                        {format(new Date(run.started_at), 'MMMM d, yyyy HH:mm:ss')}
+                        {timezone 
+                            ? formatDateTimeFull(run.started_at, timezone)
+                            : format(new Date(run.started_at), 'MMMM d, yyyy HH:mm:ss')
+                        }
                     </Typography>
                 )}
             </DialogTitle>

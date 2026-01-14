@@ -98,6 +98,95 @@ describe('RecurringScheduleBuilder', () => {
         expect(screen.getByText('Schedule Preview')).toBeInTheDocument();
     });
 
+    test('renders help section with examples', () => {
+        render(<RecurringScheduleBuilder {...defaultProps} />);
+        
+        expect(screen.getByText('Schedule Examples & Help')).toBeInTheDocument();
+    });
+
+    test('expands help section when clicked', () => {
+        render(<RecurringScheduleBuilder {...defaultProps} />);
+        
+        const helpSection = screen.getByText('Schedule Examples & Help');
+        
+        // The content is in the DOM but hidden by Collapse
+        // Check that the expand icon is in the correct state
+        const expandIcon = screen.getByTestId('ExpandMoreIcon');
+        expect(expandIcon).toBeInTheDocument();
+        
+        // Click to expand
+        fireEvent.click(helpSection);
+        
+        // Examples should be visible
+        expect(screen.getByText('Daily at 9:00 AM')).toBeVisible();
+        expect(screen.getByText('Every weekday at 8:00 AM')).toBeVisible();
+        expect(screen.getByText('Weekly on Monday at 10:00 AM')).toBeVisible();
+        expect(screen.getByText('Monthly on the 1st at 9:00 AM')).toBeVisible();
+        
+        // Check that "Use this" buttons are present (filter to only get the example buttons)
+        const useThisButtons = screen.getAllByRole('button', { name: /use this/i });
+        expect(useThisButtons.length).toBeGreaterThanOrEqual(4);
+    });
+
+    test('applies example schedule when "Use this" button is clicked', () => {
+        const mockOnChange = jest.fn();
+        // Start with a different cron value so we can see the change
+        const testProps = {
+            ...defaultProps,
+            value: { cron: '0 10 * * *', timezone: 'America/New_York' },
+            onChange: mockOnChange,
+        };
+        render(<RecurringScheduleBuilder {...testProps} />);
+        
+        // Expand help section
+        const helpSection = screen.getByText('Schedule Examples & Help');
+        fireEvent.click(helpSection);
+        
+        // Click the first "Use this" button (Daily at 9:00 AM)
+        const useThisButtons = screen.getAllByRole('button', { name: /use this/i });
+        fireEvent.click(useThisButtons[0]);
+        
+        // Should call onChange with the daily cron expression
+        expect(mockOnChange).toHaveBeenCalledWith({
+            cron: '0 9 * * *',
+            timezone: 'America/New_York',
+        });
+    });
+
+    test('applies weekday schedule when corresponding "Use this" button is clicked', () => {
+        const mockOnChange = jest.fn();
+        render(<RecurringScheduleBuilder {...defaultProps} onChange={mockOnChange} />);
+        
+        // Expand help section
+        const helpSection = screen.getByText('Schedule Examples & Help');
+        fireEvent.click(helpSection);
+        
+        // Click the second "Use this" button (Every weekday at 8:00 AM)
+        const useThisButtons = screen.getAllByRole('button', { name: /use this/i });
+        fireEvent.click(useThisButtons[1]);
+        
+        // Should call onChange with the weekday cron expression
+        expect(mockOnChange).toHaveBeenCalledWith({
+            cron: '0 8 * * 1-5',
+            timezone: 'America/New_York',
+        });
+    });
+
+    test('displays timezone explanation text', () => {
+        render(<RecurringScheduleBuilder {...defaultProps} />);
+        
+        expect(screen.getByText(/Why timezone matters:/)).toBeInTheDocument();
+        expect(screen.getByText(/Timezones ensure your scheduled experiences run at the correct local time/)).toBeInTheDocument();
+    });
+
+    test('displays tooltips for schedule configuration', () => {
+        render(<RecurringScheduleBuilder {...defaultProps} />);
+        
+        // Check that help icons are present (they contain the tooltips)
+        const helpIcons = screen.getAllByTestId('HelpOutlineIcon');
+        expect(helpIcons.length).toBeGreaterThan(0);
+    });
+
     test('displays schedule preview when cron and timezone are set', async () => {
         const mockPreview = {
             description: 'At 09:00 AM (EST)',

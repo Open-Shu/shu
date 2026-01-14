@@ -79,6 +79,10 @@ const formatTriggerTypeLabel = (triggerType) => {
 
 const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDeleting }) => {
     const visibilityLabel = experience.visibility?.replace('_', ' ') || 'draft';
+    
+    // Extract timezone from trigger_config for recurring/scheduled experiences
+    const timezone = experience.trigger_config?.timezone;
+    const showTimezone = (experience.trigger_type === 'cron' || experience.trigger_type === 'scheduled') && timezone;
 
     return (
         <Card
@@ -129,7 +133,7 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
 
                     {/* Status chips */}
                     <Grid item xs={12} sm={6} md={4}>
-                        <Stack direction="row" spacing={1} alignItems="center">
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                             <Chip
                                 size="small"
                                 label={visibilityLabel}
@@ -144,6 +148,16 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                                     variant="outlined"
                                 />
                             </Tooltip>
+                            {showTimezone && (
+                                <Tooltip title={`Timezone: ${timezone}`}>
+                                    <Chip
+                                        size="small"
+                                        label={timezone}
+                                        variant="outlined"
+                                        color="info"
+                                    />
+                                </Tooltip>
+                            )}
                             <Chip
                                 size="small"
                                 label={`${experience.step_count || 0} steps`}

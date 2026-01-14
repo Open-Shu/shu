@@ -14,6 +14,8 @@ import {
     TextField,
     Button,
     Tooltip,
+    IconButton,
+    Collapse,
 } from '@mui/material';
 import {
     Schedule as ScheduleIcon,
@@ -22,6 +24,8 @@ import {
     Info as InfoIcon,
     Code as CodeIcon,
     ViewModule as BuilderIcon,
+    HelpOutline as HelpIcon,
+    ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
@@ -143,6 +147,9 @@ const RecurringScheduleBuilder = ({
         }
         return null;
     });
+    
+    // State for help section expansion
+    const [showExamples, setShowExamples] = useState(false);
 
     // Detect browser timezone as default
     const browserTimezone = useMemo(() => {
@@ -236,11 +243,15 @@ const RecurringScheduleBuilder = ({
         if (!cron || !timezone) {
             setPreview(null);
             setPreviewError(null);
+            setIsLoadingPreview(false); // Clear loading state
             return;
         }
 
         // Don't generate preview if there are validation errors
-        if (mergedValidationErrors.cron || mergedValidationErrors.timezone) {
+        const hasCronError = mergedValidationErrors.cron;
+        const hasTimezoneError = mergedValidationErrors.timezone;
+        
+        if (hasCronError || hasTimezoneError) {
             setPreview(null);
             setPreviewError('Please fix validation errors before generating preview');
             setIsLoadingPreview(false);
@@ -265,7 +276,7 @@ const RecurringScheduleBuilder = ({
         }, 300);
 
         return () => clearTimeout(timeoutId);
-    }, [cron, timezone, mergedValidationErrors]);
+    }, [cron, timezone, mergedValidationErrors.cron, mergedValidationErrors.timezone]);
 
     const handleCronChange = (newCron) => {
         // Only trigger onChange if the cron expression actually changed
@@ -354,6 +365,174 @@ const RecurringScheduleBuilder = ({
                 })}
             />
             <Stack spacing={2}>
+            {/* Help Section with Examples */}
+            <Paper 
+                variant="outlined" 
+                sx={{ 
+                    p: 2,
+                    bgcolor: 'info.lighter',
+                    borderColor: 'info.main',
+                }}
+            >
+                <Box 
+                    sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                    }}
+                    onClick={() => setShowExamples(!showExamples)}
+                >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <HelpIcon color="info" />
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            Schedule Examples & Help
+                        </Typography>
+                    </Box>
+                    <IconButton 
+                        size="small"
+                        sx={{
+                            transform: showExamples ? 'rotate(180deg)' : 'rotate(0deg)',
+                            transition: 'transform 0.3s',
+                        }}
+                    >
+                        <ExpandMoreIcon />
+                    </IconButton>
+                </Box>
+                
+                <Collapse in={showExamples}>
+                    <Box sx={{ mt: 2 }}>
+                        <Typography variant="body2" color="text.secondary" paragraph>
+                            Click "Use this" to apply a common schedule pattern, then adjust as needed.
+                        </Typography>
+                        
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                            Common Schedule Examples:
+                        </Typography>
+                        
+                        <List dense disablePadding>
+                            <ListItem 
+                                disableGutters 
+                                sx={{ 
+                                    py: 0.5,
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                }}
+                            >
+                                <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
+                                    <EventIcon fontSize="small" color="info" />
+                                </ListItemIcon>
+                                <ListItemText
+                                    primary="Daily at 9:00 AM"
+                                    secondary="Perfect for morning briefings or daily reports"
+                                    primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                                    secondaryTypographyProps={{ variant: 'caption' }}
+                                    sx={{ flex: 1 }}
+                                />
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleCronChange('0 9 * * *')}
+                                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
+                                >
+                                    Use this
+                                </Button>
+                            </ListItem>
+                            
+                            <ListItem 
+                                disableGutters 
+                                sx={{ 
+                                    py: 0.5,
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                }}
+                            >
+                                <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
+                                    <EventIcon fontSize="small" color="info" />
+                                </ListItemIcon>
+                                <ListItemText
+                                    primary="Every weekday at 8:00 AM"
+                                    secondary="Monday through Friday, ideal for work-related tasks"
+                                    primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                                    secondaryTypographyProps={{ variant: 'caption' }}
+                                    sx={{ flex: 1 }}
+                                />
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleCronChange('0 8 * * 1-5')}
+                                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
+                                >
+                                    Use this
+                                </Button>
+                            </ListItem>
+                            
+                            <ListItem 
+                                disableGutters 
+                                sx={{ 
+                                    py: 0.5,
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                }}
+                            >
+                                <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
+                                    <EventIcon fontSize="small" color="info" />
+                                </ListItemIcon>
+                                <ListItemText
+                                    primary="Weekly on Monday at 10:00 AM"
+                                    secondary="Great for weekly summaries or status updates"
+                                    primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                                    secondaryTypographyProps={{ variant: 'caption' }}
+                                    sx={{ flex: 1 }}
+                                />
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleCronChange('0 10 * * 1')}
+                                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
+                                >
+                                    Use this
+                                </Button>
+                            </ListItem>
+                            
+                            <ListItem 
+                                disableGutters 
+                                sx={{ 
+                                    py: 0.5,
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                }}
+                            >
+                                <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
+                                    <EventIcon fontSize="small" color="info" />
+                                </ListItemIcon>
+                                <ListItemText
+                                    primary="Monthly on the 1st at 9:00 AM"
+                                    secondary="Perfect for monthly reports or billing reminders"
+                                    primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                                    secondaryTypographyProps={{ variant: 'caption' }}
+                                    sx={{ flex: 1 }}
+                                />
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleCronChange('0 9 1 * *')}
+                                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
+                                >
+                                    Use this
+                                </Button>
+                            </ListItem>
+                        </List>
+                        
+                        <Alert severity="info" icon={<InfoIcon />} sx={{ mt: 2 }}>
+                            <Typography variant="caption" component="div">
+                                <strong>Tip:</strong> After applying an example, you can adjust the time and days using the visual builder.
+                            </Typography>
+                        </Alert>
+                    </Box>
+                </Collapse>
+            </Paper>
+            
             {/* Advanced Mode Toggle */}
             {!isComplexCronExpression(cron) && (
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -394,6 +573,15 @@ const RecurringScheduleBuilder = ({
                     <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                         Schedule Configuration
                     </Typography>
+                    <Tooltip 
+                        title="Configure when your experience should run automatically. Choose a frequency (daily, weekly, monthly) and set the time."
+                        arrow
+                        placement="right"
+                    >
+                        <IconButton size="small" sx={{ ml: 0.5 }}>
+                            <HelpIcon fontSize="small" color="action" />
+                        </IconButton>
+                    </Tooltip>
                 </Box>
                 
                 <Paper 
@@ -417,6 +605,12 @@ const RecurringScheduleBuilder = ({
                     {isAdvancedMode ? (
                         // Advanced mode: Raw cron input
                         <Box>
+                            <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 2 }}>
+                                <Typography variant="body2">
+                                    <strong>Advanced Mode:</strong> Enter a standard 5-field cron expression (minute hour day month weekday).
+                                    Example: <code>0 9 * * 1-5</code> runs at 9:00 AM on weekdays.
+                                </Typography>
+                            </Alert>
                             <TextField
                                 fullWidth
                                 label="Cron Expression"
@@ -439,6 +633,12 @@ const RecurringScheduleBuilder = ({
                     ) : (
                         // Builder mode: Visual cron builder
                         <>
+                            <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 2 }}>
+                                <Typography variant="body2">
+                                    <strong>Visual Builder:</strong> Select the frequency (daily, weekly, monthly), 
+                                    choose the time, and pick specific days if needed. The schedule will be created automatically.
+                                </Typography>
+                            </Alert>
                             <Cron
                                 value={cron}
                                 setValue={handleCronChange}
@@ -464,7 +664,24 @@ const RecurringScheduleBuilder = ({
                     <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                         Timezone
                     </Typography>
+                    <Tooltip 
+                        title="Select the timezone for your schedule. The experience will run at the specified time in this timezone, regardless of where the server is located. This ensures your workflows execute at the correct local time."
+                        arrow
+                        placement="right"
+                    >
+                        <IconButton size="small" sx={{ ml: 0.5 }}>
+                            <HelpIcon fontSize="small" color="action" />
+                        </IconButton>
+                    </Tooltip>
                 </Box>
+                
+                <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                        <strong>Why timezone matters:</strong> Timezones ensure your scheduled experiences run at the correct local time. 
+                        For example, "9:00 AM EST" will always run at 9:00 AM Eastern time, even during daylight saving time transitions.
+                    </Typography>
+                </Alert>
+                
                 <TimezoneSelector
                     value={timezone}
                     onChange={handleTimezoneChange}
@@ -497,6 +714,15 @@ const RecurringScheduleBuilder = ({
                     <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                         Schedule Preview
                     </Typography>
+                    <Tooltip 
+                        title="Preview shows the next 5 times your experience will run, formatted in your selected timezone. Use this to verify your schedule is configured correctly."
+                        arrow
+                        placement="right"
+                    >
+                        <IconButton size="small" sx={{ ml: 0.5 }}>
+                            <HelpIcon fontSize="small" color="action" />
+                        </IconButton>
+                    </Tooltip>
                 </Box>
                 
                 <Paper 
