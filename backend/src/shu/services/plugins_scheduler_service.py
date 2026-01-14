@@ -1,11 +1,16 @@
 """In-process Plugin Feeds Scheduler service.
 
-- Enqueue due PluginFeed rows into PluginExecution as PENDING
-- Claim and run pending PluginExecution rows sequentially
+- Enqueue due PluginFeed rows into QueueBackend as jobs with MAINTENANCE WorkloadType
+- Workers dequeue and process jobs from the queue
+- PluginExecution records track execution state for idempotency and observability
 - Exposed start_plugins_scheduler() to run in FastAPI lifespan
 
 DRY: API endpoints delegate to this service.
-Concurrency: uses SELECT ... FOR UPDATE SKIP LOCKED to avoid duplicate work across replicas.
+Concurrency: uses QueueBackend for job distribution and SELECT ... FOR UPDATE SKIP LOCKED
+for database-level idempotency guards.
+
+Migration Note (SHU-211): Migrated from direct execution to queue-based job distribution.
+Jobs are now enqueued to QueueBackend with MAINTENANCE WorkloadType and processed by workers.
 """
 
 from __future__ import annotations
@@ -52,13 +57,18 @@ class PluginsSchedulerService:
         self.db = db
         self.settings = get_settings_instance()
 
-    async def enqueue_due_schedules(
-        self, *, limit: int | None = None, fallback_user_id: str | None = None
-    ) -> dict[str, int]:
-        """Atomically claim due schedules and enqueue executions.
-        Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j}
+    async def enqueue_due_schedules(self, *, limit: Optional[int] = None, fallback_user_id: Optional[str] = None) -> Dict[str, int]:
+        """Atomically claim due schedules and enqueue executions to QueueBackend.
+        
+        Creates PluginExecution records for tracking and idempotency, then enqueues
+        jobs to QueueBackend with MAINTENANCE WorkloadType for worker processing.
+        
+        Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j, "queue_enqueued": p}
         """
-        now = datetime.now(UTC)
+        from ..core.queue_backend import get_queue_backend
+        from ..core.workload_routing import WorkloadType, enqueue_job
+        
+        now = datetime.now(timezone.utc)
         # Claim due schedules with row-level locks to avoid duplicates across workers
         q = (
             select(PluginFeed)
@@ -75,9 +85,19 @@ class PluginsSchedulerService:
         res = await self.db.execute(q)
         due_scheds = list(res.scalars().all())
         enqueued = 0
+        queue_enqueued = 0
         skipped_no_owner = 0
         skipped_missing_plugin = 0
         skipped_already_enqueued = 0
+        
+        # Get queue backend for job enqueueing
+        try:
+            queue_backend = await get_queue_backend()
+        except Exception as e:
+            logger.error(f"Failed to get queue backend: {e}")
+            # Fall back to database-only mode if queue is unavailable
+            queue_backend = None
+        
         for s in due_scheds:
             # Skip if plugin no longer exists or is disabled
             plugin = await REGISTRY.resolve(s.plugin_name, self.db)
@@ -112,6 +132,7 @@ class PluginsSchedulerService:
                 # Best-effort idempotency guard; fall through to enqueue
                 pass
 
+            # Create PluginExecution record for tracking and idempotency
             exec_rec = PluginExecution(
                 schedule_id=s.id,
                 plugin_name=s.plugin_name,
@@ -121,13 +142,50 @@ class PluginsSchedulerService:
                 status=PluginExecutionStatus.PENDING,
             )
             self.db.add(exec_rec)
+            await self.db.flush()  # Flush to get exec_rec.id
+            
+            # Enqueue job to QueueBackend with MAINTENANCE WorkloadType
+            if queue_backend:
+                try:
+                    job = await enqueue_job(
+                        queue_backend,
+                        WorkloadType.MAINTENANCE,
+                        payload={
+                            "execution_id": str(exec_rec.id),
+                            "schedule_id": str(s.id),
+                            "plugin_name": s.plugin_name,
+                            "user_id": runner_user_id,
+                            "agent_key": s.agent_key,
+                            "params": s.params or {},
+                        },
+                        max_attempts=3,
+                        visibility_timeout=3600,  # 1 hour for plugin execution
+                    )
+                    queue_enqueued += 1
+                    logger.debug(
+                        "Scheduler job enqueued to queue",
+                        extra={
+                            "execution_id": exec_rec.id,
+                            "schedule_id": s.id,
+                            "job_id": job.id,
+                        }
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to enqueue job to queue: {e}",
+                        extra={"execution_id": exec_rec.id, "schedule_id": s.id}
+                    )
+                    # Continue - the PluginExecution record is created, so run_pending can still process it
+            
             # Advance schedule to next time; safe under lock
             s.schedule_next()
             enqueued += 1
+            
         await self.db.commit()
         return {
             "due": len(due_scheds),
             "enqueued": enqueued,
+            "queue_enqueued": queue_enqueued,
             "skipped_no_owner": skipped_no_owner,
             "skipped_missing_plugin": skipped_missing_plugin,
             "skipped_already_enqueued": skipped_already_enqueued,
@@ -547,9 +605,10 @@ async def start_plugins_scheduler():
                     r = await svc.run_pending(limit=batch)
                     if (e.get("enqueued") or 0) or (r.get("ran") or 0):
                         logger.info(
-                            "Plugins scheduler tick | due=%s enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s attempted=%s ran=%s failed_owner_required=%s skipped_disabled=%s stale_cleaned=%s deferred_429=%s",
+                            "Plugins scheduler tick | due=%s enq=%s queue_enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s attempted=%s ran=%s failed_owner_required=%s skipped_disabled=%s stale_cleaned=%s deferred_429=%s",
                             e.get("due"),
                             e.get("enqueued"),
+                            e.get("queue_enqueued"),
                             e.get("skipped_no_owner"),
                             e.get("skipped_missing_plugin"),
                             e.get("skipped_already_enqueued"),

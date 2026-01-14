@@ -64,37 +64,22 @@ def _build_skipped_result(
     }
 
 
-# Module-level semaphore for limiting concurrent profiling tasks.
-# Prevents LLM rate-limit storms during bulk imports. Tasks beyond this limit
-# queue in memory until a slot opens. See SHU-211 for persistent queue migration.
-_profiling_semaphore: asyncio.Semaphore | None = None
-
-
-def _get_profiling_semaphore() -> asyncio.Semaphore:
-    """Get or create the profiling semaphore with configured concurrency limit."""
-    global _profiling_semaphore
-    if _profiling_semaphore is None:
-        from ..core.config import get_settings_instance
-
-        settings = get_settings_instance()
-        _profiling_semaphore = asyncio.Semaphore(settings.profiling_max_concurrent_tasks)
-    return _profiling_semaphore
 
 
 async def _trigger_profiling_if_enabled(document_id: str) -> None:
     """Trigger async document profiling if enabled (SHU-344).
 
-    This spawns a fire-and-forget background task that:
-    1. Acquires a slot from the profiling semaphore (waits if at capacity)
-    2. Opens a new DB session
-    3. Calls the profiling orchestrator
-    4. Updates document/chunk records with profile data
+    Enqueues a profiling job to the QueueBackend with PROFILING WorkloadType.
+    The job will be processed by a worker consuming from the profiling queue.
+
+    Benefits over asyncio.create_task():
+    - Jobs persist across server restarts (with Redis backend)
+    - Visibility into queue depth and progress
+    - Automatic retry with exponential backoff on transient failures
+    - Horizontal scaling across multiple worker replicas
+    - Concurrency control via worker pool size instead of semaphore
 
     Does not block the caller - ingestion returns immediately.
-    Must be called from an async context to ensure event loop exists.
-
-    Note: Tasks queue in memory if concurrency limit is reached. Tasks are lost
-    on server restart. See SHU-211 for migration to persistent work queue.
     """
     from ..core.config import get_settings_instance
 
@@ -102,45 +87,42 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
     if not settings.enable_document_profiling:
         return
 
-    semaphore = _get_profiling_semaphore()
+    # Import queue backend dependencies
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
 
-    async def _run_profiling():
-        async with semaphore:
-            try:
-                from ..core.config import get_config_manager
-                from ..core.database import get_async_session_local
-                from .profiling_orchestrator import ProfilingOrchestrator
-                from .side_call_service import SideCallService
-
-                session_local = get_async_session_local()
-                async with session_local() as bg_session:
-                    config_manager = get_config_manager()
-                    side_call_service = SideCallService(bg_session, config_manager)
-                    orchestrator = ProfilingOrchestrator(bg_session, settings, side_call_service)
-                    result = await orchestrator.run_for_document(document_id)
-                    if result.success:
-                        logger.info(
-                            "Document profiling complete: document_id=%s mode=%s tokens_used=%s duration_ms=%s",
-                            document_id,
-                            result.profiling_mode.value,
-                            result.tokens_used,
-                            result.duration_ms,
-                        )
-                    else:
-                        logger.warning(
-                            "Document profiling failed: document_id=%s error=%s",
-                            document_id,
-                            result.error,
-                        )
-            except Exception as e:
-                logger.error(
-                    "Document profiling error: document_id=%s error=%s",
-                    document_id,
-                    str(e),
-                )
-
-    # Fire-and-forget - don't await
-    asyncio.create_task(_run_profiling())
+    try:
+        # Get the queue backend
+        backend = await get_queue_backend()
+        
+        # Enqueue profiling job with PROFILING WorkloadType
+        # Use higher max_attempts and longer visibility_timeout for LLM calls
+        job = await enqueue_job(
+            backend,
+            WorkloadType.PROFILING,
+            payload={
+                "document_id": document_id,
+                "action": "profile_document",
+            },
+            max_attempts=5,  # Retry up to 5 times for transient failures
+            visibility_timeout=600,  # 10 minutes for LLM API calls
+        )
+        
+        logger.info(
+            "Document profiling job enqueued",
+            extra={
+                "document_id": document_id,
+                "job_id": job.id,
+                "queue_name": job.queue_name,
+            }
+        )
+    except Exception as e:
+        # Log error but don't fail ingestion if profiling enqueue fails
+        logger.error(
+            "Failed to enqueue profiling job: document_id=%s error=%s",
+            document_id,
+            str(e),
+        )
 
 
 def _infer_file_type(filename: str, mime_type: str) -> str:
