@@ -926,11 +926,15 @@ class TestProperty7ThreadSafeConcurrentOperations:
         # Remaining jobs in queue
         remaining = await inmemory_queue_backend.queue_length(queue_name)
         
-        # Total should equal original number of jobs
-        # (dequeued + remaining = num_jobs)
-        # Note: Some dequeued jobs may be in processing state
+        # Jobs in processing state (dequeued but not yet acknowledged)
         processing_count = len(inmemory_queue_backend._processing[queue_name])
-        total = len(dequeued) + remaining
+        
+        # Total should equal original number of jobs
+        # dequeued jobs are in processing state, so: processing + remaining = num_jobs
+        assert processing_count + remaining == num_jobs, (
+            f"Invariant violated: processing ({processing_count}) + remaining ({remaining}) "
+            f"should equal num_jobs ({num_jobs})"
+        )
         
         # The total dequeued should not exceed num_jobs
         assert len(dequeued) <= num_jobs, "Should not dequeue more jobs than enqueued"

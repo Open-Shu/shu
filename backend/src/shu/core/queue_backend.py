@@ -1115,8 +1115,8 @@ class RedisQueueBackend:
                 job_json = await self._client.get(job_key)
                 
                 if job_json:
-                    # Add back to front of queue (RPUSH to add to end, but we want front)
-                    # Use LPUSH to add to front for priority reprocessing
+                    # Use RPUSH to add to end (will be dequeued first with RPOP)
+                    # This gives expired jobs priority reprocessing
                     await self._client.rpush(queue_key, job_json)
                     restored_count += 1
                     logger.debug(
