@@ -175,7 +175,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if user.last_login is None or user.last_login.date() < now.date():
             user.last_login = now
             await db.commit()
-            logger.debug(f"Updated daily login for user {user.email}")
+            logger.debug(f"Updated daily login for user {user.id}")
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip authentication for public endpoints
