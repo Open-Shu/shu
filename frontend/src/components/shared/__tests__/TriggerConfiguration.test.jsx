@@ -174,4 +174,60 @@ describe('TriggerConfiguration', () => {
         expect(dateInput).toHaveValue('2024-01-01T10:00');
         expect(timezoneInput).toHaveValue('America/New_York');
     });
+
+    test('displays existing cron configuration (backward compatibility)', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="cron"
+                triggerConfig={{ 
+                    cron: '0 9 * * 1-5',
+                    timezone: 'America/New_York'
+                }}
+            />
+        );
+        
+        const recurringBuilder = screen.getByTestId('recurring-schedule-builder');
+        const cronInput = screen.getByTestId('mock-recurring-input');
+        
+        expect(recurringBuilder).toBeInTheDocument();
+        expect(cronInput).toHaveValue('0 9 * * 1-5');
+    });
+
+    test('handles cron configuration without timezone (backward compatibility)', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="cron"
+                triggerConfig={{ 
+                    cron: '0 9 * * *'
+                }}
+            />
+        );
+        
+        const recurringBuilder = screen.getByTestId('recurring-schedule-builder');
+        
+        expect(recurringBuilder).toBeInTheDocument();
+    });
+
+    test('calls onTriggerConfigChange when cron expression changes', () => {
+        render(
+            <TriggerConfiguration 
+                {...defaultProps}
+                triggerType="cron"
+                triggerConfig={{ 
+                    cron: '0 9 * * *',
+                    timezone: 'America/New_York'
+                }}
+            />
+        );
+        
+        const cronInput = screen.getByTestId('mock-recurring-input');
+        fireEvent.change(cronInput, { target: { value: '0 10 * * *' } });
+        
+        expect(defaultProps.onTriggerConfigChange).toHaveBeenCalledWith({
+            cron: '0 10 * * *',
+            timezone: 'America/New_York'
+        });
+    });
 });

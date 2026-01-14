@@ -205,4 +205,543 @@ describe('RecurringScheduleBuilder', () => {
         // Should show placeholder text when no preview is available
         expect(screen.getByText('Configure a schedule to see preview')).toBeInTheDocument();
     });
+
+    describe('Advanced Mode Toggle', () => {
+        beforeEach(() => {
+            // Clear session storage before each test
+            sessionStorage.clear();
+        });
+
+        test('renders advanced mode toggle button', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            expect(screen.getByRole('button', { name: /advanced mode/i })).toBeInTheDocument();
+        });
+
+        test('switches to advanced mode when toggle is clicked', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            const toggleButton = screen.getByRole('button', { name: /advanced mode/i });
+            fireEvent.click(toggleButton);
+            
+            // Should show raw cron input
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.getByPlaceholderText('0 9 * * *')).toBeInTheDocument();
+            
+            // Button text should change
+            expect(screen.getByRole('button', { name: /visual builder/i })).toBeInTheDocument();
+        });
+
+        test('switches back to builder mode when toggle is clicked again', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            const toggleButton = screen.getByRole('button', { name: /advanced mode/i });
+            
+            // Switch to advanced mode
+            fireEvent.click(toggleButton);
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            
+            // Switch back to builder mode
+            const builderButton = screen.getByRole('button', { name: /visual builder/i });
+            fireEvent.click(builderButton);
+            
+            // Should show cron component again
+            expect(screen.getByTestId('cron-component')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /advanced mode/i })).toBeInTheDocument();
+        });
+
+        test('preserves advanced mode preference in session storage', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            const toggleButton = screen.getByRole('button', { name: /advanced mode/i });
+            fireEvent.click(toggleButton);
+            
+            // Check session storage
+            expect(sessionStorage.getItem('cronBuilderAdvancedMode')).toBe('true');
+            
+            // Switch back
+            const builderButton = screen.getByRole('button', { name: /visual builder/i });
+            fireEvent.click(builderButton);
+            
+            expect(sessionStorage.getItem('cronBuilderAdvancedMode')).toBe('false');
+        });
+
+        test('restores advanced mode preference from session storage', () => {
+            // Set preference in session storage
+            sessionStorage.setItem('cronBuilderAdvancedMode', 'true');
+            
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            // Should start in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /visual builder/i })).toBeInTheDocument();
+        });
+
+        test('updates cron expression when editing in advanced mode', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            // Switch to advanced mode
+            const toggleButton = screen.getByRole('button', { name: /advanced mode/i });
+            fireEvent.click(toggleButton);
+            
+            // Edit the cron expression
+            const cronInput = screen.getByLabelText('Cron Expression');
+            fireEvent.change(cronInput, { target: { value: '0 10 * * 1-5' } });
+            fireEvent.blur(cronInput);
+            
+            // Should call onChange with new value
+            expect(defaultProps.onChange).toHaveBeenCalledWith({
+                cron: '0 10 * * 1-5',
+                timezone: 'America/New_York',
+            });
+        });
+
+        test('does not call onChange if cron expression has not changed on blur', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            // Switch to advanced mode
+            const toggleButton = screen.getByRole('button', { name: /advanced mode/i });
+            fireEvent.click(toggleButton);
+            
+            // Blur without changing
+            const cronInput = screen.getByLabelText('Cron Expression');
+            fireEvent.blur(cronInput);
+            
+            // onChange should not be called (only called once for mode toggle)
+            expect(defaultProps.onChange).not.toHaveBeenCalled();
+        });
+
+        test('hides toggle button when cron expression is complex', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' }, // Step value
+            };
+            
+            // Start in advanced mode
+            sessionStorage.setItem('cronBuilderAdvancedMode', 'true');
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should not show the toggle button
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /advanced mode/i })).not.toBeInTheDocument();
+            
+            // Should show warning
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+        });
+
+        test('shows toggle button when cron expression is simple', () => {
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            // Should show the toggle button
+            expect(screen.getByRole('button', { name: /advanced mode/i })).toBeInTheDocument();
+        });
+
+        test('clears complex expression warning when dismissing', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' },
+            };
+            
+            // Don't set session storage - let component auto-switch
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should start in advanced mode with warning (auto-switched)
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+            
+            // Dismiss the warning
+            const closeButton = screen.getByLabelText('Close');
+            fireEvent.click(closeButton);
+            
+            // Warning should be cleared
+            expect(screen.queryByText(/too complex for the visual builder/i)).not.toBeInTheDocument();
+            
+            // Should still be in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+        });
+
+        test('displays validation errors in advanced mode', () => {
+            render(
+                <RecurringScheduleBuilder 
+                    {...defaultProps}
+                    validationErrors={{ cron: 'Invalid cron expression' }}
+                />
+            );
+            
+            // Switch to advanced mode
+            const toggleButton = screen.getByRole('button', { name: /advanced mode/i });
+            fireEvent.click(toggleButton);
+            
+            // Should show validation error
+            expect(screen.getByText('Invalid cron expression')).toBeInTheDocument();
+        });
+    });
+
+    describe('Complex Cron Expression Fallback', () => {
+        beforeEach(() => {
+            sessionStorage.clear();
+        });
+
+        test('automatically switches to advanced mode for complex cron with step values', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' }, // Every 5 minutes
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should automatically be in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+            
+            // Should show warning
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+        });
+
+        test('automatically switches to advanced mode for 6-position cron with seconds', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '0 0 9 * * *', timezone: 'America/New_York' }, // 6-position with seconds
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should automatically be in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+            
+            // Should show warning
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+        });
+
+        test('automatically switches to advanced mode for complex cron with multiple ranges', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '0 9 1-5,10-15 * *', timezone: 'America/New_York' }, // Multiple day ranges
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should automatically be in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+            
+            // Should show warning
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+        });
+
+        test('automatically switches to advanced mode for complex cron with long lists', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '0 9 * * 0,1,2,3,4,5,6', timezone: 'America/New_York' }, // All days listed
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should automatically be in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+            
+            // Should show warning
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+        });
+
+        test('automatically switches to advanced mode for complex cron with range and step', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '0 9-17/2 * * *', timezone: 'America/New_York' }, // Every 2 hours from 9 to 17
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should automatically be in advanced mode
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+        });
+
+        test('does not switch to advanced mode for simple cron expressions', () => {
+            const simpleCronProps = {
+                ...defaultProps,
+                value: { cron: '0 9 * * 1-5', timezone: 'America/New_York' }, // Weekdays at 9 AM
+            };
+            
+            render(<RecurringScheduleBuilder {...simpleCronProps} />);
+            
+            // Should be in builder mode
+            expect(screen.getByTestId('cron-component')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /advanced mode/i })).toBeInTheDocument();
+            
+            // Should not show warning
+            expect(screen.queryByText(/too complex for the visual builder/i)).not.toBeInTheDocument();
+        });
+
+        test('does not allow switching to builder mode for complex expressions', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should start in advanced mode (auto-switched due to complex expression)
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+            
+            // Should NOT show the toggle button
+            expect(screen.queryByRole('button', { name: /visual builder/i })).not.toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: /advanced mode/i })).not.toBeInTheDocument();
+        });
+
+        test('persists advanced mode in session storage when auto-switched', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should have set session storage
+            expect(sessionStorage.getItem('cronBuilderAdvancedMode')).toBe('true');
+        });
+
+        test('allows dismissing the complex expression warning', () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should show warning with close button
+            const warning = screen.getByText(/too complex for the visual builder/i);
+            expect(warning).toBeInTheDocument();
+            
+            // Find and click the close button on the Alert
+            const closeButton = warning.closest('.MuiAlert-root').querySelector('button');
+            if (closeButton) {
+                fireEvent.click(closeButton);
+                
+                // Warning should be dismissed
+                expect(screen.queryByText(/too complex for the visual builder/i)).not.toBeInTheDocument();
+            }
+        });
+
+        test('handles cron expression updates that become complex', async () => {
+            const { rerender } = render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            // Should start in builder mode
+            expect(screen.getByTestId('cron-component')).toBeInTheDocument();
+            
+            // Update to complex cron
+            rerender(
+                <RecurringScheduleBuilder 
+                    {...defaultProps}
+                    value={{ cron: '*/5 * * * *', timezone: 'America/New_York' }}
+                />
+            );
+            
+            // Should automatically switch to advanced mode
+            await waitFor(() => {
+                expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            });
+            
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+        });
+
+        test('clears warning when cron expression changes from complex to simple', async () => {
+            const complexCronProps = {
+                ...defaultProps,
+                value: { cron: '*/5 * * * *', timezone: 'America/New_York' },
+            };
+            
+            const { rerender } = render(<RecurringScheduleBuilder {...complexCronProps} />);
+            
+            // Should start in advanced mode with warning
+            expect(screen.getByLabelText('Cron Expression')).toBeInTheDocument();
+            expect(screen.getByText(/too complex for the visual builder/i)).toBeInTheDocument();
+            
+            // Update to simple cron
+            rerender(
+                <RecurringScheduleBuilder 
+                    {...defaultProps}
+                    value={{ cron: '0 9 * * *', timezone: 'America/New_York' }}
+                />
+            );
+            
+            // Warning should be cleared
+            await waitFor(() => {
+                expect(screen.queryByText(/too complex for the visual builder/i)).not.toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('Edge Case Handling', () => {
+        beforeEach(() => {
+            sessionStorage.clear();
+        });
+
+        test('displays warning for day 31 scheduled across all months', async () => {
+            const day31Props = {
+                ...defaultProps,
+                value: { cron: '0 9 31 * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...day31Props} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                expect(screen.getByText(/Schedule Considerations:/i)).toBeInTheDocument();
+            });
+            
+            // Should show warning about day 31
+            expect(screen.getByText(/Day 31 is scheduled but only exists in 7 months/i)).toBeInTheDocument();
+        });
+
+        test('displays warning for day 30 scheduled across all months', async () => {
+            const day30Props = {
+                ...defaultProps,
+                value: { cron: '0 9 30 * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...day30Props} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                expect(screen.getByText(/Schedule Considerations:/i)).toBeInTheDocument();
+            });
+            
+            // Should show warning about day 30 and February
+            expect(screen.getByText(/Day 30 is scheduled but does not exist in February/i)).toBeInTheDocument();
+        });
+
+        test('displays warning for day 29 scheduled across all months (leap year)', async () => {
+            const day29Props = {
+                ...defaultProps,
+                value: { cron: '0 9 29 * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...day29Props} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                expect(screen.getByText(/Schedule Considerations:/i)).toBeInTheDocument();
+            });
+            
+            // Should show warning about day 29 and leap years
+            expect(screen.getByText(/Day 29 is scheduled but does not exist in February \(except leap years\)/i)).toBeInTheDocument();
+        });
+
+        test('displays error for day 31 scheduled in February', async () => {
+            const feb31Props = {
+                ...defaultProps,
+                value: { cron: '0 9 31 2 *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...feb31Props} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                // This should show an error, not a warning, because the cron-parser library
+                // rejects this as an invalid cron expression
+                expect(screen.getByText(/Invalid explicit day of month definition/i)).toBeInTheDocument();
+            });
+        });
+
+        test('displays error for day 31 scheduled in April (30-day month)', async () => {
+            const april31Props = {
+                ...defaultProps,
+                value: { cron: '0 9 31 4 *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...april31Props} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                // This should show an error, not a warning, because the cron-parser library
+                // rejects this as an invalid cron expression
+                expect(screen.getByText(/Invalid explicit day of month definition/i)).toBeInTheDocument();
+            });
+        });
+
+        test('does not display warnings for valid day-of-month selections', async () => {
+            const validProps = {
+                ...defaultProps,
+                value: { cron: '0 9 15 * *', timezone: 'America/New_York' },
+            };
+            
+            const mockPreview = {
+                description: 'At 09:00 AM (EST)',
+                nextExecutions: ['Tuesday, January 14, 2026 at 9:00 AM EST'],
+                executionDates: [],
+            };
+            getSchedulePreview.mockReturnValue(mockPreview);
+            
+            render(<RecurringScheduleBuilder {...validProps} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                expect(screen.queryByText(/Schedule Considerations:/i)).not.toBeInTheDocument();
+            }, { timeout: 500 });
+        });
+
+        test('displays DST transition note in schedule preview', async () => {
+            const mockPreview = {
+                description: 'At 02:00 AM (EST)',
+                nextExecutions: [
+                    'Sunday, March 9, 2026 at 2:00 AM EDT (near DST spring forward)',
+                ],
+                executionDates: [],
+            };
+            
+            getSchedulePreview.mockReturnValue(mockPreview);
+            
+            render(<RecurringScheduleBuilder {...defaultProps} />);
+            
+            // Wait for preview to load
+            await waitFor(() => {
+                expect(screen.getByText(/near DST spring forward/i)).toBeInTheDocument();
+            }, { timeout: 500 });
+        });
+
+        test('handles multiple validation warnings', async () => {
+            const multiWarningProps = {
+                ...defaultProps,
+                value: { cron: '0 9 29-31 * *', timezone: 'America/New_York' },
+            };
+            
+            render(<RecurringScheduleBuilder {...multiWarningProps} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                expect(screen.getByText(/Schedule Considerations:/i)).toBeInTheDocument();
+            });
+            
+            // Should show multiple warnings
+            expect(screen.getByText(/Day 29 is scheduled but does not exist in February/i)).toBeInTheDocument();
+            expect(screen.getByText(/Day 30 is scheduled but does not exist in February/i)).toBeInTheDocument();
+            expect(screen.getByText(/Day 31 is scheduled but only exists in 7 months/i)).toBeInTheDocument();
+        });
+
+        test('does not display warnings when day-of-week is specified', async () => {
+            const weekdayProps = {
+                ...defaultProps,
+                value: { cron: '0 9 31 * 1', timezone: 'America/New_York' }, // Day 31 on Mondays
+            };
+            
+            const mockPreview = {
+                description: 'At 09:00 AM on Monday (EST)',
+                nextExecutions: ['Monday, March 31, 2026 at 9:00 AM EST'],
+                executionDates: [],
+            };
+            getSchedulePreview.mockReturnValue(mockPreview);
+            
+            render(<RecurringScheduleBuilder {...weekdayProps} />);
+            
+            // Wait for validation to complete
+            await waitFor(() => {
+                expect(screen.queryByText(/Schedule Considerations:/i)).not.toBeInTheDocument();
+            }, { timeout: 500 });
+        });
+    });
 });

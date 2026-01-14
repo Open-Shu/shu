@@ -66,6 +66,17 @@ const triggerIcons = {
     cron: <CronIcon fontSize="small" />,
 };
 
+// Helper function to format trigger type display name
+const formatTriggerTypeLabel = (triggerType) => {
+    if (triggerType === 'cron') {
+        return 'Recurring';
+    }
+    if (triggerType === 'scheduled') {
+        return 'Scheduled';
+    }
+    return 'Manual';
+};
+
 const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDeleting }) => {
     const visibilityLabel = experience.visibility?.replace('_', ' ') || 'draft';
 
@@ -125,11 +136,11 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                                 color={visibilityColors[experience.visibility] || 'default'}
                                 variant="outlined"
                             />
-                            <Tooltip title={`Trigger: ${experience.trigger_type}`}>
+                            <Tooltip title={`Trigger: ${formatTriggerTypeLabel(experience.trigger_type)}`}>
                                 <Chip
                                     size="small"
                                     icon={triggerIcons[experience.trigger_type] || triggerIcons.manual}
-                                    label={experience.trigger_type}
+                                    label={formatTriggerTypeLabel(experience.trigger_type)}
                                     variant="outlined"
                                 />
                             </Tooltip>

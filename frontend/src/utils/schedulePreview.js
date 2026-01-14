@@ -42,6 +42,42 @@ export function describe(cron, timezone) {
 }
 
 /**
+ * Check if a date falls within a DST transition period
+ * @param {Date} date - Date to check
+ * @param {string} timezone - IANA timezone identifier
+ * @returns {Object} Object with isDSTTransition boolean and details
+ * @private
+ */
+function checkDSTTransition(date, timezone) {
+  try {
+    // Get the timezone offset for the date
+    const offset = formatInTimeZone(date, timezone, 'xxx');
+    
+    // Check one hour before and after
+    const hourBefore = new Date(date.getTime() - 60 * 60 * 1000);
+    const hourAfter = new Date(date.getTime() + 60 * 60 * 1000);
+    
+    const offsetBefore = formatInTimeZone(hourBefore, timezone, 'xxx');
+    const offsetAfter = formatInTimeZone(hourAfter, timezone, 'xxx');
+    
+    // If offsets differ, we're near a DST transition
+    const isDSTTransition = offsetBefore !== offset || offsetAfter !== offset;
+    
+    return {
+      isDSTTransition,
+      offset,
+      offsetBefore,
+      offsetAfter,
+    };
+  } catch (error) {
+    return {
+      isDSTTransition: false,
+      offset: null,
+    };
+  }
+}
+
+/**
  * Calculate the next N execution times for a cron expression
  * @param {string} cron - Standard cron expression
  * @param {string} timezone - IANA timezone identifier
@@ -72,17 +108,28 @@ export function getNextExecutions(cron, timezone, count = 5) {
     const executions = [];
 
     // Get the next N execution times
-    for (let i = 0; i < count; i++) {
+    // Request extra executions to account for potential DST skips
+    const requestCount = count + 2;
+    
+    for (let i = 0; i < requestCount && executions.length < count; i++) {
       try {
         const next = interval.next();
-        executions.push(next.toDate());
+        const nextDate = next.toDate();
+        
+        // Check for DST transition
+        const dstCheck = checkDSTTransition(nextDate, timezone);
+        
+        // Always include the execution, even during DST transitions
+        // The cron-parser library handles DST transitions correctly
+        executions.push(nextDate);
       } catch (error) {
         // If we can't get more executions, break
         break;
       }
     }
 
-    return executions;
+    // Return only the requested count
+    return executions.slice(0, count);
   } catch (error) {
     throw new Error(`Failed to calculate next executions: ${error.message}`);
   }
@@ -110,7 +157,29 @@ export function formatExecution(date, timezone) {
     const time = formatInTimeZone(date, timezone, 'h:mm a');
     const tzAbbr = formatInTimeZone(date, timezone, 'zzz');
 
-    return `${dayOfWeek}, ${monthDay} at ${time} ${tzAbbr}`;
+    // Check for DST transition
+    const dstCheck = checkDSTTransition(date, timezone);
+    let dstNote = '';
+    
+    if (dstCheck.isDSTTransition) {
+      // Determine if this is spring forward or fall back
+      const offsetBefore = dstCheck.offsetBefore || '';
+      const offsetAfter = dstCheck.offsetAfter || '';
+      
+      if (offsetBefore && offsetAfter && offsetBefore !== offsetAfter) {
+        // Parse offset strings to compare (e.g., "-05:00" vs "-04:00")
+        const beforeHours = parseInt(offsetBefore.split(':')[0], 10);
+        const afterHours = parseInt(offsetAfter.split(':')[0], 10);
+        
+        if (afterHours > beforeHours) {
+          dstNote = ' (near DST spring forward)';
+        } else if (afterHours < beforeHours) {
+          dstNote = ' (near DST fall back)';
+        }
+      }
+    }
+
+    return `${dayOfWeek}, ${monthDay} at ${time} ${tzAbbr}${dstNote}`;
   } catch (error) {
     throw new Error(`Failed to format execution time: ${error.message}`);
   }

@@ -11,17 +11,85 @@ import {
     ListItemIcon,
     ListItemText,
     CircularProgress,
+    TextField,
+    Button,
+    Tooltip,
 } from '@mui/material';
 import {
     Schedule as ScheduleIcon,
     Public as TimezoneIcon,
     Event as EventIcon,
     Info as InfoIcon,
+    Code as CodeIcon,
+    ViewModule as BuilderIcon,
 } from '@mui/icons-material';
 import { Cron } from 'react-js-cron';
 import 'react-js-cron/dist/styles.css';
 import TimezoneSelector from './TimezoneSelector';
+
+/**
+ * Note: The react-js-cron library (v5.2.0) generates a React warning about the 
+ * `dropdownAlign` prop being passed to a DOM element. This is a known issue with 
+ * the library and does not affect functionality. The warning can be safely ignored.
+ * 
+ * Issue: https://github.com/xrutayisire/react-js-cron/issues
+ * 
+ * If this becomes problematic, consider:
+ * 1. Updating to a newer version of react-js-cron when available
+ * 2. Switching to an alternative cron builder library
+ * 3. Creating a custom wrapper component that filters invalid props
+ */
 import { getSchedulePreview } from '../../utils/schedulePreview';
+import { validateCronExpression, validateTimezone, validateScheduleConfig, validateDayOfMonthEdgeCases } from '../../utils/scheduleValidation';
+
+/**
+ * Check if a cron expression is too complex for the visual builder
+ * 
+ * Complex expressions include:
+ * - 6-position cron expressions with seconds field (e.g., "0 0 9 * * *")
+ * - Step values (e.g., star-slash-5 for "every 5 minutes")
+ * - Ranges with steps (e.g., 1-10/2 for "every 2nd value from 1 to 10")
+ * - Multiple ranges (e.g., 1-5,10-15 for "1 through 5 and 10 through 15")
+ * - Long lists with many specific values (e.g., 1,2,3,4,5,6,7,8,9,10)
+ * - Non-standard field values that the builder can't represent
+ * 
+ * @param {string} cronExpr - The cron expression to check
+ * @returns {boolean} - True if the expression is too complex for the builder
+ */
+const isComplexCronExpression = (cronExpr) => {
+    if (!cronExpr) return false;
+    
+    const parts = cronExpr.trim().split(/\s+/);
+    
+    // 6-position cron expressions (with seconds) are not supported by the builder
+    if (parts.length === 6) return true;
+    
+    // Only standard 5-position cron expressions can be handled by the builder
+    if (parts.length !== 5) return false;
+    
+    // Check for step values (*/n or x-y/n)
+    const hasStepValues = parts.some(part => part.includes('/'));
+    
+    // Check for multiple ranges (x-y,a-b)
+    const hasMultipleRanges = parts.some(part => {
+        const commaCount = (part.match(/,/g) || []).length;
+        const rangeCount = (part.match(/-/g) || []).length;
+        return commaCount > 0 && rangeCount > 0;
+    });
+    
+    // Check for long lists (more than 5 specific values)
+    const hasLongLists = parts.some(part => {
+        if (part === '*' || part.includes('-') || part.includes('/')) return false;
+        const values = part.split(',');
+        return values.length > 5;
+    });
+    
+    // Check for complex day-of-week patterns (e.g., "1-5" for weekdays is OK, but "1,3,5" is complex)
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+    const hasComplexDayOfWeek = dayOfWeek !== '*' && dayOfWeek.includes(',') && !dayOfWeek.includes('-');
+    
+    return hasStepValues || hasMultipleRanges || hasLongLists || hasComplexDayOfWeek;
+};
 
 /**
  * RecurringScheduleBuilder - A wrapper around the cron library that provides
@@ -48,7 +116,33 @@ const RecurringScheduleBuilder = ({
     const [previewError, setPreviewError] = useState(null);
     const [isLoadingPreview, setIsLoadingPreview] = useState(false);
     
-    // State for advanced mode toggle (removed for now, will be added in later tasks)
+    // State for advanced mode toggle
+    const [isAdvancedMode, setIsAdvancedMode] = useState(() => {
+        // Check if the cron expression is complex
+        const isComplex = cron && isComplexCronExpression(cron);
+        
+        // If complex, always start in advanced mode
+        if (isComplex) {
+            sessionStorage.setItem('cronBuilderAdvancedMode', 'true');
+            return true;
+        }
+        
+        // Otherwise, restore preference from session storage
+        const savedMode = sessionStorage.getItem('cronBuilderAdvancedMode');
+        return savedMode === 'true';
+    });
+    
+    // State for raw cron input in advanced mode
+    const [rawCronInput, setRawCronInput] = useState(cron);
+    
+    // State for complex expression warning
+    const [complexExpressionWarning, setComplexExpressionWarning] = useState(() => {
+        // Show warning on mount if expression is complex and we're in advanced mode
+        if (cron && isComplexCronExpression(cron)) {
+            return 'This cron expression is too complex for the visual builder and must be edited in Advanced mode.';
+        }
+        return null;
+    });
 
     // Detect browser timezone as default
     const browserTimezone = useMemo(() => {
@@ -59,6 +153,82 @@ const RecurringScheduleBuilder = ({
         }
     }, []);
 
+    // Validate cron expression and timezone in real-time
+    const [internalValidationErrors, setInternalValidationErrors] = useState({});
+    const [validationWarnings, setValidationWarnings] = useState([]);
+    
+    useEffect(() => {
+        const errors = {};
+        const warnings = [];
+        
+        // Always try to validate schedule configuration for warnings, even if cron is invalid
+        // This allows us to show helpful warnings about day-of-month issues
+        if (cron && timezone) {
+            const scheduleValidation = validateScheduleConfig({ cron, timezone });
+            
+            if (!scheduleValidation.isValid) {
+                Object.assign(errors, scheduleValidation.errors);
+            }
+            
+            if (scheduleValidation.warnings && scheduleValidation.warnings.length > 0) {
+                warnings.push(...scheduleValidation.warnings);
+            }
+        } else {
+            // Validate individually if only one is set
+            if (cron) {
+                const cronValidation = validateCronExpression(cron);
+                if (!cronValidation.isValid) {
+                    errors.cron = cronValidation.error;
+                }
+                
+                // Still check for day-of-month warnings even if cron is invalid
+                // This helps users understand why their cron expression might be invalid
+                const dayValidation = validateDayOfMonthEdgeCases(cron);
+                if (dayValidation.warnings && dayValidation.warnings.length > 0) {
+                    warnings.push(...dayValidation.warnings);
+                }
+            }
+            
+            if (timezone) {
+                const timezoneValidation = validateTimezone(timezone);
+                if (!timezoneValidation.isValid) {
+                    errors.timezone = timezoneValidation.error;
+                }
+            }
+        }
+        
+        setInternalValidationErrors(errors);
+        setValidationWarnings(warnings);
+    }, [cron, timezone]);
+    
+    // Merge external validation errors with internal ones
+    const mergedValidationErrors = useMemo(() => {
+        return {
+            ...internalValidationErrors,
+            ...validationErrors, // External errors take precedence
+        };
+    }, [internalValidationErrors, validationErrors]);
+
+    // Sync raw cron input with prop value when it changes externally
+    useEffect(() => {
+        setRawCronInput(cron);
+    }, [cron]);
+
+    // Automatically switch to advanced mode if the cron expression becomes complex
+    // Clear warning if expression becomes simple
+    // This runs when cron changes after mount
+    useEffect(() => {
+        if (cron && isComplexCronExpression(cron) && !isAdvancedMode) {
+            setIsAdvancedMode(true);
+            sessionStorage.setItem('cronBuilderAdvancedMode', 'true');
+            setComplexExpressionWarning(
+                'This cron expression is too complex for the visual builder and must be edited in Advanced mode.'
+            );
+        } else if (cron && !isComplexCronExpression(cron)) {
+            // Clear warning if expression becomes simple
+            setComplexExpressionWarning(null);
+        }
+    }, [cron]); // Only depend on cron, not isAdvancedMode
 
     // Update preview in real-time when cron or timezone changes
     useEffect(() => {
@@ -66,6 +236,14 @@ const RecurringScheduleBuilder = ({
         if (!cron || !timezone) {
             setPreview(null);
             setPreviewError(null);
+            return;
+        }
+
+        // Don't generate preview if there are validation errors
+        if (mergedValidationErrors.cron || mergedValidationErrors.timezone) {
+            setPreview(null);
+            setPreviewError('Please fix validation errors before generating preview');
+            setIsLoadingPreview(false);
             return;
         }
 
@@ -87,7 +265,7 @@ const RecurringScheduleBuilder = ({
         }, 300);
 
         return () => clearTimeout(timeoutId);
-    }, [cron, timezone]);
+    }, [cron, timezone, mergedValidationErrors]);
 
     const handleCronChange = (newCron) => {
         // Only trigger onChange if the cron expression actually changed
@@ -106,6 +284,33 @@ const RecurringScheduleBuilder = ({
         });
     };
 
+    const handleAdvancedModeToggle = () => {
+        const newMode = !isAdvancedMode;
+        
+        setIsAdvancedMode(newMode);
+        
+        // Persist the user's choice in session storage
+        sessionStorage.setItem('cronBuilderAdvancedMode', newMode.toString());
+        
+        // Clear any warnings when switching modes
+        setComplexExpressionWarning(null);
+    };
+
+    const handleRawCronChange = (event) => {
+        const newCron = event.target.value;
+        setRawCronInput(newCron);
+    };
+
+    const handleRawCronBlur = () => {
+        // Update the parent component when user finishes editing
+        if (rawCronInput !== cron) {
+            onChange({
+                cron: rawCronInput,
+                timezone: timezone,
+            });
+        }
+    };
+
     return (
         <>
             {/* Global styles to override Ant Design components */}
@@ -117,6 +322,8 @@ const RecurringScheduleBuilder = ({
                         color: `${theme.palette.text.primary} !important`,
                         borderRadius: '4px',
                         boxShadow: theme.shadows[8],
+                        // Ensure dropdown appears above Material-UI Dialog (z-index: 1300)
+                        zIndex: '1400 !important',
                         
                         '& .ant-select-item': {
                             color: `${theme.palette.text.primary} !important`,
@@ -147,6 +354,39 @@ const RecurringScheduleBuilder = ({
                 })}
             />
             <Stack spacing={2}>
+            {/* Advanced Mode Toggle */}
+            {!isComplexCronExpression(cron) && (
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <Tooltip 
+                        title={isAdvancedMode 
+                            ? "Switch to visual builder for easier schedule configuration" 
+                            : "Switch to advanced mode to edit cron expressions directly"
+                        }
+                    >
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={isAdvancedMode ? <BuilderIcon /> : <CodeIcon />}
+                            onClick={handleAdvancedModeToggle}
+                            sx={{ textTransform: 'none' }}
+                        >
+                            {isAdvancedMode ? 'Visual Builder' : 'Advanced Mode'}
+                        </Button>
+                    </Tooltip>
+                </Box>
+            )}
+
+            {/* Complex Expression Warning */}
+            {complexExpressionWarning && (
+                <Alert 
+                    severity="warning" 
+                    icon={<InfoIcon />}
+                    onClose={() => setComplexExpressionWarning(null)}
+                >
+                    {complexExpressionWarning}
+                </Alert>
+            )}
+
             {/* Schedule Builder Section */}
             <Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -174,18 +414,45 @@ const RecurringScheduleBuilder = ({
                         },
                     })}
                 >
-                    <Cron
-                        value={cron}
-                        setValue={handleCronChange}
-                        displayError={false}
-                        clearButton={false}
-                        clockFormat="24-hour-clock"
-                        defaultPeriod="day"
-                    />
-                    {validationErrors.cron && (
-                        <Alert severity="error" sx={{ mt: 2 }}>
-                            {validationErrors.cron}
-                        </Alert>
+                    {isAdvancedMode ? (
+                        // Advanced mode: Raw cron input
+                        <Box>
+                            <TextField
+                                fullWidth
+                                label="Cron Expression"
+                                value={rawCronInput}
+                                onChange={handleRawCronChange}
+                                onBlur={handleRawCronBlur}
+                                placeholder="0 9 * * *"
+                                helperText="Enter a standard cron expression (minute hour day month weekday)"
+                                error={!!mergedValidationErrors.cron}
+                                InputProps={{
+                                    sx: { fontFamily: 'monospace' }
+                                }}
+                            />
+                            {mergedValidationErrors.cron && (
+                                <Alert severity="error" sx={{ mt: 2 }}>
+                                    {mergedValidationErrors.cron}
+                                </Alert>
+                            )}
+                        </Box>
+                    ) : (
+                        // Builder mode: Visual cron builder
+                        <>
+                            <Cron
+                                value={cron}
+                                setValue={handleCronChange}
+                                displayError={false}
+                                clearButton={false}
+                                clockFormat="24-hour-clock"
+                                defaultPeriod="day"
+                            />
+                            {mergedValidationErrors.cron && (
+                                <Alert severity="error" sx={{ mt: 2 }}>
+                                    {mergedValidationErrors.cron}
+                                </Alert>
+                            )}
+                        </>
                     )}
                 </Paper>
             </Box>
@@ -201,11 +468,27 @@ const RecurringScheduleBuilder = ({
                 <TimezoneSelector
                     value={timezone}
                     onChange={handleTimezoneChange}
-                    error={validationErrors.timezone}
+                    error={mergedValidationErrors.timezone}
                     helperText={timezone ? "Choose the timezone for schedule execution" : `Choose the timezone for schedule execution (detected: ${browserTimezone})`}
                     placeholder={`Select timezone (e.g., ${browserTimezone})`}
                 />
             </Box>
+
+            {/* Validation Warnings */}
+            {validationWarnings.length > 0 && (
+                <Alert severity="warning" icon={<InfoIcon />}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                        Schedule Considerations:
+                    </Typography>
+                    <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                        {validationWarnings.map((warning, index) => (
+                            <li key={index}>
+                                <Typography variant="body2">{warning}</Typography>
+                            </li>
+                        ))}
+                    </Box>
+                </Alert>
+            )}
 
             {/* Schedule Preview */}
             <Box>
