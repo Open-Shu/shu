@@ -1,0 +1,150 @@
+"""
+Workload Type Routing for Queue Backend.
+
+This module provides workload-based routing for the queue system, enabling
+jobs to be enqueued by logical workload type rather than hardcoded queue names.
+This abstraction enables independent scaling of different workload types.
+
+Example usage:
+    from shu.core.workload_routing import WorkloadType, enqueue_job
+    from shu.core.queue_backend import get_queue_backend
+    
+    backend = await get_queue_backend()
+    
+    # Enqueue a profiling job
+    job = await enqueue_job(
+        backend,
+        WorkloadType.PROFILING,
+        payload={"document_id": "doc123", "action": "profile"}
+    )
+    
+    # Enqueue an ingestion job
+    job = await enqueue_job(
+        backend,
+        WorkloadType.INGESTION,
+        payload={"source": "gdrive", "file_id": "abc123"}
+    )
+"""
+
+from enum import Enum
+from typing import Any, Dict
+
+from .queue_backend import Job, QueueBackend
+
+
+class WorkloadType(Enum):
+    """Categories of background work.
+    
+    Each workload type maps to a dedicated queue, enabling independent
+    scaling of workers per workload type. For example, you can scale
+    ingestion workers independently from LLM workflow workers.
+    
+    Attributes:
+        INGESTION: Document ingestion and indexing operations.
+            Examples: Fetching documents from Google Drive, parsing PDFs,
+            extracting text, creating embeddings, storing in vector DB.
+        
+        LLM_WORKFLOW: LLM-based workflows and chat operations.
+            Examples: Chat message processing, workflow execution,
+            prompt generation, LLM API calls for conversations.
+        
+        MAINTENANCE: Scheduled tasks and cleanup operations.
+            Examples: Plugin feed scheduler, cache cleanup, database
+            maintenance, expired session cleanup.
+        
+        PROFILING: Document profiling with LLM calls.
+            Examples: Generating document summaries, extracting metadata,
+            analyzing document content, creating document profiles.
+    
+    Example:
+        # Scale ingestion workers independently
+        # docker-compose.yml:
+        # worker-ingestion:
+        #   command: python -m shu.worker --workload-types=INGESTION
+        #   replicas: 5
+        #
+        # worker-llm:
+        #   command: python -m shu.worker --workload-types=LLM_WORKFLOW,PROFILING
+        #   replicas: 2
+    """
+    
+    INGESTION = "ingestion"
+    LLM_WORKFLOW = "llm_workflow"
+    MAINTENANCE = "maintenance"
+    PROFILING = "profiling"
+
+
+def get_queue_name(workload_type: WorkloadType) -> str:
+    """Map workload type to queue name.
+    
+    This function provides a consistent mapping from WorkloadType enum
+    values to concrete queue names understood by QueueBackend. All queue
+    names are prefixed with "shu:" for namespacing.
+    
+    Args:
+        workload_type: The workload type to map.
+    
+    Returns:
+        The queue name for this workload type (e.g., "shu:ingestion").
+    
+    Example:
+        queue_name = get_queue_name(WorkloadType.INGESTION)
+        # Returns: "shu:ingestion"
+        
+        job = Job(queue_name=queue_name, payload={"action": "process"})
+        await backend.enqueue(job)
+    """
+    return f"shu:{workload_type.value}"
+
+
+async def enqueue_job(
+    backend: QueueBackend,
+    workload_type: WorkloadType,
+    payload: Dict[str, Any],
+    **job_kwargs: Any,
+) -> Job:
+    """Enqueue a job for the specified workload type.
+    
+    This is the preferred way to enqueue jobs in business logic. Instead
+    of hardcoding queue names, use WorkloadType to route jobs to the
+    appropriate queue.
+    
+    Args:
+        backend: The queue backend to use (typically from dependency injection).
+        workload_type: The type of workload (e.g., WorkloadType.INGESTION).
+        payload: Job payload data as a JSON-serializable dictionary.
+        **job_kwargs: Additional Job constructor arguments (e.g., max_attempts,
+            visibility_timeout). These are passed directly to the Job constructor.
+    
+    Returns:
+        The enqueued Job instance with generated ID and timestamps.
+    
+    Raises:
+        QueueConnectionError: If the backend is unreachable.
+        QueueOperationError: If the job cannot be serialized or enqueued.
+    
+    Example:
+        from fastapi import Depends
+        from shu.core.queue_backend import get_queue_backend_dependency, QueueBackend
+        from shu.core.workload_routing import WorkloadType, enqueue_job
+        
+        async def trigger_profiling(
+            document_id: str,
+            queue: QueueBackend = Depends(get_queue_backend_dependency)
+        ):
+            job = await enqueue_job(
+                queue,
+                WorkloadType.PROFILING,
+                payload={
+                    "document_id": document_id,
+                    "action": "generate_profile"
+                },
+                max_attempts=5,
+                visibility_timeout=600  # 10 minutes
+            )
+            return {"job_id": job.id}
+    """
+    queue_name = get_queue_name(workload_type)
+    job = Job(queue_name=queue_name, payload=payload, **job_kwargs)
+    await backend.enqueue(job)
+    return job
