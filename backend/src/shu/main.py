@@ -4,6 +4,7 @@ Shu - FastAPI Application
 This module creates and configures the FastAPI application for Shu.
 """
 
+import asyncio
 import time
 import uuid
 import traceback
@@ -250,6 +251,41 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start Experiences scheduler: {e}")
 
+    # Start inline workers if worker_mode is "inline"
+    try:
+        if settings.worker_mode == "inline":
+            from .core.worker import Worker, WorkerConfig
+            from .core.workload_routing import WorkloadType
+            from .core.queue_backend import get_queue_backend
+            from .worker import process_job
+            
+            # Get queue backend
+            backend = await get_queue_backend()
+            
+            # Configure worker to consume all workload types
+            config = WorkerConfig(
+                workload_types=set(WorkloadType),
+                poll_interval=1.0,
+                shutdown_timeout=30.0,
+            )
+            
+            # Create worker
+            worker = Worker(backend, config, job_handler=process_job)
+            
+            # Start worker in background task
+            async def run_inline_worker():
+                try:
+                    await worker.run()
+                except Exception as e:
+                    logger.error(f"Inline worker error: {e}", exc_info=True)
+            
+            app.state.inline_worker_task = asyncio.create_task(run_inline_worker())
+            logger.info("Inline worker started (consuming all workload types)")
+        else:
+            logger.info(f"Worker mode is '{settings.worker_mode}', skipping inline worker startup")
+    except Exception as e:
+        logger.warning(f"Failed to start inline worker: {e}")
+
     # Plugins v1: optional auto-sync from plugins to DB registry
     try:
         if getattr(settings, "plugins_auto_sync", False):
@@ -266,25 +302,50 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cancel background schedulers
+    # Cancel and await background schedulers for clean shutdown
+    tasks_to_cancel = []
+    
     try:
         task = getattr(app.state, 'attachments_cleanup_task', None)
-        if task:
-            task.cancel()
+        if task and not task.done():
+            tasks_to_cancel.append(('attachments_cleanup', task))
     except Exception:
         pass
+    
     try:
         t2 = getattr(app.state, 'plugins_scheduler_task', None)
-        if t2:
-            t2.cancel()
+        if t2 and not t2.done():
+            tasks_to_cancel.append(('plugins_scheduler', t2))
     except Exception:
         pass
+    
     try:
         t3 = getattr(app.state, 'experiences_scheduler_task', None)
-        if t3:
-            t3.cancel()
+        if t3 and not t3.done():
+            tasks_to_cancel.append(('experiences_scheduler', t3))
     except Exception:
         pass
+    
+    try:
+        t4 = getattr(app.state, 'inline_worker_task', None)
+        if t4 and not t4.done():
+            tasks_to_cancel.append(('inline_worker', t4))
+    except Exception:
+        pass
+    
+    # Cancel all tasks
+    for name, task in tasks_to_cancel:
+        task.cancel()
+    
+    # Wait for all tasks to complete cancellation
+    if tasks_to_cancel:
+        for name, task in tasks_to_cancel:
+            try:
+                await task
+            except asyncio.CancelledError:
+                logger.debug(f"Background task '{name}' cancelled successfully")
+            except Exception as e:
+                logger.warning(f"Error while cancelling background task '{name}': {e}")
 
     # Shutdown
     logger.info("Shutting down Shu...")
