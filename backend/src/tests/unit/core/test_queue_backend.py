@@ -1511,6 +1511,448 @@ class TestRedisQueueBackendSpecific:
 # =============================================================================
 
 
+# =============================================================================
+# Property 8: Acknowledged Jobs Are Not Redelivered
+# =============================================================================
+
+
+class TestProperty8AcknowledgedJobsNotRedelivered:
+    """
+    Property 8: Acknowledged jobs are not redelivered
+    
+    *For any* queue backend, once a job is acknowledged, it SHALL NOT be
+    returned by subsequent dequeue operations, even after visibility timeout
+    would have expired.
+    
+    **Validates: Requirements 10.1**
+    
+    Feature: queue-backend-interface, Property 8: Acknowledged jobs are not redelivered
+    """
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(job=job_strategy)
+    async def test_acknowledged_jobs_not_redelivered_inmemory(self, job: Job):
+        """
+        Property test: For any job with InMemoryQueueBackend, once acknowledged,
+        it SHALL NOT be redelivered even after visibility timeout expires.
+        
+        Feature: queue-backend-interface, Property 8: Acknowledged jobs are not redelivered
+        **Validates: Requirements 10.1**
+        """
+        backend = InMemoryQueueBackend(cleanup_interval_seconds=0)
+        
+        # Enqueue the job
+        await backend.enqueue(job)
+        
+        # Dequeue the job
+        dequeued = await backend.dequeue(job.queue_name)
+        assert dequeued is not None
+        
+        # Acknowledge the job
+        ack_result = await backend.acknowledge(dequeued)
+        assert ack_result is True, "Acknowledgment should succeed"
+        
+        # Manually expire the visibility timeout (simulate time passing)
+        # This should have no effect since the job was acknowledged
+        with backend._lock:
+            # Job should not be in processing anymore
+            assert job.id not in backend._processing[job.queue_name], (
+                "Acknowledged job should be removed from processing"
+            )
+        
+        # Try to dequeue again - should get None
+        redelivered = await backend.dequeue(job.queue_name)
+        assert redelivered is None, (
+            "Acknowledged job should NOT be redelivered"
+        )
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(job=job_strategy)
+    async def test_acknowledged_jobs_not_redelivered_redis(self, job: Job):
+        """
+        Property test: For any job with RedisQueueBackend, once acknowledged,
+        it SHALL NOT be redelivered even after visibility timeout expires.
+        
+        Feature: queue-backend-interface, Property 8: Acknowledged jobs are not redelivered
+        **Validates: Requirements 10.1**
+        """
+        mock_client = MockRedisClientForQueue()
+        backend = RedisQueueBackend(mock_client)
+        
+        # Enqueue the job
+        await backend.enqueue(job)
+        
+        # Dequeue the job
+        dequeued = await backend.dequeue(job.queue_name)
+        assert dequeued is not None
+        
+        # Acknowledge the job
+        ack_result = await backend.acknowledge(dequeued)
+        assert ack_result is True, "Acknowledgment should succeed"
+        
+        # Manually expire the visibility timeout in the processing set
+        # This should have no effect since the job was acknowledged
+        processing_key = backend._processing_key(job.queue_name)
+        members = await mock_client.zrangebyscore(processing_key, "-inf", "+inf")
+        assert job.id not in members, (
+            "Acknowledged job should be removed from processing set"
+        )
+        
+        # Try to dequeue again - should get None
+        redelivered = await backend.dequeue(job.queue_name)
+        assert redelivered is None, (
+            "Acknowledged job should NOT be redelivered"
+        )
+    
+    @pytest.mark.asyncio
+    async def test_acknowledged_job_not_redelivered_with_real_timeout_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Acknowledged job not redelivered even after real timeout (InMemory)."""
+        job = Job(
+            queue_name="ack_test",
+            payload={"key": "value"},
+            visibility_timeout=1,  # 1 second
+        )
+        
+        await inmemory_queue_backend.enqueue(job)
+        dequeued = await inmemory_queue_backend.dequeue("ack_test")
+        assert dequeued is not None
+        
+        # Acknowledge the job
+        await inmemory_queue_backend.acknowledge(dequeued)
+        
+        # Wait for visibility timeout to expire
+        await asyncio.sleep(1.2)
+        
+        # Job should NOT be available
+        result = await inmemory_queue_backend.dequeue("ack_test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_acknowledged_job_not_redelivered_with_real_timeout_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Acknowledged job not redelivered even after real timeout (Redis)."""
+        job = Job(
+            queue_name="ack_test",
+            payload={"key": "value"},
+            visibility_timeout=1,  # 1 second
+        )
+        
+        await redis_queue_backend.enqueue(job)
+        dequeued = await redis_queue_backend.dequeue("ack_test")
+        assert dequeued is not None
+        
+        # Acknowledge the job
+        await redis_queue_backend.acknowledge(dequeued)
+        
+        # Wait for visibility timeout to expire
+        await asyncio.sleep(1.2)
+        
+        # Job should NOT be available
+        result = await redis_queue_backend.dequeue("ack_test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_double_acknowledge_returns_false_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Acknowledging the same job twice returns False on second attempt (InMemory)."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        
+        await inmemory_queue_backend.enqueue(job)
+        dequeued = await inmemory_queue_backend.dequeue("test")
+        assert dequeued is not None
+        
+        # First acknowledge should succeed
+        result1 = await inmemory_queue_backend.acknowledge(dequeued)
+        assert result1 is True
+        
+        # Second acknowledge should return False
+        result2 = await inmemory_queue_backend.acknowledge(dequeued)
+        assert result2 is False
+    
+    @pytest.mark.asyncio
+    async def test_double_acknowledge_returns_false_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Acknowledging the same job twice returns False on second attempt (Redis)."""
+        job = Job(queue_name="test", payload={"key": "value"})
+        
+        await redis_queue_backend.enqueue(job)
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        
+        # First acknowledge should succeed
+        result1 = await redis_queue_backend.acknowledge(dequeued)
+        assert result1 is True
+        
+        # Second acknowledge should return False
+        result2 = await redis_queue_backend.acknowledge(dequeued)
+        assert result2 is False
+
+
+# =============================================================================
+# Property 9: Rejected Jobs with Requeue Are Redelivered
+# =============================================================================
+
+
+class TestProperty9RejectedJobsWithRequeueRedelivered:
+    """
+    Property 9: Rejected jobs with requeue are redelivered
+    
+    *For any* queue backend, when a job is rejected with `requeue=True` and
+    `attempts < max_attempts`, the job SHALL become available for dequeue again.
+    
+    **Validates: Requirements 10.1**
+    
+    Feature: queue-backend-interface, Property 9: Rejected jobs with requeue are redelivered
+    """
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(
+        queue_name=queue_name_strategy,
+        payload=payload_strategy,
+        max_attempts=st.integers(min_value=2, max_value=10),
+    )
+    async def test_rejected_jobs_with_requeue_redelivered_inmemory(
+        self, queue_name: str, payload: Dict[str, Any], max_attempts: int
+    ):
+        """
+        Property test: For any job with InMemoryQueueBackend, when rejected with
+        requeue=True and attempts < max_attempts, the job SHALL be redelivered.
+        
+        Feature: queue-backend-interface, Property 9: Rejected jobs with requeue are redelivered
+        **Validates: Requirements 10.1**
+        """
+        backend = InMemoryQueueBackend(cleanup_interval_seconds=0)
+        
+        # Create a job with max_attempts > 1
+        job = Job(
+            queue_name=queue_name,
+            payload=payload,
+            max_attempts=max_attempts,
+            attempts=0,
+        )
+        
+        # Enqueue the job
+        await backend.enqueue(job)
+        
+        # Dequeue the job
+        dequeued = await backend.dequeue(queue_name)
+        assert dequeued is not None
+        assert dequeued.attempts == 1
+        
+        # Reject with requeue
+        reject_result = await backend.reject(dequeued, requeue=True)
+        assert reject_result is True, "Reject should succeed"
+        
+        # Job should be available for dequeue again
+        redelivered = await backend.dequeue(queue_name)
+        assert redelivered is not None, (
+            "Rejected job with requeue=True should be redelivered"
+        )
+        assert redelivered.id == job.id, "Redelivered job should have same ID"
+        assert redelivered.attempts == 2, (
+            f"Redelivered job should have incremented attempts: {redelivered.attempts} != 2"
+        )
+    
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(
+        queue_name=queue_name_strategy,
+        payload=payload_strategy,
+        max_attempts=st.integers(min_value=2, max_value=10),
+    )
+    async def test_rejected_jobs_with_requeue_redelivered_redis(
+        self, queue_name: str, payload: Dict[str, Any], max_attempts: int
+    ):
+        """
+        Property test: For any job with RedisQueueBackend, when rejected with
+        requeue=True and attempts < max_attempts, the job SHALL be redelivered.
+        
+        Feature: queue-backend-interface, Property 9: Rejected jobs with requeue are redelivered
+        **Validates: Requirements 10.1**
+        """
+        mock_client = MockRedisClientForQueue()
+        backend = RedisQueueBackend(mock_client)
+        
+        # Create a job with max_attempts > 1
+        job = Job(
+            queue_name=queue_name,
+            payload=payload,
+            max_attempts=max_attempts,
+            attempts=0,
+        )
+        
+        # Enqueue the job
+        await backend.enqueue(job)
+        
+        # Dequeue the job
+        dequeued = await backend.dequeue(queue_name)
+        assert dequeued is not None
+        assert dequeued.attempts == 1
+        
+        # Reject with requeue
+        reject_result = await backend.reject(dequeued, requeue=True)
+        assert reject_result is True, "Reject should succeed"
+        
+        # Job should be available for dequeue again
+        redelivered = await backend.dequeue(queue_name)
+        assert redelivered is not None, (
+            "Rejected job with requeue=True should be redelivered"
+        )
+        assert redelivered.id == job.id, "Redelivered job should have same ID"
+        assert redelivered.attempts == 2, (
+            f"Redelivered job should have incremented attempts: {redelivered.attempts} != 2"
+        )
+    
+    @pytest.mark.asyncio
+    async def test_rejected_job_without_requeue_not_redelivered_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Rejected job with requeue=False is NOT redelivered (InMemory)."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=3)
+        
+        await inmemory_queue_backend.enqueue(job)
+        dequeued = await inmemory_queue_backend.dequeue("test")
+        assert dequeued is not None
+        
+        # Reject without requeue
+        await inmemory_queue_backend.reject(dequeued, requeue=False)
+        
+        # Job should NOT be available
+        result = await inmemory_queue_backend.dequeue("test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_rejected_job_without_requeue_not_redelivered_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Rejected job with requeue=False is NOT redelivered (Redis)."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=3)
+        
+        await redis_queue_backend.enqueue(job)
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        
+        # Reject without requeue
+        await redis_queue_backend.reject(dequeued, requeue=False)
+        
+        # Job should NOT be available
+        result = await redis_queue_backend.dequeue("test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_rejected_job_at_max_attempts_not_redelivered_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Rejected job at max_attempts is NOT redelivered even with requeue=True (InMemory)."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=2, attempts=1)
+        
+        await inmemory_queue_backend.enqueue(job)
+        dequeued = await inmemory_queue_backend.dequeue("test")
+        assert dequeued is not None
+        assert dequeued.attempts == 2  # Now at max_attempts
+        
+        # Reject with requeue, but job is at max_attempts
+        await inmemory_queue_backend.reject(dequeued, requeue=True)
+        
+        # Job should NOT be available (exceeded max_attempts)
+        result = await inmemory_queue_backend.dequeue("test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_rejected_job_at_max_attempts_not_redelivered_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Rejected job at max_attempts is NOT redelivered even with requeue=True (Redis)."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=2, attempts=1)
+        
+        await redis_queue_backend.enqueue(job)
+        dequeued = await redis_queue_backend.dequeue("test")
+        assert dequeued is not None
+        assert dequeued.attempts == 2  # Now at max_attempts
+        
+        # Reject with requeue, but job is at max_attempts
+        await redis_queue_backend.reject(dequeued, requeue=True)
+        
+        # Job should NOT be available (exceeded max_attempts)
+        result = await redis_queue_backend.dequeue("test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_multiple_reject_requeue_cycles_inmemory(
+        self, inmemory_queue_backend: InMemoryQueueBackend
+    ):
+        """Unit test: Job can be rejected and requeued multiple times until max_attempts (InMemory)."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=3)
+        
+        await inmemory_queue_backend.enqueue(job)
+        
+        # First attempt
+        dequeued1 = await inmemory_queue_backend.dequeue("test")
+        assert dequeued1 is not None
+        assert dequeued1.attempts == 1
+        await inmemory_queue_backend.reject(dequeued1, requeue=True)
+        
+        # Second attempt
+        dequeued2 = await inmemory_queue_backend.dequeue("test")
+        assert dequeued2 is not None
+        assert dequeued2.attempts == 2
+        await inmemory_queue_backend.reject(dequeued2, requeue=True)
+        
+        # Third attempt (at max_attempts)
+        dequeued3 = await inmemory_queue_backend.dequeue("test")
+        assert dequeued3 is not None
+        assert dequeued3.attempts == 3
+        await inmemory_queue_backend.reject(dequeued3, requeue=True)
+        
+        # Should not be redelivered (exceeded max_attempts)
+        result = await inmemory_queue_backend.dequeue("test")
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_multiple_reject_requeue_cycles_redis(
+        self, redis_queue_backend: RedisQueueBackend
+    ):
+        """Unit test: Job can be rejected and requeued multiple times until max_attempts (Redis)."""
+        job = Job(queue_name="test", payload={"key": "value"}, max_attempts=3)
+        
+        await redis_queue_backend.enqueue(job)
+        
+        # First attempt
+        dequeued1 = await redis_queue_backend.dequeue("test")
+        assert dequeued1 is not None
+        assert dequeued1.attempts == 1
+        await redis_queue_backend.reject(dequeued1, requeue=True)
+        
+        # Second attempt
+        dequeued2 = await redis_queue_backend.dequeue("test")
+        assert dequeued2 is not None
+        assert dequeued2.attempts == 2
+        await redis_queue_backend.reject(dequeued2, requeue=True)
+        
+        # Third attempt (at max_attempts)
+        dequeued3 = await redis_queue_backend.dequeue("test")
+        assert dequeued3 is not None
+        assert dequeued3.attempts == 3
+        await redis_queue_backend.reject(dequeued3, requeue=True)
+        
+        # Should not be redelivered (exceeded max_attempts)
+        result = await redis_queue_backend.dequeue("test")
+        assert result is None
+
+
+# =============================================================================
+# Property 4: Factory Returns Singleton
+# =============================================================================
+
+
 class TestProperty4FactoryReturnsSingleton:
     """
     Property 4: Factory returns singleton
