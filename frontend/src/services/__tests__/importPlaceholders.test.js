@@ -173,7 +173,48 @@ trigger_config: "{{ trigger_config }}"
 
             const result = replacePlaceholders(yamlContent, values);
             
-            expect(result).toContain('trigger_config: \n  cron: 0 9 * * *');
+            expect(result).toContain('trigger_config: \n  cron: "0 9 * * *"');
+        });
+
+        test('handles object values with timezone', () => {
+            const yamlContent = `
+trigger_config: "{{ trigger_config }}"
+            `;
+
+            const values = {
+                trigger_config: { 
+                    cron: '0 9 * * *',
+                    timezone: 'America/Chicago'
+                }
+            };
+
+            const result = replacePlaceholders(yamlContent, values);
+            
+            // String values should be quoted to prevent YAML parsing issues
+            expect(result).toContain('trigger_config: \n  cron: "0 9 * * *"\n  timezone: "America/Chicago"');
+        });
+
+        test('does not replace placeholders in comments', () => {
+            const yamlContent = `# - {{ trigger_config }}: The actual trigger value, depending on the schedule type
+trigger_config: {{ trigger_config }}`;
+
+            const values = {
+                trigger_config: { 
+                    cron: '0 9 * * *',
+                    timezone: 'America/Chicago'
+                }
+            };
+
+            const result = replacePlaceholders(yamlContent, values);
+            
+            // Comments should be preserved unchanged
+            expect(result).toContain('# - {{ trigger_config }}: The actual trigger value, depending on the schedule type');
+            
+            // Actual value should be replaced
+            expect(result).toContain('trigger_config: \n  cron: "0 9 * * *"\n  timezone: "America/Chicago"');
+            
+            // Should not have the comment text mixed with the value
+            expect(result).not.toContain('timezone: "America/Chicago": The actual trigger value');
         });
 
         test('preserves runtime template variables', () => {

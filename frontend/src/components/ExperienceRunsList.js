@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from 'react-query';
 import {
     Box,
@@ -30,6 +30,7 @@ import {
 import { format } from 'date-fns';
 import { experiencesAPI, extractItemsFromResponse, extractPaginationFromResponse } from '../services/api';
 import ExperienceRunDetailDialog from './ExperienceRunDetailDialog';
+import { formatDateInTimezone } from '../utils/timezoneFormatter';
 
 const StatusChip = ({ status }) => {
     let color = 'default';
@@ -67,7 +68,7 @@ const StatusChip = ({ status }) => {
     );
 };
 
-export default function ExperienceRunsList({ experienceId }) {
+export default function ExperienceRunsList({ experienceId, timezone }) {
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
     const [selectedRunId, setSelectedRunId] = useState(null);
@@ -85,7 +86,7 @@ export default function ExperienceRunsList({ experienceId }) {
     const pagination = data ? extractPaginationFromResponse(data) : null;
     const totalCount = pagination?.total || 0;
 
-    const handleChangePage = (event, newPage) => {
+    const handleChangePage = (_event, newPage) => {
         setPage(newPage);
     };
 
@@ -155,7 +156,10 @@ export default function ExperienceRunsList({ experienceId }) {
                                             <StatusChip status={run.status} />
                                         </TableCell>
                                         <TableCell>
-                                            {format(start, 'MMM d, HH:mm:ss')}
+                                            {timezone 
+                                                ? formatDateInTimezone(start, timezone, 'MMM d, HH:mm:ss')
+                                                : format(start, 'MMM d, HH:mm:ss')
+                                            }
                                         </TableCell>
                                         <TableCell>{duration}</TableCell>
                                         <TableCell>
@@ -213,6 +217,7 @@ export default function ExperienceRunsList({ experienceId }) {
                     open={!!selectedRunId}
                     onClose={() => setSelectedRunId(null)}
                     runId={selectedRunId}
+                    timezone={timezone}
                 />
             )}
         </Box>

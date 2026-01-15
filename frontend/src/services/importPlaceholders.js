@@ -148,38 +148,57 @@ export function getDefaultPlaceholderValues(placeholders) {
 
 /**
  * Replace placeholders in YAML content with actual values
+ * Note: This function preserves comment lines while avoiding replacements inside them
  */
 export function replacePlaceholders(yamlContent, values) {
-    let result = yamlContent;
+    // Preserve comment lines while avoiding replacements inside them
+    const lines = yamlContent.split('\n');
+    const outputLines = [];
     
-    for (const [placeholder, value] of Object.entries(values)) {
-        if (SUPPORTED_IMPORT_PLACEHOLDERS[placeholder]) {
-            // Handle both quoted and unquoted placeholders
-            const quotedRegex = new RegExp(`"\\{\\{\\s*${placeholder}\\s*\\}\\}"`, 'g');
-            const unquotedRegex = new RegExp(`\\{\\{\\s*${placeholder}\\s*\\}\\}`, 'g');
-            
-            // Handle different value types
-            let replacementValue;
-            if (typeof value === 'object' && value !== null) {
-                // For objects like trigger_config, convert to proper YAML object
-                if (Object.keys(value).length === 0) {
-                    replacementValue = '{}';
-                } else {
-                    // Convert to YAML object format
-                    const yamlLines = Object.entries(value).map(([k, v]) => `  ${k}: ${v}`);
-                    replacementValue = `\n${yamlLines.join('\n')}`;
+    for (let line of lines) {
+        if (line.trim().startsWith('#')) {
+            // Preserve comment lines unchanged
+            outputLines.push(line);
+        } else {
+            // Process non-comment lines for placeholder replacement
+            for (const [placeholder, value] of Object.entries(values)) {
+                if (SUPPORTED_IMPORT_PLACEHOLDERS[placeholder]) {
+                    // Handle both quoted and unquoted placeholders
+                    const quotedRegex = new RegExp(`"\\{\\{\\s*${placeholder}\\s*\\}\\}"`, 'g');
+                    const unquotedRegex = new RegExp(`\\{\\{\\s*${placeholder}\\s*\\}\\}`, 'g');
+                    
+                    // Handle different value types
+                    let replacementValue;
+                    if (typeof value === 'object' && value !== null) {
+                        // For objects like trigger_config, convert to proper YAML object
+                        if (Object.keys(value).length === 0) {
+                            replacementValue = '{}';
+                        } else {
+                            // Convert to YAML object format with proper quoting for string values
+                            const yamlLines = Object.entries(value).map(([k, v]) => {
+                                // Quote string values to prevent YAML parsing issues with special characters
+                                // Escape backslashes first, then double quotes
+                                const quotedValue = typeof v === 'string' 
+                                    ? `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` 
+                                    : v;
+                                return `  ${k}: ${quotedValue}`;
+                            });
+                            replacementValue = `\n${yamlLines.join('\n')}`;
+                        }
+                    } else if (typeof value === 'string') {
+                        replacementValue = value; // Don't add extra quotes
+                    } else {
+                        replacementValue = String(value);
+                    }
+                    
+                    // Replace both quoted and unquoted versions
+                    line = line.replace(quotedRegex, replacementValue);
+                    line = line.replace(unquotedRegex, replacementValue);
                 }
-            } else if (typeof value === 'string') {
-                replacementValue = value; // Don't add extra quotes
-            } else {
-                replacementValue = String(value);
             }
-            
-            // Replace both quoted and unquoted versions
-            result = result.replace(quotedRegex, replacementValue);
-            result = result.replace(unquotedRegex, replacementValue);
+            outputLines.push(line);
         }
     }
     
-    return result;
+    return outputLines.join('\n');
 }

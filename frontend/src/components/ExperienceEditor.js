@@ -195,8 +195,13 @@ export default function ExperienceEditor() {
             errors.scheduled_at = 'Scheduled date/time is required';
         }
 
-        if (triggerType === 'cron' && !triggerConfig.cron) {
-            errors.cron = 'Cron expression is required';
+        if (triggerType === 'cron') {
+            if (!triggerConfig.cron) {
+                errors.cron = 'Cron expression is required';
+            }
+            if (!triggerConfig.timezone) {
+                errors.timezone = 'Timezone is required for recurring schedules';
+            }
         }
 
         // Validate model configuration - only validate if user has selected something
@@ -448,6 +453,14 @@ export default function ExperienceEditor() {
                                     onTriggerConfigChange={(newConfig) => {
                                         setTriggerConfig(newConfig);
                                         setIsDirty(true);
+                                        // Clear validation errors for trigger config fields when they change
+                                        if (validationErrors.scheduled_at || validationErrors.cron || validationErrors.timezone) {
+                                            const newErrors = { ...validationErrors };
+                                            delete newErrors.scheduled_at;
+                                            delete newErrors.cron;
+                                            delete newErrors.timezone;
+                                            setValidationErrors(newErrors);
+                                        }
                                     }}
                                     validationErrors={validationErrors}
                                     required={false}
@@ -560,7 +573,10 @@ export default function ExperienceEditor() {
             )}
 
             {activeTab === 1 && (
-                <ExperienceRunsList experienceId={experienceId} />
+                <ExperienceRunsList 
+                    experienceId={experienceId} 
+                    timezone={triggerConfig?.timezone}
+                />
             )}
 
             <ExperienceRunDialog

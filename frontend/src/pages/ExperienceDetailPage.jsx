@@ -1,4 +1,3 @@
-import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from 'react-query';
 import {
@@ -13,6 +12,7 @@ import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import MarkdownRenderer from '../components/shared/MarkdownRenderer';
+import { formatDateTimeFull } from '../utils/timezoneFormatter';
 
 /**
  * Full-width page displaying a single experience result.
@@ -97,6 +97,19 @@ const ExperienceDetailPage = () => {
                             p: 3,
                         }}
                     >
+                        {/* Experience metadata */}
+                        {experience.latest_run_finished_at && (
+                            <Box sx={{ mb: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
+                                <Typography variant="body2" color="text.secondary" gutterBottom>
+                                    <strong>Generated:</strong>{' '}
+                                    {experience.trigger_config?.timezone
+                                        ? formatDateTimeFull(experience.latest_run_finished_at, experience.trigger_config.timezone)
+                                        : new Date(experience.latest_run_finished_at).toLocaleString()
+                                    }
+                                </Typography>
+                            </Box>
+                        )}
+                        
                         <MarkdownRenderer
                             content={experience.result_preview}
                             isDarkMode={isDarkMode}

@@ -294,7 +294,11 @@ const ExperienceCreationStep = ({
                                         Trigger:
                                     </Typography>
                                     <Typography variant="body1">
-                                        {createdExperience?.trigger_type || 'Manual'}
+                                        {createdExperience?.trigger_type === 'cron' 
+                                            ? 'Recurring' 
+                                            : createdExperience?.trigger_type === 'scheduled'
+                                            ? 'Scheduled'
+                                            : 'Manual'}
                                     </Typography>
                                 </Box>
                             </Stack>
