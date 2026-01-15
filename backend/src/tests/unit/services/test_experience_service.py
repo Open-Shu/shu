@@ -78,8 +78,7 @@ def mock_experience_response():
         trigger_type=TriggerType.MANUAL,
         trigger_config=None,
         include_previous_run=False,
-        llm_provider_id=None,
-        model_name=None,
+        model_configuration_id=None,
         prompt_id=None,
         inline_prompt_template=None,
         max_run_seconds=120,
@@ -88,7 +87,7 @@ def mock_experience_response():
         is_active_version=True,
         parent_version_id=None,
         steps=[],
-        llm_provider=None,
+        model_configuration=None,
         prompt=None,
         step_count=0,
         last_run_at=None,
@@ -450,8 +449,8 @@ class TestUpdateExperience:
         existing_exp.trigger_type = TriggerType.MANUAL.value
         existing_exp.trigger_config = None
         existing_exp.include_previous_run = False
-        existing_exp.llm_provider_id = None
-        existing_exp.model_name = None
+        existing_exp.model_configuration_id = None
+        existing_exp.model_configuration = None
         existing_exp.prompt_id = None
         existing_exp.inline_prompt_template = None
         existing_exp.max_run_seconds = 120
@@ -464,7 +463,6 @@ class TestUpdateExperience:
         existing_exp.updated_at = datetime.now()
         existing_exp.steps = []
         existing_exp.runs = []
-        existing_exp.llm_provider = None
         existing_exp.prompt = None
         
         service = ExperienceService(mock_db_session)
@@ -487,3 +485,135 @@ class TestUpdateExperience:
         # Verify response
         assert isinstance(result, ExperienceResponse)
 
+
+class TestExperienceExport:
+    """Test experience export to YAML functionality."""
+
+    def test_export_experience_to_yaml_basic(self, service):
+        """Test basic YAML export functionality."""
+        from shu.schemas.experience import ExperienceResponse, ExperienceStepResponse
+        
+        # Create a sample experience
+        experience = ExperienceResponse(
+            id="test-experience-id",
+            name="Morning Briefing",
+            description="Daily summary of emails and calendar",
+            created_by="user-123",
+            visibility=ExperienceVisibility.PUBLISHED,
+            trigger_type=TriggerType.CRON,
+            trigger_config={
+                "cron": "0 7 * * *",
+                "timezone": "America/Chicago"
+            },
+            include_previous_run=True,
+            model_configuration_id="test-model-config-id",
+            prompt_id=None,
+            inline_prompt_template="Summarize the following information:\n\nEmails: {{ emails }}\nCalendar: {{ calendar }}",
+            max_run_seconds=120,
+            token_budget=None,
+            version=1,
+            is_active_version=True,
+            parent_version_id=None,
+            steps=[
+                ExperienceStepResponse(
+                    id="step-1",
+                    experience_id="test-experience-id",
+                    step_key="emails",
+                    step_type=StepType.PLUGIN,
+                    order=0,
+                    plugin_name="gmail",
+                    plugin_op="list",
+                    knowledge_base_id=None,
+                    kb_query_template=None,
+                    params_template={"limit": 20},
+                    condition_template=None,
+                    required_scopes=["gmail.readonly"],
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                ),
+                ExperienceStepResponse(
+                    id="step-2",
+                    experience_id="test-experience-id",
+                    step_key="calendar",
+                    step_type=StepType.PLUGIN,
+                    order=1,
+                    plugin_name="calendar",
+                    plugin_op="list",
+                    knowledge_base_id=None,
+                    kb_query_template=None,
+                    params_template={"days_ahead": 1},
+                    condition_template=None,
+                    required_scopes=["calendar.readonly"],
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
+            ],
+            model_configuration=None,
+            prompt=None,
+            step_count=2,
+            last_run_at=None,
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+        
+        # Test the export
+        yaml_content, file_name = service.export_experience_to_yaml(experience)
+
+        assert file_name == "morning-briefing-experience.yaml"
+        
+        # Verify it's valid YAML
+        assert yaml_content is not None
+        assert isinstance(yaml_content, str)
+        assert len(yaml_content) > 0
+
+        # Verify basic structure by checking for expected content
+        # (Don't parse YAML with placeholders as they're not valid YAML syntax)
+        assert "experience_yaml_version: 1" in yaml_content
+        assert "name: Morning Briefing" in yaml_content
+        assert "description: Daily summary of emails and calendar" in yaml_content
+        assert "version: 1" in yaml_content
+        assert "visibility: draft" in yaml_content
+        
+        # Verify placeholders are unquoted (this was the fix)
+        assert "trigger_type: '{{ trigger_type }}'" in yaml_content
+        assert "trigger_config: {{ trigger_config }}" in yaml_content
+        assert "model_configuration_id: '{{ model_configuration_id }}'" in yaml_content
+        assert "max_run_seconds: {{ max_run_seconds }}" in yaml_content
+        
+        # Verify steps are exported correctly
+        assert "step_key: emails" in yaml_content
+        assert "step_key: calendar" in yaml_content
+        assert "plugin_name: gmail" in yaml_content
+        assert "plugin_name: calendar" in yaml_content
+        assert "days_ahead: 1" in yaml_content
+
+    def test_remove_none_values(self, service):
+        """Test the _remove_none_values helper method."""
+        # Test with nested structure containing None values
+        data = {
+            "name": "test",
+            "description": None,
+            "config": {
+                "enabled": True,
+                "timeout": None,
+                "nested": {
+                    "value": "test",
+                    "empty": None
+                }
+            },
+            "items": [
+                {"id": 1, "name": "item1"},
+                {"id": 2, "name": None},
+                None
+            ]
+        }
+        
+        cleaned = service._remove_none_values(data)
+        
+        # Verify None values are removed
+        assert "description" not in cleaned
+        assert "timeout" not in cleaned["config"]
+        assert "empty" not in cleaned["config"]["nested"]
+        assert len(cleaned["items"]) == 2  # None item removed
+        assert cleaned["items"][1]["id"] == 2
+        assert "name" not in cleaned["items"][1]  # None name removed

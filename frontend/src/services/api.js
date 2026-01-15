@@ -581,6 +581,8 @@ export const experiencesAPI = {
   create: (data) => api.post('/experiences', data),
   update: (id, data) => api.put(`/experiences/${id}`, data),
   delete: (id) => api.delete(`/experiences/${id}`),
+  // Export functionality
+  export: (id) => api.get(`/experiences/${id}/export`, { responseType: 'blob' }),
   // Run management
   listRuns: (experienceId, params = {}) => api.get(`/experiences/${experienceId}/runs`, { params }),
   getRun: (runId) => api.get(`/experiences/runs/${runId}`),

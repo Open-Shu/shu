@@ -19,7 +19,6 @@ import KBPermissions from './components/KBPermissions';
 import LLMProviders from './components/LLMProviders';
 import ModelConfigurations from './components/ModelConfigurations';
 import Prompts from './pages/Prompts';
-import MorningBriefing from './components/MorningBriefing';
 import PluginsAdmin from './components/PluginsAdmin';
 import PluginsAdminFeeds from './components/PluginsAdminFeeds';
 import ExperiencesAdmin from './components/ExperiencesAdmin';
@@ -299,14 +298,6 @@ const AuthenticatedApp = () => {
               <ProtectedRoute requiredRole="admin">
                 <KBPermissions />
               </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/briefing"
-          element={
-            <RoleBasedRoute adminOnly>
-              <MorningBriefing />
             </RoleBasedRoute>
           }
         />

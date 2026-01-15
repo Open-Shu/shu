@@ -62,14 +62,13 @@ def upgrade() -> None:
             # Backlink flag
             sa.Column("include_previous_run", sa.Boolean(), nullable=False, server_default="false"),
 
-            # LLM Configuration
+            # LLM Configuration - using Model Configuration instead of direct provider reference
             sa.Column(
-                "llm_provider_id",
+                "model_configuration_id",
                 sa.String(36),
-                sa.ForeignKey("llm_providers.id", ondelete="SET NULL"),
+                sa.ForeignKey("model_configurations.id", ondelete="SET NULL"),
                 nullable=True,
             ),
-            sa.Column("model_name", sa.String(100), nullable=True),
 
             # Prompt configuration
             sa.Column(
@@ -103,6 +102,7 @@ def upgrade() -> None:
         op.create_index("ix_experiences_visibility", "experiences", ["visibility"])
         op.create_index("ix_experiences_active_version", "experiences", ["is_active_version"])
         op.create_index("ix_experiences_next_run_at", "experiences", ["next_run_at"])
+        op.create_index("ix_experiences_model_configuration_id", "experiences", ["model_configuration_id"])
 
     # ========================================================================
     # Part 2: Create experience_steps table
@@ -191,9 +191,8 @@ def upgrade() -> None:
                 nullable=True,
             ),
 
-            # Model snapshot at execution time
-            sa.Column("model_provider_id", sa.String(36), nullable=True),
-            sa.Column("model_name", sa.String(100), nullable=True),
+            # Model configuration used for this run (snapshot at execution time)
+            sa.Column("model_configuration_id", sa.String(36), nullable=True),
 
             # Status tracking
             sa.Column("status", sa.String(20), nullable=False, server_default="pending", index=True),
@@ -238,7 +237,10 @@ def downgrade() -> None:
     # Drop indexes first
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user_finished")
     op.execute("DROP INDEX IF EXISTS ix_experience_runs_experience_user")
+    op.execute("DROP INDEX IF EXISTS ix_experiences_visibility")
+    op.execute("DROP INDEX IF EXISTS ix_experiences_active_version")
     op.execute("DROP INDEX IF EXISTS ix_experiences_next_run_at")
+    op.execute("DROP INDEX IF EXISTS ix_experiences_model_configuration_id")
 
     # Drop tables in reverse order (respecting foreign key dependencies)
     drop_table_if_exists(inspector, "experience_runs")

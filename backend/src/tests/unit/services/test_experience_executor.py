@@ -65,6 +65,9 @@ class TestContextBuilding:
         experience = MagicMock()
         experience.include_previous_run = False
         
+        # Mock the datetime formatting method
+        executor._get_user_formatted_datetime = AsyncMock(return_value="Monday, January 15, 2024 at 2:30 PM EST")
+        
         context = await executor._build_initial_context(
             experience=experience,
             user_id="user-123",
@@ -77,7 +80,7 @@ class TestContextBuilding:
         assert context["input"] == {"query": "test"}
         assert context["steps"] == {}
         assert context["previous_run"] is None
-        assert isinstance(context["now"], datetime)
+        assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
     
     @pytest.mark.asyncio
     async def test_build_context_with_previous_run(self, executor, mock_user):
@@ -91,6 +94,7 @@ class TestContextBuilding:
         previous_run.finished_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
         
         executor._get_previous_run = AsyncMock(return_value=previous_run)
+        executor._get_user_formatted_datetime = AsyncMock(return_value="Monday, January 15, 2024 at 2:30 PM EST")
         
         context = await executor._build_initial_context(
             experience=experience,
@@ -101,6 +105,7 @@ class TestContextBuilding:
         
         assert context["previous_run"]["result_content"] == "Previous summary"
         assert context["previous_run"]["step_outputs"] == {"old_step": {"data": 123}}
+        assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
 
 
 class TestTemplateRendering:
@@ -385,8 +390,7 @@ class TestRunManagement:
         """Test run creation."""
         experience = MagicMock()
         experience.id = "exp-123"
-        experience.llm_provider_id = "provider-1"
-        experience.model_name = "gpt-4"
+        experience.model_configuration_id = "config-1"
         
         executor.db.add = MagicMock()
         executor.db.commit = AsyncMock()
@@ -401,7 +405,7 @@ class TestRunManagement:
         assert run.user_id == "user-123"
         assert run.input_params == {"query": "test"}
         assert run.status == "running"
-        assert run.model_name == "gpt-4"
+        assert run.model_configuration_id == "config-1"
     
     @pytest.mark.asyncio
     async def test_finalize_run_success(self, executor):
@@ -440,6 +444,95 @@ class TestRunManagement:
         assert run.error_message == "Something went wrong"
 
 
+class TestDatetimeFormatting:
+    """Tests for user timezone datetime formatting."""
+    
+    @pytest.fixture
+    def executor(self):
+        """Create an executor with mocked dependencies."""
+        db = AsyncMock()
+        config_manager = MagicMock()
+        return ExperienceExecutor(db, config_manager)
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_with_timezone(self, executor):
+        """Test datetime formatting with user timezone preference."""
+        # Mock user preferences query result
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = "America/New_York"
+        executor.db.execute.return_value = mock_result
+
+        # Mock datetime.now to return a fixed time for consistent testing
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)  # Monday 7:30 PM UTC
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should format in Eastern Time (UTC-5 in January)
+            # 7:30 PM UTC = 2:30 PM EST on Monday
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "2:30 PM" in result or "14:30" in result  # Handle different time formats
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_fallback_to_utc(self, executor):
+        """Test datetime formatting falls back to UTC when user timezone is invalid."""
+        # Mock user preferences query result with invalid timezone
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = "Invalid/Timezone"
+        executor.db.execute.return_value = mock_result
+
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should fall back to UTC and include timezone info
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "7:30 PM" in result or "19:30" in result
+            assert "UTC" in result
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_no_preferences(self, executor):
+        """Test datetime formatting when user has no timezone preferences."""
+        # Mock user preferences query result returning None
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        executor.db.execute.return_value = mock_result
+
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should use UTC as default
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "7:30 PM" in result or "19:30" in result
+            assert "UTC" in result
+
+    @pytest.mark.asyncio
+    async def test_get_user_formatted_datetime_db_error(self, executor):
+        """Test datetime formatting when database query fails."""
+        # Mock database error
+        executor.db.execute.side_effect = Exception("Database error")
+
+        with patch('shu.services.experience_executor.datetime') as mock_datetime:
+            fixed_utc_time = datetime(2024, 1, 15, 19, 30, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = fixed_utc_time
+
+            result = await executor._get_user_formatted_datetime("test-user-id")
+
+            # Should handle error gracefully and fall back to UTC
+            assert "Monday" in result
+            assert "January 15, 2024" in result
+            assert "UTC" in result
+
+
 class TestPreviousRunBacklink:
     """Tests for previous run retrieval."""
     
@@ -473,3 +566,362 @@ class TestPreviousRunBacklink:
         result = await executor._get_previous_run("exp-123", "user-123")
         
         assert result is None
+
+
+class TestModelConfigurationValidation:
+    """Tests for model configuration validation in executor."""
+    
+    @pytest.fixture
+    def executor(self):
+        """Create an executor with mocked dependencies."""
+        db = AsyncMock()
+        config_manager = MagicMock()
+        mock_model_config_service = AsyncMock()
+        return ExperienceExecutor(db, config_manager, mock_model_config_service)
+    
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock user."""
+        user = MagicMock()
+        user.id = "user-123"
+        user.email = "test@example.com"
+        return user
+    
+    @pytest.fixture
+    def mock_model_config(self):
+        """Create a mock model configuration."""
+        config = MagicMock()
+        config.id = "config-123"
+        config.name = "Test Config"
+        config.is_active = True
+        config.llm_provider = MagicMock()
+        config.llm_provider.name = "OpenAI"
+        config.llm_provider.is_active = True
+        config.model_name = "gpt-4"
+        return config
+    
+    @pytest.mark.asyncio
+    async def test_validate_and_load_model_config_success(self, executor, mock_user, mock_model_config):
+        """Test successful model configuration validation and loading."""
+        executor.model_config_service.validate_model_configuration_for_use.return_value = mock_model_config
+        
+        result = await executor._validate_and_load_model_config("config-123", mock_user)
+        
+        assert result == mock_model_config
+        executor.model_config_service.validate_model_configuration_for_use.assert_called_once_with(
+            "config-123",
+            current_user=mock_user,
+            include_relationships=True
+        )
+    
+    @pytest.mark.asyncio
+    async def test_validate_and_load_model_config_not_found(self, executor, mock_user):
+        """Test when model configuration is not found."""
+        from shu.core.exceptions import ModelConfigurationNotFoundError
+        
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            ModelConfigurationNotFoundError("config-123")
+        )
+        
+        result = await executor._validate_and_load_model_config("config-123", mock_user)
+        
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_validate_and_load_model_config_inactive(self, executor, mock_user):
+        """Test when model configuration is inactive."""
+        from shu.core.exceptions import ModelConfigurationInactiveError
+        
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            ModelConfigurationInactiveError("Test Config", "config-123")
+        )
+        
+        result = await executor._validate_and_load_model_config("config-123", mock_user)
+        
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_validate_and_load_model_config_provider_inactive(self, executor, mock_user):
+        """Test when model configuration provider is inactive."""
+        from shu.core.exceptions import ModelConfigurationProviderInactiveError
+        
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            ModelConfigurationProviderInactiveError("Test Config", "Test Provider")
+        )
+        
+        result = await executor._validate_and_load_model_config("config-123", mock_user)
+        
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_validate_and_load_model_config_generic_error(self, executor, mock_user):
+        """Test when a generic error occurs during validation."""
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            Exception("Database connection failed")
+        )
+        
+        result = await executor._validate_and_load_model_config("config-123", mock_user)
+        
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_model_configuration_validation_success(self, executor, mock_user, mock_model_config):
+        """Test successful model configuration validation during execution."""
+        executor.model_config_service.validate_model_configuration_for_use.return_value = mock_model_config
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
+        mock_experience.steps = []
+        
+        with patch.object(executor, '_create_run') as mock_create_run, \
+             patch.object(executor, '_build_initial_context') as mock_build_context, \
+             patch.object(executor, '_execute_steps_loop') as mock_execute_steps, \
+             patch.object(executor, '_synthesize_with_llm_streaming') as mock_synthesize, \
+             patch.object(executor, '_finalize_run') as mock_finalize:
+            
+            mock_run = MagicMock()
+            mock_run.id = "run-123"
+            mock_create_run.return_value = mock_run
+            mock_build_context.return_value = {"steps": {}}
+            
+            # Mock async generators
+            async def mock_steps_gen():
+                yield MagicMock(type="step_completed")
+            
+            async def mock_synthesis_gen():
+                yield "Hello"
+                yield {"model": "gpt-4"}
+            
+            mock_execute_steps.return_value = mock_steps_gen()
+            mock_synthesize.return_value = mock_synthesis_gen()
+            
+            # Execute streaming to test model config validation
+            events = []
+            async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                events.append(event)
+                if len(events) >= 3:  # Just get a few events to test validation
+                    break
+            
+            # Verify model configuration validation was called
+            executor.model_config_service.validate_model_configuration_for_use.assert_called_once_with(
+                "config-123",
+                current_user=mock_user,
+                include_relationships=True
+            )
+    
+    @pytest.mark.asyncio
+    async def test_model_configuration_validation_not_found(self, executor, mock_user):
+        """Test when model configuration is not found during execution."""
+        from shu.core.exceptions import ModelConfigurationNotFoundError
+        
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            ModelConfigurationNotFoundError("config-123")
+        )
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
+        
+        with patch.object(executor, '_create_run') as mock_create_run, \
+             patch.object(executor, '_finalize_run') as mock_finalize:
+            
+            mock_run = MagicMock()
+            mock_run.id = "run-123"
+            mock_create_run.return_value = mock_run
+            
+            # Execute streaming and expect error event
+            events = []
+            async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                events.append(event)
+            
+            # Should have error event
+            error_events = [e for e in events if e.type == "error"]
+            assert len(error_events) > 0
+            assert "Model configuration validation failed" in error_events[0].data["message"]
+    
+    @pytest.mark.asyncio
+    async def test_model_configuration_validation_inactive(self, executor, mock_user):
+        """Test when model configuration is inactive during execution."""
+        from shu.core.exceptions import ModelConfigurationInactiveError
+        
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            ModelConfigurationInactiveError("Test Config", "config-123")
+        )
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
+        
+        with patch.object(executor, '_create_run') as mock_create_run, \
+             patch.object(executor, '_finalize_run') as mock_finalize:
+            
+            mock_run = MagicMock()
+            mock_run.id = "run-123"
+            mock_create_run.return_value = mock_run
+            
+            # Execute streaming and expect error event
+            events = []
+            async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                events.append(event)
+            
+            # Should have error event
+            error_events = [e for e in events if e.type == "error"]
+            assert len(error_events) > 0
+            assert "Model configuration validation failed" in str(error_events[0].data["message"])
+    
+    @pytest.mark.asyncio
+    async def test_model_configuration_validation_inactive_provider(self, executor, mock_user):
+        """Test when model configuration has inactive provider during execution."""
+        from shu.core.exceptions import ModelConfigurationProviderInactiveError
+        
+        executor.model_config_service.validate_model_configuration_for_use.side_effect = (
+            ModelConfigurationProviderInactiveError("Test Config", "Test Provider")
+        )
+        
+        mock_experience = MagicMock()
+        mock_experience.id = "exp-123"
+        mock_experience.model_configuration_id = "config-123"
+        
+        with patch.object(executor, '_create_run') as mock_create_run, \
+             patch.object(executor, '_finalize_run') as mock_finalize:
+            
+            mock_run = MagicMock()
+            mock_run.id = "run-123"
+            mock_create_run.return_value = mock_run
+            
+            # Execute streaming and expect error event
+            events = []
+            async for event in executor.execute_streaming(mock_experience, "user-123", {}, mock_user):
+                events.append(event)
+            
+            # Should have error event
+            error_events = [e for e in events if e.type == "error"]
+            assert len(error_events) > 0
+            assert "Model configuration validation failed" in str(error_events[0].data["message"])
+
+
+class TestModelConfigurationOptimization:
+    """Tests for model configuration optimization in synthesis."""
+    
+    @pytest.fixture
+    def executor(self):
+        """Create an executor with mocked dependencies."""
+        db = AsyncMock()
+        config_manager = MagicMock()
+        mock_model_config_service = AsyncMock()
+        return ExperienceExecutor(db, config_manager, mock_model_config_service)
+    
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock user."""
+        user = MagicMock()
+        user.id = "user-123"
+        user.email = "test@example.com"
+        return user
+    
+    @pytest.fixture
+    def mock_experience(self):
+        """Create a mock experience with model configuration."""
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.model_configuration_id = "config-123"
+        experience.inline_prompt_template = None
+        experience.prompt = None
+        return experience
+    
+    @pytest.fixture
+    def mock_model_config(self):
+        """Create a mock model configuration."""
+        config = MagicMock()
+        config.id = "config-123"
+        config.name = "Test Config"
+        config.is_active = True
+        config.llm_provider = MagicMock()
+        config.llm_provider.name = "OpenAI"
+        config.llm_provider.is_active = True
+        config.llm_provider_id = "provider-123"
+        config.model_name = "gpt-4"
+        config.parameter_overrides = {"temperature": 0.7}
+        config.prompt = None  # No prompt configured
+        return config
+    
+    @pytest.mark.asyncio
+    async def test_synthesize_with_preloaded_model_config(self, executor, mock_user, mock_experience, mock_model_config):
+        """Test that _synthesize_with_llm_streaming uses preloaded model config without loading again."""
+        context = {"steps": {}}
+        
+        # Mock the LLM service and client
+        with patch('shu.services.experience_executor.LLMService') as mock_llm_service_class:
+            mock_llm_service = AsyncMock()
+            mock_llm_service_class.return_value = mock_llm_service
+            
+            mock_client = AsyncMock()
+            mock_llm_service.get_client.return_value = mock_client
+            
+            # Mock the chat completion to return a simple response
+            async def mock_chat_completion(**kwargs):
+                # Simulate streaming response
+                yield MagicMock(type="content_delta", content="Hello")
+                yield MagicMock(type="final_message", tokens={"prompt": 10, "completion": 5})
+            
+            mock_client.chat_completion.return_value = mock_chat_completion()
+            mock_client.close = AsyncMock()
+            
+            # Call synthesis with preloaded model config
+            results = []
+            async for chunk in executor._synthesize_with_llm_streaming(
+                mock_experience, context, mock_user, mock_model_config
+            ):
+                results.append(chunk)
+            
+            # Verify that the LLM service was used correctly
+            mock_llm_service.get_client.assert_called_once_with("provider-123")
+            mock_client.chat_completion.assert_called_once()
+            
+            # Verify the results contain expected content
+            assert len(results) >= 2  # At least content and metadata
+            assert any("Hello" in str(result) for result in results)
+            assert any(isinstance(result, dict) and "model" in result for result in results)
+    
+    @pytest.mark.asyncio
+    async def test_synthesize_without_preloaded_model_config(self, executor, mock_user, mock_experience, mock_model_config):
+        """Test that _synthesize_with_llm_streaming loads model config when not provided."""
+        context = {"steps": {}}
+        
+        # Mock the model config service to return our mock config
+        executor.model_config_service.validate_model_configuration_for_use.return_value = mock_model_config
+        
+        # Mock the LLM service and client
+        with patch('shu.services.experience_executor.LLMService') as mock_llm_service_class:
+            mock_llm_service = AsyncMock()
+            mock_llm_service_class.return_value = mock_llm_service
+            
+            mock_client = AsyncMock()
+            mock_llm_service.get_client.return_value = mock_client
+            
+            # Mock the chat completion to return a simple response
+            async def mock_chat_completion(**kwargs):
+                yield MagicMock(type="content_delta", content="Hello")
+                yield MagicMock(type="final_message", tokens={"prompt": 10, "completion": 5})
+            
+            mock_client.chat_completion.return_value = mock_chat_completion()
+            mock_client.close = AsyncMock()
+            
+            # Call synthesis without preloaded model config
+            results = []
+            async for chunk in executor._synthesize_with_llm_streaming(
+                mock_experience, context, mock_user
+            ):
+                results.append(chunk)
+            
+            # Verify that validate_model_configuration_for_use WAS called since we didn't pass the config
+            executor.model_config_service.validate_model_configuration_for_use.assert_called_once_with(
+                "config-123", 
+                current_user=mock_user,
+                include_relationships=True
+            )
+            
+            # Verify that the LLM service was used correctly
+            mock_llm_service.get_client.assert_called_once_with("provider-123")
+            mock_client.chat_completion.assert_called_once()

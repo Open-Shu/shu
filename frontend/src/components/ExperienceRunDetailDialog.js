@@ -20,13 +20,17 @@ import {
     Alert,
     Chip,
 } from '@mui/material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useTheme } from '@mui/material/styles';
 import { format } from 'date-fns';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
+import MarkdownRenderer from './shared/MarkdownRenderer';
+import { formatDateTimeFull } from '../utils/timezoneFormatter';
 
-export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
+export default function ExperienceRunDetailDialog({ open, onClose, runId, timezone }) {
+    const theme = useTheme();
+    const isDarkMode = theme.palette.mode === 'dark';
+    
     const { data: run, isLoading, error } = useQuery(
         ['experience-run', runId],
         () => experiencesAPI.getRun(runId).then(extractDataFromResponse),
@@ -62,7 +66,10 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
                 Run Details
                 {run && run.started_at && !isNaN(new Date(run.started_at).getTime()) && (
                     <Typography variant="body2" color="text.secondary">
-                        {format(new Date(run.started_at), 'MMMM d, yyyy HH:mm:ss')}
+                        {timezone 
+                            ? formatDateTimeFull(run.started_at, timezone)
+                            : format(new Date(run.started_at), 'MMMM d, yyyy HH:mm:ss')
+                        }
                     </Typography>
                 )}
             </DialogTitle>
@@ -167,9 +174,10 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId }) {
                                 }}
                             >
                                 {run.result_content ? (
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                        {run.result_content}
-                                    </ReactMarkdown>
+                                    <MarkdownRenderer
+                                        content={run.result_content}
+                                        isDarkMode={isDarkMode}
+                                    />
                                 ) : (
                                     <Typography color="text.secondary" variant="body2" fontStyle="italic">
                                         No result content.

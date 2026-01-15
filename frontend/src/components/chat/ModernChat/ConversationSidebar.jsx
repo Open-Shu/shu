@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -20,11 +21,11 @@ import {
   Delete as DeleteIcon,
   Lock as LockIcon,
   Storage as KnowledgeBaseIcon,
+  Dashboard as DashboardIcon,
 } from '@mui/icons-material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { alpha, useTheme } from '@mui/material/styles';
 import ClearIcon from '@mui/icons-material/Clear';
+import MarkdownRenderer from '../../shared/MarkdownRenderer';
 
 const ConversationSidebar = React.memo(function ConversationSidebar({
   conversations,
@@ -44,6 +45,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
   isMobile = false,
 }) {
   const theme = useTheme();
+  const isDarkMode = theme.palette.mode === 'dark';
+  const navigate = useNavigate();
 
   return (
     <Paper
@@ -58,6 +61,15 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
       }}
     >
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Button
+          fullWidth
+          variant="outlined"
+          startIcon={<DashboardIcon />}
+          onClick={() => navigate('/dashboard')}
+          sx={{ minHeight: 44 }}
+        >
+          Dashboard
+        </Button>
         <Button
           fullWidth
           variant="contained"
@@ -137,9 +149,10 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   title={(
                     <Box sx={{ maxWidth: 360, p: 0.5 }}>
                       {conversation.summary_text ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {conversation.summary_text}
-                        </ReactMarkdown>
+                        <MarkdownRenderer 
+                          content={conversation.summary_text} 
+                          isDarkMode={isDarkMode}
+                        />
                       ) : (
                         <Typography variant="caption" color="text.secondary">No summary yet</Typography>
                       )}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
     Box,
     Button,
@@ -20,6 +20,7 @@ import {
     TextField,
     Tooltip,
     Typography,
+    Alert,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -32,12 +33,24 @@ import {
     Event as CronIcon,
     History as HistoryIcon,
     AutoAwesome as ExperiencesIcon,
+    FileUpload as ImportIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import ExperienceRunDialog from './ExperienceRunDialog';
+import ExportExperienceButton from './ExportExperienceButton';
+import ImportExperienceWizard from './ImportExperienceWizard';
 import PageHelpHeader from './PageHelpHeader';
+import { MORNING_BRIEFING_YAML } from '../utils/morningBriefingTemplate';
+import { keyframes } from '@mui/system';
+
+// Pulsing animation for highlighting the import button
+const pulseAnimation = keyframes`
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.4); }
+  50% { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(25, 118, 210, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25, 118, 210, 0); }
+`;
 
 // Visibility chip colors
 const visibilityColors = {
@@ -53,8 +66,23 @@ const triggerIcons = {
     cron: <CronIcon fontSize="small" />,
 };
 
+// Helper function to format trigger type display name
+const formatTriggerTypeLabel = (triggerType) => {
+    if (triggerType === 'cron') {
+        return 'Recurring';
+    }
+    if (triggerType === 'scheduled') {
+        return 'Scheduled';
+    }
+    return 'Manual';
+};
+
 const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDeleting }) => {
     const visibilityLabel = experience.visibility?.replace('_', ' ') || 'draft';
+    
+    // Extract timezone from trigger_config for recurring/scheduled experiences
+    const timezone = experience.trigger_config?.timezone;
+    const showTimezone = (experience.trigger_type === 'cron' || experience.trigger_type === 'scheduled') && timezone;
 
     return (
         <Card
@@ -79,26 +107,57 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                                     {experience.description}
                                 </Typography>
                             )}
+                            {/* Model Configuration Display */}
+                            {experience.model_configuration ? (
+                                <Box sx={{ mt: 0.5 }}>
+                                    <Chip
+                                        size="small"
+                                        label={experience.model_configuration.name}
+                                        color="primary"
+                                        variant="outlined"
+                                        sx={{ fontSize: '0.75rem' }}
+                                    />
+                                    {experience.model_configuration.description && (
+                                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                            {experience.model_configuration.description}
+                                        </Typography>
+                                    )}
+                                </Box>
+                            ) : (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                                    No LLM synthesis configured
+                                </Typography>
+                            )}
                         </Stack>
                     </Grid>
 
                     {/* Status chips */}
                     <Grid item xs={12} sm={6} md={4}>
-                        <Stack direction="row" spacing={1} alignItems="center">
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                             <Chip
                                 size="small"
                                 label={visibilityLabel}
                                 color={visibilityColors[experience.visibility] || 'default'}
                                 variant="outlined"
                             />
-                            <Tooltip title={`Trigger: ${experience.trigger_type}`}>
+                            <Tooltip title={`Trigger: ${formatTriggerTypeLabel(experience.trigger_type)}`}>
                                 <Chip
                                     size="small"
                                     icon={triggerIcons[experience.trigger_type] || triggerIcons.manual}
-                                    label={experience.trigger_type}
+                                    label={formatTriggerTypeLabel(experience.trigger_type)}
                                     variant="outlined"
                                 />
                             </Tooltip>
+                            {showTimezone && (
+                                <Tooltip title={`Timezone: ${timezone}`}>
+                                    <Chip
+                                        size="small"
+                                        label={timezone}
+                                        variant="outlined"
+                                        color="info"
+                                    />
+                                </Tooltip>
+                            )}
                             <Chip
                                 size="small"
                                 label={`${experience.step_count || 0} steps`}
@@ -127,6 +186,12 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                                     <HistoryIcon fontSize="small" />
                                 </IconButton>
                             </Tooltip>
+                            <ExportExperienceButton
+                                experienceId={experience.id}
+                                experienceName={experience.name}
+                                variant="icon"
+                                size="small"
+                            />
                             <Tooltip title="Edit experience">
                                 <IconButton
                                     size="small"
@@ -187,8 +252,14 @@ const DeleteConfirmDialog = ({ open, experience, onClose, onConfirm, isDeleting 
 export default function ExperiencesAdmin() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const highlightImport = searchParams.get('action') === 'import-morning-briefing';
+    
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [runDialogExperience, setRunDialogExperience] = useState(null);
+    const [importWizardOpen, setImportWizardOpen] = useState(false);
+    const [prePopulatedYAML, setPrePopulatedYAML] = useState('');
+    const [showFirstTimeAlert, setShowFirstTimeAlert] = useState(false);
 
     // Fetch experiences
     const { data, isLoading, isFetching, error, refetch } = useQuery(
@@ -202,6 +273,11 @@ export default function ExperiencesAdmin() {
         // Sort by name
         return items.sort((a, b) => a.name.localeCompare(b.name));
     }, [data]);
+
+    // Manage first-time alert visibility based on experiences
+    useEffect(() => {
+        setShowFirstTimeAlert(experiences.length === 0);
+    }, [experiences]);
 
     // Delete mutation
     const deleteMutation = useMutation(
@@ -220,6 +296,41 @@ export default function ExperiencesAdmin() {
 
     const handleCreate = () => {
         navigate('/admin/experiences/new');
+    };
+
+    const handleImport = () => {
+        // Pre-populate with Morning Briefing YAML if this is the first time (no experiences) or if coming from Quick Start
+        if (experiences.length === 0 || highlightImport) {
+            setPrePopulatedYAML(MORNING_BRIEFING_YAML);
+        } else {
+            setPrePopulatedYAML('');
+        }
+        
+        // Clear the highlight param when opening the wizard
+        if (highlightImport) {
+            setSearchParams({});
+        }
+        
+        setImportWizardOpen(true);
+    };
+
+    const handleImportSuccess = (createdExperience) => {
+        // Refresh the experiences list
+        queryClient.invalidateQueries(['experiences', 'list']);
+        // Close the import wizard
+        setImportWizardOpen(false);
+        // Optionally navigate to the created experience
+        if (createdExperience?.id) {
+            navigate(`/admin/experiences/${createdExperience.id}/edit`);
+        } else {
+            // Safe fallback to experiences list if id is missing
+            navigate('/admin/experiences');
+        }
+    };
+
+    const handleImportClose = () => {
+        setImportWizardOpen(false);
+        setPrePopulatedYAML('');
     };
 
     const handleDelete = (experience) => {
@@ -255,6 +366,17 @@ export default function ExperiencesAdmin() {
                 ]}
             />
 
+            {/* Alert for first-time users */}
+            {showFirstTimeAlert && experiences.length === 0 && (
+                <Alert
+                    severity="info"
+                    sx={{ mb: 2 }}
+                    onClose={() => setShowFirstTimeAlert(false)}
+                >
+                    Click the pulsing <ImportIcon fontSize="small" sx={{ verticalAlign: 'middle', mx: 0.5 }} /> button to import the "Morning Briefing" experience and get started quickly.
+                </Alert>
+            )}
+
             {/* Header */}
             <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
                 <Box>
@@ -272,6 +394,31 @@ export default function ExperiencesAdmin() {
                         onClick={handleCreate}
                     >
                         New Experience
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        startIcon={<ImportIcon />}
+                        onClick={handleImport}
+                        title={experiences.length === 0 ? 'Click to import Morning Briefing experience' : 'Import Experience'}
+                        sx={experiences.length === 0 ? {
+                            animation: `${pulseAnimation} 1.5s ease-in-out infinite`,
+                            borderColor: 'primary.main',
+                            color: 'primary.contrastText',
+                            bgcolor: 'primary.light',
+                            '&:hover': {
+                                borderColor: 'primary.dark',
+                                bgcolor: 'primary.main',
+                            },
+                        } : {
+                            borderColor: 'primary.main',
+                            color: 'primary.main',
+                            '&:hover': {
+                                borderColor: 'primary.dark',
+                                backgroundColor: 'primary.50',
+                            },
+                        }}
+                    >
+                        Import Experience
                     </Button>
                     <Tooltip title="Refresh list">
                         <Button
@@ -334,13 +481,44 @@ export default function ExperiencesAdmin() {
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                                 Create your first experience to get started
                             </Typography>
-                            <Button
-                                variant="contained"
-                                startIcon={<AddIcon />}
-                                onClick={handleCreate}
+                            <Box
+                                sx={{
+                                flex: 1,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                textAlign: 'center',
+                                }}
                             >
-                                New Experience
-                            </Button>
+                                <Stack direction="row" spacing={1}>
+                                    <Button
+                                        variant="contained"
+                                        startIcon={<AddIcon />}
+                                        onClick={handleCreate}
+                                    >
+                                        New Experience
+                                    </Button>
+                                    <Button
+                                        variant="outlined"
+                                        startIcon={<ImportIcon />}
+                                        onClick={handleImport}
+                                        title="Click to import Morning Briefing experience"
+                                        sx={{
+                                            animation: `${pulseAnimation} 1.5s ease-in-out infinite`,
+                                            borderColor: 'primary.main',
+                                            color: 'primary.contrastText',
+                                            bgcolor: 'primary.light',
+                                            '&:hover': {
+                                                borderColor: 'primary.dark',
+                                                bgcolor: 'primary.main',
+                                            },
+                                        }}
+                                    >
+                                        Import Experience
+                                    </Button>
+                                </Stack>
+                            </Box>
                         </Box>
                     ) : (
                         experiences.map((exp) => (
@@ -379,6 +557,18 @@ export default function ExperiencesAdmin() {
                     steps={runDialogExperience.steps || []}
                 />
             )}
+
+            {/* Import Experience Wizard */}
+            <ImportExperienceWizard
+                open={importWizardOpen}
+                onClose={handleImportClose}
+                onSuccess={handleImportSuccess}
+                prePopulatedYAML={prePopulatedYAML}
+                onError={(error) => {
+                    console.error('Import failed:', error);
+                    // Keep wizard open to show error - the wizard handles error display
+                }}
+            />
         </Box>
     );
 }

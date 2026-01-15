@@ -29,7 +29,6 @@ import {
 } from '@mui/icons-material';
 import {
     experiencesAPI,
-    llmAPI,
     extractDataFromResponse,
     formatError,
 } from '../services/api';
@@ -37,7 +36,10 @@ import { promptAPI } from '../api/prompts';
 import ExperienceStepBuilder from './ExperienceStepBuilder';
 import ExperienceRunDialog from './ExperienceRunDialog';
 import ExperienceRunsList from './ExperienceRunsList';
+import ExportExperienceButton from './ExportExperienceButton';
 import TemplateVariableHints from './TemplateVariableHints';
+import TriggerConfiguration from './shared/TriggerConfiguration';
+import ModelConfigurationSelector from './shared/ModelConfigurationSelector';
 
 export default function ExperienceEditor() {
     const { experienceId } = useParams();
@@ -51,8 +53,7 @@ export default function ExperienceEditor() {
     const [visibility, setVisibility] = useState('draft');
     const [triggerType, setTriggerType] = useState('manual');
     const [triggerConfig, setTriggerConfig] = useState({});
-    const [llmProviderId, setLlmProviderId] = useState('');
-    const [modelName, setModelName] = useState('');
+    const [modelConfigurationId, setModelConfigurationId] = useState('');
     const [promptId, setPromptId] = useState('');
     const [inlinePromptTemplate, setInlinePromptTemplate] = useState('');
     const [steps, setSteps] = useState([]);
@@ -82,13 +83,6 @@ export default function ExperienceEditor() {
         }
     );
 
-    // Fetch LLM providers for selector
-    const providersQuery = useQuery(
-        ['llm-providers', 'list'],
-        () => llmAPI.getProviders().then(extractDataFromResponse),
-        { staleTime: 30000 }
-    );
-
     // Fetch prompts for selector
     const promptsQuery = useQuery(
         ['prompts', 'list'],
@@ -99,35 +93,10 @@ export default function ExperienceEditor() {
         { staleTime: 30000 }
     );
 
-    const providers = useMemo(() => {
-        const items = providersQuery.data?.items || providersQuery.data || [];
-        return Array.isArray(items) ? items : [];
-    }, [providersQuery.data]);
-
     const prompts = useMemo(() => {
         const items = promptsQuery.data || [];
         return Array.isArray(items) ? items : [];
     }, [promptsQuery.data]);
-
-    // Fetch all models for the model selector
-    const modelsQuery = useQuery(
-        ['llm-models', 'all'],
-        () => llmAPI.getModels().then(extractDataFromResponse),
-        { staleTime: 30000 }
-    );
-
-    const allModels = useMemo(() => {
-        const items = modelsQuery.data?.items || modelsQuery.data || [];
-        return Array.isArray(items) ? items : [];
-    }, [modelsQuery.data]);
-
-    // Get active models for selected provider
-    const availableModels = useMemo(() => {
-        if (!llmProviderId) return [];
-        return allModels
-            .filter(m => m.provider_id === llmProviderId && m.is_active)
-            .map(m => m.model_name || m.display_name);
-    }, [allModels, llmProviderId]);
 
     // Initialize form from existing experience
     useEffect(() => {
@@ -138,8 +107,8 @@ export default function ExperienceEditor() {
             setVisibility(exp.visibility || 'draft');
             setTriggerType(exp.trigger_type || 'manual');
             setTriggerConfig(exp.trigger_config || {});
-            setLlmProviderId(exp.llm_provider_id || '');
-            setModelName(exp.model_name || '');
+            // Use model configuration only (no legacy fields)
+            setModelConfigurationId(exp.model_configuration_id || '');
             setPromptId(exp.prompt_id || '');
             setInlinePromptTemplate(exp.inline_prompt_template || '');
             setSteps(exp.steps || []);
@@ -174,12 +143,14 @@ export default function ExperienceEditor() {
         }
     );
 
-    const handleFieldChange = (setter) => (e) => {
+    const handleFieldChange = (setter, fieldName) => (e) => {
         setter(e.target.value);
         setIsDirty(true);
-        // Clear error when field changes
-        if (Object.keys(validationErrors).length > 0) {
-            setValidationErrors({});
+        // Clear specific field error when it changes
+        if (validationErrors[fieldName]) {
+            const newErrors = { ...validationErrors };
+            delete newErrors[fieldName];
+            setValidationErrors(newErrors);
         }
     };
 
@@ -224,8 +195,20 @@ export default function ExperienceEditor() {
             errors.scheduled_at = 'Scheduled date/time is required';
         }
 
-        if (triggerType === 'cron' && !triggerConfig.cron) {
-            errors.cron = 'Cron expression is required';
+        if (triggerType === 'cron') {
+            if (!triggerConfig.cron) {
+                errors.cron = 'Cron expression is required';
+            }
+            if (!triggerConfig.timezone) {
+                errors.timezone = 'Timezone is required for recurring schedules';
+            }
+        }
+
+        // Validate model configuration - only validate if user has selected something
+        // Empty string is valid (means no LLM synthesis)
+        if (modelConfigurationId && modelConfigurationId.trim() === '') {
+            // This shouldn't happen with the selector, but just in case
+            errors.model_configuration_id = 'Invalid model configuration selection';
         }
 
         if (Object.keys(errors).length > 0) {
@@ -243,8 +226,8 @@ export default function ExperienceEditor() {
             visibility,
             trigger_type: triggerType,
             trigger_config: triggerConfig,
-            llm_provider_id: llmProviderId || null,
-            model_name: modelName || null,
+            // Use model configuration (no legacy fields)
+            model_configuration_id: modelConfigurationId || null,
             prompt_id: promptId || null,
             inline_prompt_template: inlinePromptTemplate || null,
             max_run_seconds: safeMaxRunSeconds,
@@ -343,11 +326,25 @@ export default function ExperienceEditor() {
                             onDelete={() => setSnackbar({ ...snackbar, open: false })}
                         />
                     )}
+                    {!isNew && (
+                        <ExportExperienceButton
+                            experienceId={experienceId}
+                            experienceName={name}
+                            variant="button"
+                            size="medium"
+                        />
+                    )}
                     <Button
                         variant="outlined"
                         startIcon={<RunIcon />}
                         onClick={() => setRunDialogOpen(true)}
                         disabled={isNew || isDirty || isSaving}
+                        title={
+                            isNew ? "Save the experience first" :
+                            isDirty ? "Save changes first" :
+                            isSaving ? "Saving in progress" :
+                            "Run this experience now"
+                        }
                     >
                         Run Now
                     </Button>
@@ -390,7 +387,7 @@ export default function ExperienceEditor() {
                                     <TextField
                                         label="Name"
                                         value={name}
-                                        onChange={handleFieldChange(setName)}
+                                        onChange={handleFieldChange(setName, 'name')}
                                         fullWidth
                                         required
                                         error={!!validationErrors.name}
@@ -399,7 +396,7 @@ export default function ExperienceEditor() {
                                     <TextField
                                         label="Description"
                                         value={description}
-                                        onChange={handleFieldChange(setDescription)}
+                                        onChange={handleFieldChange(setDescription, 'description')}
                                         fullWidth
                                         multiline
                                         rows={3}
@@ -410,7 +407,7 @@ export default function ExperienceEditor() {
                                             <Select
                                                 value={visibility}
                                                 label="Visibility"
-                                                onChange={handleFieldChange(setVisibility)}
+                                                onChange={handleFieldChange(setVisibility, 'visibility')}
                                             >
                                                 <MenuItem value="draft">Draft</MenuItem>
                                                 <MenuItem value="admin_only">Admin Only</MenuItem>
@@ -421,7 +418,7 @@ export default function ExperienceEditor() {
                                             label="Max Run Time (s)"
                                             type="number"
                                             value={maxRunSeconds}
-                                            onChange={handleFieldChange(setMaxRunSeconds)}
+                                            onChange={handleFieldChange(setMaxRunSeconds, 'max_run_seconds')}
                                             fullWidth
                                             inputProps={{ min: 10, max: 600 }}
                                         />
@@ -446,49 +443,29 @@ export default function ExperienceEditor() {
                                 <Typography variant="h6" gutterBottom>
                                     Trigger Configuration
                                 </Typography>
-                                <Stack spacing={2}>
-                                    <FormControl fullWidth>
-                                        <InputLabel>Trigger Type</InputLabel>
-                                        <Select
-                                            value={triggerType}
-                                            label="Trigger Type"
-                                            onChange={handleFieldChange(setTriggerType)}
-                                        >
-                                            <MenuItem value="manual">Manual</MenuItem>
-                                            <MenuItem value="scheduled">Scheduled</MenuItem>
-                                            <MenuItem value="cron">Cron</MenuItem>
-                                        </Select>
-                                    </FormControl>
-                                    {triggerType === 'scheduled' && (
-                                        <TextField
-                                            label="Scheduled Date/Time"
-                                            type="datetime-local"
-                                            value={triggerConfig.scheduled_at || ''}
-                                            onChange={(e) => {
-                                                setTriggerConfig({ ...triggerConfig, scheduled_at: e.target.value });
-                                                setIsDirty(true);
-                                            }}
-                                            fullWidth
-                                            InputLabelProps={{ shrink: true }}
-                                            error={!!validationErrors.scheduled_at}
-                                            helperText={validationErrors.scheduled_at || "One-time execution at the specified date and time"}
-                                        />
-                                    )}
-                                    {triggerType === 'cron' && (
-                                        <TextField
-                                            label="Cron Expression"
-                                            value={triggerConfig.cron || ''}
-                                            onChange={(e) => {
-                                                setTriggerConfig({ ...triggerConfig, cron: e.target.value });
-                                                setIsDirty(true);
-                                            }}
-                                            fullWidth
-                                            placeholder="0 9 * * *"
-                                            error={!!validationErrors.cron}
-                                            helperText={validationErrors.cron || "Standard cron expression (e.g., '0 9 * * *' for daily at 9am)"}
-                                        />
-                                    )}
-                                </Stack>
+                                <TriggerConfiguration
+                                    triggerType={triggerType}
+                                    triggerConfig={triggerConfig}
+                                    onTriggerTypeChange={(newType) => {
+                                        setTriggerType(newType);
+                                        setIsDirty(true);
+                                    }}
+                                    onTriggerConfigChange={(newConfig) => {
+                                        setTriggerConfig(newConfig);
+                                        setIsDirty(true);
+                                        // Clear validation errors for trigger config fields when they change
+                                        if (validationErrors.scheduled_at || validationErrors.cron || validationErrors.timezone) {
+                                            const newErrors = { ...validationErrors };
+                                            delete newErrors.scheduled_at;
+                                            delete newErrors.cron;
+                                            delete newErrors.timezone;
+                                            setValidationErrors(newErrors);
+                                        }
+                                    }}
+                                    validationErrors={validationErrors}
+                                    required={false}
+                                    showHelperText={true}
+                                />
                             </Paper>
 
                             {/* LLM Configuration */}
@@ -497,86 +474,78 @@ export default function ExperienceEditor() {
                                     LLM Configuration (Optional)
                                 </Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                    Configure the LLM to process step outputs and generate final results.
+                                    Configure the LLM to process step outputs and generate final results. 
+                                    Leave empty if you only want to collect data without AI synthesis.
                                 </Typography>
                                 <Stack spacing={2}>
-                                    <FormControl fullWidth>
-                                        <InputLabel>LLM Provider</InputLabel>
-                                        <Select
-                                            value={llmProviderId}
-                                            label="LLM Provider"
-                                            onChange={(e) => {
-                                                setLlmProviderId(e.target.value);
-                                                setModelName(''); // Reset model when provider changes
-                                                setIsDirty(true);
-                                            }}
-                                        >
-                                            <MenuItem value="">
-                                                <em>None</em>
-                                            </MenuItem>
-                                            {providers.map((p) => (
-                                                <MenuItem key={p.id} value={p.id}>
-                                                    {p.name}
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                    {llmProviderId && (
-                                        <FormControl fullWidth>
-                                            <InputLabel>Model</InputLabel>
-                                            <Select
-                                                value={modelName}
-                                                label="Model"
-                                                onChange={handleFieldChange(setModelName)}
-                                            >
-                                                <MenuItem value="">
-                                                    <em>Default</em>
-                                                </MenuItem>
-                                                {availableModels.map((m) => (
-                                                    <MenuItem key={m} value={m}>
-                                                        {m}
-                                                    </MenuItem>
-                                                ))}
-                                            </Select>
-                                        </FormControl>
-                                    )}
-                                    <Divider />
-                                    <FormControl fullWidth>
-                                        <InputLabel>Prompt Template</InputLabel>
-                                        <Select
-                                            value={promptId}
-                                            label="Prompt Template"
-                                            onChange={handleFieldChange(setPromptId)}
-                                        >
-                                            <MenuItem value="">
-                                                <em>Use inline prompt</em>
-                                            </MenuItem>
-                                            {prompts.map((p) => (
-                                                <MenuItem key={p.id} value={p.id}>
-                                                    {p.name}
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                    {!promptId && (
+                                    <ModelConfigurationSelector
+                                        modelConfigurationId={modelConfigurationId}
+                                        onModelConfigurationChange={(newConfigId) => {
+                                            setModelConfigurationId(newConfigId);
+                                            setIsDirty(true);
+                                            // Clear model configuration validation errors
+                                            if (validationErrors.model_configuration_id) {
+                                                const newErrors = { ...validationErrors };
+                                                delete newErrors.model_configuration_id;
+                                                setValidationErrors(newErrors);
+                                            }
+                                        }}
+                                        validationErrors={validationErrors}
+                                        required={false}
+                                        showHelperText={true}
+                                        label="Model Configuration"
+                                        showDetails={true}
+                                    />
+                                    
+                                    {/* Only show prompt options if model configuration is selected */}
+                                    {modelConfigurationId && (
                                         <>
-                                            <TextField
-                                                label="Inline Prompt Template"
-                                                value={inlinePromptTemplate}
-                                                onChange={handleFieldChange(setInlinePromptTemplate)}
-                                                fullWidth
-                                                multiline
-                                                rows={20}
-                                                placeholder="Use {{ step_outputs.step_key }} to reference step results"
-                                                helperText="Jinja2 template with access to step_outputs, user, and previous_run"
-                                                inputRef={inlinePromptRef}
-                                            />
-                                            <TemplateVariableHints
-                                                steps={steps}
-                                                includePreviousRun={includePreviousRun}
-                                                onInsert={handleInsertVariable}
-                                            />
+                                            <Divider />
+                                            <FormControl fullWidth>
+                                                <InputLabel>Prompt Template</InputLabel>
+                                                <Select
+                                                    value={promptId}
+                                                    label="Prompt Template"
+                                                    onChange={handleFieldChange(setPromptId, 'prompt_id')}
+                                                >
+                                                    <MenuItem value="">
+                                                        <em>Use model configuration prompt</em>
+                                                    </MenuItem>
+                                                    {prompts.map((p) => (
+                                                        <MenuItem key={p.id} value={p.id}>
+                                                            {p.name}
+                                                        </MenuItem>
+                                                    ))}
+                                                </Select>
+                                            </FormControl>
+                                            {!promptId && (
+                                                <>
+                                                    <TextField
+                                                        label="Inline Prompt Template"
+                                                        value={inlinePromptTemplate}
+                                                        onChange={handleFieldChange(setInlinePromptTemplate, 'inline_prompt_template')}
+                                                        fullWidth
+                                                        multiline
+                                                        rows={20}
+                                                        placeholder="Use {{ step_outputs.step_key }} to reference step results"
+                                                        helperText="Jinja2 template with access to step_outputs, user, and previous_run. Overrides model configuration prompt."
+                                                        inputRef={inlinePromptRef}
+                                                    />
+                                                    <TemplateVariableHints
+                                                        steps={steps}
+                                                        includePreviousRun={includePreviousRun}
+                                                        onInsert={handleInsertVariable}
+                                                    />
+                                                </>
+                                            )}
                                         </>
+                                    )}
+                                    
+                                    {/* Show helpful message when no model configuration is selected */}
+                                    {!modelConfigurationId && (
+                                        <Alert severity="info" sx={{ mt: 1 }}>
+                                            No LLM synthesis configured. This experience will only collect and return step outputs without AI processing.
+                                        </Alert>
                                     )}
                                 </Stack>
                             </Paper>
@@ -604,7 +573,10 @@ export default function ExperienceEditor() {
             )}
 
             {activeTab === 1 && (
-                <ExperienceRunsList experienceId={experienceId} />
+                <ExperienceRunsList 
+                    experienceId={experienceId} 
+                    timezone={triggerConfig?.timezone}
+                />
             )}
 
             <ExperienceRunDialog

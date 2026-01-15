@@ -11,10 +11,15 @@
     "@testing-library/react": "^13.3.0",
     "@testing-library/user-event": "^13.5.0",
     "axios": "^1.4.0",
+    "cron-parser": "^5.4.0",
+    "cronstrue": "^3.9.0",
     "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "js-yaml": "^4.1.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.43.9",
+    "react-js-cron": "^5.2.0",
     "react-json-pretty": "^2.2.0",
     "react-markdown": "^10.1.0",
     "react-query": "^3.39.3",
@@ -59,7 +64,7 @@
   },
   "jest": {
     "transformIgnorePatterns": [
-      "node_modules/(?!(axios)/)"
+      "node_modules/(?!(axios|date-fns|date-fns-tz|cron-parser|cronstrue)/)"
     ]
   },
   "browserslist": {

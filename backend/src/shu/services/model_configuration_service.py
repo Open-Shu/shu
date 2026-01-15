@@ -7,10 +7,13 @@ configurations that users select for chat and other interactions.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
+
+if TYPE_CHECKING:
+    from ..auth.models import User
 
 from shu.services.providers.adapter_base import get_adapter_from_provider
 from shu.services.providers.parameter_definitions import serialize_parameter_mapping
@@ -790,6 +793,90 @@ class ModelConfigurationService:
             )
         except ValidationError as ve:
             raise ShuException(str(ve), "PARAM_VALIDATION_ERROR")
+
+    async def validate_model_configuration_for_use(
+        self,
+        model_configuration_id: str,
+        current_user: Optional['User'] = None,
+        include_relationships: bool = True
+    ) -> ModelConfiguration:
+        """
+        Validate that model configuration exists, is active, and user has access.
+        
+        This is a shared validation method used by both ExperienceService and ExperienceExecutor
+        to ensure consistent validation logic across the codebase.
+        
+        Args:
+            model_configuration_id: Model configuration ID to validate
+            current_user: Current user for access validation
+            include_relationships: Whether to load provider relationships for validation
+            
+        Returns:
+            ModelConfiguration: Loaded and validated model configuration
+            
+        Raises:
+            ModelConfigurationNotFoundError: If configuration is not found
+            ModelConfigurationInactiveError: If configuration is inactive
+            ModelConfigurationProviderInactiveError: If underlying provider is inactive
+        """
+        from ..core.exceptions import (
+            ModelConfigurationNotFoundError,
+            ModelConfigurationInactiveError,
+            ModelConfigurationProviderInactiveError
+        )
+        
+        # Load model configuration with optional relationships
+        model_config = await self.get_model_configuration(
+            model_configuration_id,
+            include_relationships=include_relationships,
+            current_user=current_user
+        )
+        
+        if not model_config:
+            details = {"user_id": str(current_user.id)} if current_user else {}
+            raise ModelConfigurationNotFoundError(
+                config_id=model_configuration_id,
+                details=details
+            )
+        
+        if not model_config.is_active:
+            details = {
+                "description": model_config.description
+            }
+            if current_user:
+                details["user_id"] = str(current_user.id)
+                
+            raise ModelConfigurationInactiveError(
+                config_name=model_config.name,
+                config_id=model_config.id,
+                details=details
+            )
+        
+        # Validate that the underlying provider is active (only if relationships are loaded)
+        if include_relationships and (not model_config.llm_provider or not model_config.llm_provider.is_active):
+            provider_name = model_config.llm_provider.name if model_config.llm_provider else "Unknown"
+            details = {
+                "config_id": model_config.id,
+                "provider_id": model_config.llm_provider_id
+            }
+            if current_user:
+                details["user_id"] = str(current_user.id)
+                
+            raise ModelConfigurationProviderInactiveError(
+                config_name=model_config.name,
+                provider_name=provider_name,
+                details=details
+            )
+        
+        logger.debug(
+            "Successfully validated model configuration | config=%s provider=%s model=%s user=%s",
+            model_config.name,
+            model_config.llm_provider.name if model_config.llm_provider else "Unknown",
+            model_config.model_name,
+            current_user.email if current_user else "None",
+        )
+        
+        return model_config
 
     async def _update_model_configuration_parameter_overrides(self, update_dict: Dict[str, Any], provider: LLMProvider | None) -> Dict[str, Any]:
         # Handle parameter_overrides validation/update
