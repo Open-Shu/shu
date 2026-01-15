@@ -207,6 +207,8 @@ async def run_worker(
 
     try:
         await worker.run()
+    except KeyboardInterrupt:
+        logger.info("Worker interrupted by user")
     except Exception as e:
         logger.error(f"Worker error: {e}", exc_info=True)
         sys.exit(1)
