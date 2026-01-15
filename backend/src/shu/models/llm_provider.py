@@ -213,6 +213,7 @@ class Conversation(BaseModel):
     
     # Status
     is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_favorite = Column(Boolean, default=False, nullable=False, index=True)  # Favorite status for pinning conversations
     
     # Relationships
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")

@@ -22,6 +22,8 @@ import {
   Lock as LockIcon,
   Storage as KnowledgeBaseIcon,
   Dashboard as DashboardIcon,
+  Star as StarIcon,
+  StarBorder as StarBorderIcon,
 } from '@mui/icons-material';
 import { alpha, useTheme } from '@mui/material/styles';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -37,6 +39,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
   showNoModelsNote,
   onRenameConversation,
   onDeleteConversation,
+  onToggleFavorite,
   branding,
   chatStyles,
   searchValue,
@@ -169,7 +172,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     onClick={() => onSelectConversation(conversation)}
                     sx={{
                       borderRadius: 1,
-                      pr: 7,
+                      pr: 1,
                       minHeight: 56,
                       border: `1px solid ${chatStyles.conversationBorderColor}`,
                       color: selectedConversationId === conversation.id
@@ -212,6 +215,14 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                               }}
                             />
                           )}
+                          {conversation.is_favorite && (
+                            <StarIcon
+                              sx={{
+                                fontSize: 12,
+                                color: theme.palette.warning.main,
+                              }}
+                            />
+                          )}
                           {conversation?.meta?.title_locked && (
                             <Chip size="small" icon={<LockIcon sx={{ fontSize: 12 }} />} label="Locked" variant="outlined" />
                           )}
@@ -231,6 +242,35 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
 
                 <IconButton
                   className="conversation-action-button"
+                  aria-label={conversation.is_favorite ? "Remove from favorites" : "Add to favorites"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleFavorite?.(conversation);
+                  }}
+                  sx={{
+                    position: 'absolute',
+                    bottom: 4,
+                    right: 72,
+                    opacity: 0,
+                    transition: 'opacity 0.2s',
+                    color: conversation.is_favorite ? theme.palette.warning.main : theme.palette.text.secondary,
+                    '&:hover': {
+                      bgcolor: alpha(conversation.is_favorite ? theme.palette.warning.main : theme.palette.primary.main, 0.12),
+                    },
+                    width: 28,
+                    height: 28,
+                  }}
+                  size="small"
+                >
+                  {conversation.is_favorite ? (
+                    <StarIcon sx={{ fontSize: 16 }} />
+                  ) : (
+                    <StarBorderIcon sx={{ fontSize: 16 }} />
+                  )}
+                </IconButton>
+
+                <IconButton
+                  className="conversation-action-button"
                   aria-label="Rename conversation"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -238,9 +278,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   }}
                   sx={{
                     position: 'absolute',
-                    top: '50%',
+                    bottom: 4,
                     right: 40,
-                    transform: 'translateY(-50%)',
                     opacity: 0,
                     transition: 'opacity 0.2s',
                     color: theme.palette.text.secondary,
@@ -264,9 +303,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   }}
                   sx={{
                     position: 'absolute',
-                    top: '50%',
+                    bottom: 4,
                     right: 8,
-                    transform: 'translateY(-50%)',
                     opacity: 0,
                     transition: 'opacity 0.2s',
                     color: theme.palette.error.main,
