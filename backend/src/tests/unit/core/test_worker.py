@@ -14,7 +14,7 @@ from hypothesis import given, strategies as st, settings
 from typing import List, Set
 
 from shu.core.worker import Worker, WorkerConfig
-from shu.core.workload_routing import WorkloadType, get_queue_name, enqueue_job
+from shu.core.workload_routing import WorkloadType, enqueue_job
 from shu.core.queue_backend import Job, InMemoryQueueBackend
 
 
@@ -137,8 +137,7 @@ async def test_worker_consumes_only_configured_workload_types(
     # Verify: Jobs from non-configured types should remain in queues
     non_configured_types = set(WorkloadType) - configured_types
     for workload_type in non_configured_types:
-        queue_name = get_queue_name(workload_type)
-        queue_length = await backend.queue_length(queue_name)
+        queue_length = await backend.queue_length(workload_type.queue_name)
         assert queue_length == num_jobs_per_type, (
             f"Jobs from non-configured type {workload_type.value} were processed. "
             f"Expected {num_jobs_per_type} jobs in queue, found {queue_length}"
@@ -244,8 +243,7 @@ async def test_worker_rejects_failed_jobs():
     assert processed_attempts[1] == 2  # Second attempt (retry)
     
     # Verify job is no longer in queue (discarded after max attempts)
-    queue_name = get_queue_name(WorkloadType.INGESTION)
-    queue_length = await backend.queue_length(queue_name)
+    queue_length = await backend.queue_length(WorkloadType.INGESTION.queue_name)
     assert queue_length == 0
 
 
@@ -413,8 +411,7 @@ async def test_worker_graceful_shutdown_finishes_current_job():
     assert processed_jobs[0].id == job.id
     
     # Verify job was acknowledged (not in queue)
-    queue_name = get_queue_name(WorkloadType.INGESTION)
-    queue_length = await backend.queue_length(queue_name)
+    queue_length = await backend.queue_length(WorkloadType.INGESTION.queue_name)
     assert queue_length == 0
 
 
@@ -489,6 +486,5 @@ async def test_worker_graceful_shutdown_no_new_jobs():
     assert processed_jobs[0].id == job1.id
     
     # Verify second job is still in queue
-    queue_name = get_queue_name(WorkloadType.INGESTION)
-    queue_length = await backend.queue_length(queue_name)
+    queue_length = await backend.queue_length(WorkloadType.INGESTION.queue_name)
     assert queue_length == 1

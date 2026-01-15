@@ -34,28 +34,28 @@ from .queue_backend import Job, QueueBackend
 
 class WorkloadType(Enum):
     """Categories of background work.
-    
+
     Each workload type maps to a dedicated queue, enabling independent
     scaling of workers per workload type. For example, you can scale
     ingestion workers independently from LLM workflow workers.
-    
+
     Attributes:
         INGESTION: Document ingestion and indexing operations.
             Examples: Fetching documents from Google Drive, parsing PDFs,
             extracting text, creating embeddings, storing in vector DB.
-        
+
         LLM_WORKFLOW: LLM-based workflows and chat operations.
             Examples: Chat message processing, workflow execution,
             prompt generation, LLM API calls for conversations.
-        
+
         MAINTENANCE: Scheduled tasks and cleanup operations.
             Examples: Plugin feed scheduler, cache cleanup, database
             maintenance, expired session cleanup.
-        
+
         PROFILING: Document profiling with LLM calls.
             Examples: Generating document summaries, extracting metadata,
             analyzing document content, creating document profiles.
-    
+
     Example:
         # Scale ingestion workers independently
         # docker-compose.yml:
@@ -67,34 +67,26 @@ class WorkloadType(Enum):
         #   command: python -m shu.worker --workload-types=LLM_WORKFLOW,PROFILING
         #   replicas: 2
     """
-    
+
     INGESTION = "ingestion"
     LLM_WORKFLOW = "llm_workflow"
     MAINTENANCE = "maintenance"
     PROFILING = "profiling"
 
+    @property
+    def queue_name(self) -> str:
+        """Get the queue name for this workload type.
 
-def get_queue_name(workload_type: WorkloadType) -> str:
-    """Map workload type to queue name.
-    
-    This function provides a consistent mapping from WorkloadType enum
-    values to concrete queue names understood by QueueBackend. All queue
-    names are prefixed with "shu:" for namespacing.
-    
-    Args:
-        workload_type: The workload type to map.
-    
-    Returns:
-        The queue name for this workload type (e.g., "shu:ingestion").
-    
-    Example:
-        queue_name = get_queue_name(WorkloadType.INGESTION)
-        # Returns: "shu:ingestion"
-        
-        job = Job(queue_name=queue_name, payload={"action": "process"})
-        await backend.enqueue(job)
-    """
-    return f"shu:{workload_type.value}"
+        All queue names are prefixed with "shu:" for namespacing.
+
+        Returns:
+            The queue name (e.g., "shu:ingestion").
+
+        Example:
+            queue_name = WorkloadType.INGESTION.queue_name
+            # Returns: "shu:ingestion"
+        """
+        return f"shu:{self.value}"
 
 
 async def enqueue_job(
@@ -144,7 +136,6 @@ async def enqueue_job(
             )
             return {"job_id": job.id}
     """
-    queue_name = get_queue_name(workload_type)
-    job = Job(queue_name=queue_name, payload=payload, **job_kwargs)
+    job = Job(queue_name=workload_type.queue_name, payload=payload, **job_kwargs)
     await backend.enqueue(job)
     return job

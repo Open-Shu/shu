@@ -103,12 +103,12 @@ async def process_job(job):
         ValueError: If job has unknown workload type or invalid payload.
         Exception: For transient errors that should trigger retry.
     """
-    from .core.workload_routing import WorkloadType, get_queue_name
-    
+    from .core.workload_routing import WorkloadType
+
     # Determine workload type from queue name
     workload_type = None
     for wt in WorkloadType:
-        if job.queue_name == get_queue_name(wt):
+        if job.queue_name == wt.queue_name:
             workload_type = wt
             break
     

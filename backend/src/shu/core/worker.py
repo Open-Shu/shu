@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, List, Optional, Set
 
 from .queue_backend import Job, QueueBackend
-from .workload_routing import WorkloadType, get_queue_name
+from .workload_routing import WorkloadType
 
 logger = logging.getLogger(__name__)
 
@@ -222,9 +222,7 @@ class Worker:
         
         # Get queue names for configured workload types
         # Sort to ensure deterministic polling order across runs
-        queue_names = sorted([
-            get_queue_name(wt) for wt in self._config.workload_types
-        ])
+        queue_names = sorted([wt.queue_name for wt in self._config.workload_types])
         
         logger.info(
             "Worker starting",

@@ -10,7 +10,7 @@ Feature: queue-backend-interface
 import pytest
 from hypothesis import given, strategies as st, settings
 
-from shu.core.workload_routing import WorkloadType, get_queue_name, enqueue_job
+from shu.core.workload_routing import WorkloadType, enqueue_job
 from shu.core.queue_backend import Job, InMemoryQueueBackend
 
 
@@ -22,13 +22,13 @@ from shu.core.queue_backend import Job, InMemoryQueueBackend
 class TestProperty5WorkloadTypeRoutingCorrectness:
     """
     Property 5: WorkloadType routing correctness
-    
-    *For any* WorkloadType value, `get_queue_name(workload_type)` SHALL return
+
+    *For any* WorkloadType value, `workload_type.queue_name` SHALL return
     a consistent, non-empty queue name, and jobs enqueued via
     `enqueue_job(backend, workload_type, payload)` SHALL be placed in that queue.
-    
+
     **Validates: Requirements 5.2, 5.3, 5.4**
-    
+
     Feature: queue-backend-interface, Property 5: WorkloadType routing correctness
     """
     
@@ -55,22 +55,22 @@ class TestProperty5WorkloadTypeRoutingCorrectness:
         payload: dict,
     ):
         """
-        Property test: For any WorkloadType and payload, get_queue_name returns
+        Property test: For any WorkloadType and payload, queue_name property returns
         a consistent queue name, and enqueue_job places the job in that queue.
-        
+
         Feature: queue-backend-interface, Property 5: WorkloadType routing correctness
         **Validates: Requirements 5.2, 5.3, 5.4**
         """
         backend = InMemoryQueueBackend(cleanup_interval_seconds=0)
-        
+
         # Get the queue name for this workload type
-        queue_name = get_queue_name(workload_type)
-        
+        queue_name = workload_type.queue_name
+
         # Verify queue name is non-empty
         assert queue_name, f"Queue name should be non-empty for {workload_type}"
-        
-        # Verify queue name is consistent (call again)
-        queue_name_2 = get_queue_name(workload_type)
+
+        # Verify queue name is consistent (access again)
+        queue_name_2 = workload_type.queue_name
         assert queue_name == queue_name_2, (
             f"Queue name should be consistent: {queue_name} != {queue_name_2}"
         )
@@ -116,8 +116,8 @@ class TestProperty5WorkloadTypeRoutingCorrectness:
         Feature: queue-backend-interface, Property 5: WorkloadType routing correctness
         **Validates: Requirements 5.2, 5.3**
         """
-        queue_name_1 = get_queue_name(workload_type_1)
-        queue_name_2 = get_queue_name(workload_type_2)
+        queue_name_1 = workload_type_1.queue_name
+        queue_name_2 = workload_type_2.queue_name
         
         if workload_type_1 == workload_type_2:
             # Same workload type should map to same queue
@@ -146,43 +146,39 @@ class TestWorkloadTypeRouting:
     async def test_all_workload_types_have_queue_names(self):
         """Unit test: All WorkloadType enum values map to queue names."""
         for workload_type in WorkloadType:
-            queue_name = get_queue_name(workload_type)
+            queue_name = workload_type.queue_name
             assert queue_name, f"WorkloadType {workload_type} should have a queue name"
-            assert isinstance(queue_name, str), f"Queue name should be a string"
-            assert len(queue_name) > 0, f"Queue name should not be empty"
-    
+            assert isinstance(queue_name, str), "Queue name should be a string"
+            assert len(queue_name) > 0, "Queue name should not be empty"
+
     @pytest.mark.asyncio
     async def test_queue_names_are_namespaced(self):
         """Unit test: All queue names are prefixed with 'shu:'."""
         for workload_type in WorkloadType:
-            queue_name = get_queue_name(workload_type)
+            queue_name = workload_type.queue_name
             assert queue_name.startswith("shu:"), (
                 f"Queue name should be namespaced with 'shu:': {queue_name}"
             )
-    
+
     @pytest.mark.asyncio
     async def test_ingestion_workload_type(self):
         """Unit test: INGESTION workload type maps to correct queue."""
-        queue_name = get_queue_name(WorkloadType.INGESTION)
-        assert queue_name == "shu:ingestion"
-    
+        assert WorkloadType.INGESTION.queue_name == "shu:ingestion"
+
     @pytest.mark.asyncio
     async def test_llm_workflow_workload_type(self):
         """Unit test: LLM_WORKFLOW workload type maps to correct queue."""
-        queue_name = get_queue_name(WorkloadType.LLM_WORKFLOW)
-        assert queue_name == "shu:llm_workflow"
-    
+        assert WorkloadType.LLM_WORKFLOW.queue_name == "shu:llm_workflow"
+
     @pytest.mark.asyncio
     async def test_maintenance_workload_type(self):
         """Unit test: MAINTENANCE workload type maps to correct queue."""
-        queue_name = get_queue_name(WorkloadType.MAINTENANCE)
-        assert queue_name == "shu:maintenance"
-    
+        assert WorkloadType.MAINTENANCE.queue_name == "shu:maintenance"
+
     @pytest.mark.asyncio
     async def test_profiling_workload_type(self):
         """Unit test: PROFILING workload type maps to correct queue."""
-        queue_name = get_queue_name(WorkloadType.PROFILING)
-        assert queue_name == "shu:profiling"
+        assert WorkloadType.PROFILING.queue_name == "shu:profiling"
     
     @pytest.mark.asyncio
     async def test_enqueue_job_with_custom_job_kwargs(self):
