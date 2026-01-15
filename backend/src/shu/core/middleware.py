@@ -160,6 +160,23 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         return False
 
+    async def _update_daily_login(self, db, user) -> None:
+        """Update last_login if this is the user's first request of the day.
+
+        This treats the first authenticated request each calendar day (in UTC)
+        as a "login" event, providing accurate activity tracking even when
+        OAuth tokens are silently refreshed.
+        """
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+
+        # Check if last_login is null or from a previous day
+        if user.last_login is None or user.last_login.date() < now.date():
+            user.last_login = now
+            await db.commit()
+            logger.debug(f"Updated daily login for user {user.id}")
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip authentication for public endpoints
         """
@@ -253,6 +270,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         status_code=400,
                         content={"detail": "User account is inactive. Please contact an administrator for activation."}
                     )
+
+                # Update last_login on first request of the day
+                await self._update_daily_login(db, current_user)
 
                 # Build user context for RBAC
                 if getattr(request.state, "api_key_authenticated", False):
