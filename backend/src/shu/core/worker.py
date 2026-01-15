@@ -58,6 +58,9 @@ class WorkerConfig:
             worker finishes the current job but will forcefully exit
             if it takes longer than this timeout. Default is 30 seconds.
     
+    Raises:
+        ValueError: If workload_types is empty.
+    
     Example:
         # Worker that handles all workload types
         config = WorkerConfig(
@@ -80,6 +83,14 @@ class WorkerConfig:
     workload_types: Set[WorkloadType]
     poll_interval: float = 1.0
     shutdown_timeout: float = 30.0
+    
+    def __post_init__(self) -> None:
+        """Validate configuration after initialization."""
+        if not self.workload_types:
+            raise ValueError(
+                "WorkerConfig requires at least one workload type. "
+                "A worker with no workload types would never process any jobs."
+            )
 
 
 class Worker:

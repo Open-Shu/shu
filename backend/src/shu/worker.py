@@ -78,12 +78,12 @@ def parse_workload_types(workload_types_str: str) -> Set[WorkloadType]:
         try:
             workload_type = WorkloadType[name]
             workload_types.add(workload_type)
-        except KeyError:
+        except KeyError as err:
             valid_types = [wt.name for wt in WorkloadType]
             raise ValueError(
                 f"Invalid workload type: {name}. "
                 f"Valid types are: {', '.join(valid_types)}"
-            )
+            ) from err
     
     if not workload_types:
         raise ValueError("At least one workload type must be specified")
