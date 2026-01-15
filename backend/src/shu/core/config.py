@@ -137,6 +137,11 @@ class Settings(BaseSettings):
     sync_timeout: int = Field(3600, alias="SHU_SYNC_TIMEOUT")  # 1 hour
     sync_retry_attempts: int = Field(3, alias="SHU_SYNC_RETRY_ATTEMPTS")  # Default retry attempts
 
+    # Worker mode configuration
+    worker_mode: str = Field("inline", alias="SHU_WORKER_MODE")  # "inline" or "dedicated"
+    worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
+    worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
+
     # Rate limiting
     enable_rate_limiting: bool = Field(True, alias="SHU_ENABLE_RATE_LIMITING")
     rate_limit_requests: int = Field(100, alias="SHU_RATE_LIMIT_REQUESTS")
@@ -446,6 +451,15 @@ class Settings(BaseSettings):
         elif isinstance(v, list):
             return [email.strip() for email in v if email.strip()]
         return []
+
+    @field_validator("worker_mode")
+    @classmethod
+    def validate_worker_mode(cls, v):
+        """Validate worker mode setting."""
+        valid_modes = ["inline", "dedicated"]
+        if v.lower() not in valid_modes:
+            raise ValueError(f"Worker mode must be one of: {valid_modes}")
+        return v.lower()
 
     model_config = SettingsConfigDict(
         env_file=".env",
