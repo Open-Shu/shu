@@ -265,8 +265,8 @@ async def lifespan(app: FastAPI):
             # Configure worker to consume all workload types
             config = WorkerConfig(
                 workload_types=set(WorkloadType),
-                poll_interval=1.0,
-                shutdown_timeout=30.0,
+                poll_interval=settings.worker_poll_interval,
+                shutdown_timeout=settings.worker_shutdown_timeout,
             )
             
             # Create worker

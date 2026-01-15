@@ -139,6 +139,8 @@ class Settings(BaseSettings):
 
     # Worker mode configuration
     worker_mode: str = Field("inline", alias="SHU_WORKER_MODE")  # "inline" or "dedicated"
+    worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
+    worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
     # Rate limiting
     enable_rate_limiting: bool = Field(True, alias="SHU_ENABLE_RATE_LIMITING")

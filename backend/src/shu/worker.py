@@ -250,27 +250,27 @@ Valid workload types:
              "If not specified, consumes all workload types."
     )
     
+    # Get settings first so we can use them as defaults
+    settings = get_settings_instance()
+
     parser.add_argument(
         "--poll-interval",
         type=float,
-        default=1.0,
-        help="Seconds between dequeue attempts when idle (default: 1.0)"
+        default=settings.worker_poll_interval,
+        help=f"Seconds between dequeue attempts when idle (default: {settings.worker_poll_interval})"
     )
-    
+
     parser.add_argument(
         "--shutdown-timeout",
         type=float,
-        default=30.0,
-        help="Seconds to wait for current job on shutdown (default: 30.0)"
+        default=settings.worker_shutdown_timeout,
+        help=f"Seconds to wait for current job on shutdown (default: {settings.worker_shutdown_timeout})"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging()
-    
-    # Get settings
-    settings = get_settings_instance()
     
     logger.info(
         "Worker entrypoint starting",
