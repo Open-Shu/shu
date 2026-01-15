@@ -40,6 +40,19 @@ Use this section to locate live systems quickly and avoid reinventing them. Each
   - Standards: docs/policies/DEVELOPMENT_STANDARDS.md Section 25
 
 
+- Queue System
+  - Unified Interface: src/shu/core/queue_backend.py (QueueBackend protocol, Job dataclass, get_queue_backend factory)
+  - Redis Backend: RedisQueueBackend (production/multi-node deployments with competing consumers)
+  - In-Memory Backend: InMemoryQueueBackend (development/single-node)
+  - Workload Routing: src/shu/core/workload_routing.py (WorkloadType enum, enqueue_job helper)
+  - Worker: src/shu/core/worker.py (Worker class, WorkerConfig)
+  - Worker Entrypoint: src/shu/worker.py (dedicated worker process)
+  - Backend Selection: Automatic based on SHU_REDIS_URL configuration
+  - Worker Mode: SHU_WORKER_MODE (inline with API or dedicated process)
+  - Usage: Background job processing, document profiling, scheduled tasks
+  - Standards: docs/policies/DEVELOPMENT_STANDARDS.md Section 26
+
+
 - API Routers (FastAPI)
   - Aggregation: src/shu/main.py (includes routers; see app.include_router calls)
   - Plugins/Feeds/Executions: src/shu/api/plugins.py

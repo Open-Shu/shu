@@ -317,6 +317,89 @@ service = SomeService(db, config_manager)  # Service receives config_manager
   - **Impact**: Affects plugin cache, rate limiting, configuration cache, and quota tracking
   - **Deployment flexibility**: Same application code works with or without Redis
 
+#### Queue Configuration
+- `SHU_REDIS_URL`: Redis connection string for queue backend (shared with cache)
+  - **When set and Redis is reachable**: Uses RedisQueueBackend for all queue operations
+  - **When not set**: Uses InMemoryQueueBackend for all queue operations
+  - **Impact**: Affects background job processing, document profiling, scheduled tasks
+  - **Deployment flexibility**: Same application code works with or without Redis
+
+- `SHU_WORKER_MODE`: Worker deployment mode (default: `inline`)
+  - **`inline`** (default): Workers run in-process with the API server
+    - Suitable for single-node deployments, development, and bare-metal installs
+    - No additional processes needed - workers start automatically with the API
+    - Uses InMemoryQueueBackend when Redis is not configured
+  - **`dedicated`**: Workers run as separate processes
+    - Suitable for horizontally-scaled containerized deployments
+    - API process starts without workers (API-only mode)
+    - Workers started separately via `python -m shu.worker`
+    - Requires Redis for cross-process queue communication
+
+##### Worker Entrypoint (Dedicated Mode)
+When `SHU_WORKER_MODE=dedicated`, start workers separately:
+
+```bash
+# Start a worker consuming all workload types
+python -m shu.worker
+
+# Start a worker for specific workload types only
+python -m shu.worker --workload-types INGESTION,PROFILING
+
+# Start multiple specialized workers (in separate terminals/containers)
+python -m shu.worker --workload-types INGESTION
+python -m shu.worker --workload-types LLM_WORKFLOW
+python -m shu.worker --workload-types MAINTENANCE,PROFILING
+```
+
+##### Horizontal Scaling Scenarios
+
+**Scenario 1: Single-Node Development/Bare-Metal**
+```bash
+# No Redis needed, workers run in-process
+SHU_WORKER_MODE=inline  # or unset (default)
+# Start API - workers included automatically
+python -m uvicorn shu.main:app --app-dir backend/src
+```
+
+**Scenario 2: Horizontally-Scaled Production**
+```bash
+# Redis required for cross-process communication
+SHU_REDIS_URL=redis://redis:6379/0
+SHU_WORKER_MODE=dedicated
+
+# Deploy API replicas (no workers)
+# Container 1-N: API only
+python -m uvicorn shu.main:app --app-dir backend/src
+
+# Deploy specialized worker replicas
+# Container A1-AN: Ingestion workers (scale based on document volume)
+python -m shu.worker --workload-types INGESTION
+
+# Container B1-BN: LLM workers (scale based on LLM request volume)
+python -m shu.worker --workload-types LLM_WORKFLOW
+
+# Container C1-CN: Maintenance workers (typically 1-2 replicas)
+python -m shu.worker --workload-types MAINTENANCE,PROFILING
+```
+
+**Scenario 3: Mixed Workload Scaling**
+```bash
+# Scale ingestion workers independently from LLM workers
+# Useful when document ingestion spikes don't correlate with chat usage
+
+# Kubernetes example:
+# - api: 3 replicas, SHU_WORKER_MODE=dedicated
+# - worker-ingestion: 5 replicas, --workload-types INGESTION
+# - worker-llm: 2 replicas, --workload-types LLM_WORKFLOW
+# - worker-maintenance: 1 replica, --workload-types MAINTENANCE,PROFILING
+```
+
+##### WorkloadType Reference
+- **INGESTION**: Document ingestion and indexing tasks
+- **LLM_WORKFLOW**: LLM-based workflows and chat processing
+- **MAINTENANCE**: Scheduled tasks, cleanup, and system maintenance
+- **PROFILING**: Document profiling (LLM-based analysis)
+
 #### Sync Configuration
 - `SHU_SYNC_TIMEOUT`: Default timeout for sync operations in seconds (default: `3600`)
 - `SHU_SYNC_RETRY_ATTEMPTS`: Default number of retry attempts for failed documents (default: `3`)
