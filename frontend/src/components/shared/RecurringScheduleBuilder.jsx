@@ -109,7 +109,9 @@ const RecurringScheduleBuilder = ({
     onChange,
     validationErrors = {},
 }) => {
-    const { cron = '0 9 * * *', timezone = '' } = value;
+    // Treat empty string as undefined to use default value
+    const cron = value.cron || '0 9 * * *';
+    const timezone = value.timezone || '';
     
     // State for schedule preview
     const [preview, setPreview] = useState(null);

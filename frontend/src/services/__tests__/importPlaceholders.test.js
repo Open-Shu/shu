@@ -207,8 +207,8 @@ trigger_config: {{ trigger_config }}`;
 
             const result = replacePlaceholders(yamlContent, values);
             
-            // Comments should be stripped out
-            expect(result).not.toContain('# - {{ trigger_config }}');
+            // Comments should be preserved unchanged
+            expect(result).toContain('# - {{ trigger_config }}: The actual trigger value, depending on the schedule type');
             
             // Actual value should be replaced
             expect(result).toContain('trigger_config: \n  cron: "0 9 * * *"\n  timezone: "America/Chicago"');
