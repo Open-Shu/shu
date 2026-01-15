@@ -335,6 +335,13 @@ service = SomeService(db, config_manager)  # Service receives config_manager
     - Workers started separately via `python -m shu.worker`
     - Requires Redis for cross-process queue communication
 
+- `SHU_WORKER_CONCURRENCY`: Number of concurrent worker tasks per process (default: `10`)
+  - Controls how many async worker tasks run concurrently within a single process
+  - Higher values improve throughput for I/O-bound jobs (LLM calls, API requests)
+  - All workers share the same queue backend and compete for jobs
+  - Applies to both inline workers (with API) and dedicated worker processes
+  - Recommended: 8-16 for I/O-bound workloads, lower for CPU-bound work
+
 ##### Separate Worker Processes
 When `SHU_WORKERS_ENABLED=false` on the API, start workers separately:
 
@@ -342,12 +349,15 @@ When `SHU_WORKERS_ENABLED=false` on the API, start workers separately:
 # Start a worker consuming all workload types
 python -m shu.worker
 
+# Start a worker with increased concurrency (4 concurrent tasks)
+python -m shu.worker --concurrency 4
+
 # Start a worker for specific workload types only
 python -m shu.worker --workload-types INGESTION,PROFILING
 
 # Start multiple specialized workers (in separate terminals/containers)
-python -m shu.worker --workload-types INGESTION
-python -m shu.worker --workload-types LLM_WORKFLOW
+python -m shu.worker --workload-types INGESTION --concurrency 4
+python -m shu.worker --workload-types LLM_WORKFLOW --concurrency 2
 python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
 

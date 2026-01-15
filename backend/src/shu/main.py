@@ -261,7 +261,7 @@ async def lifespan(app: FastAPI):
             from .core.queue_backend import get_queue_backend
             from .worker import process_job
 
-            # Get queue backend
+            # Get queue backend (shared by all workers)
             backend = await get_queue_backend()
 
             # Configure worker to consume all workload types
@@ -271,22 +271,30 @@ async def lifespan(app: FastAPI):
                 shutdown_timeout=settings.worker_shutdown_timeout,
             )
 
-            # Create worker
-            worker = Worker(backend, config, job_handler=process_job)
+            # Create N concurrent workers
+            concurrency = max(1, settings.worker_concurrency)
+            app.state.inline_worker_tasks = []
 
-            # Start worker in background task
-            async def run_inline_worker():
-                try:
-                    await worker.run()
-                except Exception as e:
-                    logger.error(f"Inline worker error: {e}", exc_info=True)
+            for i in range(concurrency):
+                worker_id = f"{i + 1}/{concurrency}"
+                worker = Worker(backend, config, job_handler=process_job, worker_id=worker_id)
 
-            app.state.inline_worker_task = asyncio.create_task(run_inline_worker())
-            logger.info("Inline worker started (consuming all workload types)")
+                async def run_inline_worker(w=worker, wid=worker_id):
+                    try:
+                        await w.run()
+                    except Exception as e:
+                        logger.error(f"Inline worker {wid} error: {e}", exc_info=True)
+
+                task = asyncio.create_task(run_inline_worker())
+                app.state.inline_worker_tasks.append(task)
+
+            logger.info(
+                f"Inline workers started (concurrency={concurrency}, consuming all workload types)"
+            )
         else:
             logger.info("Workers disabled (SHU_WORKERS_ENABLED=false), skipping inline worker startup")
     except Exception as e:
-        logger.warning(f"Failed to start inline worker: {e}")
+        logger.warning(f"Failed to start inline workers: {e}")
 
     # Plugins v1: optional auto-sync from plugins to DB registry
     try:
@@ -309,18 +317,23 @@ async def lifespan(app: FastAPI):
         ('attachments_cleanup', 'attachments_cleanup_task'),
         ('plugins_scheduler', 'plugins_scheduler_task'),
         ('experiences_scheduler', 'experiences_scheduler_task'),
-        ('inline_worker', 'inline_worker_task'),
     ]
     tasks_to_cancel = []
     for name, attr in task_attrs:
         task = getattr(app.state, attr, None)
         if task and not task.done():
             tasks_to_cancel.append((name, task))
-    
+
+    # Add inline worker tasks (list of concurrent workers)
+    inline_worker_tasks = getattr(app.state, 'inline_worker_tasks', [])
+    for i, task in enumerate(inline_worker_tasks):
+        if task and not task.done():
+            tasks_to_cancel.append((f'inline_worker_{i + 1}', task))
+
     # Cancel all tasks
     for name, task in tasks_to_cancel:
         task.cancel()
-    
+
     # Wait for all tasks to complete cancellation
     if tasks_to_cancel:
         for name, task in tasks_to_cancel:

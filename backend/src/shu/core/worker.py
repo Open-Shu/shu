@@ -165,19 +165,23 @@ class Worker:
         backend: QueueBackend,
         config: WorkerConfig,
         job_handler: Callable[[Job], Awaitable[None]],
+        worker_id: Optional[str] = None,
     ):
         """Initialize the worker.
-        
+
         Args:
             backend: The queue backend to use for dequeuing jobs.
             config: Worker configuration specifying workload types and timeouts.
             job_handler: Async function that processes a job. Should raise
                 an exception if processing fails. The worker will handle
                 acknowledgment/rejection based on success/failure.
+            worker_id: Optional identifier for this worker instance (e.g., "1/4").
+                Used in logs to distinguish concurrent workers in the same process.
         """
         self._backend = backend
         self._config = config
         self._handler = job_handler
+        self._worker_id = worker_id
         self._running = False
         self._current_job: Optional[Job] = None
         self._queue_index: int = 0  # Round-robin index for fair queue polling
@@ -224,27 +228,29 @@ class Worker:
         # Sort to ensure deterministic polling order across runs
         queue_names = sorted([wt.queue_name for wt in self._config.workload_types])
         
+        worker_label = f"Worker[{self._worker_id}]" if self._worker_id else "Worker"
         logger.info(
-            "Worker starting",
+            f"{worker_label} starting",
             extra={
+                "worker_id": self._worker_id,
                 "workload_types": [wt.value for wt in self._config.workload_types],
                 "queue_names": queue_names,
                 "poll_interval": self._config.poll_interval,
                 "shutdown_timeout": self._config.shutdown_timeout,
             }
         )
-        
+
         while self._running:
             # Try to dequeue from any of the configured queues
             job = await self._dequeue_from_any(queue_names)
-            
+
             if job:
                 await self._process_job(job)
             else:
                 # No jobs available, sleep before trying again
                 await asyncio.sleep(self._config.poll_interval)
-        
-        logger.info("Worker stopped")
+
+        logger.info(f"{worker_label} stopped", extra={"worker_id": self._worker_id})
     
     async def _dequeue_from_any(
         self,
@@ -310,18 +316,20 @@ class Worker:
             logger.info(
                 "Job completed successfully",
                 extra={
+                    "worker_id": self._worker_id,
                     "job_id": job.id,
                     "queue": job.queue_name,
                     "attempts": job.attempts,
                     "duration_ms": int(duration * 1000),
                 }
             )
-        
+
         except Exception as e:
             duration = time.time() - start_time
             logger.error(
                 "Job processing failed",
                 extra={
+                    "worker_id": self._worker_id,
                     "job_id": job.id,
                     "queue": job.queue_name,
                     "error": str(e),
@@ -331,15 +339,16 @@ class Worker:
                 },
                 exc_info=True
             )
-            
+
             # Requeue if under max attempts
             should_requeue = job.attempts < job.max_attempts
             await self._backend.reject(job, requeue=should_requeue)
-            
+
             if should_requeue:
                 logger.info(
                     "Job requeued for retry",
                     extra={
+                        "worker_id": self._worker_id,
                         "job_id": job.id,
                         "queue": job.queue_name,
                         "attempts": job.attempts,
@@ -350,6 +359,7 @@ class Worker:
                 logger.warning(
                     "Job discarded after max attempts",
                     extra={
+                        "worker_id": self._worker_id,
                         "job_id": job.id,
                         "queue": job.queue_name,
                         "attempts": job.attempts,

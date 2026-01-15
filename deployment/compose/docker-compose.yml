@@ -143,6 +143,7 @@ services:
       - SHU_LOG_LEVEL=INFO
       - SHU_LOG_FORMAT=text
       - SHU_ENVIRONMENT=production
+      - SHU_WORKER_CONCURRENCY=10
       - SHU_WORKER_POLL_INTERVAL=1.0
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
@@ -173,6 +174,7 @@ services:
       - SHU_LOG_LEVEL=DEBUG
       - SHU_LOG_FORMAT=text
       - SHU_ENVIRONMENT=development
+      - SHU_WORKER_CONCURRENCY=10
       - SHU_WORKER_POLL_INTERVAL=0.5
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
