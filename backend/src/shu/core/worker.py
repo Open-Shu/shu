@@ -180,6 +180,7 @@ class Worker:
         self._handler = job_handler
         self._running = False
         self._current_job: Optional[Job] = None
+        self._queue_index: int = 0  # Round-robin index for fair queue polling
     
     def _setup_signal_handlers(self) -> None:
         """Setup graceful shutdown on SIGTERM and SIGINT.
@@ -251,31 +252,37 @@ class Worker:
         self,
         queue_names: List[str],
     ) -> Optional[Job]:
-        """Try to dequeue from any of the configured queues.
-        
-        Attempts to dequeue from each queue in order. Returns the first
-        job found, or None if all queues are empty.
-        
+        """Try to dequeue from any of the configured queues using round-robin.
+
+        Uses round-robin polling to ensure fair processing across all queues.
+        Each call starts from the next queue in rotation, preventing any single
+        queue from starving others when under continuous load.
+
         Args:
             queue_names: List of queue names to try dequeuing from.
-        
+
         Returns:
             The first job found, or None if no jobs are available.
         """
-        for queue_name in queue_names:
+        num_queues = len(queue_names)
+
+        for i in range(num_queues):
+            idx = (self._queue_index + i) % num_queues
+            queue_name = queue_names[idx]
             try:
-                job = await self._backend.dequeue(
-                    queue_name,
-                    timeout_seconds=0.1,  # Very short timeout to check each queue quickly
-                )
+                job = await self._backend.dequeue(queue_name)
                 if job:
+                    # Advance to next queue for next poll cycle
+                    self._queue_index = (idx + 1) % num_queues
                     return job
             except Exception as e:
                 logger.error(
                     f"Failed to dequeue from queue '{queue_name}': {e}",
                     extra={"queue_name": queue_name, "error": str(e)}
                 )
-        
+
+        # No jobs found, still advance index for fairness on next poll
+        self._queue_index = (self._queue_index + 1) % num_queues
         return None
     
     async def _process_job(self, job: Job) -> None:
