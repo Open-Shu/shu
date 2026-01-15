@@ -1,9 +1,8 @@
 """
-Unit tests for worker mode configuration.
+Unit tests for worker configuration.
 
-These tests verify that the worker mode configuration works correctly,
-including inline mode (workers run with API) and dedicated mode (workers
-run separately).
+These tests verify that the workers_enabled configuration works correctly,
+controlling whether background workers run in-process with the API.
 
 Feature: queue-backend-interface
 Validates: Requirements 7.1, 7.2, 7.5, 7.6
@@ -25,117 +24,106 @@ from shu.worker import parse_workload_types, run_worker
 
 
 @pytest.fixture
-def mock_settings_inline():
-    """Create mock settings with inline worker mode."""
+def mock_settings_workers_enabled():
+    """Create mock settings with workers enabled."""
     settings = MagicMock(spec=Settings)
-    settings.worker_mode = "inline"
+    settings.workers_enabled = True
     settings.version = "test"
     settings.environment = "test"
     return settings
 
 
 @pytest.fixture
-def mock_settings_dedicated():
-    """Create mock settings with dedicated worker mode."""
+def mock_settings_workers_disabled():
+    """Create mock settings with workers disabled."""
     settings = MagicMock(spec=Settings)
-    settings.worker_mode = "dedicated"
+    settings.workers_enabled = False
     settings.version = "test"
     settings.environment = "test"
     return settings
 
 
 # =============================================================================
-# Worker Mode Configuration Tests
+# Workers Enabled Configuration Tests
 # =============================================================================
 
 
-def test_settings_worker_mode_default():
+def test_settings_workers_enabled_default():
     """
-    Test that worker_mode defaults to 'inline'.
+    Test that workers_enabled defaults to True.
 
     Validates: Requirements 7.1
 
-    When SHU_WORKER_MODE is not set, the default should be 'inline'.
+    When SHU_WORKERS_ENABLED is not set, workers should be enabled by default.
     """
-    # Create settings without SHU_WORKER_MODE
     with patch.dict(os.environ, {}, clear=False):
-        # Remove SHU_WORKER_MODE if it exists
-        os.environ.pop("SHU_WORKER_MODE", None)
+        os.environ.pop('SHU_WORKERS_ENABLED', None)
 
-        # Create settings (will use default)
         from shu.core.config import Settings
 
         settings = Settings()
 
-        assert settings.worker_mode == "inline"
+        assert settings.workers_enabled is True
 
 
-def test_settings_worker_mode_inline():
+def test_settings_workers_enabled_true():
     """
-    Test that worker_mode can be set to 'inline'.
+    Test that workers_enabled can be set to true.
 
     Validates: Requirements 7.1
 
-    When SHU_WORKER_MODE is set to 'inline', workers should run
+    When SHU_WORKERS_ENABLED is set to 'true', workers should run
     in-process with the API.
     """
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "inline"}, clear=False):
+    with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'true'}, clear=False):
         from shu.core.config import Settings
 
         settings = Settings()
 
-        assert settings.worker_mode == "inline"
+        assert settings.workers_enabled is True
 
 
-def test_settings_worker_mode_dedicated():
+def test_settings_workers_enabled_false():
     """
-    Test that worker_mode can be set to 'dedicated'.
+    Test that workers_enabled can be set to false.
 
     Validates: Requirements 7.2
 
-    When SHU_WORKER_MODE is set to 'dedicated', workers should NOT
+    When SHU_WORKERS_ENABLED is set to 'false', workers should NOT
     start with the API process.
     """
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "dedicated"}, clear=False):
+    with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'false'}, clear=False):
         from shu.core.config import Settings
 
         settings = Settings()
 
-        assert settings.worker_mode == "dedicated"
+        assert settings.workers_enabled is False
 
 
-def test_settings_worker_mode_invalid():
+def test_settings_workers_enabled_case_variations():
     """
-    Test that invalid worker_mode values are rejected.
+    Test that workers_enabled accepts various boolean representations.
 
     Validates: Requirements 7.1, 7.2
 
-    Only 'inline' and 'dedicated' should be valid values.
+    'True', 'TRUE', '1', 'yes' should all be accepted as true.
+    'False', 'FALSE', '0', 'no' should all be accepted as false.
     """
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "invalid"}, clear=False):
-        from shu.core.config import Settings
+    true_cases = ['true', 'True', 'TRUE', '1', 'yes', 'on']
+    false_cases = ['false', 'False', 'FALSE', '0', 'no', 'off']
 
-        with pytest.raises(ValueError, match="Worker mode must be one of"):
-            Settings()
+    for val in true_cases:
+        with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': val}, clear=False):
+            from shu.core.config import Settings
+            settings = Settings()
+            assert settings.workers_enabled is True, f"Expected True for '{val}'"
 
-
-def test_settings_worker_mode_case_insensitive():
-    """
-    Test that worker_mode is case-insensitive.
-
-    Validates: Requirements 7.1, 7.2
-
-    'INLINE', 'Inline', 'inline' should all work.
-    """
-    test_cases = ["INLINE", "Inline", "inline", "DEDICATED", "Dedicated", "dedicated"]
-
-    for mode in test_cases:
-        with patch.dict(os.environ, {"SHU_WORKER_MODE": mode}, clear=False):
+    for val in false_cases:
+        with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': val}, clear=False):
             from shu.core.config import Settings
 
             settings = Settings()
-
-            assert settings.worker_mode.lower() in ["inline", "dedicated"]
+            assert settings.workers_enabled is False, f"Expected False for '{val}'"
 
 
 # =============================================================================
@@ -235,40 +223,41 @@ def test_parse_workload_types_duplicate():
 
 
 @pytest.mark.asyncio
-async def test_inline_worker_starts_with_api():
+async def test_workers_enabled_starts_with_api():
     """
-    Test that inline mode starts workers with API.
+    Test that workers start with API when enabled.
 
     Validates: Requirements 7.1, 7.5
 
-    When worker_mode is 'inline', workers should start automatically
+    When workers_enabled is True, workers should start automatically
     when the API starts.
 
+
     This test verifies the integration by checking that the lifespan
-    creates a worker task when mode is 'inline'.
+    creates a worker task when workers are enabled.
     """
     from fastapi import FastAPI
 
-    from shu.main import lifespan
-
-    # Create app with inline mode
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "inline"}, clear=False):
+    # Create app with workers enabled
+    with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'true'}, clear=False):
         app = FastAPI()
 
+
         # Mock the worker components to avoid actual worker startup
-        with (
-            patch("shu.core.queue_backend.get_queue_backend") as mock_get_backend,
-            patch("shu.core.worker.Worker") as mock_worker_class,
-            patch("shu.main.init_db") as mock_init_db,
-        ):
+        with patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
+             patch('shu.core.worker.Worker') as mock_worker_class, \
+             patch('shu.main.init_db') as mock_init_db:
+
             # Setup mocks
             mock_backend = AsyncMock()
             mock_get_backend.return_value = mock_backend
             mock_init_db.return_value = None
 
+
             mock_worker = MagicMock()
             mock_worker.run = AsyncMock()
             mock_worker_class.return_value = mock_worker
+
 
             # Run lifespan startup
             async with lifespan(app):
@@ -276,9 +265,11 @@ async def test_inline_worker_starts_with_api():
                 assert hasattr(app.state, "inline_worker_task")
                 assert app.state.inline_worker_task is not None
 
+
                 # Verify worker was created with correct config
                 mock_worker_class.assert_called_once()
                 call_args = mock_worker_class.call_args
+
 
                 # Check that config has all workload types
                 config = call_args[0][1]  # Second positional arg is config
@@ -286,22 +277,22 @@ async def test_inline_worker_starts_with_api():
 
 
 @pytest.mark.asyncio
-async def test_dedicated_worker_skips_startup():
+async def test_workers_disabled_skips_startup():
     """
-    Test that dedicated mode configuration is respected.
+    Test that workers don't start when disabled.
 
     Validates: Requirements 7.2, 7.5
 
-    When worker_mode is 'dedicated', the configuration should be set correctly.
-    The actual skipping of worker startup is tested in the API startup test.
+    When workers_enabled is False, the configuration should be set correctly.
     """
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "dedicated"}, clear=False):
+    with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'false'}, clear=False):
         from shu.core.config import Settings
 
         settings = Settings()
 
+
         # Verify settings are correct
-        assert settings.worker_mode == "dedicated"
+        assert settings.workers_enabled is False
 
 
 @pytest.mark.asyncio
@@ -357,34 +348,37 @@ async def test_worker_entrypoint_starts_without_api():
 
 
 @pytest.mark.asyncio
-async def test_api_starts_cleanly_in_inline_mode():
+async def test_api_starts_cleanly_with_workers_enabled():
     """
     Test that API starts cleanly with inline workers.
 
+
     Validates: Requirements 7.5
 
-    The API should start successfully when worker_mode is 'inline',
+    The API should start successfully when workers_enabled is True,
     with workers running in the same process.
     """
     from shu.main import create_app
 
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "inline"}, clear=False):
+    with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'true'}, clear=False):
         # Mock worker components to avoid actual startup
-        with (
-            patch("shu.core.queue_backend.get_queue_backend") as mock_get_backend,
-            patch("shu.core.worker.Worker") as mock_worker_class,
-            patch("shu.main.init_db") as mock_init_db,
-        ):
+        with patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
+             patch('shu.core.worker.Worker') as mock_worker_class, \
+             patch('shu.main.init_db') as mock_init_db:
+
             mock_backend = AsyncMock()
             mock_get_backend.return_value = mock_backend
             mock_init_db.return_value = None
+
 
             mock_worker = MagicMock()
             mock_worker.run = AsyncMock()
             mock_worker_class.return_value = mock_worker
 
+
             # Create app
             app = create_app()
+
 
             # Verify app was created successfully
             assert app is not None
@@ -392,24 +386,27 @@ async def test_api_starts_cleanly_in_inline_mode():
 
 
 @pytest.mark.asyncio
-async def test_api_starts_cleanly_in_dedicated_mode():
+async def test_api_starts_cleanly_with_workers_disabled():
     """
     Test that API starts cleanly without workers.
 
+
     Validates: Requirements 7.5
 
-    The API should start successfully when worker_mode is 'dedicated',
+    The API should start successfully when workers_enabled is False,
     without starting any workers.
     """
     from shu.main import create_app
 
-    with patch.dict(os.environ, {"SHU_WORKER_MODE": "dedicated"}, clear=False):
+    with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'false'}, clear=False):
         # Mock init_db to avoid database connection
         with patch("shu.main.init_db") as mock_init_db:
             mock_init_db.return_value = None
 
+
             # Create app
             app = create_app()
+
 
             # Verify app was created successfully
             assert app is not None

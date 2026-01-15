@@ -255,16 +255,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start Experiences scheduler: {e}")
 
-    # Start inline workers if worker_mode is "inline"
+    # Start inline workers if workers are enabled
     try:
-        if settings.worker_mode == "inline":
-            from .core.queue_backend import get_queue_backend
+        if settings.workers_enabled:
             from .core.worker import Worker, WorkerConfig
             from .core.workload_routing import WorkloadType
             from .worker import process_job
 
+
             # Get queue backend
             backend = await get_queue_backend()
+
 
             # Configure worker to consume all workload types
             config = WorkerConfig(
@@ -273,8 +274,10 @@ async def lifespan(app: FastAPI):
                 shutdown_timeout=settings.worker_shutdown_timeout,
             )
 
+
             # Create worker
             worker = Worker(backend, config, job_handler=process_job)
+
 
             # Start worker in background task
             async def run_inline_worker():
@@ -283,10 +286,11 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.error(f"Inline worker error: {e}", exc_info=True)
 
+
             app.state.inline_worker_task = asyncio.create_task(run_inline_worker())
             logger.info("Inline worker started (consuming all workload types)")
         else:
-            logger.info(f"Worker mode is '{settings.worker_mode}', skipping inline worker startup")
+            logger.info("Workers disabled (SHU_WORKERS_ENABLED=false), skipping inline worker startup")
     except Exception as e:
         logger.warning(f"Failed to start inline worker: {e}")
 
