@@ -162,14 +162,15 @@ async def run_worker(
     workload_types: set[WorkloadType],
     poll_interval: float = 1.0,
     shutdown_timeout: float = 30.0,
+    concurrency: int = 1,
 ) -> None:
-    """Run the worker loop.
+    """Run the worker loop with configurable concurrency.
 
     Args:
         workload_types: Set of workload types to consume.
         poll_interval: Seconds between dequeue attempts when idle.
         shutdown_timeout: Seconds to wait for current job on shutdown.
-
+        concurrency: Number of concurrent worker tasks to run.
     """
     # Initialize database connection
     try:
@@ -179,13 +180,14 @@ async def run_worker(
         logger.error(f"Failed to initialize database: {e}", exc_info=True)
         sys.exit(1)
 
-    # Get queue backend
+    # Get queue backend (shared by all workers)
     try:
         backend = await get_queue_backend()
         logger.info("Queue backend initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize queue backend: {e}", exc_info=True)
         sys.exit(1)
+
 
     # Create worker configuration
     config = WorkerConfig(
@@ -194,27 +196,35 @@ async def run_worker(
         shutdown_timeout=shutdown_timeout,
     )
 
-    # Create and run worker
-    worker = Worker(backend, config, job_handler=process_job)
+    # Create N concurrent workers
+    concurrency = max(1, concurrency)
+    workers = []
+    for i in range(concurrency):
+        worker_id = f"{i + 1}/{concurrency}"
+        worker = Worker(backend, config, job_handler=process_job, worker_id=worker_id)
+        workers.append(worker)
 
     logger.info(
-        "Starting dedicated worker",
+        "Starting dedicated workers",
         extra={
+            "concurrency": concurrency,
             "workload_types": [wt.value for wt in workload_types],
             "poll_interval": poll_interval,
             "shutdown_timeout": shutdown_timeout,
         },
     )
 
+
     try:
-        await worker.run()
+        # Run all workers concurrently
+        await asyncio.gather(*[w.run() for w in workers])
     except KeyboardInterrupt:
-        logger.info("Worker interrupted by user")
+        logger.info("Workers interrupted by user")
     except Exception as e:
         logger.error(f"Worker error: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        logger.info("Worker shutdown complete")
+        logger.info("Workers shutdown complete")
 
 
 def main() -> None:
@@ -264,7 +274,14 @@ Valid workload types:
         "--shutdown-timeout",
         type=float,
         default=settings.worker_shutdown_timeout,
-        help=f"Seconds to wait for current job on shutdown (default: {settings.worker_shutdown_timeout})",
+        help=f"Seconds to wait for current job on shutdown (default: {settings.worker_shutdown_timeout})"
+    )
+
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=settings.worker_concurrency,
+        help=f"Number of concurrent worker tasks (default: {settings.worker_concurrency})"
     )
 
     args = parser.parse_args()
@@ -272,13 +289,16 @@ Valid workload types:
     # Setup logging
     setup_logging()
 
+
     logger.info(
         "Worker entrypoint starting",
         extra={
             "version": settings.version,
             "environment": settings.environment,
-        },
+            "concurrency": args.concurrency,
+        }
     )
+
 
     # Parse workload types
     try:
@@ -292,6 +312,7 @@ Valid workload types:
         logger.error(f"Invalid workload types: {e}")
         sys.exit(1)
 
+
     # Run worker
     try:
         asyncio.run(
@@ -299,6 +320,7 @@ Valid workload types:
                 workload_types=workload_types,
                 poll_interval=args.poll_interval,
                 shutdown_timeout=args.shutdown_timeout,
+                concurrency=args.concurrency,
             )
         )
     except Exception as e:

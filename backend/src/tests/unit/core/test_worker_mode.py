@@ -127,6 +127,52 @@ def test_settings_workers_enabled_case_variations():
 
 
 # =============================================================================
+# Worker Concurrency Configuration Tests
+# =============================================================================
+
+
+def test_settings_worker_concurrency_default():
+    """
+    Test that worker_concurrency defaults to 10.
+
+    When SHU_WORKER_CONCURRENCY is not set, concurrency should be 10.
+    """
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop('SHU_WORKER_CONCURRENCY', None)
+
+        from shu.core.config import Settings
+        settings = Settings()
+
+        assert settings.worker_concurrency == 10
+
+
+def test_settings_worker_concurrency_custom():
+    """
+    Test that worker_concurrency can be configured.
+
+    When SHU_WORKER_CONCURRENCY is set to a value, it should be used.
+    """
+    with patch.dict(os.environ, {'SHU_WORKER_CONCURRENCY': '4'}, clear=False):
+        from shu.core.config import Settings
+        settings = Settings()
+
+        assert settings.worker_concurrency == 4
+
+
+def test_settings_worker_concurrency_high_value():
+    """
+    Test that worker_concurrency accepts high values.
+
+    For I/O-bound workloads, users may want high concurrency.
+    """
+    with patch.dict(os.environ, {'SHU_WORKER_CONCURRENCY': '16'}, clear=False):
+        from shu.core.config import Settings
+        settings = Settings()
+
+        assert settings.worker_concurrency == 16
+
+
+# =============================================================================
 # Worker Entrypoint Tests
 # =============================================================================
 
@@ -234,11 +280,11 @@ async def test_workers_enabled_starts_with_api():
 
 
     This test verifies the integration by checking that the lifespan
-    creates a worker task when workers are enabled.
+    creates worker tasks when workers are enabled.
     """
     from fastapi import FastAPI
 
-    # Create app with workers enabled
+    # Create app with workers enabled (concurrency=1 default)
     with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'true'}, clear=False):
         app = FastAPI()
 
@@ -261,19 +307,76 @@ async def test_workers_enabled_starts_with_api():
 
             # Run lifespan startup
             async with lifespan(app):
-                # Verify worker task was created
-                assert hasattr(app.state, "inline_worker_task")
-                assert app.state.inline_worker_task is not None
-
+                # Verify worker tasks list was created
+                assert hasattr(app.state, 'inline_worker_tasks')
+                assert isinstance(app.state.inline_worker_tasks, list)
+                assert len(app.state.inline_worker_tasks) >= 1
 
                 # Verify worker was created with correct config
-                mock_worker_class.assert_called_once()
+                mock_worker_class.assert_called()
                 call_args = mock_worker_class.call_args
 
 
                 # Check that config has all workload types
                 config = call_args[0][1]  # Second positional arg is config
                 assert config.workload_types == set(WorkloadType)
+
+
+@pytest.mark.asyncio
+async def test_workers_enabled_with_concurrency():
+    """
+    Test that multiple workers start when concurrency > 1.
+
+    When SHU_WORKER_CONCURRENCY is set, that many workers should be created.
+    """
+    from shu.main import lifespan
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    # Create mock settings with concurrency=3
+    mock_settings = MagicMock(spec=Settings)
+    mock_settings.workers_enabled = True
+    mock_settings.worker_concurrency = 3
+    mock_settings.worker_poll_interval = 1.0
+    mock_settings.worker_shutdown_timeout = 30.0
+    mock_settings.version = "test"
+    mock_settings.environment = "test"
+    mock_settings.debug = False
+    mock_settings.plugins_scheduler_enabled = False
+    mock_settings.experiences_scheduler_enabled = False
+    mock_settings.attachment_cleanup_enabled = False
+
+    # Mock the worker components to avoid actual worker startup
+    with patch('shu.main.settings', mock_settings), \
+         patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
+         patch('shu.core.worker.Worker') as mock_worker_class, \
+         patch('shu.main.init_db') as mock_init_db:
+
+        # Setup mocks
+        mock_backend = AsyncMock()
+        mock_get_backend.return_value = mock_backend
+        mock_init_db.return_value = None
+
+        mock_worker = MagicMock()
+        mock_worker.run = AsyncMock()
+        mock_worker_class.return_value = mock_worker
+
+        # Run lifespan startup
+        async with lifespan(app):
+            # Verify 3 worker tasks were created
+            assert hasattr(app.state, 'inline_worker_tasks')
+            assert len(app.state.inline_worker_tasks) == 3
+
+            # Verify Worker was instantiated 3 times with worker_id
+            assert mock_worker_class.call_count == 3
+
+            # Check worker_ids are set correctly
+            call_args_list = mock_worker_class.call_args_list
+            worker_ids = [call.kwargs.get('worker_id') for call in call_args_list]
+            assert '1/3' in worker_ids
+            assert '2/3' in worker_ids
+            assert '3/3' in worker_ids
 
 
 @pytest.mark.asyncio

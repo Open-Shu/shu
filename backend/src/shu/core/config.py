@@ -107,7 +107,7 @@ class Settings(BaseSettings):
 
     # Performance configuration
     batch_size: int = Field(10, alias="SHU_BATCH_SIZE")
-    max_workers: int = Field(4, alias="SHU_MAX_WORKERS")
+    embedding_threads: int = Field(4, alias="SHU_EMBEDDING_THREADS")  # Thread pool size for CPU-bound embedding work
     download_concurrency: int = Field(3, alias="SHU_DOWNLOAD_CONCURRENCY")
     cache_ttl: int = Field(3600, alias="SHU_CACHE_TTL")
 
@@ -150,6 +150,7 @@ class Settings(BaseSettings):
 
     # Worker configuration
     workers_enabled: bool = Field(True, alias="SHU_WORKERS_ENABLED")  # Run background workers in this process
+    worker_concurrency: int = Field(10, alias="SHU_WORKER_CONCURRENCY")  # Number of concurrent worker tasks per process
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
