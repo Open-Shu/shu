@@ -91,6 +91,16 @@ class WorkerConfig:
                 "WorkerConfig requires at least one workload type. "
                 "A worker with no workload types would never process any jobs."
             )
+        if self.poll_interval <= 0:
+            raise ValueError(
+                f"poll_interval must be positive, got {self.poll_interval}. "
+                "A zero or negative poll interval would cause a tight loop or errors."
+            )
+        if self.shutdown_timeout <= 0:
+            raise ValueError(
+                f"shutdown_timeout must be positive, got {self.shutdown_timeout}. "
+                "A zero or negative timeout is invalid."
+            )
 
 
 class Worker:
@@ -116,9 +126,11 @@ class Worker:
         1. Stops accepting new jobs
         2. Finishes processing the current job (if any)
         3. Exits cleanly
-        
-        If the current job exceeds shutdown_timeout, the worker exits
-        forcefully to prevent hanging.
+
+        Note: The shutdown is cooperative - if the current job handler does not
+        return, the worker will wait indefinitely. Job handlers should respect
+        reasonable timeouts or check for cancellation. The shutdown_timeout
+        config is reserved for future forceful termination support.
     
     Example:
         async def process_job(job: Job) -> None:
@@ -208,9 +220,10 @@ class Worker:
         self._setup_signal_handlers()
         
         # Get queue names for configured workload types
-        queue_names = [
+        # Sort to ensure deterministic polling order across runs
+        queue_names = sorted([
             get_queue_name(wt) for wt in self._config.workload_types
-        ]
+        ])
         
         logger.info(
             "Worker starting",
