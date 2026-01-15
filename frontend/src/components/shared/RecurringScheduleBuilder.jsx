@@ -278,7 +278,7 @@ const RecurringScheduleBuilder = ({
 
     const handleCronChange = (newCron) => {
         // Only trigger onChange if the cron expression actually changed
-        if (newCron !== cron) {
+        if (newCron !== cron && typeof onChange === 'function') {
             onChange({
                 cron: newCron,
                 timezone: timezone,
@@ -287,10 +287,12 @@ const RecurringScheduleBuilder = ({
     };
 
     const handleTimezoneChange = (selectedTimezone) => {
-        onChange({
-            cron,
-            timezone: selectedTimezone,
-        });
+        if (typeof onChange === 'function') {
+            onChange({
+                cron,
+                timezone: selectedTimezone,
+            });
+        }
     };
 
     const handleAdvancedModeToggle = () => {
@@ -312,7 +314,7 @@ const RecurringScheduleBuilder = ({
 
     const handleRawCronBlur = () => {
         // Update the parent component when user finishes editing
-        if (rawCronInput !== cron) {
+        if (rawCronInput !== cron && typeof onChange === 'function') {
             onChange({
                 cron: rawCronInput,
                 timezone: timezone,
