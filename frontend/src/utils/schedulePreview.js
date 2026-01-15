@@ -1,7 +1,6 @@
 import CronExpressionParser from 'cron-parser';
 import cronstrue from 'cronstrue';
-import { format } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { formatInTimeZone } from 'date-fns-tz';
 
 /**
  * SchedulePreview utility for generating human-readable schedule descriptions
@@ -115,9 +114,6 @@ export function getNextExecutions(cron, timezone, count = 5) {
       try {
         const next = interval.next();
         const nextDate = next.toDate();
-        
-        // Check for DST transition
-        const dstCheck = checkDSTTransition(nextDate, timezone);
         
         // Always include the execution, even during DST transitions
         // The cron-parser library handles DST transitions correctly

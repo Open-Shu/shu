@@ -5,8 +5,7 @@
 import {
     formatDateInTimezone,
     getTimezoneAbbreviation,
-    formatDateTimeFull,
-    getExperienceTimezone
+    formatDateTimeFull
 } from '../timezoneFormatter';
 
 describe('timezoneFormatter', () => {

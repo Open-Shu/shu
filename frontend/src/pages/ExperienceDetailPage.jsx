@@ -98,8 +98,8 @@ const ExperienceDetailPage = () => {
                         }}
                     >
                         {/* Experience metadata */}
-                        <Box sx={{ mb: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
-                            {experience.latest_run_finished_at && (
+                        {experience.latest_run_finished_at && (
+                            <Box sx={{ mb: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
                                 <Typography variant="body2" color="text.secondary" gutterBottom>
                                     <strong>Generated:</strong>{' '}
                                     {experience.trigger_config?.timezone
@@ -107,8 +107,8 @@ const ExperienceDetailPage = () => {
                                         : new Date(experience.latest_run_finished_at).toLocaleString()
                                     }
                                 </Typography>
-                            )}
-                        </Box>
+                            </Box>
+                        )}
                         
                         <MarkdownRenderer
                             content={experience.result_preview}

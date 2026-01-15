@@ -3,7 +3,7 @@
  */
 
 import { format as dateFnsFormat } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { formatInTimeZone } from 'date-fns-tz';
 
 /**
  * Format a date in a specific timezone with timezone abbreviation

@@ -565,6 +565,22 @@ describe('RecurringScheduleBuilder', () => {
             expect(screen.queryByText(/too complex for the visual builder/i)).not.toBeInTheDocument();
         });
 
+        test('does not switch to advanced mode for comma-separated day-of-week values', () => {
+            const commaDaysProps = {
+                ...defaultProps,
+                value: { cron: '0 9 * * 1,3,5', timezone: 'America/New_York' }, // Mon, Wed, Fri at 9 AM
+            };
+            
+            render(<RecurringScheduleBuilder {...commaDaysProps} />);
+            
+            // Should be in builder mode (react-js-cron supports multiple day selection)
+            expect(screen.getByTestId('cron-component')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /advanced mode/i })).toBeInTheDocument();
+            
+            // Should not show warning
+            expect(screen.queryByText(/too complex for the visual builder/i)).not.toBeInTheDocument();
+        });
+
         test('does not allow switching to builder mode for complex expressions', () => {
             const complexCronProps = {
                 ...defaultProps,

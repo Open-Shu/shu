@@ -88,11 +88,7 @@ const isComplexCronExpression = (cronExpr) => {
         return values.length > 5;
     });
     
-    // Check for complex day-of-week patterns (e.g., "1-5" for weekdays is OK, but "1,3,5" is complex)
-    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
-    const hasComplexDayOfWeek = dayOfWeek !== '*' && dayOfWeek.includes(',') && !dayOfWeek.includes('-');
-    
-    return hasStepValues || hasMultipleRanges || hasLongLists || hasComplexDayOfWeek;
+    return hasStepValues || hasMultipleRanges || hasLongLists;
 };
 
 /**
