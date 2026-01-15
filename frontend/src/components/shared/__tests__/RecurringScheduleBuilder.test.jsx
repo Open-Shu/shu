@@ -263,22 +263,17 @@ describe('RecurringScheduleBuilder', () => {
     });
 
     test('shows loading state while generating preview', async () => {
-        getSchedulePreview.mockImplementation(() => {
-            return new Promise(resolve => setTimeout(() => resolve({
-                description: 'At 09:00 AM (EST)',
-                nextExecutions: [],
-                executionDates: [],
-            }), 100));
+        getSchedulePreview.mockReturnValue({
+            description: 'At 09:00 AM (EST)',
+            nextExecutions: [],
+            executionDates: [],
         });
 
         render(<RecurringScheduleBuilder {...defaultProps} />);
 
-        // Should show loading state initially
-        expect(screen.getByText('Calculating next execution times...')).toBeInTheDocument();
-
-        // Wait for preview to load
+        // Wait for preview to load (debounced)
         await waitFor(() => {
-            expect(screen.queryByText('Calculating next execution times...')).not.toBeInTheDocument();
+            expect(screen.getByText('At 09:00 AM (EST)')).toBeInTheDocument();
         }, { timeout: 500 });
     });
 

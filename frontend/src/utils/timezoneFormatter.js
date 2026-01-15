@@ -4,6 +4,21 @@
 
 import { format as dateFnsFormat } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
+import log from './log';
+
+/**
+ * Safely parse and validate a date, returning a fallback if invalid
+ * @param {Date|string} date - Date to parse
+ * @param {string} fallback - Fallback value if date is invalid (default: '-')
+ * @returns {Date|string} Valid Date object or fallback value
+ */
+function safeParseDateOrFallback(date, fallback = '-') {
+    const parsed = new Date(date);
+    if (isNaN(parsed.getTime())) {
+        return fallback;
+    }
+    return parsed;
+}
 
 /**
  * Format a date in a specific timezone with timezone abbreviation
@@ -35,8 +50,13 @@ export function formatDateInTimezone(date, timezone, formatStr = 'MMM d, HH:mm:s
         
         return `${formatted} ${tzAbbr}`;
     } catch (error) {
-        console.error('Error formatting date in timezone:', error);
-        return dateFnsFormat(new Date(date), formatStr);
+        log.error('Error formatting date in timezone:', error);
+        // Defensive fallback: validate date before formatting
+        const validDateOrFallback = safeParseDateOrFallback(date);
+        if (validDateOrFallback === '-') {
+            return '-';
+        }
+        return dateFnsFormat(validDateOrFallback, formatStr);
     }
 }
 
@@ -62,7 +82,7 @@ export function getTimezoneAbbreviation(date, timezone) {
         
         return tzPart ? tzPart.value : timezone;
     } catch (error) {
-        console.error('Error getting timezone abbreviation:', error);
+        log.error('Error getting timezone abbreviation:', error);
         return timezone;
     }
 }
@@ -92,7 +112,12 @@ export function formatDateTimeFull(date, timezone) {
         
         return `${formatted} ${tzAbbr}`;
     } catch (error) {
-        console.error('Error formatting full date time:', error);
-        return dateFnsFormat(new Date(date), 'MMMM d, yyyy \'at\' h:mm a');
+        log.error('Error formatting full date time:', error);
+        // Defensive fallback: validate date before formatting
+        const validDateOrFallback = safeParseDateOrFallback(date);
+        if (validDateOrFallback === '-') {
+            return '-';
+        }
+        return dateFnsFormat(validDateOrFallback, 'MMMM d, yyyy \'at\' h:mm a');
     }
 }

@@ -368,7 +368,7 @@ const RecurringScheduleBuilder = ({
                 variant="outlined" 
                 sx={{ 
                     p: 2,
-                    bgcolor: 'info.lighter',
+                    bgcolor: 'info.light',
                     borderColor: 'info.main',
                 }}
             >

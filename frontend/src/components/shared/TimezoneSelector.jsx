@@ -145,7 +145,9 @@ const TimezoneSelector = ({
 
     const handleTimezoneChange = (_, newValue) => {
         const selectedTimezone = newValue ? newValue.value : '';
-        onChange(selectedTimezone);
+        if (typeof onChange === 'function') {
+            onChange(selectedTimezone);
+        }
     };
 
     const selectedTimezone = timezoneOptions.find(tz => tz.value === value);
