@@ -303,35 +303,17 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cancel and await background schedulers for clean shutdown
+    task_attrs = [
+        ('attachments_cleanup', 'attachments_cleanup_task'),
+        ('plugins_scheduler', 'plugins_scheduler_task'),
+        ('experiences_scheduler', 'experiences_scheduler_task'),
+        ('inline_worker', 'inline_worker_task'),
+    ]
     tasks_to_cancel = []
-    
-    try:
-        task = getattr(app.state, 'attachments_cleanup_task', None)
+    for name, attr in task_attrs:
+        task = getattr(app.state, attr, None)
         if task and not task.done():
-            tasks_to_cancel.append(('attachments_cleanup', task))
-    except Exception:
-        pass
-    
-    try:
-        t2 = getattr(app.state, 'plugins_scheduler_task', None)
-        if t2 and not t2.done():
-            tasks_to_cancel.append(('plugins_scheduler', t2))
-    except Exception:
-        pass
-    
-    try:
-        t3 = getattr(app.state, 'experiences_scheduler_task', None)
-        if t3 and not t3.done():
-            tasks_to_cancel.append(('experiences_scheduler', t3))
-    except Exception:
-        pass
-    
-    try:
-        t4 = getattr(app.state, 'inline_worker_task', None)
-        if t4 and not t4.done():
-            tasks_to_cancel.append(('inline_worker', t4))
-    except Exception:
-        pass
+            tasks_to_cancel.append((name, task))
     
     # Cancel all tasks
     for name, task in tasks_to_cancel:
