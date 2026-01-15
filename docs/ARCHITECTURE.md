@@ -48,7 +48,7 @@ Use this section to locate live systems quickly and avoid reinventing them. Each
   - Worker: src/shu/core/worker.py (Worker class, WorkerConfig)
   - Worker Entrypoint: src/shu/worker.py (dedicated worker process)
   - Backend Selection: Automatic based on SHU_REDIS_URL configuration
-  - Worker Mode: SHU_WORKER_MODE (inline with API or dedicated process)
+  - Worker Mode: SHU_WORKERS_ENABLED (true=inline with API, false=use dedicated worker processes)
   - Usage: Background job processing, document profiling, scheduled tasks
   - Standards: docs/policies/DEVELOPMENT_STANDARDS.md Section 26
 

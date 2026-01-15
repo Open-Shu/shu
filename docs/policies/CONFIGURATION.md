@@ -324,19 +324,19 @@ service = SomeService(db, config_manager)  # Service receives config_manager
   - **Impact**: Affects background job processing, document profiling, scheduled tasks
   - **Deployment flexibility**: Same application code works with or without Redis
 
-- `SHU_WORKER_MODE`: Worker deployment mode (default: `inline`)
-  - **`inline`** (default): Workers run in-process with the API server
+- `SHU_WORKERS_ENABLED`: Enable background workers in this process (default: `true`)
+  - **`true`** (default): Workers run in-process with the API server
     - Suitable for single-node deployments, development, and bare-metal installs
     - No additional processes needed - workers start automatically with the API
     - Uses InMemoryQueueBackend when Redis is not configured
-  - **`dedicated`**: Workers run as separate processes
-    - Suitable for horizontally-scaled containerized deployments
-    - API process starts without workers (API-only mode)
+  - **`false`**: Workers disabled in this process
+    - Use when running separate dedicated worker processes
+    - API process serves HTTP only (no background job processing)
     - Workers started separately via `python -m shu.worker`
     - Requires Redis for cross-process queue communication
 
-##### Worker Entrypoint (Dedicated Mode)
-When `SHU_WORKER_MODE=dedicated`, start workers separately:
+##### Separate Worker Processes
+When `SHU_WORKERS_ENABLED=false` on the API, start workers separately:
 
 ```bash
 # Start a worker consuming all workload types
@@ -356,7 +356,7 @@ python -m shu.worker --workload-types MAINTENANCE,PROFILING
 **Scenario 1: Single-Node Development/Bare-Metal**
 ```bash
 # No Redis needed, workers run in-process
-SHU_WORKER_MODE=inline  # or unset (default)
+SHU_WORKERS_ENABLED=true  # or unset (default)
 # Start API - workers included automatically
 python -m uvicorn shu.main:app --app-dir backend/src
 ```
@@ -365,7 +365,7 @@ python -m uvicorn shu.main:app --app-dir backend/src
 ```bash
 # Redis required for cross-process communication
 SHU_REDIS_URL=redis://redis:6379/0
-SHU_WORKER_MODE=dedicated
+SHU_WORKERS_ENABLED=false  # Disable workers in API process
 
 # Deploy API replicas (no workers)
 # Container 1-N: API only
@@ -388,7 +388,7 @@ python -m shu.worker --workload-types MAINTENANCE,PROFILING
 # Useful when document ingestion spikes don't correlate with chat usage
 
 # Kubernetes example:
-# - api: 3 replicas, SHU_WORKER_MODE=dedicated
+# - api: 3 replicas, SHU_WORKERS_ENABLED=false
 # - worker-ingestion: 5 replicas, --workload-types INGESTION
 # - worker-llm: 2 replicas, --workload-types LLM_WORKFLOW
 # - worker-maintenance: 1 replica, --workload-types MAINTENANCE,PROFILING

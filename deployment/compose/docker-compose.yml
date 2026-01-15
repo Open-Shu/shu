@@ -16,6 +16,7 @@ services:
       - SHU_ENVIRONMENT=production
       - SHU_APP_VERSION=0.0.6
       - SHU_WORKER_MODE=inline
+      - SHU_WORKERS_ENABLED=true
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"
@@ -52,6 +53,7 @@ services:
       - SHU_ENVIRONMENT=development
       - SHU_APP_VERSION=0.0.6-dev      
       - SHU_WORKER_MODE=inline
+      - SHU_WORKERS_ENABLED=true
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"
@@ -127,8 +129,8 @@ services:
       - shu-network
     restart: unless-stopped
 
-  # Shu Background Worker (dedicated mode)
-  # Consumes jobs from Redis queues; use with SHU_WORKER_MODE=dedicated on API
+  # Shu Background Worker
+  # Consumes jobs from Redis queues; set SHU_WORKERS_ENABLED=false on API when using
   shu-worker:
     build:
       context: ../..
@@ -141,7 +143,6 @@ services:
       - SHU_LOG_LEVEL=INFO
       - SHU_LOG_FORMAT=text
       - SHU_ENVIRONMENT=production
-      - SHU_WORKER_MODE=dedicated
       - SHU_WORKER_POLL_INTERVAL=1.0
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
@@ -172,7 +173,6 @@ services:
       - SHU_LOG_LEVEL=DEBUG
       - SHU_LOG_FORMAT=text
       - SHU_ENVIRONMENT=development
-      - SHU_WORKER_MODE=dedicated
       - SHU_WORKER_POLL_INTERVAL=0.5
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src

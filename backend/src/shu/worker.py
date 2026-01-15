@@ -22,15 +22,16 @@ Example Docker Compose:
       replicas: 5
       environment:
         - SHU_REDIS_URL=redis://redis:6379
-        - SHU_WORKER_MODE=dedicated
-    
+
     worker-llm:
       image: shu:latest
       command: python -m shu.worker --workload-types=LLM_WORKFLOW,PROFILING
       replicas: 2
       environment:
         - SHU_REDIS_URL=redis://redis:6379
-        - SHU_WORKER_MODE=dedicated
+
+    # Note: When using dedicated workers, set SHU_WORKERS_ENABLED=false on the API
+    # to prevent duplicate job processing.
 """
 
 import argparse
