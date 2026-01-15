@@ -51,12 +51,14 @@ compose-build-dev:
 
 
 # Docker Compose targets
-# - make up:      API + Postgres + Redis (backend only)
-# - make up-full: Full stack including frontend
-# - make up-dev:  Backend with hot-reload (port 8001)
-# - make up-full-dev: Full stack with hot-reload backend
+# - make up:           API + Postgres + Redis (backend only, inline workers)
+# - make up-full:      Full stack including frontend
+# - make up-dev:       Backend with hot-reload
+# - make up-full-dev:  Full stack with hot-reload backend
+# - make up-worker:    Dedicated worker (production)
+# - make up-worker-dev: Dedicated worker with hot-reload
 
-.PHONY: up up-full up-dev up-full-dev down logs ps
+.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev down logs logs-worker ps
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -70,15 +72,26 @@ up-dev:
 up-full-dev:
 	docker compose -f $(COMPOSE_FILE) --profile dev up -d shu-api-dev shu-postgres shu-db-migrate redis shu-frontend-dev
 
+# Start dedicated worker (requires redis and db-migrate to be running)
+up-worker:
+	docker compose -f $(COMPOSE_FILE) --profile worker up -d shu-worker
+
+# Start dedicated worker with hot-reload for development
+up-worker-dev:
+	docker compose -f $(COMPOSE_FILE) --profile worker-dev up -d shu-worker-dev
+
 down:
-	docker compose -f $(COMPOSE_FILE) down --remove-orphans || true
-	-docker rm -f shu-frontend shu-api-dev 2>/dev/null || true
+	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev down --remove-orphans || true
+	-docker rm -f shu-frontend shu-api-dev shu-worker shu-worker-dev 2>/dev/null || true
 
 logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
 
+logs-worker:
+	docker compose -f $(COMPOSE_FILE) logs -f shu-worker shu-worker-dev
+
 ps:
-	docker compose -f $(COMPOSE_FILE) ps
+	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev ps
 
 # Linting and formatting targets
 .PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix

@@ -7,7 +7,6 @@ services:
     container_name: shu-api
     env_file: ../../.env
     environment:
-      # External PostgreSQL connection - update these values for your database
       - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
       - SHU_REDIS_URL=redis://redis:6379
       - SHU_LOG_LEVEL=INFO
@@ -16,6 +15,7 @@ services:
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=production
       - SHU_APP_VERSION=0.0.6
+      - SHU_WORKER_MODE=inline
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"
@@ -43,7 +43,6 @@ services:
     container_name: shu-api-dev
     env_file: ../../.env
     environment:
-      # External PostgreSQL connection - update these values for your database
       - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
       - SHU_REDIS_URL=redis://redis:6379
       - SHU_LOG_LEVEL=DEBUG
@@ -51,7 +50,8 @@ services:
       - SHU_API_HOST=0.0.0.0
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=development
-      - SHU_APP_VERSION=0.0.6-dev
+      - SHU_APP_VERSION=0.0.6-dev      
+      - SHU_WORKER_MODE=inline
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"
@@ -115,7 +115,7 @@ services:
     restart: "no"
     command: ["python", "scripts/database.py", "bootstrap", "--admin-user", "shu", "--admin-password", "password"]
 
-  # Redis for caching
+  # Redis for caching and queues
   redis:
     image: redis:7-alpine
     container_name: shu-redis
@@ -126,6 +126,70 @@ services:
     networks:
       - shu-network
     restart: unless-stopped
+
+  # Shu Background Worker (dedicated mode)
+  # Consumes jobs from Redis queues; use with SHU_WORKER_MODE=dedicated on API
+  shu-worker:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-worker
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=INFO
+      - SHU_LOG_FORMAT=text
+      - SHU_ENVIRONMENT=production
+      - SHU_WORKER_MODE=dedicated
+      - SHU_WORKER_POLL_INTERVAL=1.0
+      - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
+      - PYTHONPATH=/app/src
+    volumes:
+      - shu-plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - worker
+    command: ["python", "-m", "shu.worker"]
+    depends_on:
+      shu-db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  # Shu Background Worker (Development with hot-reload)
+  shu-worker-dev:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-worker-dev
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=DEBUG
+      - SHU_LOG_FORMAT=text
+      - SHU_ENVIRONMENT=development
+      - SHU_WORKER_MODE=dedicated
+      - SHU_WORKER_POLL_INTERVAL=0.5
+      - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
+      - PYTHONPATH=/app/src
+    volumes:
+      - ../../backend/src:/app/src
+      - ../../plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - worker-dev
+    command: ["python", "-m", "shu.worker"]
+    depends_on:
+      shu-db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
 
   # Shu React Admin frontend (static build served by Nginx)
   shu-frontend:
