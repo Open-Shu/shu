@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional, Any, Union, AsyncGenerator, Tuple, Set
 from sqlalchemy import select, and_, desc, asc, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 
 from ..models.llm_provider import Conversation, Message, LLMModel
 from ..models.attachment import Attachment, MessageAttachment
@@ -408,6 +408,143 @@ class ChatService:
         conversation = await self.get_conversation_by_id(conversation.id)
 
         logger.info(f"Created conversation '{title}' for user {user_id} with model config '{model_config.name}'")
+        return conversation
+
+    async def create_conversation_from_experience_run(
+        self,
+        run_id: str,
+        user_id: str,
+        title_override: Optional[str] = None
+    ) -> Conversation:
+        """
+        Create a conversation from an experience run.
+
+        Args:
+            run_id: Experience run ID
+            user_id: User ID (for ownership verification)
+            title_override: Optional custom title (defaults to experience name)
+
+        Returns:
+            Created conversation with pre-filled assistant message
+
+        Raises:
+            HTTPException: If run not found, access denied, or no result content
+        """
+        from fastapi import HTTPException
+        from ..models.experience import ExperienceRun
+
+        # Fetch experience run with access check
+        stmt = select(ExperienceRun).options(
+            joinedload(ExperienceRun.experience)
+        ).where(
+            ExperienceRun.id == run_id
+        )
+        result = await self.db_session.execute(stmt)
+        run = result.unique().scalar_one_or_none()
+
+        if not run:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Experience run '{run_id}' not found"
+            )
+
+        # Access check: user must own the run or be admin
+        if run.user_id != user_id:
+            # Check if user is admin
+            from ..auth.models import User as UserModel
+            user_stmt = select(UserModel).where(UserModel.id == user_id)
+            user_result = await self.db_session.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+
+            if not user or not user.can_manage_users():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Experience run '{run_id}' not found"
+                )
+
+        # Validate run has result content
+        if not run.result_content:
+            raise HTTPException(
+                status_code=400,
+                detail="Experience run has no result content to start conversation from"
+            )
+
+        # Store experience attributes before they might become detached
+        # Access the relationship immediately after the query while still in async context
+        experience_id = run.experience_id
+        
+        # Ensure experience is loaded (selectinload should have loaded it)
+        if not run.experience:
+            raise HTTPException(
+                status_code=500,
+                detail="Experience data not available for this run"
+            )
+        
+        experience_name = run.experience.name
+        experience_model_config_id = run.experience.model_configuration_id
+
+        # Determine model configuration
+        # Priority: run's model config > experience's model config > None (will use system default)
+        model_config_id = run.model_configuration_id or experience_model_config_id
+
+        # Create conversation
+        conversation = Conversation(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            title=title_override or experience_name,
+            model_configuration_id=model_config_id,
+            is_active=True,
+            is_favorite=False,
+            meta={
+                "source": "experience",
+                "experience_id": experience_id,
+                "experience_name": experience_name,
+                "run_id": run_id,
+                "created_from_experience": True
+            }
+        )
+
+        self.db_session.add(conversation)
+        await self.db_session.flush()  # Get conversation ID
+
+        # Create first assistant message with experience result
+        message = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation.id,
+            role="assistant",
+            content=run.result_content,
+            message_metadata={
+                "source": "experience_result",
+                "experience_run_id": run_id,
+                "original_model_config_id": model_config_id
+            }
+        )
+
+        self.db_session.add(message)
+        await self.db_session.commit()
+
+        # Reload conversation with all necessary relationships for serialization
+        stmt = select(Conversation).where(
+            Conversation.id == conversation.id
+        ).options(
+            selectinload(Conversation.messages),
+            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
+            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
+            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases)
+        )
+        result = await self.db_session.execute(stmt)
+        conversation = result.scalar_one()
+
+        logger.info(
+            f"Created conversation from experience run",
+            extra={
+                "conversation_id": conversation.id,
+                "run_id": run_id,
+                "experience_id": experience_id,
+                "user_id": user_id
+            }
+        )
+
         return conversation
 
     async def get_conversation_by_id(self, conversation_id: str, include_inactive: bool = False) -> Optional[Conversation]:

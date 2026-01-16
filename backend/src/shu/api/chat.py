@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional, Union, Literal
 from pydantic import BaseModel, Field
 import logging
 import json
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path as PathlibPath
 
@@ -24,6 +25,7 @@ from ..core.logging import get_logger
 from ..core.response import ShuResponse, create_success_response, create_error_response
 from ..schemas.envelope import SuccessResponse
 from ..schemas.query import RagRewriteMode
+from ..schemas.chat import ConversationFromExperienceRequest
 from ..services.chat_service import ChatService
 from ..services.chat_streaming import ProviderResponseEvent
 from ..services.attachment_service import AttachmentService
@@ -406,6 +408,90 @@ async def create_conversation(
             status_code=500
         )
 
+
+@router.post(
+    "/conversations/from-experience/{run_id}",
+    response_model=SuccessResponse[ConversationResponse],
+    summary="Create conversation from experience run",
+    description="Create a new conversation from an experience run with the result pre-filled as the first assistant message."
+)
+async def create_conversation_from_experience(
+    run_id: str = Path(..., description="Experience run ID"),
+    request_data: Optional[ConversationFromExperienceRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    config_manager: ConfigurationManager = Depends(get_config_manager_dependency)
+):
+    """
+    Create a new conversation from an experience run.
+    
+    The conversation will be pre-filled with the experience result as the
+    first assistant message, allowing the user to ask follow-up questions.
+    
+    Args:
+        run_id: Experience run ID
+        request_data: Optional request data (title override)
+        current_user: Current authenticated user
+        db: Database session
+        config_manager: Configuration manager
+        
+    Returns:
+        Created conversation with pre-filled message
+        
+    Raises:
+        404: Experience run not found or access denied
+        400: Experience run has no result content
+        403: User does not have access to the experience run
+    """
+    try:
+        chat_service = ChatService(db, config_manager)
+        
+        # Create conversation from experience run
+        conversation = await chat_service.create_conversation_from_experience_run(
+            run_id=run_id,
+            user_id=current_user.id,
+            title_override=request_data.title if request_data else None
+        )
+        
+        return create_success_response(data=_build_conversation_response(conversation))
+    
+    except ShuException as e:
+        logger.error(f"Error creating conversation from experience: {e}")
+        return create_error_response(
+            code=e.error_code,
+            message=e.message,
+            status_code=e.status_code
+        )
+    except HTTPException as e:
+        # Handle HTTPExceptions from service layer
+        logger.error(f"HTTP error creating conversation from experience: {e.detail}")
+        
+        # Map status codes to appropriate error codes
+        error_code_map = {
+            404: "EXPERIENCE_RUN_NOT_FOUND",
+            400: "NO_RESULT_CONTENT",
+            403: "UNAUTHORIZED"
+        }
+        
+        return create_error_response(
+            code=error_code_map.get(e.status_code, "INTERNAL_ERROR"),
+            message=e.detail,
+            status_code=e.status_code
+        )
+    except Exception as e:
+        # Convert exception to string to avoid lazy-loading issues with SQLAlchemy objects
+        error_msg = str(e)
+        error_type = type(e).__name__
+        tb = traceback.format_exc()
+        logger.error(
+            f"Unexpected error creating conversation from experience: {error_type}: {error_msg}\n{tb}",
+            extra={"run_id": run_id, "error_type": error_type}
+        )
+        return create_error_response(
+            message="Failed to create conversation from experience",
+            code="INTERNAL_ERROR",
+            status_code=500
+        )
 
 
 @router.get(
