@@ -714,6 +714,20 @@ def create_mock_db_with_tracking():
     return mock_db, added_objects
 
 
+def create_mock_model_configuration(model_config_id: str, is_active: bool = True):
+    """Helper to create a mock ModelConfiguration."""
+    from shu.models.model_configuration import ModelConfiguration
+    
+    mock_config = MagicMock(spec=ModelConfiguration)
+    mock_config.id = model_config_id
+    mock_config.name = f"Test Config {model_config_id[:8]}"
+    mock_config.is_active = is_active
+    mock_config.llm_provider_id = str(uuid.uuid4())
+    mock_config.model_name = "test-model"
+    
+    return mock_config
+
+
 class TestChatServiceExperienceIntegration:
     """Property-based tests for conversation creation from experience runs.
     
@@ -765,15 +779,33 @@ class TestChatServiceExperienceIntegration:
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
         
-        # Mock the experience run query to return the run
-        # Need to handle: execute() -> unique() -> scalar_one_or_none()
+        # Determine which model config ID will be used
+        effective_model_config_id = run_data['model_configuration_id'] or run_data['experience_model_configuration_id']
+        
+        # Create mock model configuration
+        mock_model_config = create_mock_model_configuration(effective_model_config_id, is_active=True)
+        
+        # Mock the database execute to handle multiple queries
+        # First call: experience run query
+        # Second call: model configuration query
+        # Third call: conversation reload query
         mock_run_result = MagicMock()
         mock_unique_result = MagicMock()
         mock_unique_result.scalar_one_or_none.return_value = mock_run
         mock_run_result.unique.return_value = mock_unique_result
         
-        # Setup execute to return the run result
-        mock_db.execute.return_value = mock_run_result
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = mock_model_config
+        
+        mock_conversation_result = MagicMock()
+        mock_conversation_result.scalar_one.return_value = MagicMock(spec=Conversation)
+        
+        # Setup execute to return different results for different queries
+        mock_db.execute.side_effect = [
+            mock_run_result,           # First call: get experience run
+            mock_config_result,        # Second call: get model configuration
+            mock_conversation_result   # Third call: reload conversation
+        ]
         
         # Mock config manager
         mock_config_manager = MagicMock()
@@ -891,15 +923,30 @@ class TestChatServiceExperienceIntegration:
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
         
-        # Mock the experience run query to return the run
-        # Need to handle: execute() -> unique() -> scalar_one_or_none()
+        # Determine which model config ID will be used
+        effective_model_config_id = run_data['model_configuration_id'] or run_data['experience_model_configuration_id']
+        
+        # Create mock model configuration
+        mock_model_config = create_mock_model_configuration(effective_model_config_id, is_active=True)
+        
+        # Mock the database execute to handle multiple queries
         mock_run_result = MagicMock()
         mock_unique_result = MagicMock()
         mock_unique_result.scalar_one_or_none.return_value = mock_run
         mock_run_result.unique.return_value = mock_unique_result
         
-        # Setup execute to return the run result
-        mock_db.execute.return_value = mock_run_result
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = mock_model_config
+        
+        mock_conversation_result = MagicMock()
+        mock_conversation_result.scalar_one.return_value = MagicMock(spec=Conversation)
+        
+        # Setup execute to return different results for different queries
+        mock_db.execute.side_effect = [
+            mock_run_result,           # First call: get experience run
+            mock_config_result,        # Second call: get model configuration
+            mock_conversation_result   # Third call: reload conversation
+        ]
         
         # Mock config manager
         mock_config_manager = MagicMock()
@@ -961,15 +1008,30 @@ class TestChatServiceExperienceIntegration:
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
         
-        # Mock the experience run query to return the run
-        # Need to handle: execute() -> unique() -> scalar_one_or_none()
+        # Determine which model config ID will be used
+        effective_model_config_id = run_data['model_configuration_id'] or run_data['experience_model_configuration_id']
+        
+        # Create mock model configuration
+        mock_model_config = create_mock_model_configuration(effective_model_config_id, is_active=True)
+        
+        # Mock the database execute to handle multiple queries
         mock_run_result = MagicMock()
         mock_unique_result = MagicMock()
         mock_unique_result.scalar_one_or_none.return_value = mock_run
         mock_run_result.unique.return_value = mock_unique_result
         
-        # Setup execute to return the run result
-        mock_db.execute.return_value = mock_run_result
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = mock_model_config
+        
+        mock_conversation_result = MagicMock()
+        mock_conversation_result.scalar_one.return_value = MagicMock(spec=Conversation)
+        
+        # Setup execute to return different results for different queries
+        mock_db.execute.side_effect = [
+            mock_run_result,           # First call: get experience run
+            mock_config_result,        # Second call: get model configuration
+            mock_conversation_result   # Third call: reload conversation
+        ]
         
         # Mock config manager
         mock_config_manager = MagicMock()
@@ -1032,15 +1094,30 @@ class TestChatServiceExperienceIntegration:
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
         
-        # Mock the experience run query to return the run
-        # Need to handle: execute() -> unique() -> scalar_one_or_none()
+        # Determine which model config ID will be used
+        effective_model_config_id = run_data['model_configuration_id'] or run_data['experience_model_configuration_id']
+        
+        # Create mock model configuration
+        mock_model_config = create_mock_model_configuration(effective_model_config_id, is_active=True)
+        
+        # Mock the database execute to handle multiple queries
         mock_run_result = MagicMock()
         mock_unique_result = MagicMock()
         mock_unique_result.scalar_one_or_none.return_value = mock_run
         mock_run_result.unique.return_value = mock_unique_result
         
-        # Setup execute to return the run result
-        mock_db.execute.return_value = mock_run_result
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = mock_model_config
+        
+        mock_conversation_result = MagicMock()
+        mock_conversation_result.scalar_one.return_value = MagicMock(spec=Conversation)
+        
+        # Setup execute to return different results for different queries
+        mock_db.execute.side_effect = [
+            mock_run_result,           # First call: get experience run
+            mock_config_result,        # Second call: get model configuration
+            mock_conversation_result   # Third call: reload conversation
+        ]
         
         # Mock config manager
         mock_config_manager = MagicMock()
@@ -1111,15 +1188,30 @@ class TestChatServiceExperienceIntegration:
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
         
-        # Mock the experience run query to return the run
-        # Need to handle: execute() -> unique() -> scalar_one_or_none()
+        # Determine which model config ID will be used
+        effective_model_config_id = run_data['model_configuration_id'] or run_data['experience_model_configuration_id']
+        
+        # Create mock model configuration
+        mock_model_config = create_mock_model_configuration(effective_model_config_id, is_active=True)
+        
+        # Mock the database execute to handle multiple queries
         mock_run_result = MagicMock()
         mock_unique_result = MagicMock()
         mock_unique_result.scalar_one_or_none.return_value = mock_run
         mock_run_result.unique.return_value = mock_unique_result
         
-        # Setup execute to return the run result
-        mock_db.execute.return_value = mock_run_result
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = mock_model_config
+        
+        mock_conversation_result = MagicMock()
+        mock_conversation_result.scalar_one.return_value = MagicMock(spec=Conversation)
+        
+        # Setup execute to return different results for different queries
+        mock_db.execute.side_effect = [
+            mock_run_result,           # First call: get experience run
+            mock_config_result,        # Second call: get model configuration
+            mock_conversation_result   # Third call: reload conversation
+        ]
         
         # Mock config manager
         mock_config_manager = MagicMock()
@@ -1218,3 +1310,147 @@ class TestChatServiceExperienceIntegration:
         assert exc_info.value.status_code == 400
         assert "model configuration" in exc_info.value.detail.lower()
         assert "neither" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_inactive_model_configuration_raises_error(self) -> None:
+        """
+        Test that creating a conversation with an inactive model configuration raises an error.
+        
+        When the model configuration exists but is marked as inactive,
+        the system should raise an HTTPException with a clear error message.
+        
+        **Validates: Requirements 1.2** (conversations require active model configurations)
+        """
+        from fastapi import HTTPException
+        from shu.models.experience import Experience, ExperienceRun
+        
+        run_id = str(uuid.uuid4())
+        experience_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        model_config_id = str(uuid.uuid4())
+        
+        # Create mock experience with model configuration
+        mock_experience = MagicMock(spec=Experience)
+        mock_experience.id = experience_id
+        mock_experience.name = "Test Experience"
+        mock_experience.model_configuration_id = model_config_id
+        
+        # Create mock experience run
+        mock_run = MagicMock(spec=ExperienceRun)
+        mock_run.id = run_id
+        mock_run.experience_id = experience_id
+        mock_run.user_id = user_id
+        mock_run.result_content = "Test content"
+        mock_run.model_configuration_id = None
+        mock_run.experience = mock_experience
+        
+        # Create inactive model configuration
+        mock_model_config = create_mock_model_configuration(model_config_id, is_active=False)
+        
+        # Mock database session
+        mock_db = AsyncMock()
+        
+        # Mock the experience run query to return the run
+        mock_run_result = MagicMock()
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Mock the model configuration query to return inactive config
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = mock_model_config
+        
+        # Setup execute to return different results
+        mock_db.execute.side_effect = [
+            mock_run_result,      # First call: get experience run
+            mock_config_result,   # Second call: get model configuration
+        ]
+        
+        # Mock config manager
+        mock_config_manager = MagicMock()
+        
+        # Create service
+        chat_service = ChatService(mock_db, mock_config_manager)
+        
+        # Attempt to create conversation should raise HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await chat_service.create_conversation_from_experience_run(
+                run_id=run_id,
+                user_id=user_id,
+                title_override=None
+            )
+        
+        # Verify the error details
+        assert exc_info.value.status_code == 400
+        assert "not active" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_model_configuration_raises_error(self) -> None:
+        """
+        Test that creating a conversation with a non-existent model configuration raises an error.
+        
+        When the model configuration ID is provided but doesn't exist in the database,
+        the system should raise an HTTPException with a clear error message.
+        
+        **Validates: Requirements 1.2** (conversations require valid model configurations)
+        """
+        from fastapi import HTTPException
+        from shu.models.experience import Experience, ExperienceRun
+        
+        run_id = str(uuid.uuid4())
+        experience_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        model_config_id = str(uuid.uuid4())
+        
+        # Create mock experience with model configuration
+        mock_experience = MagicMock(spec=Experience)
+        mock_experience.id = experience_id
+        mock_experience.name = "Test Experience"
+        mock_experience.model_configuration_id = model_config_id
+        
+        # Create mock experience run
+        mock_run = MagicMock(spec=ExperienceRun)
+        mock_run.id = run_id
+        mock_run.experience_id = experience_id
+        mock_run.user_id = user_id
+        mock_run.result_content = "Test content"
+        mock_run.model_configuration_id = None
+        mock_run.experience = mock_experience
+        
+        # Mock database session
+        mock_db = AsyncMock()
+        
+        # Mock the experience run query to return the run
+        mock_run_result = MagicMock()
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Mock the model configuration query to return None (not found)
+        mock_config_result = MagicMock()
+        mock_config_result.scalar_one_or_none.return_value = None
+        
+        # Setup execute to return different results
+        mock_db.execute.side_effect = [
+            mock_run_result,      # First call: get experience run
+            mock_config_result,   # Second call: get model configuration
+        ]
+        
+        # Mock config manager
+        mock_config_manager = MagicMock()
+        
+        # Create service
+        chat_service = ChatService(mock_db, mock_config_manager)
+        
+        # Attempt to create conversation should raise HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await chat_service.create_conversation_from_experience_run(
+                run_id=run_id,
+                user_id=user_id,
+                title_override=None
+            )
+        
+        # Verify the error details
+        assert exc_info.value.status_code == 400
+        assert "not found" in exc_info.value.detail.lower()
+        assert model_config_id in exc_info.value.detail

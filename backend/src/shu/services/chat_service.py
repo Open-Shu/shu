@@ -492,6 +492,25 @@ class ChatService:
                 status_code=400,
                 detail="Cannot create conversation: neither the experience run nor the experience has a model configuration"
             )
+        
+        # Validate that the model configuration exists and is active
+        model_config_stmt = select(ModelConfiguration).where(
+            ModelConfiguration.id == model_config_id
+        )
+        model_config_result = await self.db_session.execute(model_config_stmt)
+        model_config = model_config_result.scalar_one_or_none()
+        
+        if not model_config:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model configuration '{model_config_id}' not found"
+            )
+        
+        if not model_config.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model configuration '{model_config.name}' is not active"
+            )
 
         # Create conversation
         conversation = Conversation(
