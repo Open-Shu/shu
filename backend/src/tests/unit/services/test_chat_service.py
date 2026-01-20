@@ -753,9 +753,14 @@ class TestChatServiceExperienceIntegration:
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
         
-        # Mock the experience run query
+        # Mock the experience run query to return the run
+        # Need to handle: execute() -> unique() -> scalar_one_or_none()
         mock_run_result = MagicMock()
-        mock_run_result.scalar_one_or_none.return_value = mock_run
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Setup execute to return the run result
         mock_db.execute.return_value = mock_run_result
         
         # Mock config manager
@@ -764,7 +769,7 @@ class TestChatServiceExperienceIntegration:
         # Create service
         chat_service = ChatService(mock_db, mock_config_manager)
         
-        # Create conversation from experience run
+        # Create conversation from experience run (user_id matches run.user_id, so no admin check)
         result = await chat_service.create_conversation_from_experience_run(
             run_id=run_data['run_id'],
             user_id=run_data['user_id'],
@@ -873,8 +878,15 @@ class TestChatServiceExperienceIntegration:
         
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
+        
+        # Mock the experience run query to return the run
+        # Need to handle: execute() -> unique() -> scalar_one_or_none()
         mock_run_result = MagicMock()
-        mock_run_result.scalar_one_or_none.return_value = mock_run
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Setup execute to return the run result
         mock_db.execute.return_value = mock_run_result
         
         # Mock config manager
@@ -883,7 +895,7 @@ class TestChatServiceExperienceIntegration:
         # Create service
         chat_service = ChatService(mock_db, mock_config_manager)
         
-        # Create conversation with custom title
+        # Create conversation with custom title (user_id matches run.user_id, so no admin check)
         await chat_service.create_conversation_from_experience_run(
             run_id=run_data['run_id'],
             user_id=run_data['user_id'],
@@ -936,8 +948,15 @@ class TestChatServiceExperienceIntegration:
         
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
+        
+        # Mock the experience run query to return the run
+        # Need to handle: execute() -> unique() -> scalar_one_or_none()
         mock_run_result = MagicMock()
-        mock_run_result.scalar_one_or_none.return_value = mock_run
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Setup execute to return the run result
         mock_db.execute.return_value = mock_run_result
         
         # Mock config manager
@@ -946,8 +965,8 @@ class TestChatServiceExperienceIntegration:
         # Create service
         chat_service = ChatService(mock_db, mock_config_manager)
         
-        # Create conversation without custom title
-        result = await chat_service.create_conversation_from_experience_run(
+        # Create conversation without custom title (user_id matches run.user_id, so no admin check)
+        await chat_service.create_conversation_from_experience_run(
             run_id=run_data['run_id'],
             user_id=run_data['user_id'],
             title_override=None
@@ -1000,8 +1019,15 @@ class TestChatServiceExperienceIntegration:
         
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
+        
+        # Mock the experience run query to return the run
+        # Need to handle: execute() -> unique() -> scalar_one_or_none()
         mock_run_result = MagicMock()
-        mock_run_result.scalar_one_or_none.return_value = mock_run
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Setup execute to return the run result
         mock_db.execute.return_value = mock_run_result
         
         # Mock config manager
@@ -1010,8 +1036,8 @@ class TestChatServiceExperienceIntegration:
         # Create service
         chat_service = ChatService(mock_db, mock_config_manager)
         
-        # Create conversation
-        result = await chat_service.create_conversation_from_experience_run(
+        # Create conversation (user_id matches run.user_id, so no admin check)
+        await chat_service.create_conversation_from_experience_run(
             run_id=run_data['run_id'],
             user_id=run_data['user_id'],
             title_override=None
@@ -1072,8 +1098,15 @@ class TestChatServiceExperienceIntegration:
         
         # Mock database session with tracking
         mock_db, added_objects = create_mock_db_with_tracking()
+        
+        # Mock the experience run query to return the run
+        # Need to handle: execute() -> unique() -> scalar_one_or_none()
         mock_run_result = MagicMock()
-        mock_run_result.scalar_one_or_none.return_value = mock_run
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        
+        # Setup execute to return the run result
         mock_db.execute.return_value = mock_run_result
         
         # Mock config manager
@@ -1082,8 +1115,8 @@ class TestChatServiceExperienceIntegration:
         # Create service
         chat_service = ChatService(mock_db, mock_config_manager)
         
-        # Create conversation
-        result = await chat_service.create_conversation_from_experience_run(
+        # Create conversation (user_id matches run.user_id, so no admin check)
+        await chat_service.create_conversation_from_experience_run(
             run_id=run_data['run_id'],
             user_id=run_data['user_id'],
             title_override=None

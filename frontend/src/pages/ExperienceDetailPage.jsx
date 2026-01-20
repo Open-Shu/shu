@@ -1,18 +1,22 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from 'react-query';
+import { useState } from 'react';
 import {
     Alert,
     Box,
+    Button,
     CircularProgress,
     IconButton,
     Paper,
+    Snackbar,
     Typography,
 } from '@mui/material';
-import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
+import { ArrowBack as ArrowBackIcon, Chat as ChatIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
-import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import MarkdownRenderer from '../components/shared/MarkdownRenderer';
 import { formatDateTimeFull } from '../utils/timezoneFormatter';
+import log from '../utils/log';
 
 /**
  * Full-width page displaying a single experience result.
@@ -22,6 +26,10 @@ const ExperienceDetailPage = () => {
     const { experienceId } = useParams();
     const navigate = useNavigate();
     const theme = useTheme();
+
+    // State for conversation creation
+    const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+    const [errorSnackbar, setErrorSnackbar] = useState({ open: false, message: '' });
 
     // Detect dark mode from theme
     const isDarkMode = theme.palette.mode === 'dark';
@@ -41,6 +49,47 @@ const ExperienceDetailPage = () => {
 
     const handleBack = () => {
         navigate('/dashboard');
+    };
+
+    const handleStartConversation = async () => {
+        if (!experience?.latest_run_id) {
+            setErrorSnackbar({ 
+                open: true, 
+                message: 'No result content available to start conversation' 
+            });
+            return;
+        }
+
+        try {
+            setIsCreatingConversation(true);
+            
+            // Create conversation from experience run
+            const response = await chatAPI.createConversationFromExperience(
+                experience.latest_run_id
+            );
+            const conversation = extractDataFromResponse(response);
+            
+            log.info('Started conversation from experience', { 
+                conversationId: conversation.id, 
+                runId: experience.latest_run_id,
+                experienceId: experience.experience_id
+            });
+            
+            // Navigate to conversation view
+            navigate(`/chat?conversationId=${conversation.id}`);
+        } catch (error) {
+            log.error('Failed to start conversation from experience:', error);
+            setErrorSnackbar({ 
+                open: true, 
+                message: formatError(error) || 'Failed to start conversation. Please try again.' 
+            });
+        } finally {
+            setIsCreatingConversation(false);
+        }
+    };
+
+    const handleCloseErrorSnackbar = () => {
+        setErrorSnackbar({ open: false, message: '' });
     };
 
     // Find the specific experience from results
@@ -64,9 +113,19 @@ const ExperienceDetailPage = () => {
                 <IconButton onClick={handleBack} aria-label="Back to dashboard">
                     <ArrowBackIcon />
                 </IconButton>
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600, flex: 1 }}>
                     {experience?.experience_name || 'Experience Details'}
                 </Typography>
+                {experience && (
+                    <Button
+                        variant="outlined"
+                        startIcon={<ChatIcon />}
+                        onClick={handleStartConversation}
+                        disabled={isCreatingConversation || !experience.latest_run_id || !experience.result_preview}
+                    >
+                        {isCreatingConversation ? 'Starting...' : 'Start Conversation'}
+                    </Button>
+                )}
             </Paper>
 
             {/* Content */}
@@ -117,6 +176,18 @@ const ExperienceDetailPage = () => {
                     </Box>
                 )}
             </Box>
+
+            {/* Error Snackbar */}
+            <Snackbar
+                open={errorSnackbar.open}
+                autoHideDuration={6000}
+                onClose={handleCloseErrorSnackbar}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            >
+                <Alert onClose={handleCloseErrorSnackbar} severity="error" sx={{ width: '100%' }}>
+                    {errorSnackbar.message}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 };

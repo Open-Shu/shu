@@ -26,6 +26,7 @@ def mock_settings():
     """Provide a mock Settings object for tests that need custom configuration."""
     mock = MagicMock()
     # Set common defaults that tests might need
+    mock.title = "Shu"
     mock.database_url = "postgresql+asyncpg://test:test@localhost:5432/test_db"
     mock.jwt_secret_key = "test-secret-key"
     mock.debug = False
