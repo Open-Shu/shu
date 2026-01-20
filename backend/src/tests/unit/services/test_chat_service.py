@@ -671,14 +671,26 @@ def experience_run_data(draw) -> Dict[str, Any]:
     # Include short, medium, and long content to test truncation handling
     result_content = draw(st.text(min_size=1, max_size=10000))
     
+    # Ensure at least one model configuration ID is present
+    # This reflects the business rule that conversations require a model configuration
+    has_run_config = draw(st.booleans())
+    has_experience_config = draw(st.booleans())
+    
+    # If both are False, force at least one to be True
+    if not has_run_config and not has_experience_config:
+        has_experience_config = True
+    
+    model_configuration_id = str(uuid.uuid4()) if has_run_config else None
+    experience_model_configuration_id = str(uuid.uuid4()) if has_experience_config else None
+    
     return {
         'run_id': str(uuid.uuid4()),
         'experience_id': experience_id,
         'user_id': user_id,
         'result_content': result_content,
         'experience_name': draw(st.text(min_size=1, max_size=100)),
-        'model_configuration_id': draw(st.one_of(st.none(), st.just(str(uuid.uuid4())))),
-        'experience_model_configuration_id': draw(st.one_of(st.none(), st.just(str(uuid.uuid4())))),
+        'model_configuration_id': model_configuration_id,
+        'experience_model_configuration_id': experience_model_configuration_id,
         'status': 'succeeded',
         'created_at': datetime.now(timezone.utc),
         'updated_at': datetime.now(timezone.utc),
@@ -1145,3 +1157,64 @@ class TestChatServiceExperienceIntegration:
             assert actual_value == expected_value, (
                 f"Expected meta.{field}='{expected_value}', but got '{actual_value}'"
             )
+
+    @pytest.mark.asyncio
+    async def test_missing_model_configuration_raises_error(self) -> None:
+        """
+        Test that creating a conversation without any model configuration raises an error.
+        
+        When both the experience run and the experience have no model configuration,
+        the system should raise an HTTPException with a clear error message.
+        
+        **Validates: Requirements 1.2** (conversations require model configurations)
+        """
+        from fastapi import HTTPException
+        from shu.models.experience import Experience, ExperienceRun
+        
+        run_id = str(uuid.uuid4())
+        experience_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        
+        # Create mock experience with no model configuration
+        mock_experience = MagicMock(spec=Experience)
+        mock_experience.id = experience_id
+        mock_experience.name = "Test Experience"
+        mock_experience.model_configuration_id = None  # No model config
+        
+        # Create mock experience run with no model configuration
+        mock_run = MagicMock(spec=ExperienceRun)
+        mock_run.id = run_id
+        mock_run.experience_id = experience_id
+        mock_run.user_id = user_id
+        mock_run.result_content = "Test content"
+        mock_run.model_configuration_id = None  # No model config
+        mock_run.experience = mock_experience
+        
+        # Mock database session
+        mock_db = AsyncMock()
+        
+        # Mock the experience run query to return the run
+        mock_run_result = MagicMock()
+        mock_unique_result = MagicMock()
+        mock_unique_result.scalar_one_or_none.return_value = mock_run
+        mock_run_result.unique.return_value = mock_unique_result
+        mock_db.execute.return_value = mock_run_result
+        
+        # Mock config manager
+        mock_config_manager = MagicMock()
+        
+        # Create service
+        chat_service = ChatService(mock_db, mock_config_manager)
+        
+        # Attempt to create conversation should raise HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await chat_service.create_conversation_from_experience_run(
+                run_id=run_id,
+                user_id=user_id,
+                title_override=None
+            )
+        
+        # Verify the error details
+        assert exc_info.value.status_code == 400
+        assert "model configuration" in exc_info.value.detail.lower()
+        assert "neither" in exc_info.value.detail.lower()
