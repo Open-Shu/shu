@@ -302,35 +302,6 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
     });
   });
 
-  test('handles missing result content gracefully', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
-
-    render(
-      <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-123"
-          timezone="America/New_York"
-        />
-      </TestWrapper>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Start Conversation')).toBeInTheDocument();
-    });
-
-    // Manually trigger the handler with no result content by modifying the run data
-    // This tests the internal validation in handleStartConversation
-    const button = screen.getByRole('button', { name: /start conversation/i });
-    
-    // The button should only appear when result_content exists, so this test
-    // verifies the conditional rendering logic
-    expect(button).toBeInTheDocument();
-  });
-
   test('error alert can be dismissed', async () => {
     api.experiencesAPI = {
       getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),

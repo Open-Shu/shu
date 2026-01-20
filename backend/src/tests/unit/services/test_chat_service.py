@@ -807,7 +807,7 @@ class TestChatServiceExperienceIntegration:
         
         # Property 1e: Message should be linked to the conversation
         assert message.conversation_id == conversation.id, (
-            f"Message conversation_id should match conversation id"
+            "Message conversation_id should match conversation id"
         )
         
         # Property 1f: Conversation should have correct metadata

@@ -536,7 +536,7 @@ class ChatService:
         conversation = result.scalar_one()
 
         logger.info(
-            f"Created conversation from experience run",
+            "Created conversation from experience run",
             extra={
                 "conversation_id": conversation.id,
                 "run_id": run_id,
