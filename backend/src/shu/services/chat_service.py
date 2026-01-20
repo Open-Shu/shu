@@ -451,8 +451,7 @@ class ChatService:
         # Access check: user must own the run or be admin
         if run.user_id != user_id:
             # Check if user is admin
-            from ..auth.models import User as UserModel
-            user_stmt = select(UserModel).where(UserModel.id == user_id)
+            user_stmt = select(User).where(User.id == user_id)
             user_result = await self.db_session.execute(user_stmt)
             user = user_result.scalar_one_or_none()
 
@@ -484,8 +483,15 @@ class ChatService:
         experience_model_config_id = run.experience.model_configuration_id
 
         # Determine model configuration
-        # Priority: run's model config > experience's model config > None (will use system default)
+        # Priority: run's model config > experience's model config
+        # If neither is available, raise an error as conversations require a model configuration
         model_config_id = run.model_configuration_id or experience_model_config_id
+        
+        if not model_config_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot create conversation: neither the experience run nor the experience has a model configuration"
+            )
 
         # Create conversation
         conversation = Conversation(
