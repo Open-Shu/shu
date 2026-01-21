@@ -433,6 +433,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                         >
                             {llmContent ? (
                                 <MarkdownRenderer
+                                    key={status === 'completed' ? 'final' : 'streaming'}
                                     content={llmContent}
                                     isDarkMode={isDarkMode}
                                 />

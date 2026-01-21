@@ -18,10 +18,23 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
   const theme = useTheme();
 
   // Preprocess content to replace <br> tags with newlines
+  // BUT preserve them inside markdown tables (between | characters)
   const processedContent = useMemo(() => {
     if (!content) return content;
-    // Replace <br>, <br/>, and <br /> tags with newlines
-    return content.replace(/<br\s*\/?>/gi, '\n');
+    
+    // Split by lines to process each line separately
+    const lines = content.split('\n');
+    const processedLines = lines.map(line => {
+      // If line contains table delimiters (|), don't replace <br> tags
+      // as they might be intentional formatting within table cells
+      if (line.includes('|')) {
+        return line;
+      }
+      // Otherwise, replace <br> tags with newlines
+      return line.replace(/<br\s*\/?>/gi, '\n');
+    });
+    
+    return processedLines.join('\n');
   }, [content]);
 
   const markdownComponents = useMemo(
