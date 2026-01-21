@@ -1000,6 +1000,58 @@ const ModernChat = () => {
     openDeleteDialog();
   }, [openDeleteDialog]);
 
+  const handleToggleFavorite = useCallback(async (conversation) => {
+    if (!conversation?.id) return;
+    
+    try {
+      const newFavoriteStatus = !conversation.is_favorite;
+      
+      // Optimistically update the UI
+      queryClient.setQueryData(conversationQueryKey, (oldData) => {
+        const existing = extractDataFromResponse(oldData);
+        if (!Array.isArray(existing)) return oldData;
+        
+        const updated = existing.map((conv) => {
+          if (conv.id !== conversation.id) {
+            return conv;
+          }
+          return { ...conv, is_favorite: newFavoriteStatus };
+        });
+        
+        // Sort: favorites first, then by updated_at descending
+        updated.sort((a, b) => {
+          if (a.is_favorite !== b.is_favorite) {
+            return b.is_favorite ? 1 : -1;
+          }
+          return new Date(b.updated_at) - new Date(a.updated_at);
+        });
+        
+        return { ...oldData, data: { data: updated } };
+      });
+      
+      // Update selected conversation if it's the one being favorited
+      if (selectedConversation?.id === conversation.id) {
+        setSelectedConversation((prev) => ({
+          ...prev,
+          is_favorite: newFavoriteStatus,
+        }));
+      }
+      
+      // Make the API call
+      await chatAPI.updateConversation(conversation.id, {
+        is_favorite: newFavoriteStatus,
+      });
+      
+      // Refresh conversations to ensure consistency
+      queryClient.invalidateQueries('conversations');
+      setError(null);
+    } catch (err) {
+      // Revert optimistic update on error
+      queryClient.invalidateQueries('conversations');
+      setError(formatError(err).message);
+    }
+  }, [conversationQueryKey, queryClient, selectedConversation, setError]);
+
   const handleComposerSend = useCallback(() => {
     setIsPinnedToBottom(true);
     scheduleScrollToBottom('smooth');
@@ -1018,6 +1070,7 @@ const ModernChat = () => {
     showNoModelsNote: availableModelConfigs.length === 0 && !loadingConfigs,
     onRenameConversation: handleOpenRenameDialog,
     onDeleteConversation: handleOpenDeleteDialog,
+    onToggleFavorite: handleToggleFavorite,
     branding: { appDisplayName, logoUrl, primaryMain },
     chatStyles,
     searchValue: summarySearchInput,

@@ -440,7 +440,20 @@ class ChatService:
         include_inactive: bool = False,
         summary_terms: Optional[List[str]] = None
     ) -> List[Conversation]:
-        """Get conversations for a user."""
+        """Get conversations for a user.
+        
+        Conversations are sorted with favorited conversations first, then by most recently updated.
+        
+        Args:
+            user_id: ID of the user whose conversations to retrieve
+            limit: Maximum number of conversations to return
+            offset: Number of conversations to skip for pagination
+            include_inactive: Whether to include inactive conversations
+            summary_terms: Optional list of terms to filter by in summary text
+            
+        Returns:
+            List of conversations sorted by is_favorite DESC, updated_at DESC
+        """
         stmt = select(Conversation).where(
             Conversation.user_id == user_id
         ).options(
@@ -457,7 +470,11 @@ class ChatService:
             for term in summary_terms:
                 stmt = stmt.where(Conversation.summary_text.ilike(f"%{term}%"))
 
-        stmt = stmt.order_by(desc(Conversation.updated_at)).limit(limit).offset(offset)
+        # Sort: favorites first, then by updated_at descending
+        stmt = stmt.order_by(
+            desc(Conversation.is_favorite),
+            desc(Conversation.updated_at)
+        ).limit(limit).offset(offset)
 
         result = await self.db_session.execute(stmt)
         return result.scalars().all()
@@ -467,10 +484,25 @@ class ChatService:
         conversation_id: str,
         title: Optional[str] = None,
         is_active: Optional[bool] = None,
+        is_favorite: Optional[bool] = None,
         *,
         meta_updates: Optional[Dict[str, Any]] = None
     ) -> Conversation:
-        """Update conversation details."""
+        """Update conversation details.
+        
+        Args:
+            conversation_id: ID of the conversation to update
+            title: New title for the conversation (optional)
+            is_active: New active status (optional)
+            is_favorite: New favorite status (optional)
+            meta_updates: Additional metadata updates (optional)
+            
+        Returns:
+            Updated conversation
+            
+        Raises:
+            ConversationNotFoundError: If conversation doesn't exist
+        """
         conversation = await self.get_conversation_by_id(conversation_id)
         if not conversation:
             raise ConversationNotFoundError(f"Conversation with ID '{conversation_id}' not found")
@@ -480,6 +512,8 @@ class ChatService:
             conversation.title = title
         if is_active is not None:
             conversation.is_active = is_active
+        if is_favorite is not None:
+            conversation.is_favorite = is_favorite
 
         if meta_updates:
             current_meta = dict(conversation.meta or {})

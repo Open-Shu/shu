@@ -48,6 +48,7 @@ class ConversationUpdate(BaseModel):
     """Schema for updating conversations."""
     title: Optional[str] = None
     is_active: Optional[bool] = None
+    is_favorite: Optional[bool] = None
 
 
 class ConversationResponse(BaseModel):
@@ -61,6 +62,7 @@ class ConversationResponse(BaseModel):
     model_configuration_id: Optional[str] = Field(None, description="Model configuration ID")
     model_configuration: Optional[Dict[str, Any]] = Field(None, description="Model configuration details")
     is_active: bool
+    is_favorite: bool = Field(default=False, description="Whether conversation is favorited")
     summary_text: Optional[str] = Field(None, description="Stored conversation summary text")
     meta: Dict[str, Any] = Field(default_factory=dict, description="Conversation automation metadata (title locks, summary checkpoints, etc.)")
     created_at: datetime
@@ -549,6 +551,7 @@ async def update_conversation(
             conversation_id=conversation_id,
             title=conversation_data.title,
             is_active=conversation_data.is_active,
+            is_favorite=conversation_data.is_favorite,
             meta_updates=meta_updates
         )
 
@@ -963,6 +966,7 @@ def _build_conversation_response(conversation) -> ConversationResponse:
         model_configuration_id=conversation.model_configuration_id,
         model_configuration=_serialize_model_configuration(getattr(conversation, "model_configuration", None)),
         is_active=conversation.is_active,
+        is_favorite=getattr(conversation, "is_favorite", False),
         summary_text=getattr(conversation, "summary_text", None),
         meta=getattr(conversation, "meta", {}) or {},
         created_at=conversation.created_at,
