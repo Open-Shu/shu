@@ -334,23 +334,22 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                 if (reason === 'backdropClick' && status === 'running') return;
                 onClose();
             }}
-            maxWidth="md"
-            fullWidth
+            fullScreen
         >
             <DialogTitle>
                 Execute: {experienceName}
                 {status === 'running' && <Typography variant="caption" sx={{ ml: 2 }}>Running...</Typography>}
             </DialogTitle>
-            <DialogContent dividers>
-                <Stack spacing={3}>
+            <DialogContent dividers sx={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+                <Stack spacing={3} sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                     {error && (
                         <Alert severity="error">{error}</Alert>
                     )}
 
                     {/* Steps Progress */}
-                    <Box>
+                    <Box sx={{ flex: '0 0 auto', maxHeight: '40vh', display: 'flex', flexDirection: 'column' }}>
                         <Typography variant="subtitle2" gutterBottom>Steps Execution</Typography>
-                        <Paper variant="outlined">
+                        <Paper variant="outlined" sx={{ flex: 1, overflow: 'auto' }}>
                             <List dense>
                                 {steps.map((step) => {
                                     const state = stepStates[step.step_key];
@@ -393,7 +392,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                                                             sx={{
                                                                 p: 2,
                                                                 bgcolor: 'background.default',
-                                                                maxHeight: 400,
+                                                                maxHeight: '30vh',
                                                                 overflowY: 'auto',
                                                             }}
                                                         >
@@ -417,7 +416,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                     </Box>
 
                     {/* LLM Output */}
-                    <Box sx={{ minHeight: 200 }}>
+                    <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                         <Typography variant="subtitle2" gutterBottom>
                             Synthesized Result
                         </Typography>
@@ -426,9 +425,10 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                             sx={{
                                 p: 2,
                                 bgcolor: 'background.default',
-                                minHeight: 200,
-                                maxHeight: 400,
-                                overflowY: 'auto'
+                                flex: 1,
+                                overflowY: 'auto',
+                                display: 'flex',
+                                flexDirection: 'column'
                             }}
                         >
                             {llmContent ? (

@@ -44,9 +44,12 @@ DEMO_PLAYER_PROFILES = {
             {
                 "date": "2025-12-20",
                 "type": "suite",
+                "restaurant": "",
                 "nights": 2,
+                "guests": 0,
                 "value": 3000.00,
-                "reason": "holiday_visit"
+                "reason": "holiday_visit",
+                "show": "",
             },
             {
                 "date": "2026-01-05",
@@ -54,15 +57,19 @@ DEMO_PLAYER_PROFILES = {
                 "restaurant": "Jade Palace",
                 "guests": 2,
                 "value": 450.00,
-                "reason": "birthday"
+                "reason": "birthday",
+                "show": "",
+                "nights": 1,
             },
             {
                 "date": "2026-01-10",
                 "type": "show_tickets",
                 "show": "Cirque Performance",
-                "seats": 2,
+                "restaurant": "",
                 "value": 600.00,
-                "reason": "anniversary"
+                "guests": 1,
+                "reason": "anniversary",
+                "nights": 1,
             }
         ],
         "financial": {

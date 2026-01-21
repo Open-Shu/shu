@@ -17,6 +17,13 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
 }) {
   const theme = useTheme();
 
+  // Preprocess content to replace <br> tags with newlines
+  const processedContent = useMemo(() => {
+    if (!content) return content;
+    // Replace <br>, <br/>, and <br /> tags with newlines
+    return content.replace(/<br\s*\/?>/gi, '\n');
+  }, [content]);
+
   const markdownComponents = useMemo(
     () => ({
       a: ({ href, children, ...props }) => {
@@ -172,7 +179,7 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
       }}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {content || 'No content available.'}
+        {processedContent || 'No content available.'}
       </ReactMarkdown>
     </Box>
   );

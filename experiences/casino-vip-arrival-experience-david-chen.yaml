@@ -11,7 +11,7 @@
 
 experience_yaml_version: 1
 id: casino-vip-arrival-experience---standard-v1
-name: Casino VIP Arrival Experience - David Chen
+name: Casino VIP Arrival Experience
 description: Demonstrates real-time VIP recognition and personalized service orchestration for standard VIP players
 version: 1
 visibility: draft
