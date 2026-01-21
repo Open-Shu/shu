@@ -5,6 +5,8 @@ returning synthesized recognition events for demonstration purposes.
 """
 
 from __future__ import annotations
+import asyncio
+import random
 from typing import Any, Dict, Optional
 
 
@@ -65,7 +67,7 @@ class ToolResult:
 
 # Synthesized recognition events for demo purposes
 DEMO_RECOGNITION_EVENTS = [
-    # VIP Player 1: David Chen - High-roller, blackjack specialist
+    # VIP Player: David Chen - High-roller, blackjack specialist
     {
         "event_id": "EVT-20260116-201500-001",
         "timestamp": "2026-01-16T20:15:00Z",
@@ -79,54 +81,12 @@ DEMO_RECOGNITION_EVENTS = [
         "companion_count": 0,
         "category": "vip"
     },
-    # VIP Player 2: Sarah Martinez - Poker tournament regular
-    {
-        "event_id": "EVT-20260116-201530-002",
-        "timestamp": "2026-01-16T20:15:30Z",
-        "person_id": "PLAYER-8901",
-        "name": "Sarah Martinez",
-        "confidence": 0.94,
-        "location": "vip_entrance",
-        "camera_id": "CAM-VIP-01",
-        "image_ref": "img_20260116_201530_002.jpg",
-        "entry_type": "vip_entrance",
-        "companion_count": 1,
-        "category": "vip"
-    },
-    # VIP Player 3: James Wilson - Slots and entertainment enthusiast
-    {
-        "event_id": "EVT-20260116-201600-003",
-        "timestamp": "2026-01-16T20:16:00Z",
-        "person_id": "PLAYER-2345",
-        "name": "James Wilson",
-        "confidence": 0.98,
-        "location": "main_entrance",
-        "camera_id": "CAM-ENTRANCE-02",
-        "image_ref": "img_20260116_201600_003.jpg",
-        "entry_type": "main_entrance",
-        "companion_count": 3,
-        "category": "vip"
-    },
-    # VIP Player 4: Elena Volkov - Baccarat high-stakes player
-    {
-        "event_id": "EVT-20260116-201645-004",
-        "timestamp": "2026-01-16T20:16:45Z",
-        "person_id": "PLAYER-6789",
-        "name": "Elena Volkov",
-        "confidence": 0.95,
-        "location": "vip_entrance",
-        "camera_id": "CAM-VIP-01",
-        "image_ref": "img_20260116_201645_004.jpg",
-        "entry_type": "vip_entrance",
-        "companion_count": 0,
-        "category": "vip"
-    },
-    # VIP Player 5: Michael Park - New VIP, rapid ascent
+    # VIP Player: Michael Park - New VIP, rapid ascent
     {
         "event_id": "EVT-20260116-201700-005",
         "timestamp": "2026-01-16T20:17:00Z",
         "person_id": "PLAYER-3456",
-        "name": "Michael Park",
+        "name": "Ahmed Al Mansoori",
         "confidence": 0.92,
         "location": "main_entrance",
         "camera_id": "CAM-ENTRANCE-01",
@@ -135,33 +95,19 @@ DEMO_RECOGNITION_EVENTS = [
         "companion_count": 2,
         "category": "vip"
     },
-    # Flagged Player 1: High-risk banned player
-    {
-        "event_id": "EVT-20260116-201730-006",
-        "timestamp": "2026-01-16T20:17:30Z",
-        "person_id": "PLAYER-9999",
-        "name": "Robert Blackwell",
-        "confidence": 0.97,
-        "location": "main_entrance",
-        "camera_id": "CAM-ENTRANCE-02",
-        "image_ref": "img_20260116_201730_006.jpg",
-        "entry_type": "main_entrance",
-        "companion_count": 0,
-        "category": "flagged"
-    },
-    # Flagged Player 2: Alcohol-restricted player
+    # Flagged Player: Alcohol-restricted player
     {
         "event_id": "EVT-20260116-201800-007",
         "timestamp": "2026-01-16T20:18:00Z",
         "person_id": "PLAYER-7777",
         "name": "Thomas Anderson",
         "confidence": 0.93,
-        "location": "main_entrance",
-        "camera_id": "CAM-ENTRANCE-01",
+        "location": "bar_lounge",
+        "camera_id": "CAM-BAR-01",
         "image_ref": "img_20260116_201800_007.jpg",
         "entry_type": "main_entrance",
         "companion_count": 1,
-        "category": "flagged"
+        "category": "other"
     }
 ]
 
@@ -292,6 +238,9 @@ class DemoFacialRecognitionPlugin:
         Returns:
             ToolResult containing synthesized recognition data or error
         """
+        # Simulate realistic API delay
+        await asyncio.sleep(random.uniform(0.5, 2.0))
+        
         op = params.get("op", "list")
         
         if op == "list":

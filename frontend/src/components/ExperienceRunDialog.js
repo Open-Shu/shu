@@ -6,7 +6,6 @@ import {
     DialogActions,
     DialogContent,
     DialogTitle,
-    Divider,
     List,
     ListItem,
     ListItemIcon,
@@ -16,9 +15,19 @@ import {
     Typography,
     CircularProgress,
     Alert,
+    Collapse,
+    IconButton,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    Chip,
 } from '@mui/material';
 import {
-    PlayArrow as RunIcon,
+    ExpandMore as ExpandMoreIcon,
+    ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { experiencesAPI } from '../services/api';
@@ -30,11 +39,165 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
     const isDarkMode = theme.palette.mode === 'dark';
     
     const [status, setStatus] = useState('pending'); // pending, running, completed, failed
-    const [logs, setLogs] = useState([]); // List of parsed events for debugging
-    const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error } }
+    const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error, data } }
+    const [expandedSteps, setExpandedSteps] = useState({}); // { step_key: boolean }
     const [llmContent, setLlmContent] = useState('');
     const [error, setError] = useState(null);
     const abortControllerRef = useRef(null);
+
+    const toggleStepExpanded = (stepKey) => {
+        setExpandedSteps(prev => ({
+            ...prev,
+            [stepKey]: !prev[stepKey]
+        }));
+    };
+
+    // Helper function to render data in a human-readable format
+    const renderDataValue = (value) => {
+        if (value === null || value === undefined) {
+            return <Typography variant="body2" color="text.secondary" fontStyle="italic">null</Typography>;
+        }
+        
+        if (typeof value === 'boolean') {
+            return <Chip label={value ? 'true' : 'false'} size="small" color={value ? 'success' : 'default'} />;
+        }
+        
+        if (typeof value === 'number') {
+            return <Typography variant="body2">{value}</Typography>;
+        }
+        
+        if (typeof value === 'string') {
+            // Check if it's a date string
+            if (value.match(/^\d{4}-\d{2}-\d{2}/) && !isNaN(Date.parse(value))) {
+                return <Typography variant="body2">{new Date(value).toLocaleString()}</Typography>;
+            }
+            return <Typography variant="body2">{value}</Typography>;
+        }
+        
+        if (Array.isArray(value)) {
+            if (value.length === 0) {
+                return <Typography variant="body2" color="text.secondary" fontStyle="italic">empty array</Typography>;
+            }
+            // For arrays of primitives, show as chips
+            if (value.every(item => typeof item !== 'object')) {
+                return (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {value.map((item, idx) => (
+                            <Chip key={idx} label={String(item)} size="small" variant="outlined" />
+                        ))}
+                    </Box>
+                );
+            }
+            // For arrays of objects, show count
+            return <Typography variant="body2" color="text.secondary">{value.length} items</Typography>;
+        }
+        
+        if (typeof value === 'object') {
+            return <Typography variant="body2" color="text.secondary">object</Typography>;
+        }
+        
+        return <Typography variant="body2">{String(value)}</Typography>;
+    };
+
+    // Helper function to render nested data structure
+    const renderDataStructure = (data, depth = 0) => {
+        if (!data || typeof data !== 'object') {
+            return renderDataValue(data);
+        }
+
+        if (Array.isArray(data)) {
+            if (data.length === 0) {
+                return <Typography variant="body2" color="text.secondary" fontStyle="italic">Empty array</Typography>;
+            }
+            
+            // If array of objects with similar structure, render as table
+            if (data.every(item => typeof item === 'object' && !Array.isArray(item))) {
+                const allKeys = [...new Set(data.flatMap(item => Object.keys(item)))];
+                
+                return (
+                    <TableContainer>
+                        <Table size="small">
+                            <TableHead>
+                                <TableRow>
+                                    {allKeys.map(key => (
+                                        <TableCell key={key} sx={{ fontWeight: 600 }}>
+                                            {key.replace(/_/g, ' ')}
+                                        </TableCell>
+                                    ))}
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {data.map((item, idx) => (
+                                    <TableRow key={idx}>
+                                        {allKeys.map(key => (
+                                            <TableCell key={key}>
+                                                {renderDataValue(item[key])}
+                                            </TableCell>
+                                        ))}
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
+                );
+            }
+            
+            // Otherwise, render as list
+            return (
+                <Stack spacing={1}>
+                    {data.map((item, idx) => (
+                        <Box key={idx} sx={{ pl: 2, borderLeft: 2, borderColor: 'divider' }}>
+                            {renderDataStructure(item, depth + 1)}
+                        </Box>
+                    ))}
+                </Stack>
+            );
+        }
+
+        // Render object as key-value pairs
+        const entries = Object.entries(data);
+        if (entries.length === 0) {
+            return <Typography variant="body2" color="text.secondary" fontStyle="italic">Empty object</Typography>;
+        }
+
+        return (
+            <Stack spacing={1.5}>
+                {entries.map(([key, value]) => {
+                    const isNested = value && typeof value === 'object';
+                    
+                    return (
+                        <Box key={key}>
+                            <Typography 
+                                variant="caption" 
+                                sx={{ 
+                                    fontWeight: 600, 
+                                    color: 'text.secondary',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: 0.5,
+                                    display: 'block',
+                                    mb: 0.5
+                                }}
+                            >
+                                {key.replace(/_/g, ' ')}
+                            </Typography>
+                            {isNested ? (
+                                <Box sx={{ 
+                                    pl: 2, 
+                                    borderLeft: 2, 
+                                    borderColor: 'divider',
+                                    mt: 0.5
+                                }}>
+                                    {renderDataStructure(value, depth + 1)}
+                                </Box>
+                            ) : (
+                                renderDataValue(value)
+                            )}
+                        </Box>
+                    );
+                })}
+            </Stack>
+        );
+    };
 
     const startExecution = React.useCallback(async () => {
         try {
@@ -72,7 +235,6 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
 
                             try {
                                 const event = JSON.parse(jsonStr);
-                                setLogs(prev => [...prev, event]);
 
                                 // Process events for state updates
                                 if (event.type === 'run_started') setStatus('running');
@@ -87,7 +249,8 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                                         ...prev,
                                         [event.step_key]: {
                                             status: 'succeeded',
-                                            summary: event.summary
+                                            summary: event.summary,
+                                            data: event.data // Store the actual data returned by the step
                                         }
                                     }));
                                 }
@@ -142,8 +305,8 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
     useEffect(() => {
         if (open) {
             setStatus('running');
-            setLogs([]);
             setStepStates({});
+            setExpandedSteps({});
             setLlmContent('');
             setError(null);
 
@@ -191,24 +354,62 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                             <List dense>
                                 {steps.map((step) => {
                                     const state = stepStates[step.step_key];
+                                    const isExpanded = expandedSteps[step.step_key];
+                                    const hasData = state?.data !== undefined && state?.data !== null;
+                                    
                                     return (
-                                        <ListItem key={step.step_key}>
-                                            <ListItemIcon>
-                                                <StepStatusIcon state={state} />
-                                            </ListItemIcon>
-                                            <ListItemText
-                                                primary={step.step_key}
-                                                secondary={
-                                                    state?.error ? `Error: ${state.error}` :
-                                                        state?.summary ? state.summary :
-                                                            state?.reason ? `Skipped: ${state.reason}` :
-                                                                step.step_type
-                                                }
-                                                primaryTypographyProps={{
-                                                    color: state?.status === 'failed' ? 'error' : 'textPrimary'
-                                                }}
-                                            />
-                                        </ListItem>
+                                        <React.Fragment key={step.step_key}>
+                                            <ListItem>
+                                                <ListItemIcon>
+                                                    <StepStatusIcon state={state} />
+                                                </ListItemIcon>
+                                                <ListItemText
+                                                    primary={step.step_key}
+                                                    secondary={
+                                                        state?.error ? `Error: ${state.error}` :
+                                                            state?.summary ? state.summary :
+                                                                state?.reason ? `Skipped: ${state.reason}` :
+                                                                    step.step_type
+                                                    }
+                                                    primaryTypographyProps={{
+                                                        color: state?.status === 'failed' ? 'error' : 'textPrimary'
+                                                    }}
+                                                />
+                                                {hasData && (
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => toggleStepExpanded(step.step_key)}
+                                                        sx={{ ml: 1 }}
+                                                    >
+                                                        {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                                                    </IconButton>
+                                                )}
+                                            </ListItem>
+                                            {hasData && (
+                                                <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                                                    <Box sx={{ px: 2, pb: 2, pl: 9 }}>
+                                                        <Paper
+                                                            variant="outlined"
+                                                            sx={{
+                                                                p: 2,
+                                                                bgcolor: 'background.default',
+                                                                maxHeight: 400,
+                                                                overflowY: 'auto',
+                                                            }}
+                                                        >
+                                                            <Typography
+                                                                variant="caption"
+                                                                color="text.secondary"
+                                                                sx={{ display: 'block', mb: 2, fontWeight: 600 }}
+                                                            >
+                                                                Step Output Data:
+                                                            </Typography>
+                                                            {renderDataStructure(state.data)}
+                                                        </Paper>
+                                                    </Box>
+                                                </Collapse>
+                                            )}
+                                        </React.Fragment>
                                     );
                                 })}
                             </List>
@@ -224,7 +425,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                             variant="outlined"
                             sx={{
                                 p: 2,
-                                bgcolor: 'grey.50',
+                                bgcolor: 'background.default',
                                 minHeight: 200,
                                 maxHeight: 400,
                                 overflowY: 'auto'

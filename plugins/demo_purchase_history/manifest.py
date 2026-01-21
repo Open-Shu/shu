@@ -1,18 +1,18 @@
-"""Manifest for Demo Incident History Plugin."""
+"""Manifest for Demo Purchase History Plugin."""
 
 PLUGIN_MANIFEST = {
-    "name": "demo_incident_history",
-    "display_name": "Demo: Incident History Tracking",
+    "name": "demo_purchase_history",
+    "display_name": "Demo: Purchase History Tracking",
     "version": "1.0.0",
-    "module": "plugins.demo_incident_history.plugin:DemoIncidentHistoryPlugin",
+    "module": "plugins.demo_purchase_history.plugin:DemoPurchaseHistoryPlugin",
     # Demo plugin capabilities - minimal requirements
     # - kb: For potential knowledge base ingestion demos
     "capabilities": ["kb"],
     # Feeds policy: declare feed-safe operations
-    "default_feed_op": "list",
-    "allowed_feed_ops": ["list"],
+    "default_feed_op": "get",
+    "allowed_feed_ops": ["get"],
     # Chat-callable operations for demo workflows
-    "chat_callable_ops": ["list", "search", "get_by_player"],
+    "chat_callable_ops": ["get"],
     # No authentication required for demo plugin (uses synthesized data)
     "required_identities": [],
     "op_auth": {}

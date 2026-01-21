@@ -1,0 +1,68 @@
+# Experience Export: Casino Alcohol Restriction Experience - Safety Monitoring
+# Generated on: 2026-01-20 17:44:59
+# 
+# This YAML file contains placeholders for user-specific values:
+# - { trigger_type }: How the experience will be triggered (Cron, Scheduled, Manual)
+# - { trigger_config }: The actual trigger value, depending on the schedule type
+# - { model_configuration_id }: Choose your model configuration
+# - { max_run_seconds }: The total amount of time the experience is allowed to run
+#
+# To import this experience, use the Experience Import wizard in Shu.
+
+experience_yaml_version: 1
+id: casino-alcohol-restriction-experience---safety-monitoring-v1
+name: Casino Alcohol Restriction Experience - Safety Monitoring
+description: Demonstrates location awareness, purchase tracking, and intelligent safety decisions for alcohol-restricted players,
+  based on historic events.
+version: 1
+visibility: draft
+trigger_type: '{{ trigger_type }}'
+trigger_config: {{ trigger_config }}
+include_previous_run: false
+model_configuration_id: '{{ model_configuration_id }}'
+inline_prompt_template: 'You work for the Casino Royale. As the casino system detects people entering the facility, you assist
+  the bartenders with real-time decisions.
+
+
+  You are provided with `incident_histories` that highlights events that have happened in the past. What''s especially important,
+  is that you assist in the decision of when people are cut off. From the purchase history, estimate how many more drinks
+  (if any) are safe for the person to consume. Take their history into account.
+
+
+  Do not needlessly limit customers from consuming alcohol, our business model requires that people do. However, we want to
+  ensure that they stay in the safe zone where they increase their spending and don''t go past this.'
+max_run_seconds: {{ max_run_seconds }}
+steps:
+- step_key: recognition_events
+  step_type: plugin
+  order: 0
+  plugin_name: demo_facial_recognition
+  plugin_op: get_event
+  params_template:
+    event_id: EVT-20260116-201800-007
+- step_key: player_profiles
+  step_type: plugin
+  order: 1
+  plugin_name: demo_player_profiles
+  plugin_op: get
+  params_template:
+    player_id: PLAYER-7777
+    include_notes: true
+    include_analytics: true
+    include_questions: true
+- step_key: incident_histories
+  step_type: plugin
+  order: 2
+  plugin_name: demo_incident_history
+  plugin_op: get_by_player
+  params_template:
+    player_id: PLAYER-7777
+    include_risk_assessment: true
+    include_behavioral_notes: true
+- step_key: purchase_history
+  step_type: plugin
+  order: 3
+  plugin_name: demo_purchase_history
+  plugin_op: get
+  params_template:
+    player_id: PLAYER-7777

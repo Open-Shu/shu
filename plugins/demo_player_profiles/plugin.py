@@ -5,6 +5,8 @@ returning synthesized player profiles for demonstration purposes.
 """
 
 from __future__ import annotations
+import asyncio
+import random
 from typing import Any, Dict, Optional
 
 
@@ -13,6 +15,7 @@ DEMO_PLAYER_PROFILES = {
     # VIP Player 1: David Chen - High-roller, blackjack specialist
     "PLAYER-5678": {
         "player_id": "PLAYER-5678",
+        "portrait": "/david_chen.png",
         "name": "David Chen",
         "tier": "platinum",
         "member_since": "2022-03-15",
@@ -111,308 +114,15 @@ DEMO_PLAYER_PROFILES = {
         ]
     },
     
-    # VIP Player 2: Sarah Martinez - Poker tournament regular
-    "PLAYER-8901": {
-        "player_id": "PLAYER-8901",
-        "name": "Sarah Martinez",
-        "tier": "diamond",
-        "member_since": "2020-08-22",
-        "contact": {
-            "email": "s.martinez@example.com",
-            "phone": "+1-555-0456",
-            "preferred_contact": "email"
-        },
-        "preferences": {
-            "games": [
-                {"game": "poker", "skill_level": "expert", "preference_score": 10},
-                {"game": "blackjack", "skill_level": "advanced", "preference_score": 6},
-                {"game": "roulette", "skill_level": "intermediate", "preference_score": 4}
-            ],
-            "table_preference": "private_rooms",
-            "table_limits": {"min": 500, "max": 25000},
-            "beverage": "champagne",
-            "dining": [
-                {"restaurant": "Le Bernardin", "cuisine": "french", "visits": 18},
-                {"restaurant": "Nobu", "cuisine": "japanese", "visits": 10}
-            ],
-            "entertainment": ["poker_tournaments", "wine_tastings"],
-            "room_preference": "penthouse_suite"
-        },
-        "comp_history": [
-            {
-                "date": "2025-11-15",
-                "type": "tournament_entry",
-                "tournament": "High Roller Championship",
-                "value": 10000.00,
-                "reason": "diamond_tier_benefit"
-            },
-            {
-                "date": "2025-12-28",
-                "type": "suite",
-                "nights": 3,
-                "value": 7500.00,
-                "reason": "new_year_visit"
-            },
-            {
-                "date": "2026-01-12",
-                "type": "spa_package",
-                "value": 1200.00,
-                "reason": "loyalty_reward"
-            }
-        ],
-        "financial": {
-            "credit_line": 150000.00,
-            "credit_used": 25000.00,
-            "average_bet": 2500.00,
-            "average_session_buy_in": 50000.00,
-            "lifetime_value": 485000.00,
-            "ytd_value": 42000.00,
-            "last_30_days_value": 18000.00
-        },
-        "visit_history": {
-            "total_visits": 89,
-            "last_visit": "2026-01-13",
-            "average_visit_duration_hours": 6.5,
-            "preferred_days": ["thursday", "friday", "saturday"],
-            "preferred_times": ["evening", "night", "late_night"]
-        },
-        "analytics": {
-            "win_loss_ratio": 0.52,
-            "volatility": "high",
-            "churn_risk": "very_low",
-            "upsell_potential": "medium",
-            "social_influence": "high"
-        },
-        "special_dates": [
-            {"type": "birthday", "date": "1985-03-28"},
-            {"type": "member_anniversary", "date": "2020-08-22"}
-        ],
-        "notes": [
-            {
-                "date": "2025-11-15",
-                "author": "Tournament Director Mike Chen",
-                "note": "Exceptional poker player. Prefers high-stakes tournaments. Very professional and courteous."
-            },
-            {
-                "date": "2026-01-12",
-                "author": "VIP Host Jennifer Liu",
-                "note": "Mentioned interest in private poker room for upcoming business associates visit. Schedule for February."
-            }
-        ],
-        "pre_generated_questions": [
-            "What poker tournaments has Sarah Martinez participated in?",
-            "What is Sarah Martinez's preferred table limit range?",
-            "When is Sarah Martinez's next scheduled visit?",
-            "What are Sarah Martinez's dining and entertainment preferences?",
-            "What is Sarah Martinez's current credit line status?",
-            "What special accommodations does Sarah Martinez typically request?"
-        ]
-    },
-    
-    # VIP Player 3: James Wilson - Slots and entertainment enthusiast
-    "PLAYER-2345": {
-        "player_id": "PLAYER-2345",
-        "name": "James Wilson",
-        "tier": "gold",
-        "member_since": "2023-05-10",
-        "contact": {
-            "email": "j.wilson@example.com",
-            "phone": "+1-555-0789",
-            "preferred_contact": "phone"
-        },
-        "preferences": {
-            "games": [
-                {"game": "slots", "skill_level": "casual", "preference_score": 10},
-                {"game": "roulette", "skill_level": "beginner", "preference_score": 6},
-                {"game": "blackjack", "skill_level": "beginner", "preference_score": 4}
-            ],
-            "table_preference": "social_atmosphere",
-            "table_limits": {"min": 25, "max": 500},
-            "beverage": "beer",
-            "dining": [
-                {"restaurant": "The Buffet", "cuisine": "buffet", "visits": 25},
-                {"restaurant": "Sports Bar & Grill", "cuisine": "american", "visits": 15}
-            ],
-            "entertainment": ["shows", "concerts", "sports_events"],
-            "room_preference": "standard_room"
-        },
-        "comp_history": [
-            {
-                "date": "2025-12-15",
-                "type": "show_tickets",
-                "show": "Magic Spectacular",
-                "seats": 4,
-                "value": 800.00,
-                "reason": "family_visit"
-            },
-            {
-                "date": "2026-01-08",
-                "type": "buffet_vouchers",
-                "value": 200.00,
-                "reason": "slot_play_reward"
-            },
-            {
-                "date": "2026-01-14",
-                "type": "room_upgrade",
-                "nights": 1,
-                "value": 150.00,
-                "reason": "loyalty_reward"
-            }
-        ],
-        "financial": {
-            "credit_line": 5000.00,
-            "credit_used": 0.00,
-            "average_bet": 50.00,
-            "average_session_buy_in": 500.00,
-            "lifetime_value": 18500.00,
-            "ytd_value": 3200.00,
-            "last_30_days_value": 1200.00
-        },
-        "visit_history": {
-            "total_visits": 34,
-            "last_visit": "2026-01-15",
-            "average_visit_duration_hours": 3.5,
-            "preferred_days": ["friday", "saturday", "sunday"],
-            "preferred_times": ["afternoon", "evening"]
-        },
-        "analytics": {
-            "win_loss_ratio": 0.38,
-            "volatility": "low",
-            "churn_risk": "low",
-            "upsell_potential": "medium",
-            "social_influence": "low"
-        },
-        "special_dates": [
-            {"type": "birthday", "date": "1972-11-03"},
-            {"type": "wedding_anniversary", "date": "1995-06-17"}
-        ],
-        "notes": [
-            {
-                "date": "2025-12-15",
-                "author": "Guest Services Manager Amy Chen",
-                "note": "Family-oriented guest. Often brings wife and adult children. Enjoys entertainment more than gambling."
-            },
-            {
-                "date": "2026-01-14",
-                "author": "Slot Host David Park",
-                "note": "Regular slots player. Prefers progressive jackpot machines. Very friendly and appreciative of comps."
-            }
-        ],
-        "pre_generated_questions": [
-            "What are James Wilson's favorite slot machines?",
-            "When does James Wilson typically visit with family?",
-            "What entertainment options does James Wilson prefer?",
-            "What dining venues does James Wilson frequent?",
-            "What is James Wilson's average session duration?",
-            "What comps has James Wilson received recently?"
-        ]
-    },
-    
-    # VIP Player 4: Elena Volkov - Baccarat high-stakes player
-    "PLAYER-6789": {
-        "player_id": "PLAYER-6789",
-        "name": "Elena Volkov",
-        "tier": "platinum",
-        "member_since": "2021-01-20",
-        "contact": {
-            "email": "e.volkov@example.com",
-            "phone": "+1-555-0234",
-            "preferred_contact": "text"
-        },
-        "preferences": {
-            "games": [
-                {"game": "baccarat", "skill_level": "expert", "preference_score": 10},
-                {"game": "blackjack", "skill_level": "advanced", "preference_score": 5},
-                {"game": "roulette", "skill_level": "intermediate", "preference_score": 3}
-            ],
-            "table_preference": "high_limit_private",
-            "table_limits": {"min": 1000, "max": 50000},
-            "beverage": "vodka_martini",
-            "dining": [
-                {"restaurant": "The Steakhouse", "cuisine": "steakhouse", "visits": 20},
-                {"restaurant": "Caviar Bar", "cuisine": "russian", "visits": 8}
-            ],
-            "entertainment": ["private_events", "no_crowds"],
-            "room_preference": "presidential_suite"
-        },
-        "comp_history": [
-            {
-                "date": "2025-10-15",
-                "type": "suite",
-                "nights": 4,
-                "value": 12000.00,
-                "reason": "high_roller_visit"
-            },
-            {
-                "date": "2025-11-20",
-                "type": "private_jet",
-                "value": 25000.00,
-                "reason": "platinum_tier_benefit"
-            },
-            {
-                "date": "2025-12-31",
-                "type": "new_year_gala",
-                "guests": 2,
-                "value": 5000.00,
-                "reason": "vip_event"
-            }
-        ],
-        "financial": {
-            "credit_line": 500000.00,
-            "credit_used": 150000.00,
-            "average_bet": 10000.00,
-            "average_session_buy_in": 200000.00,
-            "lifetime_value": 1250000.00,
-            "ytd_value": 85000.00,
-            "last_30_days_value": 0.00
-        },
-        "visit_history": {
-            "total_visits": 28,
-            "last_visit": "2025-12-31",
-            "average_visit_duration_hours": 8.0,
-            "preferred_days": ["friday", "saturday"],
-            "preferred_times": ["night", "late_night"]
-        },
-        "analytics": {
-            "win_loss_ratio": 0.48,
-            "volatility": "very_high",
-            "churn_risk": "medium",
-            "upsell_potential": "low",
-            "social_influence": "very_high"
-        },
-        "special_dates": [
-            {"type": "birthday", "date": "1980-09-12"}
-        ],
-        "notes": [
-            {
-                "date": "2025-12-31",
-                "author": "Casino Manager Richard Stone",
-                "note": "Ultra-high-net-worth individual. Requires absolute privacy and discretion. Prefers minimal interaction unless initiated by her."
-            },
-            {
-                "date": "2025-11-20",
-                "author": "VIP Host Jennifer Liu",
-                "note": "Mentioned potential visit in late January. Ensure presidential suite and private baccarat room are available."
-            }
-        ],
-        "pre_generated_questions": [
-            "What is Elena Volkov's preferred baccarat table setup?",
-            "When is Elena Volkov's next expected visit?",
-            "What are Elena Volkov's privacy and security requirements?",
-            "What is Elena Volkov's current credit line status?",
-            "What dining and beverage preferences does Elena Volkov have?",
-            "What special accommodations does Elena Volkov require?"
-        ]
-    },
-    
-    # VIP Player 5: Michael Park - New VIP, rapid ascent
+    # VIP Player 5: Ahmed Al Mansoori - New VIP, rapid ascent
     "PLAYER-3456": {
         "player_id": "PLAYER-3456",
-        "name": "Michael Park",
+        "portrait": "/ahmed-al-mansoori.png",
+        "name": "Ahmed Al Mansoori",
         "tier": "gold",
         "member_since": "2025-09-01",
         "contact": {
-            "email": "m.park@example.com",
+            "email": "a.mansoori@example.com",
             "phone": "+1-555-0567",
             "preferred_contact": "email"
         },
@@ -503,110 +213,18 @@ DEMO_PLAYER_PROFILES = {
             "What special events would appeal to Michael Park?"
         ]
     },
-    
-    # Flagged Player 1: Robert Blackwell - High-risk banned player
-    "PLAYER-9999": {
-        "player_id": "PLAYER-9999",
-        "name": "Robert Blackwell",
-        "tier": "banned",
-        "member_since": "2019-03-10",
-        "ban_date": "2024-08-15",
-        "ban_reason": "violent_behavior",
-        "contact": {
-            "email": "r.blackwell@example.com",
-            "phone": "+1-555-0999",
-            "preferred_contact": "none"
-        },
-        "restriction_flags": {
-            "banned": True,
-            "self_excluded": False,
-            "credit_suspended": True,
-            "watchlist": "high_priority"
-        },
-        "ban_details": {
-            "incident_date": "2024-08-15T23:45:00Z",
-            "incident_type": "physical_altercation",
-            "severity": "critical",
-            "description": "Physical altercation with dealer and security staff. Threatened employees. Police called.",
-            "witnesses": ["Dealer Mike Johnson", "Security Officer Sarah Lee", "Floor Manager Tom Rodriguez"],
-            "police_report": "CASE-2024-0815-1145",
-            "ban_duration": "permanent",
-            "appeal_status": "denied"
-        },
-        "security_notes": [
-            {
-                "date": "2024-08-15",
-                "author": "Security Director James Wilson",
-                "note": "CRITICAL: Player became aggressive after losing streak. Verbally abusive to dealer, then physically aggressive when asked to leave. Required police intervention. Permanent ban issued. Alert all staff."
-            },
-            {
-                "date": "2024-08-20",
-                "author": "Legal Department",
-                "note": "Trespass notice served. Player is not permitted on property. Contact security immediately if spotted."
-            },
-            {
-                "date": "2024-09-10",
-                "author": "Security Director James Wilson",
-                "note": "Player attempted entry at side entrance. Recognized by facial recognition. Denied entry, escorted off property. No incident."
-            }
-        ],
-        "handling_instructions": {
-            "immediate_action": "DENY ENTRY - Contact security immediately",
-            "security_protocol": "Code Red - High Priority",
-            "contact_security": True,
-            "contact_management": True,
-            "police_standby": True,
-            "do_not_engage": True,
-            "escort_required": True
-        },
-        "financial": {
-            "credit_line": 0.00,
-            "credit_used": 0.00,
-            "outstanding_balance": 0.00,
-            "lifetime_value": -15000.00,
-            "last_transaction": "2024-08-15"
-        },
-        "pre_generated_questions": [
-            "Why is Robert Blackwell banned?",
-            "What is the security protocol for Robert Blackwell?",
-            "What incident led to Robert Blackwell's ban?",
-            "Is Robert Blackwell's ban permanent or temporary?",
-            "What should staff do if Robert Blackwell is spotted?"
-        ]
-    },
-    
-    # Flagged Player 2: Thomas Anderson - Alcohol-restricted player
+
+    # Flagged Player: Thomas Anderson - Alcohol-restricted player
     "PLAYER-7777": {
         "player_id": "PLAYER-7777",
+        "portrait": "/thomas_anderson.png",
         "name": "Thomas Anderson",
         "tier": "silver",
         "member_since": "2021-06-15",
-        "restriction_date": "2025-03-20",
-        "restriction_reason": "alcohol_related_incidents",
         "contact": {
             "email": "t.anderson@example.com",
             "phone": "+1-555-0777",
             "preferred_contact": "email"
-        },
-        "restriction_flags": {
-            "banned": False,
-            "self_excluded": False,
-            "alcohol_restricted": True,
-            "credit_suspended": False,
-            "watchlist": "standard_monitoring"
-        },
-        "restriction_details": {
-            "restriction_type": "alcohol_service_prohibited",
-            "effective_date": "2025-03-20",
-            "review_date": "2026-03-20",
-            "reason": "Multiple alcohol-related behavioral incidents",
-            "conditions": [
-                "No alcoholic beverages to be served",
-                "Staff must politely decline alcohol requests",
-                "Offer alternative beverages",
-                "Monitor behavior during visits",
-                "Notify floor manager of arrival"
-            ]
         },
         "preferences": {
             "games": [
@@ -662,61 +280,19 @@ DEMO_PLAYER_PROFILES = {
             "upsell_potential": "low",
             "social_influence": "low"
         },
-        "incident_history": [
+        "notes": [
             {
-                "date": "2025-02-15",
-                "type": "behavioral_concern",
-                "severity": "medium",
-                "description": "Player became loud and disruptive after consuming alcohol. Required intervention from floor staff."
-            },
-            {
-                "date": "2025-03-10",
-                "type": "behavioral_concern",
-                "severity": "high",
-                "description": "Player intoxicated, verbally abusive to other guests. Security called. Player escorted out."
-            },
-            {
-                "date": "2025-03-20",
-                "type": "restriction_imposed",
-                "severity": "administrative",
-                "description": "Alcohol service restriction imposed after pattern of incidents. Player notified by certified mail."
-            }
-        ],
-        "compliance_notes": [
-            {
-                "date": "2025-03-20",
-                "author": "Guest Services Manager Amy Chen",
-                "note": "Alcohol restriction in place. Player has been cooperative since restriction. Prefers coffee and energy drinks."
-            },
-            {
-                "date": "2025-06-15",
+                "date": "2025-11-10",
                 "author": "Floor Manager Tom Rodriguez",
-                "note": "Player behavior has improved significantly. No incidents since restriction. Continues to visit regularly."
-            },
-            {
-                "date": "2025-12-15",
-                "author": "Slot Host David Park",
-                "note": "Player appreciates being able to continue visiting. Mentioned restriction has helped him. Positive attitude."
+                "note": "They can get agitated if they consume excessive amounts of alcohol."
             }
         ],
-        "handling_instructions": {
-            "immediate_action": "ALLOW ENTRY - Notify floor manager",
-            "beverage_protocol": "No alcohol service - offer alternatives",
-            "staff_notification": True,
-            "monitor_behavior": True,
-            "be_discreet": True,
-            "positive_reinforcement": True,
-            "alternative_beverages": ["coffee", "soda", "energy_drinks", "juice", "water"]
-        },
         "special_dates": [
             {"type": "birthday", "date": "1975-08-22"}
         ],
         "pre_generated_questions": [
-            "Why is Thomas Anderson alcohol-restricted?",
             "What beverages can be offered to Thomas Anderson?",
             "What is the protocol for serving Thomas Anderson?",
-            "When is Thomas Anderson's restriction review date?",
-            "How has Thomas Anderson's behavior been since the restriction?",
             "What should staff do when Thomas Anderson arrives?"
         ]
     }
@@ -1112,6 +688,9 @@ class DemoPlayerProfilesPlugin:
         Returns:
             ToolResult containing synthesized player profile data or error
         """
+        # Simulate realistic API delay
+        await asyncio.sleep(random.uniform(0.5, 2.0))
+        
         op = params.get("op", "list")
         include_analytics = params.get("include_analytics", True)
         include_notes = params.get("include_notes", True)

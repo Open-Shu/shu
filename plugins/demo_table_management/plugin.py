@@ -5,6 +5,8 @@ returning synthesized table data for demonstration purposes.
 """
 
 from __future__ import annotations
+import asyncio
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 import uuid
@@ -544,6 +546,9 @@ class DemoTableManagementPlugin:
         Returns:
             ToolResult containing synthesized table data or error
         """
+        # Simulate realistic API delay
+        await asyncio.sleep(random.uniform(0.5, 2.0))
+        
         op = params.get("op", "list_available")
         
         if op == "list_available":

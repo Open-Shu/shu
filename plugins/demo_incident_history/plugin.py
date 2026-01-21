@@ -6,7 +6,13 @@ that demonstrate what Shu can accomplish when integrated with real security
 and customer service systems.
 """
 
+import asyncio
+import random
 from typing import Any, Dict
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Synthesized incident histories for all demo players
@@ -61,145 +67,7 @@ DEMO_INCIDENT_HISTORIES = {
         "summary": "Preferred customer with no concerns. One minor comp dispute resolved favorably. Known for courteous behavior and positive interactions with staff and other guests."
     },
     
-    # VIP Player 2: Sarah Martinez - Poker tournament regular, professional demeanor
-    "PLAYER-8901": {
-        "player_id": "PLAYER-8901",
-        "incidents": [
-            {
-                "incident_id": "INC-2025-789",
-                "date": "2025-09-10T21:15:00Z",
-                "type": "positive_note",
-                "severity": "none",
-                "category": "exceptional_behavior",
-                "description": "Player noticed dealer error in her favor during high-stakes poker game. Immediately alerted floor manager to correct the mistake.",
-                "resolution": "Commended player for integrity. Added note to profile highlighting exceptional character.",
-                "resolved_by": "Tournament Director Mike Chen",
-                "player_satisfaction": "n/a",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2024-234",
-                "date": "2024-11-05T23:00:00Z",
-                "type": "dispute",
-                "severity": "low",
-                "category": "tournament_ruling",
-                "description": "Player disagreed with tournament director's ruling on a hand. Requested review of decision.",
-                "resolution": "Reviewed hand with tournament officials. Original ruling upheld but player's concern was valid. Explained reasoning thoroughly. Player accepted decision professionally.",
-                "resolved_by": "Tournament Director Mike Chen",
-                "resolution_time_minutes": 20,
-                "player_satisfaction": "satisfied",
-                "follow_up_required": False
-            }
-        ],
-        "watchlist_status": "none",
-        "self_exclusion": False,
-        "regulatory_flags": [],
-        "credit_flags": [],
-        "behavioral_notes": {
-            "temperament": "professional_and_composed",
-            "alcohol_consumption": "light_to_moderate",
-            "tipping_behavior": "very_generous",
-            "staff_interactions": "professional",
-            "other_player_interactions": "respectful_and_competitive"
-        },
-        "risk_assessment": {
-            "problem_gambling_indicators": "none",
-            "credit_risk": "very_low",
-            "security_risk": "none",
-            "overall_risk": "very_low"
-        },
-        "summary": "Exemplary VIP customer. Professional poker player with exceptional integrity. No behavioral concerns. Highly valued customer with excellent relationship with staff."
-    },
-    
-    # VIP Player 3: James Wilson - Family-oriented, no incidents
-    "PLAYER-2345": {
-        "player_id": "PLAYER-2345",
-        "incidents": [
-            {
-                "incident_id": "INC-2025-567",
-                "date": "2025-12-15T18:30:00Z",
-                "type": "positive_note",
-                "severity": "none",
-                "category": "exceptional_behavior",
-                "description": "Player's teenage son found lost wallet with $800 cash. Family turned it in to security immediately. Owner identified and wallet returned intact.",
-                "resolution": "Sent thank you letter to family and complimentary show tickets. Added positive note to profile.",
-                "resolved_by": "Security Manager James Wilson",
-                "player_satisfaction": "n/a",
-                "follow_up_required": False
-            }
-        ],
-        "watchlist_status": "none",
-        "self_exclusion": False,
-        "regulatory_flags": [],
-        "credit_flags": [],
-        "behavioral_notes": {
-            "temperament": "friendly_and_easygoing",
-            "alcohol_consumption": "light",
-            "tipping_behavior": "appropriate",
-            "staff_interactions": "friendly",
-            "other_player_interactions": "social_and_friendly"
-        },
-        "risk_assessment": {
-            "problem_gambling_indicators": "none",
-            "credit_risk": "low",
-            "security_risk": "none",
-            "overall_risk": "very_low"
-        },
-        "summary": "Family-oriented guest with no concerns. Known for bringing family members. Positive interactions with staff and other guests. No incidents or issues."
-    },
-    
-    # VIP Player 4: Elena Volkov - High-stakes player, privacy-focused
-    "PLAYER-6789": {
-        "player_id": "PLAYER-6789",
-        "incidents": [
-            {
-                "incident_id": "INC-2025-345",
-                "date": "2025-10-20T02:15:00Z",
-                "type": "dispute",
-                "severity": "medium",
-                "category": "privacy_concern",
-                "description": "Player expressed strong concern about another guest attempting to photograph her at baccarat table. Requested immediate intervention.",
-                "resolution": "Security immediately addressed situation. Other guest's phone confiscated temporarily, photos deleted. Guest escorted from high-limit area. Player satisfied with response.",
-                "resolved_by": "Security Director James Wilson",
-                "resolution_time_minutes": 10,
-                "player_satisfaction": "satisfied",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2024-678",
-                "date": "2024-06-15T01:30:00Z",
-                "type": "service_complaint",
-                "severity": "low",
-                "category": "beverage_service",
-                "description": "Player requested specific vodka brand not available at table. Expressed disappointment with beverage selection.",
-                "resolution": "Immediately sourced requested vodka brand from main bar. Added brand to high-limit room permanent inventory. Player appreciated quick response.",
-                "resolved_by": "Beverage Manager Lisa Chen",
-                "resolution_time_minutes": 12,
-                "player_satisfaction": "satisfied",
-                "follow_up_required": False
-            }
-        ],
-        "watchlist_status": "vip_protection",
-        "self_exclusion": False,
-        "regulatory_flags": [],
-        "credit_flags": [],
-        "behavioral_notes": {
-            "temperament": "reserved_and_private",
-            "alcohol_consumption": "moderate",
-            "tipping_behavior": "extremely_generous",
-            "staff_interactions": "minimal_but_respectful",
-            "other_player_interactions": "prefers_privacy"
-        },
-        "risk_assessment": {
-            "problem_gambling_indicators": "none",
-            "credit_risk": "low",
-            "security_risk": "none",
-            "overall_risk": "low"
-        },
-        "summary": "Ultra-high-value customer requiring privacy and discretion. No behavioral concerns. Incidents relate to privacy protection and service preferences. Excellent relationship maintained through attentive service."
-    },
-    
-    # VIP Player 5: Michael Park - Young, social, learning
+    # VIP Player 5: Ahmed Al Mansoori - Young, social, learning
     "PLAYER-3456": {
         "player_id": "PLAYER-3456",
         "incidents": [
@@ -249,127 +117,10 @@ DEMO_INCIDENT_HISTORIES = {
         "summary": "Young, enthusiastic player with rapid tier advancement. One minor noise incident resolved immediately with apology. Known for generous tipping and creating positive atmosphere. Monitor spending patterns for responsible gaming."
     },
     
-    # Flagged Player 1: Robert Blackwell - Banned for violent behavior
-    "PLAYER-9999": {
-        "player_id": "PLAYER-9999",
-        "incidents": [
-            {
-                "incident_id": "INC-2024-1145",
-                "date": "2024-08-15T23:45:00Z",
-                "type": "violent_behavior",
-                "severity": "critical",
-                "category": "physical_altercation",
-                "description": "Player became extremely aggressive after significant losses at blackjack table. Verbally abusive to dealer, using profanity and threats. When pit boss intervened, player shoved dealer and attempted to overturn table. Security called immediately.",
-                "resolution": "Security and police responded. Player physically restrained. Three staff members injured (minor). Police arrested player for assault and battery. Permanent ban issued. Trespass notice served. Criminal charges filed.",
-                "resolved_by": "Security Director James Wilson",
-                "resolution_time_minutes": 45,
-                "player_satisfaction": "n/a",
-                "follow_up_required": True,
-                "police_report": "CASE-2024-0815-1145",
-                "witnesses": ["Dealer Mike Johnson", "Security Officer Sarah Lee", "Floor Manager Tom Rodriguez", "Pit Boss Jennifer Liu"],
-                "injuries": ["Dealer Mike Johnson - bruised arm", "Security Officer Sarah Lee - scratched face", "Security Officer Tom Chen - bruised ribs"]
-            },
-            {
-                "incident_id": "INC-2024-0920",
-                "date": "2024-09-20T19:30:00Z",
-                "type": "trespass_attempt",
-                "severity": "high",
-                "category": "banned_player_entry_attempt",
-                "description": "Facial recognition system identified banned player attempting entry through side entrance. Security immediately dispatched.",
-                "resolution": "Player recognized by security. Informed of trespass status. Player left property without incident. Police notified as per protocol.",
-                "resolved_by": "Security Officer David Martinez",
-                "resolution_time_minutes": 8,
-                "player_satisfaction": "n/a",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2024-0715",
-                "date": "2024-07-15T21:00:00Z",
-                "type": "verbal_abuse",
-                "severity": "medium",
-                "category": "staff_harassment",
-                "description": "Player became verbally abusive to cocktail waitress after she informed him of drink limit policy. Used profanity and made inappropriate comments.",
-                "resolution": "Floor manager intervened. Player warned about behavior. Player apologized and behavior improved for remainder of visit. Incident documented.",
-                "resolved_by": "Floor Manager Tom Rodriguez",
-                "resolution_time_minutes": 10,
-                "player_satisfaction": "n/a",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2024-0520",
-                "date": "2024-05-20T22:30:00Z",
-                "type": "dispute",
-                "severity": "medium",
-                "category": "game_ruling",
-                "description": "Player loudly disputed dealer's ruling on blackjack hand. Became argumentative with pit boss. Accused casino of cheating.",
-                "resolution": "Surveillance reviewed hand. Ruling was correct. Player shown video evidence. Player reluctantly accepted but remained hostile. Incident documented as pattern of aggressive behavior.",
-                "resolved_by": "Pit Boss Jennifer Liu",
-                "resolution_time_minutes": 25,
-                "player_satisfaction": "dissatisfied",
-                "follow_up_required": False
-            }
-        ],
-        "watchlist_status": "banned_permanent",
-        "self_exclusion": False,
-        "regulatory_flags": ["violent_behavior", "criminal_charges", "staff_assault"],
-        "credit_flags": ["suspended_permanently"],
-        "behavioral_notes": {
-            "temperament": "aggressive_and_volatile",
-            "alcohol_consumption": "heavy",
-            "tipping_behavior": "poor",
-            "staff_interactions": "hostile_and_abusive",
-            "other_player_interactions": "confrontational"
-        },
-        "risk_assessment": {
-            "problem_gambling_indicators": "severe_loss_chasing",
-            "credit_risk": "n/a_banned",
-            "security_risk": "critical",
-            "overall_risk": "critical"
-        },
-        "ban_details": {
-            "ban_date": "2024-08-15",
-            "ban_type": "permanent",
-            "ban_reason": "violent_behavior_staff_assault",
-            "appeal_status": "denied",
-            "appeal_date": "2024-09-01",
-            "trespass_notice_served": True,
-            "police_involvement": True,
-            "criminal_charges": "assault_and_battery"
-        },
-        "summary": "CRITICAL SECURITY RISK. Player permanently banned after violent assault on staff. Pattern of escalating aggressive behavior documented. Criminal charges filed. Trespass notice served. DENY ENTRY IMMEDIATELY. Contact security and management if spotted on property."
-    },
-    
     # Flagged Player 2: Thomas Anderson - Alcohol-restricted player
     "PLAYER-7777": {
         "player_id": "PLAYER-7777",
         "incidents": [
-            {
-                "incident_id": "INC-2025-0320",
-                "date": "2025-03-20T16:00:00Z",
-                "type": "administrative",
-                "severity": "administrative",
-                "category": "restriction_imposed",
-                "description": "Alcohol service restriction formally imposed after pattern of alcohol-related behavioral incidents. Player notified by certified mail and in-person meeting with guest services manager.",
-                "resolution": "Restriction effective immediately. Player accepted restriction and expressed understanding. Agreed to comply with no-alcohol policy. Review date set for one year.",
-                "resolved_by": "Guest Services Manager Amy Chen",
-                "resolution_time_minutes": 30,
-                "player_satisfaction": "understanding",
-                "follow_up_required": True,
-                "review_date": "2026-03-20"
-            },
-            {
-                "incident_id": "INC-2025-0310",
-                "date": "2025-03-10T21:45:00Z",
-                "type": "behavioral_incident",
-                "severity": "high",
-                "category": "intoxication",
-                "description": "Player arrived at casino already intoxicated. Became loud and verbally abusive to other guests at slots area. Knocked over drink, creating mess. Refused to calm down when approached by floor staff.",
-                "resolution": "Security called. Player escorted from property. Banned from property for 30 days. Incident triggered review of player's alcohol-related history. Decision made to impose permanent alcohol restriction.",
-                "resolved_by": "Security Officer David Martinez",
-                "resolution_time_minutes": 20,
-                "player_satisfaction": "hostile",
-                "follow_up_required": True
-            },
             {
                 "incident_id": "INC-2025-0215",
                 "date": "2025-02-15T20:15:00Z",
@@ -377,7 +128,7 @@ DEMO_INCIDENT_HISTORIES = {
                 "severity": "medium",
                 "category": "disruptive_behavior",
                 "description": "Player became increasingly loud and disruptive after consuming multiple alcoholic beverages. Singing loudly at blackjack table. Other players complained. Floor staff asked player to quiet down multiple times.",
-                "resolution": "Player eventually complied but remained disruptive. Beverage service cut off. Player left property shortly after. Incident documented as part of pattern.",
+                "resolution": "Player eventually complied but remained disruptive. Beverage service cut off after 5 mixed drinks. Player left property shortly after. Incident documented as part of pattern.",
                 "resolved_by": "Floor Manager Tom Rodriguez",
                 "resolution_time_minutes": 25,
                 "player_satisfaction": "dissatisfied",
@@ -395,59 +146,23 @@ DEMO_INCIDENT_HISTORIES = {
                 "resolution_time_minutes": 15,
                 "player_satisfaction": "understanding",
                 "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2025-0615",
-                "date": "2025-06-15T19:30:00Z",
-                "type": "positive_note",
-                "severity": "none",
-                "category": "compliance",
-                "description": "Player's first visit since alcohol restriction imposed. Player complied fully with restriction. Ordered coffee and soda. Behavior was appropriate throughout visit. No issues.",
-                "resolution": "Positive compliance noted. Player thanked staff for allowing him to continue visiting. Expressed appreciation for restriction helping him.",
-                "resolved_by": "Floor Manager Tom Rodriguez",
-                "player_satisfaction": "satisfied",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2025-1215",
-                "date": "2025-12-15T18:00:00Z",
-                "type": "positive_note",
-                "severity": "none",
-                "category": "continued_compliance",
-                "description": "Player continues to comply with alcohol restriction. Regular visitor with no behavioral issues since restriction imposed. Positive attitude and appreciation for being able to continue visiting.",
-                "resolution": "Continued positive compliance documented. Player mentioned restriction has been helpful. Recommend favorable review at one-year mark.",
-                "resolved_by": "Slot Host David Park",
-                "player_satisfaction": "satisfied",
-                "follow_up_required": False
             }
         ],
         "watchlist_status": "standard_monitoring",
         "self_exclusion": False,
-        "regulatory_flags": ["alcohol_restriction"],
         "credit_flags": [],
         "behavioral_notes": {
             "temperament": "friendly_when_sober",
-            "alcohol_consumption": "restricted_none_allowed",
             "tipping_behavior": "appropriate",
-            "staff_interactions": "respectful_since_restriction",
             "other_player_interactions": "friendly"
         },
         "risk_assessment": {
             "problem_gambling_indicators": "none",
             "credit_risk": "low",
-            "security_risk": "low_with_restriction",
+            "security_risk": "medium",
             "overall_risk": "low_with_monitoring"
         },
-        "restriction_details": {
-            "restriction_type": "alcohol_service_prohibited",
-            "effective_date": "2025-03-20",
-            "review_date": "2026-03-20",
-            "reason": "pattern_of_alcohol_related_incidents",
-            "compliance_status": "excellent",
-            "incidents_since_restriction": 0,
-            "positive_notes_since_restriction": 2
-        },
-        "summary": "Player with alcohol restriction in place since March 2025. Pattern of alcohol-related behavioral incidents led to restriction. Since restriction imposed, player has shown excellent compliance and positive behavior. No incidents. Player appreciates being able to continue visiting and has expressed that restriction has been helpful. Recommend favorable review at one-year mark."
+        "summary": "Player has received multiple warnings due to alcohol related disturbances."
     }
 }
 
@@ -479,27 +194,26 @@ class DemoIncidentHistoryPlugin:
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["get_by_players", "list", "search"],
-                    "default": "get_by_players",
+                    "enum": ["get_by_player", "list", "search"],
+                    "default": "get_by_player",
                     "x-ui": {
                         "help": "Operation to perform",
                         "enum_labels": {
-                            "get_by_players": "Get Incident Histories by Player IDs",
+                            "get_by_player": "Get Incident History by Player ID",
                             "list": "List All Incident Histories",
                             "search": "Search Incident Histories"
                         },
                         "enum_help": {
-                            "get_by_players": "Retrieve incident histories for specific player IDs",
+                            "get_by_player": "Retrieve incident history for a specific player ID",
                             "list": "List all available incident histories",
                             "search": "Search incident histories by criteria"
                         }
                     }
                 },
-                "player_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
+                "player_id": {
+                    "type": "string",
                     "x-ui": {
-                        "help": "Array of player IDs to retrieve incident histories for (required for get_by_players operation)"
+                        "help": "Player ID to retrieve incident history for (required for get_by_player operation)"
                     }
                 },
                 "include_risk_assessment": {
@@ -793,29 +507,34 @@ class DemoIncidentHistoryPlugin:
         
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "properties": {
-                "incident_histories": {
-                    "type": "array",
-                    "items": incident_history_schema,
-                    "description": "Array of incident histories for requested players"
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "incident_history": incident_history_schema,
+                        "found": {
+                            "type": "boolean",
+                            "description": "Whether the player was found"
+                        }
+                    },
+                    "required": ["found"],
+                    "additionalProperties": False,
+                    "description": "Single player incident history result"
                 },
-                "requested_count": {
-                    "type": "integer",
-                    "description": "Number of players requested"
-                },
-                "found_count": {
-                    "type": "integer",
-                    "description": "Number of players found"
-                },
-                "not_found": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Player IDs that were not found"
+                {
+                    "type": "object",
+                    "properties": {
+                        "incident_histories": {
+                            "type": "array",
+                            "items": incident_history_schema,
+                            "description": "Array of incident histories for all players"
+                        }
+                    },
+                    "required": ["incident_histories"],
+                    "additionalProperties": False,
+                    "description": "Multiple player incident histories result (for list operation)"
                 }
-            },
-            "required": ["incident_histories"],
-            "additionalProperties": False
+            ]
         }
     
     async def execute(
@@ -834,10 +553,12 @@ class DemoIncidentHistoryPlugin:
         Returns:
             Dict containing the operation result in ToolResult format
         """
-        op = params.get("op", "get_by_players")
+        op = params.get("op", "get_by_player")
         
-        if op == "get_by_players":
-            return await self._get_by_players(params)
+        if op == "get_by_player":
+            res = await self._get_by_player(params)
+            logger.info(res)
+            return res
         
         return {
             "status": "error",
@@ -846,55 +567,56 @@ class DemoIncidentHistoryPlugin:
             "cost": {"api_calls": 0}
         }
     
-    async def _get_by_players(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Get incident histories for specified player IDs.
+    async def _get_by_player(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Get incident history for a specified player ID.
         
         Args:
-            params: Parameters including player_ids array
+            params: Parameters including player_id string
             
         Returns:
-            Dict containing incident histories in ToolResult format
+            Dict containing incident history in ToolResult format
         """
-        player_ids = params.get("player_ids", [])
+        # Simulate realistic API delay
+        await asyncio.sleep(random.uniform(0.5, 2.0))
         
-        if not player_ids:
+        player_id = params.get("player_id")
+        
+        if not player_id:
             return {
                 "status": "error",
                 "data": None,
-                "diagnostics": ["No player_ids provided"],
+                "diagnostics": ["No player_id provided"],
                 "cost": {"api_calls": 0}
             }
         
-        if not isinstance(player_ids, list):
+        if not isinstance(player_id, str):
             return {
                 "status": "error",
                 "data": None,
-                "diagnostics": ["player_ids must be an array"],
+                "diagnostics": ["player_id must be a string"],
                 "cost": {"api_calls": 0}
             }
         
-        # Retrieve incident histories for requested players
-        results = []
-        not_found = []
-        
-        for player_id in player_ids:
-            if player_id in DEMO_INCIDENT_HISTORIES:
-                results.append(DEMO_INCIDENT_HISTORIES[player_id])
-            else:
-                not_found.append(player_id)
-        
+        # Retrieve incident history for requested player
         diagnostics = ["Demo mode: using synthesized data"]
-        if not_found:
-            diagnostics.append(f"Players not found: {', '.join(not_found)}")
-        
-        return {
-            "status": "success",
-            "data": {
-                "incident_histories": results,
-                "requested_count": len(player_ids),
-                "found_count": len(results),
-                "not_found": not_found
-            },
-            "diagnostics": diagnostics,
-            "cost": {"api_calls": 0}
-        }
+
+        if player_id in DEMO_INCIDENT_HISTORIES:
+            return {
+                "status": "success",
+                "data": {
+                    "incident_history": DEMO_INCIDENT_HISTORIES[player_id],
+                    "found": True
+                },
+                "diagnostics": diagnostics,
+                "cost": {"api_calls": 0}
+            }
+        else:
+            diagnostics.append(f"Player not found: {player_id}")
+            return {
+                "status": "success",
+                "data": {
+                    "found": False
+                },
+                "diagnostics": diagnostics,
+                "cost": {"api_calls": 0}
+            }
