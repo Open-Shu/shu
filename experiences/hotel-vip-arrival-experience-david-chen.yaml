@@ -1,0 +1,155 @@
+# Experience Export: Dubai Hotel VIP Arrival Experience
+# Generated on: 2026-01-21 16:00:40
+# 
+# This YAML file contains placeholders for user-specific values:
+# - { trigger_type }: How the experience will be triggered (Cron, Scheduled, Manual)
+# - { trigger_config }: The actual trigger value, depending on the schedule type
+# - { model_configuration_id }: Choose your model configuration
+# - { max_run_seconds }: The total amount of time the experience is allowed to run
+#
+# To import this experience, use the Experience Import wizard in Shu.
+
+experience_yaml_version: 1
+id: dubai-hotel-vip-arrival-experience-v1
+name: Dubai Hotel VIP Arrival Experience
+description: Demonstrates real-time VIP recognition at Dubai International Airport and personalized hotel service orchestration
+version: 1
+visibility: draft
+trigger_type: '{{ trigger_type }}'
+trigger_config: {{ trigger_config }}
+include_previous_run: false
+model_configuration_id: '{{ model_configuration_id }}'
+inline_prompt_template: "You work for the Azure Pearl luxury hotel in Dubai. A VIP guest, David Chen, has just been detected\
+  \ exiting his plane at Dubai International Airport in the evening, traveling with one companion. It is dinner time.\n\n\
+  You are preparing a briefing for David Chen's Executive Host Thomas Anderson (his personal liaison at the hotel). Your role\
+  \ is to:\n  1. Review the customer profile to understand who David Chen is, his preferences, and his travel companion.\n\
+  \  2. Check incident history to understand any past issues that should inform service decisions.\n  3. Check decisions the\
+  \ system made for different services. These decisions are `car_service_decision`, `tailor_notification_decision`, `restaurant_decision`,\
+  \ and `spa_service_decision`.\n  4. Prepare a warm, personalized greeting script for the Executive Host with key talking\
+  \ points about the arrangements made.\n\nThe car was scheduled for airport pickup, so this already happened by the time\
+  \ Thomas Anderson is greeting the customer.\n\nAll reservations are holds and require customer confirmation.\n\nDisplay\
+  \ David Chen's photo so the Executive Host knows who to look for. Be specific about which services were actually arranged\
+  \ - only mention services that the system successfully coordinated based on availability."
+max_run_seconds: {{ max_run_seconds }}
+steps:
+- step_key: recognition_events
+  step_type: plugin
+  order: 0
+  plugin_name: demo_facial_recognition
+  plugin_op: get_event
+  params_template:
+    op: list
+    filter: vip
+    event_id: DXB-20260121-193000-001
+- step_key: customer_profile
+  step_type: plugin
+  order: 1
+  plugin_name: demo_player_profiles
+  plugin_op: get
+  params_template:
+    op: get
+    customer_id: CUST-5678
+    include_notes: true
+    include_analytics: true
+- step_key: incident_history
+  step_type: plugin
+  order: 2
+  plugin_name: demo_incident_history
+  plugin_op: get_by_player
+  params_template:
+    op: get_by_customer
+    customer_id: CUST-5678
+    include_risk_assessment: true
+- step_key: check_car_availability
+  step_type: plugin
+  order: 3
+  plugin_name: demo_car_service
+  plugin_op: check_availability
+  params_template:
+    op: check_availability
+- step_key: check_tailor_availability
+  step_type: plugin
+  order: 4
+  plugin_name: demo_tailor_hold
+  plugin_op: check_availability
+  params_template:
+    op: check_availability
+- step_key: check_restaurant_availability
+  step_type: plugin
+  order: 5
+  plugin_name: demo_restaurant_management
+  plugin_op: list_available
+  params_template:
+    op: list_available
+    restaurant_name: Jade Palace
+- step_key: check_spa_availability
+  step_type: plugin
+  order: 6
+  plugin_name: demo_spa_service
+  plugin_op: check_availability
+  params_template:
+    op: check_availability
+- step_key: car_service_decision
+  step_type: decision_control
+  order: 7
+- step_key: book_car_service
+  step_type: plugin
+  order: 8
+  plugin_name: demo_car_service
+  plugin_op: book
+  params_template:
+    op: book
+    notes: VIP arrival - proactive booking based on customer tier and past preferences
+    passengers: 2
+    customer_id: CUST-5678
+    pickup_location: Dubai International Airport - Terminal 3
+    dropoff_location: Azure Pearl Hotel
+  condition_template: '{{ steps.car_service_decision.data.should_execute }}'
+- step_key: tailor_notification_decision
+  step_type: decision_control
+  order: 9
+- step_key: notify_tailor
+  step_type: plugin
+  order: 10
+  plugin_name: demo_tailor_hold
+  plugin_op: add_hold
+  params_template:
+    op: notify
+    notes: Customer has expressed interest in tailoring services - keep availability open
+    customer_id: CUST-5678
+    arrival_time: '2026-01-22T10:00:00+04:00'
+    customer_name: David Chen
+    customer_tier: platinum
+  condition_template: '{{ steps.tailor_notification_decision.data.should_execute }}'
+- step_key: restaurant_decision
+  step_type: decision_control
+  order: 11
+- step_key: reserve_restaurant_table
+  step_type: plugin
+  order: 12
+  plugin_name: demo_restaurant_management
+  plugin_op: reserve
+  params_template:
+    op: reserve
+    notes: VIP arrival - evening dinner reservation with favorite table and green tea prepared
+    table_id: JP-VIP-02
+    party_size: 2
+    customer_id: CUST-5678
+    restaurant_name: Jade Palace
+  condition_template: '{{ steps.restaurant_decision.data.should_execute }}'
+- step_key: spa_service_decision
+  step_type: decision_control
+  order: 13
+- step_key: reserve_spa
+  step_type: plugin
+  order: 14
+  plugin_name: demo_spa_service
+  plugin_op: reserve
+  params_template:
+    op: reserve
+    notes: VIP arrival - evening dinner reservation with favorite table and green tea prepared
+    table_id: JP-VIP-02
+    party_size: 2
+    customer_id: CUST-5678
+    restaurant_name: Jade Palace
+  condition_template: '{{ steps.spa_service_decision.data.should_execute }}'

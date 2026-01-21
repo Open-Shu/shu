@@ -700,7 +700,7 @@ class ExperienceExecutor:
         # Execute decision logic
         # Note: host parameter is optional, we pass None for now
         # In the future, we could pass a host object with audit capabilities
-        result = await decision_step.execute(config, context, host=None)
+        result = await decision_step.execute(step.step_key, config, context, host=None)
         
         logger.info(
             f"Decision control step '{step.step_key}' executed: "

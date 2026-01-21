@@ -13,8 +13,8 @@ from typing import Any, Dict, Optional
 # Synthesized player profiles for demo purposes
 DEMO_PLAYER_PROFILES = {
     # VIP Player 1: David Chen - High-roller, blackjack specialist
-    "PLAYER-5678": {
-        "player_id": "PLAYER-5678",
+    "CUST-5678": {
+        "customer_id": "CUST-5678",
         "portrait": "/david_chen.png",
         "name": "David Chen",
         "tier": "platinum",
@@ -23,6 +23,22 @@ DEMO_PLAYER_PROFILES = {
             "email": "d.chen@example.com",
             "phone": "+1-555-0123",
             "preferred_contact": "text"
+        },
+        "hotel_preferences": {
+            "room_type": "executive_suite",
+            "floor": "high_floor",
+            "view": "burj_khalifa_view",
+            "bed": "king",
+            "pillow": "firm",
+            "temperature": 20,  # Celsius
+            "minibar": "premium_stocked",
+            "newspaper": "financial_times"
+        },
+        "transportation_preferences": {
+            "preferred_vehicle": "mercedes_s_class",
+            "vehicle_color": "black",
+            "special_requirements": ["spacious", "quiet", "wifi"],
+            "driver_language": "english"
         },
         "preferences": {
             "games": [
@@ -39,6 +55,33 @@ DEMO_PLAYER_PROFILES = {
             ],
             "entertainment": ["live_music", "no_shows"],
             "room_preference": "suite_with_view"
+        },
+        "dining_preferences": {
+            "favorite_restaurant": "Jade Palace",
+            "cuisine_preferences": ["asian_fusion", "modern_european", "seafood"],
+            "favorite_table": "JP-VIP-02",
+            "favorite_beverage": "green_tea",
+            "dietary_restrictions": [],
+            "meal_times": {
+                "breakfast": "07:00",
+                "dinner": "20:00"
+            }
+        },
+        "service_preferences": {
+            "tailor_interest": True,
+            "spa_interest": True,
+            "spa_preferences": ["massage", "sauna"],
+            "concierge_services": ["restaurant_reservations", "event_tickets"],
+            "activities": ["golf", "yacht_charter"]
+        },
+        "companion_info": {
+            "traveling_with": "spouse",
+            "companion_name": "Lisa Chen",
+            "companion_preferences": {
+                "spa_interest": True,
+                "shopping_interest": True,
+                "dining_preferences": ["italian", "french"]
+            }
         },
         "comp_history": [
             {
@@ -109,6 +152,16 @@ DEMO_PLAYER_PROFILES = {
                 "date": "2026-01-05",
                 "author": "Floor Manager Tom Rodriguez",
                 "note": "Celebrating birthday with wife. Appreciated the complimentary champagne."
+            },
+            {
+                "date": "2026-01-10",
+                "author": "Spa Manager Fatima Al-Rashid",
+                "note": "Guest was offered complimentary spa treatment during last visit. Politely declined, mentioning that he does not enjoy spa services. Prefers to spend time at gaming tables or dining. Note: Do not offer spa services to this guest in the future."
+            },
+            {
+                "date": "2026-01-15",
+                "author": "Executive Host Sarah Al-Mansouri",
+                "note": "Guest mentioned interest in visiting hotel tailor for custom suits. Prefers quiet, professional service. Traveling with spouse who enjoys spa and shopping."
             }
         ],
         "pre_generated_questions": [
@@ -120,189 +173,7 @@ DEMO_PLAYER_PROFILES = {
             "What is David Chen's lifetime value and current tier status?"
         ]
     },
-    
-    # VIP Player 5: Ahmed Al Mansoori - New VIP, rapid ascent
-    "PLAYER-3456": {
-        "player_id": "PLAYER-3456",
-        "portrait": "/ahmed-al-mansoori.png",
-        "name": "Ahmed Al Mansoori",
-        "tier": "gold",
-        "member_since": "2025-09-01",
-        "contact": {
-            "email": "a.mansoori@example.com",
-            "phone": "+1-555-0567",
-            "preferred_contact": "email"
-        },
-        "preferences": {
-            "games": [
-                {"game": "blackjack", "skill_level": "intermediate", "preference_score": 8},
-                {"game": "poker", "skill_level": "intermediate", "preference_score": 7},
-                {"game": "craps", "skill_level": "beginner", "preference_score": 6},
-                {"game": "slots", "skill_level": "casual", "preference_score": 5}
-            ],
-            "table_preference": "social_atmosphere",
-            "table_limits": {"min": 100, "max": 2500},
-            "beverage": "craft_cocktails",
-            "dining": [
-                {"restaurant": "Fusion Kitchen", "cuisine": "modern_american", "visits": 8},
-                {"restaurant": "Sushi Bar", "cuisine": "japanese", "visits": 5}
-            ],
-            "entertainment": ["nightclub", "pool_parties", "live_music"],
-            "room_preference": "modern_suite"
-        },
-        "comp_history": [
-            {
-                "date": "2025-11-10",
-                "type": "room_upgrade",
-                "nights": 2,
-                "value": 800.00,
-                "reason": "rapid_tier_advancement"
-            },
-            {
-                "date": "2025-12-20",
-                "type": "nightclub_vip",
-                "value": 1500.00,
-                "reason": "gold_tier_benefit"
-            },
-            {
-                "date": "2026-01-05",
-                "type": "dinner",
-                "restaurant": "Fusion Kitchen",
-                "guests": 4,
-                "value": 600.00,
-                "reason": "new_year_celebration"
-            }
-        ],
-        "financial": {
-            "credit_line": 25000.00,
-            "credit_used": 5000.00,
-            "average_bet": 250.00,
-            "average_session_buy_in": 5000.00,
-            "lifetime_value": 45000.00,
-            "ytd_value": 45000.00,
-            "last_30_days_value": 12000.00
-        },
-        "visit_history": {
-            "total_visits": 18,
-            "last_visit": "2026-01-05",
-            "average_visit_duration_hours": 5.0,
-            "preferred_days": ["friday", "saturday"],
-            "preferred_times": ["evening", "night"]
-        },
-        "analytics": {
-            "win_loss_ratio": 0.42,
-            "volatility": "medium",
-            "churn_risk": "low",
-            "upsell_potential": "very_high",
-            "social_influence": "high"
-        },
-        "special_dates": [
-            {"type": "birthday", "date": "1992-04-18"}
-        ],
-        "notes": [
-            {
-                "date": "2025-11-10",
-                "author": "Host Manager Lisa Wong",
-                "note": "Young tech entrepreneur. Very social, often brings groups of friends. Rapid spending increase - potential platinum candidate."
-            },
-            {
-                "date": "2026-01-05",
-                "author": "Floor Manager Tom Rodriguez",
-                "note": "Celebrating successful business deal with colleagues. Interested in learning more games. Suggested poker lessons."
-            }
-        ],
-        "pre_generated_questions": [
-            "What is Michael Park's tier progression timeline?",
-            "What games is Michael Park learning or interested in?",
-            "When does Michael Park typically visit with groups?",
-            "What entertainment venues does Michael Park prefer?",
-            "What is Michael Park's upsell potential for platinum tier?",
-            "What special events would appeal to Michael Park?"
-        ]
-    },
 
-    # Flagged Player: Thomas Anderson - Alcohol-restricted player
-    "PLAYER-7777": {
-        "player_id": "PLAYER-7777",
-        "portrait": "/thomas_anderson.png",
-        "name": "Thomas Anderson",
-        "tier": "silver",
-        "member_since": "2021-06-15",
-        "contact": {
-            "email": "t.anderson@example.com",
-            "phone": "+1-555-0777",
-            "preferred_contact": "email"
-        },
-        "preferences": {
-            "games": [
-                {"game": "slots", "skill_level": "casual", "preference_score": 8},
-                {"game": "blackjack", "skill_level": "beginner", "preference_score": 6},
-                {"game": "roulette", "skill_level": "beginner", "preference_score": 4}
-            ],
-            "table_preference": "standard_tables",
-            "table_limits": {"min": 25, "max": 500},
-            "beverage": "coffee",
-            "alternative_beverages": ["coffee", "soda", "energy_drinks", "juice"],
-            "dining": [
-                {"restaurant": "The Buffet", "cuisine": "buffet", "visits": 10},
-                {"restaurant": "Coffee Shop", "cuisine": "cafe", "visits": 8}
-            ],
-            "entertainment": ["slots", "casual_gaming"],
-            "room_preference": "standard_room"
-        },
-        "comp_history": [
-            {
-                "date": "2025-11-10",
-                "type": "buffet_voucher",
-                "value": 50.00,
-                "reason": "loyalty_reward"
-            },
-            {
-                "date": "2025-12-15",
-                "type": "slot_play_credit",
-                "value": 100.00,
-                "reason": "tier_benefit"
-            }
-        ],
-        "financial": {
-            "credit_line": 2000.00,
-            "credit_used": 0.00,
-            "average_bet": 25.00,
-            "average_session_buy_in": 300.00,
-            "lifetime_value": 8500.00,
-            "ytd_value": 1200.00,
-            "last_30_days_value": 400.00
-        },
-        "visit_history": {
-            "total_visits": 42,
-            "last_visit": "2026-01-10",
-            "average_visit_duration_hours": 2.5,
-            "preferred_days": ["saturday", "sunday"],
-            "preferred_times": ["afternoon", "evening"]
-        },
-        "analytics": {
-            "win_loss_ratio": 0.40,
-            "volatility": "low",
-            "churn_risk": "medium",
-            "upsell_potential": "low",
-            "social_influence": "low"
-        },
-        "notes": [
-            {
-                "date": "2025-11-10",
-                "author": "Floor Manager Tom Rodriguez",
-                "note": "They can get agitated if they consume excessive amounts of alcohol."
-            }
-        ],
-        "special_dates": [
-            {"type": "birthday", "date": "1975-08-22"}
-        ],
-        "pre_generated_questions": [
-            "What beverages can be offered to Thomas Anderson?",
-            "What is the protocol for serving Thomas Anderson?",
-            "What should staff do when Thomas Anderson arrives?"
-        ]
-    }
 }
 
 
@@ -401,13 +272,13 @@ class DemoPlayerProfilesPlugin:
                         }
                     }
                 },
-                "player_id": {
+                "customer_id": {
                     "type": "string",
                     "x-ui": {
                         "help": "Player ID for get operation"
                     }
                 },
-                "player_ids": {
+                "customer_ids": {
                     "type": "array",
                     "items": {"type": "string"},
                     "x-ui": {
@@ -456,9 +327,9 @@ class DemoPlayerProfilesPlugin:
         player_profile_schema = {
             "type": "object",
             "properties": {
-                "player_id": {
+                "customer_id": {
                     "type": "string",
-                    "description": "Unique player identifier"
+                    "description": "Unique customer identifier"
                 },
                 "name": {
                     "type": "string",
@@ -658,7 +529,7 @@ class DemoPlayerProfilesPlugin:
                     "description": "Pre-generated questions about the player"
                 }
             },
-            "required": ["player_id", "name", "tier"],
+            "required": ["customer_id", "name", "tier"],
             "description": "Comprehensive player profile with preferences, history, and restrictions"
         }
         
@@ -726,19 +597,19 @@ class DemoPlayerProfilesPlugin:
             return filtered
         
         if op == "get":
-            player_id = params.get("player_id")
-            if not player_id:
+            customer_id = params.get("customer_id")
+            if not customer_id:
                 return ToolResult.err(
                     "player_id is required for get operation",
                     code="missing_parameter"
                 )
             
             # Get player profile from synthesized data
-            profile = DEMO_PLAYER_PROFILES.get(player_id)
+            profile = DEMO_PLAYER_PROFILES.get(customer_id)
             if profile is None:
                 return ToolResult.err(
-                    f"Player not found: {player_id}",
-                    code="player_not_found"
+                    f"Customer not found: {customer_id}",
+                    code="customer_not_found"
                 )
             
             filtered_profile = filter_profile(profile)
@@ -780,41 +651,7 @@ class DemoPlayerProfilesPlugin:
                 data={"profiles": matching_profiles},
                 diagnostics=["Demo mode: using synthesized data"]
             )
-            
-        elif op == "get_by_players":
-            player_ids = params.get("player_ids")
-            if player_ids is None:
-                return ToolResult.err(
-                    "player_ids is required for get_by_players operation",
-                    code="missing_parameter"
-                )
-            
-            if not isinstance(player_ids, list):
-                return ToolResult.err(
-                    "player_ids must be an array",
-                    code="invalid_parameter_type"
-                )
-            
-            # Retrieve profiles for all requested player IDs
-            profiles = []
-            not_found_ids = []
-            
-            for player_id in player_ids:
-                profile = DEMO_PLAYER_PROFILES.get(player_id)
-                if profile is not None:
-                    profiles.append(filter_profile(profile))
-                else:
-                    not_found_ids.append(player_id)
-            
-            # Build diagnostics
-            diagnostics = ["Demo mode: using synthesized data"]
-            if not_found_ids:
-                diagnostics.append(f"Players not found: {', '.join(not_found_ids)}")
-            
-            return ToolResult.ok(
-                data={"profiles": profiles},
-                diagnostics=diagnostics
-            )
+
             
         else:
             return ToolResult.err(

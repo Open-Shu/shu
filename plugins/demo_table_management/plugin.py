@@ -1,7 +1,7 @@
-"""Demo Table Management Plugin Implementation.
+"""Demo Restaurant Management Plugin Implementation.
 
-This plugin simulates a table reservation and availability system,
-returning synthesized table data for demonstration purposes.
+This plugin simulates a restaurant reservation and availability system,
+returning synthesized restaurant data for demonstration purposes.
 """
 
 from __future__ import annotations
@@ -67,284 +67,201 @@ class ToolResult:
         return cls(status="error", error=error)
 
 
-# Synthesized table inventory data
-DEMO_TABLES = [
-    # VIP Blackjack Tables
+# Synthesized restaurant and table data for Dubai hotel
+DEMO_RESTAURANTS = [
+    # Jade Palace - Asian Fusion Restaurant
     {
-        "table_id": "BJ-VIP-01",
-        "game": "blackjack",
-        "location": "vip_area",
-        "min_bet": 100,
-        "max_bet": 10000,
-        "seats": 6,
-        "available_seats": 6,
-        "status": "available",
-        "dealer": "Jennifer Liu",
-        "dealer_rating": 4.8,
-        "atmosphere": "quiet",
-        "features": ["private", "high_limit", "preferred_dealer", "complimentary_beverages"]
-    },
-    {
-        "table_id": "BJ-VIP-02",
-        "game": "blackjack",
-        "location": "vip_area",
-        "min_bet": 100,
-        "max_bet": 10000,
-        "seats": 6,
-        "available_seats": 4,
-        "status": "active",
-        "dealer": "Marcus Chen",
-        "dealer_rating": 4.9,
-        "atmosphere": "quiet",
-        "features": ["private", "high_limit", "complimentary_beverages"]
-    },
-    {
-        "table_id": "BJ-VIP-03",
-        "game": "blackjack",
-        "location": "vip_area",
-        "min_bet": 100,
-        "max_bet": 10000,
-        "seats": 6,
-        "available_seats": 6,
-        "status": "available",
-        "dealer": "Sarah Johnson",
-        "dealer_rating": 4.7,
-        "atmosphere": "quiet",
-        "features": ["private", "high_limit", "preferred_dealer"]
-    },
-    
-    # High-Limit Baccarat Tables
-    {
-        "table_id": "BAC-HL-01",
-        "game": "baccarat",
-        "location": "high_limit_room",
-        "min_bet": 500,
-        "max_bet": 50000,
-        "seats": 8,
-        "available_seats": 3,
-        "status": "active",
-        "dealer": "Marcus Wong",
-        "dealer_rating": 4.9,
-        "atmosphere": "exclusive",
-        "features": ["private_room", "high_limit", "complimentary_beverages", "personal_host"]
-    },
-    {
-        "table_id": "BAC-HL-02",
-        "game": "baccarat",
-        "location": "high_limit_room",
-        "min_bet": 500,
-        "max_bet": 50000,
-        "seats": 8,
-        "available_seats": 8,
-        "status": "available",
-        "dealer": "Elena Rodriguez",
-        "dealer_rating": 4.8,
-        "atmosphere": "exclusive",
-        "features": ["private_room", "high_limit", "complimentary_beverages", "personal_host"]
-    },
-    {
-        "table_id": "BAC-VIP-01",
-        "game": "baccarat",
-        "location": "vip_area",
-        "min_bet": 200,
-        "max_bet": 25000,
-        "seats": 8,
-        "available_seats": 5,
-        "status": "active",
-        "dealer": "David Kim",
-        "dealer_rating": 4.7,
-        "atmosphere": "upscale",
-        "features": ["high_limit", "complimentary_beverages"]
-    },
-    
-    # Standard Blackjack Tables
-    {
-        "table_id": "BJ-STD-01",
-        "game": "blackjack",
-        "location": "main_floor",
-        "min_bet": 25,
-        "max_bet": 1000,
-        "seats": 7,
-        "available_seats": 2,
-        "status": "active",
-        "dealer": "Tom Rodriguez",
-        "dealer_rating": 4.5,
-        "atmosphere": "lively",
-        "features": ["standard"]
-    },
-    {
-        "table_id": "BJ-STD-02",
-        "game": "blackjack",
-        "location": "main_floor",
-        "min_bet": 25,
-        "max_bet": 1000,
-        "seats": 7,
-        "available_seats": 0,
-        "status": "full",
-        "dealer": "Lisa Martinez",
-        "dealer_rating": 4.6,
-        "atmosphere": "lively",
-        "features": ["standard"]
-    },
-    {
-        "table_id": "BJ-STD-03",
-        "game": "blackjack",
-        "location": "main_floor",
-        "min_bet": 15,
-        "max_bet": 500,
-        "seats": 7,
-        "available_seats": 5,
-        "status": "active",
-        "dealer": "James Wilson",
-        "dealer_rating": 4.4,
-        "atmosphere": "casual",
-        "features": ["standard", "beginner_friendly"]
-    },
-    
-    # Poker Tables
-    {
-        "table_id": "PKR-VIP-01",
-        "game": "poker",
-        "location": "poker_room",
-        "min_bet": 100,
-        "max_bet": 5000,
-        "seats": 9,
-        "available_seats": 2,
-        "status": "active",
-        "dealer": "Robert Chang",
-        "dealer_rating": 4.8,
-        "atmosphere": "professional",
-        "features": ["private_room", "tournament_style", "complimentary_beverages"]
-    },
-    {
-        "table_id": "PKR-STD-01",
-        "game": "poker",
-        "location": "poker_room",
-        "min_bet": 25,
-        "max_bet": 1000,
-        "seats": 9,
-        "available_seats": 4,
-        "status": "active",
-        "dealer": "Amanda Foster",
-        "dealer_rating": 4.6,
-        "atmosphere": "social",
-        "features": ["standard", "cash_game"]
-    },
-    {
-        "table_id": "PKR-STD-02",
-        "game": "poker",
-        "location": "poker_room",
-        "min_bet": 10,
-        "max_bet": 500,
-        "seats": 9,
-        "available_seats": 6,
-        "status": "active",
-        "dealer": "Chris Anderson",
-        "dealer_rating": 4.5,
-        "atmosphere": "casual",
-        "features": ["standard", "beginner_friendly", "cash_game"]
-    },
-    
-    # Roulette Tables
-    {
-        "table_id": "RLT-VIP-01",
-        "game": "roulette",
-        "location": "vip_area",
-        "min_bet": 50,
-        "max_bet": 5000,
-        "seats": 8,
-        "available_seats": 6,
-        "status": "available",
-        "dealer": "Sophie Laurent",
-        "dealer_rating": 4.7,
+        "restaurant_id": "JADE-PALACE",
+        "name": "Jade Palace",
+        "location": "Azure Pearl - Ground Floor",
+        "cuisine": "asian_fusion",
+        "dress_code": "smart_casual",
+        "rating": 4.8,
+        "price_range": "$$$$",
         "atmosphere": "elegant",
-        "features": ["european_wheel", "high_limit", "complimentary_beverages"]
-    },
-    {
-        "table_id": "RLT-STD-01",
-        "game": "roulette",
-        "location": "main_floor",
-        "min_bet": 10,
-        "max_bet": 1000,
-        "seats": 10,
-        "available_seats": 3,
-        "status": "active",
-        "dealer": "Michael Brown",
-        "dealer_rating": 4.5,
-        "atmosphere": "energetic",
-        "features": ["american_wheel", "standard"]
-    },
-    
-    # Craps Tables
-    {
-        "table_id": "CRP-STD-01",
-        "game": "craps",
-        "location": "main_floor",
-        "min_bet": 15,
-        "max_bet": 2000,
-        "seats": 14,
-        "available_seats": 8,
-        "status": "active",
-        "dealer": "Tony Russo",
-        "dealer_rating": 4.6,
-        "atmosphere": "exciting",
-        "features": ["standard", "high_energy"]
-    },
-    {
-        "table_id": "CRP-VIP-01",
-        "game": "craps",
-        "location": "vip_area",
-        "min_bet": 100,
-        "max_bet": 10000,
-        "seats": 12,
-        "available_seats": 10,
-        "status": "available",
-        "dealer": "Vincent Lee",
-        "dealer_rating": 4.8,
-        "atmosphere": "upscale",
-        "features": ["high_limit", "complimentary_beverages", "private"]
+        "features": ["quiet", "private_dining", "window_views", "arabian_gulf_view"],
+        "tables": [
+            {
+                "table_id": "JP-VIP-02",
+                "table_number": "VIP-02",
+                "location": "quiet_corner",
+                "seats": 2,
+                "view": "arabian_gulf",
+                "status": "available",
+                "features": ["quiet", "private", "window_view"]
+            },
+            {
+                "table_id": "JP-VIP-01",
+                "table_number": "VIP-01",
+                "location": "private_room",
+                "seats": 4,
+                "view": "arabian_gulf",
+                "status": "available",
+                "features": ["private_room", "quiet", "window_view"]
+            },
+            {
+                "table_id": "JP-STD-03",
+                "table_number": "03",
+                "location": "main_dining",
+                "seats": 4,
+                "view": "interior",
+                "status": "available",
+                "features": ["standard"]
+            },
+            {
+                "table_id": "JP-STD-05",
+                "table_number": "05",
+                "location": "main_dining",
+                "seats": 2,
+                "view": "interior",
+                "status": "reserved",
+                "features": ["standard"]
+            }
+        ]
     },
     
-    # Slots Area (represented as "tables" for consistency)
+    # Atmosphere - Modern European Restaurant
     {
-        "table_id": "SLOTS-VIP-01",
-        "game": "slots",
-        "location": "vip_slots_area",
-        "min_bet": 5,
-        "max_bet": 500,
-        "seats": 1,
-        "available_seats": 1,
-        "status": "available",
-        "dealer": "N/A",
-        "dealer_rating": 0.0,
+        "restaurant_id": "ATMOSPHERE",
+        "name": "Atmosphere Burj Khalifa",
+        "location": "Burj Khalifa - 122nd Floor",
+        "cuisine": "modern_european",
+        "dress_code": "formal",
+        "rating": 4.9,
+        "price_range": "$$$$$",
         "atmosphere": "luxurious",
-        "features": ["high_limit", "private_area", "personal_attendant", "complimentary_beverages"]
+        "features": ["panoramic_views", "fine_dining", "private_dining", "burj_khalifa_view"],
+        "tables": [
+            {
+                "table_id": "ATM-WIN-12",
+                "table_number": "Window-12",
+                "location": "window_section",
+                "seats": 2,
+                "view": "panoramic_city",
+                "status": "available",
+                "features": ["window_view", "romantic", "quiet"]
+            },
+            {
+                "table_id": "ATM-WIN-08",
+                "table_number": "Window-08",
+                "location": "window_section",
+                "seats": 4,
+                "view": "panoramic_city",
+                "status": "available",
+                "features": ["window_view", "quiet"]
+            },
+            {
+                "table_id": "ATM-PVT-01",
+                "table_number": "Private-01",
+                "location": "private_room",
+                "seats": 8,
+                "view": "panoramic_city",
+                "status": "available",
+                "features": ["private_room", "exclusive", "window_view"]
+            }
+        ]
     },
+    
+    # Al Mahara - Seafood Restaurant
     {
-        "table_id": "SLOTS-STD-AREA",
-        "game": "slots",
-        "location": "main_slots_floor",
-        "min_bet": 0.25,
-        "max_bet": 100,
-        "seats": 200,
-        "available_seats": 145,
-        "status": "active",
-        "dealer": "N/A",
-        "dealer_rating": 0.0,
-        "atmosphere": "lively",
-        "features": ["standard", "variety", "progressive_jackpots"]
+        "restaurant_id": "AL-MAHARA",
+        "name": "Al Mahara",
+        "location": "Azure Pearl - Lower Level",
+        "cuisine": "seafood",
+        "dress_code": "formal",
+        "rating": 4.9,
+        "price_range": "$$$$$",
+        "atmosphere": "exclusive",
+        "features": ["underwater_dining", "aquarium_view", "fine_dining", "romantic"],
+        "tables": [
+            {
+                "table_id": "AM-AQ-01",
+                "table_number": "Aquarium-01",
+                "location": "aquarium_side",
+                "seats": 2,
+                "view": "aquarium",
+                "status": "available",
+                "features": ["aquarium_view", "romantic", "exclusive"]
+            },
+            {
+                "table_id": "AM-AQ-05",
+                "table_number": "Aquarium-05",
+                "location": "aquarium_side",
+                "seats": 4,
+                "view": "aquarium",
+                "status": "reserved",
+                "features": ["aquarium_view", "exclusive"]
+            }
+        ]
+    },
+    
+    # Pierchic - Mediterranean Restaurant
+    {
+        "restaurant_id": "PIERCHIC",
+        "name": "Pierchic",
+        "location": "Al Qasr - Pier",
+        "cuisine": "mediterranean",
+        "dress_code": "smart_casual",
+        "rating": 4.7,
+        "price_range": "$$$$",
+        "atmosphere": "romantic",
+        "features": ["overwater_dining", "arabian_gulf_view", "sunset_views", "seafood"],
+        "tables": [
+            {
+                "table_id": "PC-PIER-03",
+                "table_number": "Pier-03",
+                "location": "pier_end",
+                "seats": 2,
+                "view": "arabian_gulf",
+                "status": "available",
+                "features": ["water_view", "romantic", "sunset_view"]
+            },
+            {
+                "table_id": "PC-PIER-07",
+                "table_number": "Pier-07",
+                "location": "pier_middle",
+                "seats": 4,
+                "view": "arabian_gulf",
+                "status": "available",
+                "features": ["water_view", "sunset_view"]
+            }
+        ]
+    },
+    
+    # Nathan Outlaw - British Seafood
+    {
+        "restaurant_id": "NATHAN-OUTLAW",
+        "name": "Nathan Outlaw at Al Mahara",
+        "location": "Azure Pearl - Lower Level",
+        "cuisine": "british_seafood",
+        "dress_code": "formal",
+        "rating": 4.8,
+        "price_range": "$$$$$",
+        "atmosphere": "upscale",
+        "features": ["michelin_star", "fine_dining", "seafood", "tasting_menu"],
+        "tables": [
+            {
+                "table_id": "NO-VIP-01",
+                "table_number": "VIP-01",
+                "location": "private_section",
+                "seats": 2,
+                "view": "interior",
+                "status": "available",
+                "features": ["private", "quiet", "exclusive"]
+            }
+        ]
     }
 ]
 
 
-class DemoTableManagementPlugin:
-    """Demo plugin simulating table reservation and availability system.
+class DemoRestaurantManagementPlugin:
+    """Demo plugin simulating restaurant reservation and availability system.
     
     This plugin returns pre-crafted synthesized data for demonstration purposes,
-    showcasing what Shu can accomplish when integrated with real table management systems.
+    showcasing what Shu can accomplish when integrated with real restaurant management systems.
     """
     
-    name = "demo_table_management"
+    name = "demo_restaurant_management"
     version = "1.0.0"
     
     # In-memory reservation storage (simple dict for demo purposes)
@@ -362,70 +279,87 @@ class DemoTableManagementPlugin:
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["list_available", "reserve", "release", "get_status"],
+                    "enum": ["list_available", "reserve", "cancel", "get_reservation"],
                     "default": "list_available",
                     "x-ui": {
                         "help": "Operation to perform",
                         "enum_labels": {
                             "list_available": "List Available Tables",
                             "reserve": "Reserve Table",
-                            "release": "Release Reservation",
-                            "get_status": "Get Table Status"
+                            "cancel": "Cancel Reservation",
+                            "get_reservation": "Get Reservation Details"
                         },
                         "enum_help": {
-                            "list_available": "List available tables with optional filtering",
-                            "reserve": "Reserve a table for a player",
-                            "release": "Release an existing table reservation",
-                            "get_status": "Get current status of a specific table"
+                            "list_available": "List available restaurant tables with optional filtering",
+                            "reserve": "Reserve a table for a customer",
+                            "cancel": "Cancel an existing table reservation",
+                            "get_reservation": "Get details of a specific reservation"
                         }
                     }
                 },
-                "game_type": {
+                "restaurant_id": {
                     "type": "string",
-                    "enum": ["blackjack", "baccarat", "poker", "roulette", "craps", "slots"],
                     "x-ui": {
-                        "help": "Filter by game type (optional)"
+                        "help": "Filter by restaurant ID (optional)"
                     }
                 },
-                "min_limit": {
-                    "type": "number",
-                    "minimum": 0,
+                "restaurant_name": {
+                    "type": "string",
                     "x-ui": {
-                        "help": "Minimum bet limit filter (optional)"
+                        "help": "Restaurant name (for reserve operation)"
                     }
                 },
-                "max_limit": {
-                    "type": "number",
-                    "minimum": 0,
+                "cuisine": {
+                    "type": "string",
+                    "enum": ["asian_fusion", "modern_european", "seafood", "mediterranean", "british_seafood"],
                     "x-ui": {
-                        "help": "Maximum bet limit filter (optional)"
+                        "help": "Filter by cuisine type (optional)"
                     }
                 },
                 "atmosphere": {
                     "type": "string",
-                    "enum": ["quiet", "exclusive", "upscale", "lively", "casual", "professional", "social", "elegant", "energetic", "exciting", "luxurious"],
+                    "enum": ["elegant", "luxurious", "exclusive", "romantic", "upscale"],
                     "x-ui": {
-                        "help": "Filter by table atmosphere (optional)"
+                        "help": "Filter by restaurant atmosphere (optional)"
                     }
                 },
                 "table_id": {
                     "type": "string",
                     "x-ui": {
-                        "help": "Specific table ID (for reserve, release, get_status operations)"
+                        "help": "Specific table ID (for reserve, cancel, get_reservation operations)"
                     }
                 },
-                "player_id": {
+                "customer_id": {
                     "type": "string",
                     "x-ui": {
-                        "help": "Player ID (for reserve operation)"
+                        "help": "Customer ID (for reserve operation)"
                     }
                 },
-                "duration_minutes": {
+                "customer_name": {
+                    "type": "string",
+                    "x-ui": {
+                        "help": "Customer name (for reserve operation)"
+                    }
+                },
+                "party_size": {
                     "type": "integer",
                     "minimum": 1,
-                    "default": 30,
+                    "default": 2,
                     "x-ui": {
-                        "help": "Reservation duration in minutes (for reserve operation)"
+                        "help": "Number of guests (for reserve operation)"
+                    }
+                },
+                "reservation_time": {
+                    "type": "string",
+                    "x-ui": {
+                        "help": "Reservation time in ISO format (for reserve operation)"
+                    }
+                },
+                "special_requests": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "x-ui": {
+                        "help": "Special requests (for reserve operation)"
                     }
                 },
                 "notes": {
@@ -449,25 +383,40 @@ class DemoTableManagementPlugin:
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "tables": {
+                "restaurants": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "table_id": {"type": "string"},
-                            "game": {"type": "string"},
+                            "restaurant_id": {"type": "string"},
+                            "name": {"type": "string"},
                             "location": {"type": "string"},
-                            "min_bet": {"type": "number"},
-                            "max_bet": {"type": "number"},
-                            "seats": {"type": "integer"},
-                            "available_seats": {"type": "integer"},
-                            "status": {"type": "string"},
-                            "dealer": {"type": "string"},
-                            "dealer_rating": {"type": "number"},
+                            "cuisine": {"type": "string"},
+                            "dress_code": {"type": "string"},
+                            "rating": {"type": "number"},
+                            "price_range": {"type": "string"},
                             "atmosphere": {"type": "string"},
                             "features": {
                                 "type": "array",
                                 "items": {"type": "string"}
+                            },
+                            "tables": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "table_id": {"type": "string"},
+                                        "table_number": {"type": "string"},
+                                        "location": {"type": "string"},
+                                        "seats": {"type": "integer"},
+                                        "view": {"type": "string"},
+                                        "status": {"type": "string"},
+                                        "features": {
+                                            "type": "array",
+                                            "items": {"type": "string"}
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -476,11 +425,22 @@ class DemoTableManagementPlugin:
                     "type": "object",
                     "properties": {
                         "reservation_id": {"type": "string"},
+                        "time": {"type": "string"},
+                        "customer_id": {"type": "string"},
+                        "customer_name": {"type": "string"},
+                        "party_size": {"type": "integer"},
+                        "restaurant_id": {"type": "string"},
+                        "restaurant_name": {"type": "string"},
                         "table_id": {"type": "string"},
-                        "player_id": {"type": "string"},
-                        "reserved_at": {"type": "string"},
-                        "reserved_until": {"type": "string"},
+                        "table_number": {"type": "string"},
+                        "reservation_time": {"type": "string"},
+                        "special_requests": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "beverage_prepared": {"type": "string"},
                         "status": {"type": "string"},
+                        "confirmation_code": {"type": "string"},
                         "notes": {"type": "string"}
                     }
                 }
@@ -488,47 +448,56 @@ class DemoTableManagementPlugin:
             "additionalProperties": False
         }
 
-    def _filter_tables(
+    def _filter_restaurants(
         self,
-        game_type: Optional[str] = None,
-        min_limit: Optional[float] = None,
-        max_limit: Optional[float] = None,
+        restaurant_id: Optional[str] = None,
+        cuisine: Optional[str] = None,
         atmosphere: Optional[str] = None
     ) -> list:
-        """Filter tables based on provided criteria.
+        """Filter restaurants based on provided criteria.
         
         Args:
-            game_type: Filter by game type (e.g., "blackjack", "baccarat")
-            min_limit: Filter by minimum bet limit
-            max_limit: Filter by maximum bet limit
-            atmosphere: Filter by table atmosphere (e.g., "quiet", "exclusive")
+            restaurant_id: Filter by specific restaurant ID
+            cuisine: Filter by cuisine type (e.g., "asian_fusion", "seafood")
+            atmosphere: Filter by restaurant atmosphere (e.g., "elegant", "exclusive")
             
         Returns:
-            List of tables matching the filter criteria
+            List of restaurants matching the filter criteria
         """
-        filtered_tables = []
+        filtered_restaurants = []
         
-        for table in DEMO_TABLES:
-            # Apply game type filter
-            if game_type and table["game"] != game_type:
+        for restaurant in DEMO_RESTAURANTS:
+            # Apply restaurant ID filter
+            if restaurant_id and restaurant["restaurant_id"] != restaurant_id:
                 continue
             
-            # Apply min limit filter (table's min_bet should be <= requested min_limit)
-            # if min_limit is not None and table["min_bet"] > min_limit:
-            #     continue
+            # Apply cuisine filter
+            if cuisine and restaurant["cuisine"] != cuisine:
+                continue
             
-            # # Apply max limit filter (table's max_bet should be >= requested max_limit)
-            # if max_limit is not None and table["max_bet"] < max_limit:
-            #     continue
+            # Apply atmosphere filter
+            if atmosphere and restaurant["atmosphere"] != atmosphere:
+                continue
             
-            # # Apply atmosphere filter
-            # if atmosphere and table["atmosphere"] != atmosphere:
-            #     continue
-            
-            # Table matches all filters
-            filtered_tables.append(table)
+            # Restaurant matches all filters
+            filtered_restaurants.append(restaurant)
         
-        return filtered_tables
+        return filtered_restaurants
+
+    def _find_table(self, table_id: str) -> Optional[tuple]:
+        """Find a table by ID across all restaurants.
+        
+        Args:
+            table_id: The table ID to search for
+            
+        Returns:
+            Tuple of (restaurant, table) if found, None otherwise
+        """
+        for restaurant in DEMO_RESTAURANTS:
+            for table in restaurant["tables"]:
+                if table["table_id"] == table_id:
+                    return (restaurant, table)
+        return None
 
     async def execute(
         self,
@@ -544,7 +513,7 @@ class DemoTableManagementPlugin:
             host: Host capabilities interface
             
         Returns:
-            ToolResult containing synthesized table data or error
+            ToolResult containing synthesized restaurant data or error
         """
         # Simulate realistic API delay
         await asyncio.sleep(random.uniform(0.5, 2.0))
@@ -553,45 +522,45 @@ class DemoTableManagementPlugin:
         
         if op == "list_available":
             # Extract filter parameters
-            game_type = params.get("game_type")
-            min_limit = params.get("min_limit")
-            max_limit = params.get("max_limit")
+            restaurant_id = params.get("restaurant_id")
+            cuisine = params.get("cuisine")
             atmosphere = params.get("atmosphere")
             
-            # Apply filters to get matching tables
-            filtered_tables = self._filter_tables(
-                game_type=game_type,
-                min_limit=min_limit,
-                max_limit=max_limit,
+            # Apply filters to get matching restaurants
+            filtered_restaurants = self._filter_restaurants(
+                restaurant_id=restaurant_id,
+                cuisine=cuisine,
                 atmosphere=atmosphere
             )
             
             # Build diagnostic message
             diagnostics = ["Demo mode: using synthesized data"]
             filter_info = []
-            if game_type:
-                filter_info.append(f"game_type={game_type}")
-            if min_limit is not None:
-                filter_info.append(f"min_limit={min_limit}")
-            if max_limit is not None:
-                filter_info.append(f"max_limit={max_limit}")
+            if restaurant_id:
+                filter_info.append(f"restaurant_id={restaurant_id}")
+            if cuisine:
+                filter_info.append(f"cuisine={cuisine}")
             if atmosphere:
                 filter_info.append(f"atmosphere={atmosphere}")
             
             if filter_info:
                 diagnostics.append(f"Filters applied: {', '.join(filter_info)}")
-            diagnostics.append(f"Found {len(filtered_tables)} matching tables")
+            diagnostics.append(f"Found {len(filtered_restaurants)} matching restaurants")
             
             return ToolResult.ok(
-                data={"tables": filtered_tables},
+                data={"restaurants": filtered_restaurants},
                 diagnostics=diagnostics
             )
             
         elif op == "reserve":
             # Extract required parameters
             table_id = params.get("table_id")
-            player_id = params.get("player_id")
-            duration_minutes = params.get("duration_minutes", 30)
+            customer_id = params.get("customer_id")
+            customer_name = params.get("customer_name")
+            party_size = params.get("party_size", 2)
+            restaurant_name = params.get("restaurant_name", "")
+            reservation_time = params.get("reservation_time")
+            special_requests = params.get("special_requests", [])
             notes = params.get("notes", "")
             
             # Validate required parameters
@@ -602,59 +571,55 @@ class DemoTableManagementPlugin:
                     details={"parameter": "table_id"}
                 )
             
-            if not player_id:
+            if not customer_id:
                 return ToolResult.err(
-                    "player_id is required for reserve operation",
+                    "customer_id is required for reserve operation",
                     code="missing_parameter",
-                    details={"parameter": "player_id"}
+                    details={"parameter": "customer_id"}
                 )
             
             # Find the table
-            table = None
-            for t in DEMO_TABLES:
-                if t["table_id"] == table_id:
-                    table = t
-                    break
-            
-            if not table:
+            result = self._find_table(table_id)
+            if not result:
                 return ToolResult.err(
                     f"Table not found: {table_id}",
                     code="table_not_found",
                     details={"table_id": table_id}
                 )
             
+            restaurant, table = result
+            
             # Check if table is available
-            if table["status"] == "full":
+            if table["status"] == "reserved":
                 return ToolResult.err(
-                    f"Table {table_id} is currently full",
-                    code="table_full",
-                    details={"table_id": table_id, "available_seats": 0}
+                    f"Table {table_id} is currently reserved",
+                    code="table_reserved",
+                    details={"table_id": table_id}
                 )
             
             # Generate reservation details
-            reservation_id = f"RES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
-            reserved_at = datetime.now(timezone.utc)
-            reserved_until = reserved_at + timedelta(minutes=duration_minutes)
+            reservation_id = f"RES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(uuid.uuid4())[:3].upper()}"
+            
+            # Determine beverage based on customer (David Chen gets green tea)
+            beverage_prepared = "green_tea" if customer_id == "CUST-5678" else "champagne"
             
             # Create reservation record
             reservation = {
                 "reservation_id": reservation_id,
+                "time": "2026-01-20:30:00+04:00",
+                "customer_id": customer_id,
+                "customer_name": customer_name or "Guest",
+                "party_size": party_size,
+                "restaurant_id": restaurant["restaurant_id"],
+                "restaurant_name": restaurant["name"],
                 "table_id": table_id,
-                "player_id": player_id,
-                "reserved_at": reserved_at.isoformat(),
-                "reserved_until": reserved_until.isoformat(),
-                "duration_minutes": duration_minutes,
+                "table_number": table["table_number"],
+                "reservation_time": reservation_time or datetime.now(timezone.utc).isoformat(),
+                "special_requests": special_requests,
+                "beverage_prepared": beverage_prepared,
                 "status": "confirmed",
-                "notes": notes,
-                "table_details": {
-                    "game": table["game"],
-                    "location": table["location"],
-                    "min_bet": table["min_bet"],
-                    "max_bet": table["max_bet"],
-                    "dealer": table["dealer"],
-                    "atmosphere": table["atmosphere"],
-                    "features": table["features"]
-                }
+                "confirmation_code": f"{restaurant['restaurant_id'][:2]}-{reservation_id}",
+                "notes": notes or f"Platinum customer - favorite table and {beverage_prepared.replace('_', ' ')} confirmed"
             }
             
             # Store reservation in memory
@@ -663,9 +628,9 @@ class DemoTableManagementPlugin:
             # Build diagnostics
             diagnostics = [
                 "Demo mode: using synthesized data",
-                f"Reserved table {table_id} for player {player_id}",
-                f"Reservation duration: {duration_minutes} minutes",
-                f"Valid until: {reserved_until.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                f"Reserved table {table_id} at {restaurant['name']} for {customer_name or customer_id}",
+                f"Party size: {party_size}",
+                f"Beverage prepared: {beverage_prepared.replace('_', ' ')}"
             ]
             
             return ToolResult.ok(
@@ -673,17 +638,17 @@ class DemoTableManagementPlugin:
                 diagnostics=diagnostics
             )
             
-        elif op == "release":
-            # Placeholder for release operation
+        elif op == "cancel":
+            # Placeholder for cancel operation
             return ToolResult.err(
-                "Release operation not yet implemented",
+                "Cancel operation not yet implemented",
                 code="not_implemented"
             )
             
-        elif op == "get_status":
-            # Placeholder for get_status operation
+        elif op == "get_reservation":
+            # Placeholder for get_reservation operation
             return ToolResult.err(
-                "Get status operation not yet implemented",
+                "Get reservation operation not yet implemented",
                 code="not_implemented"
             )
             

@@ -1,6 +1,6 @@
 """Demo Facial Recognition Plugin Implementation.
 
-This plugin simulates a facial recognition system at casino entry points,
+This plugin simulates a facial recognition system at Dubai International Airport,
 returning synthesized recognition events for demonstration purposes.
 """
 
@@ -67,53 +67,24 @@ class ToolResult:
 
 # Synthesized recognition events for demo purposes
 DEMO_RECOGNITION_EVENTS = [
-    # VIP Player: David Chen - High-roller, blackjack specialist
+    # VIP Guest: David Chen - Platinum tier guest arriving in evening with companion
     {
-        "event_id": "EVT-20260116-201500-001",
-        "timestamp": "2026-01-16T20:15:00Z",
-        "person_id": "PLAYER-5678",
+        "event_id": "DXB-20260121-193000-001",
+        "timestamp": "2026-01-21T19:30:00+04:00",  # Dubai time (UTC+4)
+        "customer_id": "CUST-5678",
         "name": "David Chen",
-        "confidence": 0.96,
-        "location": "main_entrance",
-        "camera_id": "CAM-ENTRANCE-01",
-        "image_ref": "img_20260116_201500_001.jpg",
-        "entry_type": "vip_entrance",
-        "companion_count": 0,
-        "category": "vip"
-    },
-    # VIP Player: Michael Park - New VIP, rapid ascent
-    {
-        "event_id": "EVT-20260116-201700-005",
-        "timestamp": "2026-01-16T20:17:00Z",
-        "person_id": "PLAYER-3456",
-        "name": "Ahmed Al Mansoori",
-        "confidence": 0.92,
-        "location": "main_entrance",
-        "camera_id": "CAM-ENTRANCE-01",
-        "image_ref": "img_20260116_201700_005.jpg",
-        "entry_type": "main_entrance",
-        "companion_count": 2,
-        "category": "vip"
-    },
-    # Flagged Player: Alcohol-restricted player
-    {
-        "event_id": "EVT-20260116-201800-007",
-        "timestamp": "2026-01-16T20:18:00Z",
-        "person_id": "PLAYER-7777",
-        "name": "Thomas Anderson",
-        "confidence": 0.93,
-        "location": "bar_lounge",
-        "camera_id": "CAM-BAR-01",
-        "image_ref": "img_20260116_201800_007.jpg",
-        "entry_type": "main_entrance",
+        "confidence": 0.97,
+        "location": "terminal_3_gate_b12",
+        "aircraft": "EK001",
         "companion_count": 1,
-        "category": "other"
+        "time_of_day": "evening",
+        "image_ref": "dxb_recognition_20260121_193000.jpg"
     }
 ]
 
 
 class DemoFacialRecognitionPlugin:
-    """Demo plugin simulating facial recognition at casino entry points.
+    """Demo plugin simulating facial recognition at Dubai International Airport.
     
     This plugin returns pre-crafted synthesized data for demonstration purposes,
     showcasing what Shu can accomplish when integrated with real facial recognition systems.
@@ -190,7 +161,7 @@ class DemoFacialRecognitionPlugin:
                         "properties": {
                             "event_id": {"type": "string"},
                             "timestamp": {"type": "string"},
-                            "person_id": {"type": "string"},
+                            "customer_id": {"type": "string"},
                             "name": {"type": "string"},
                             "confidence": {"type": "number"},
                             "location": {"type": "string"},
@@ -207,7 +178,7 @@ class DemoFacialRecognitionPlugin:
                     "properties": {
                         "event_id": {"type": "string"},
                         "timestamp": {"type": "string"},
-                        "person_id": {"type": "string"},
+                        "customer_id": {"type": "string"},
                         "name": {"type": "string"},
                         "confidence": {"type": "number"},
                         "location": {"type": "string"},
@@ -243,25 +214,7 @@ class DemoFacialRecognitionPlugin:
         
         op = params.get("op", "list")
         
-        if op == "list":
-            # Get filter parameter
-            filter_category = params.get("filter", "all")
-            
-            # Filter events based on category
-            if filter_category == "all":
-                filtered_events = DEMO_RECOGNITION_EVENTS
-            else:
-                filtered_events = [
-                    event for event in DEMO_RECOGNITION_EVENTS
-                    if event["category"] == filter_category
-                ]
-            
-            return ToolResult.ok(
-                data={"events": filtered_events},
-                diagnostics=["Demo mode: using synthesized data"]
-            )
-            
-        elif op == "get_event":
+        if op == "get_event":
             event_id = params.get("event_id")
             if not event_id:
                 return ToolResult.err(

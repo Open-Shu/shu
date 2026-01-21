@@ -17,153 +17,57 @@ logger = logging.getLogger(__name__)
 
 # Synthesized incident histories for all demo players
 DEMO_INCIDENT_HISTORIES = {
-    # VIP Player 1: David Chen - Minor disputes, positive notes
-    "PLAYER-5678": {
-        "player_id": "PLAYER-5678",
+    # VIP Customer 1: David Chen - Transportation complaint, positive notes
+    "CUST-5678": {
+        "customer_id": "CUST-5678",
         "incidents": [
             {
-                "incident_id": "INC-2025-456",
-                "date": "2025-11-15T22:30:00Z",
-                "type": "dispute",
-                "severity": "low",
-                "category": "comp_calculation",
-                "description": "Player questioned comp point calculation for October play. Believed he should have earned additional 500 points.",
-                "resolution": "Reviewed play history. Calculation was correct but player was close to next tier threshold. Issued courtesy 500 bonus points to maintain goodwill.",
-                "resolved_by": "Floor Manager Sarah Johnson",
-                "resolution_time_minutes": 15,
-                "player_satisfaction": "satisfied",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2024-892",
-                "date": "2024-08-20T19:45:00Z",
-                "type": "positive_note",
-                "severity": "none",
-                "category": "exceptional_behavior",
-                "description": "Player helped elderly guest who appeared confused at blackjack table. Explained rules patiently and called floor staff for assistance.",
-                "resolution": "Sent thank you note and $100 dining credit.",
-                "resolved_by": "Pit Boss Michael Chen",
-                "player_satisfaction": "n/a",
-                "follow_up_required": False
-            }
-        ],
-        "watchlist_status": "none",
-        "self_exclusion": False,
-        "regulatory_flags": [],
-        "credit_flags": [],
-        "behavioral_notes": {
-            "temperament": "calm_and_friendly",
-            "alcohol_consumption": "moderate",
-            "tipping_behavior": "generous",
-            "staff_interactions": "respectful",
-            "other_player_interactions": "friendly"
-        },
-        "risk_assessment": {
-            "problem_gambling_indicators": "none",
-            "credit_risk": "low",
-            "security_risk": "none",
-            "overall_risk": "low"
-        },
-        "summary": "Preferred customer with no concerns. One minor comp dispute resolved favorably. Known for courteous behavior and positive interactions with staff and other guests."
-    },
-    
-    # VIP Player 5: Ahmed Al Mansoori - Young, social, learning
-    "PLAYER-3456": {
-        "player_id": "PLAYER-3456",
-        "incidents": [
-            {
-                "incident_id": "INC-2025-890",
-                "date": "2025-11-20T22:45:00Z",
-                "type": "minor_incident",
-                "severity": "low",
-                "category": "noise_complaint",
-                "description": "Player and group of friends became loud and boisterous at blackjack table. Other guests complained about noise level.",
-                "resolution": "Floor manager politely asked group to lower voices. Player immediately apologized and complied. No further issues. Player sent apology note next day.",
-                "resolved_by": "Floor Manager Tom Rodriguez",
-                "resolution_time_minutes": 5,
-                "player_satisfaction": "apologetic",
-                "follow_up_required": False
-            },
-            {
-                "incident_id": "INC-2025-234",
-                "date": "2025-10-15T20:30:00Z",
-                "type": "positive_note",
-                "severity": "none",
-                "category": "exceptional_behavior",
-                "description": "Player tipped dealer $500 after winning hand. Shared winnings with entire table, buying drinks for all players.",
-                "resolution": "Noted generous behavior. Player creates positive atmosphere at tables.",
-                "resolved_by": "Pit Boss Sarah Lee",
-                "player_satisfaction": "n/a",
-                "follow_up_required": False
-            }
-        ],
-        "watchlist_status": "none",
-        "self_exclusion": False,
-        "regulatory_flags": [],
-        "credit_flags": [],
-        "behavioral_notes": {
-            "temperament": "enthusiastic_and_social",
-            "alcohol_consumption": "moderate_to_high",
-            "tipping_behavior": "very_generous",
-            "staff_interactions": "friendly_and_respectful",
-            "other_player_interactions": "very_social"
-        },
-        "risk_assessment": {
-            "problem_gambling_indicators": "monitor_spending_velocity",
-            "credit_risk": "low",
-            "security_risk": "none",
-            "overall_risk": "low"
-        },
-        "summary": "Young, enthusiastic player with rapid tier advancement. One minor noise incident resolved immediately with apology. Known for generous tipping and creating positive atmosphere. Monitor spending patterns for responsible gaming."
-    },
-    
-    # Flagged Player 2: Thomas Anderson - Alcohol-restricted player
-    "PLAYER-7777": {
-        "player_id": "PLAYER-7777",
-        "incidents": [
-            {
-                "incident_id": "INC-2025-0215",
-                "date": "2025-02-15T20:15:00Z",
-                "type": "behavioral_incident",
+                "incident_id": "INC-2025-0847",
+                "date": "2025-08-10T14:30:00+04:00",
+                "type": "complaint",
                 "severity": "medium",
-                "category": "disruptive_behavior",
-                "description": "Player became increasingly loud and disruptive after consuming multiple alcoholic beverages. Singing loudly at blackjack table. Other players complained. Floor staff asked player to quiet down multiple times.",
-                "resolution": "Player eventually complied but remained disruptive. Beverage service cut off after 5 mixed drinks. Player left property shortly after. Incident documented as part of pattern.",
-                "resolved_by": "Floor Manager Tom Rodriguez",
-                "resolution_time_minutes": 25,
-                "player_satisfaction": "dissatisfied",
-                "follow_up_required": False
+                "category": "transportation",
+                "description": "Guest complained that the car sent for airport pickup was too small for luggage and companion. Mercedes E-Class was provided but guest expected S-Class or larger for platinum tier.",
+                "resolution": "Apologized and upgraded to Mercedes S-Class for return trip. Issued 5000 loyalty points as compensation. Updated profile to ensure S-Class or equivalent for future bookings.",
+                "resolved_by": "Transportation Manager Ahmed Hassan",
+                "resolution_time_minutes": 45,
+                "guest_satisfaction": "satisfied_after_resolution",
+                "follow_up_required": False,
+                "follow_up_notes": "Ensure S-Class minimum for all future bookings"
             },
             {
-                "incident_id": "INC-2024-1120",
-                "date": "2024-11-20T22:00:00Z",
-                "type": "minor_incident",
-                "severity": "low",
-                "category": "intoxication",
-                "description": "Player appeared intoxicated. Stumbling, slurred speech. Beverage service cut off per responsible gaming policy. Player accepted decision without issue.",
-                "resolution": "Player offered coffee and water. Player accepted and sobered up. Left property safely via rideshare. No further issues.",
-                "resolved_by": "Beverage Manager Lisa Chen",
-                "resolution_time_minutes": 15,
-                "player_satisfaction": "understanding",
+                "incident_id": "INC-2025-0623",
+                "date": "2025-06-15T09:00:00+04:00",
+                "type": "positive_note",
+                "severity": "none",
+                "category": "exceptional_behavior",
+                "description": "Guest's birthday. Executive Host arranged surprise champagne and cake in suite. Guest was very appreciative and mentioned this was the best hotel experience he's had.",
+                "resolution": "Sent thank you note. Guest posted positive review on social media.",
+                "resolved_by": "Executive Host Sarah Al-Mansouri",
+                "guest_satisfaction": "highly_satisfied",
                 "follow_up_required": False
             }
         ],
-        "watchlist_status": "standard_monitoring",
+        "watchlist_status": "none",
         "self_exclusion": False,
+        "regulatory_flags": [],
         "credit_flags": [],
         "behavioral_notes": {
-            "temperament": "friendly_when_sober",
-            "tipping_behavior": "appropriate",
-            "other_player_interactions": "friendly"
+            "temperament": "professional_and_courteous",
+            "service_expectations": "very_high",
+            "communication_style": "direct_and_clear",
+            "staff_interactions": "respectful",
+            "complaint_handling": "reasonable_when_addressed_promptly"
         },
         "risk_assessment": {
-            "problem_gambling_indicators": "none",
-            "credit_risk": "low",
-            "security_risk": "medium",
-            "overall_risk": "low_with_monitoring"
+            "overall_risk": "low",
+            "credit_risk": "none",
+            "behavioral_risk": "none",
+            "service_sensitivity": "high"
         },
-        "summary": "Player has received multiple warnings due to alcohol related disturbances."
-    }
+        "summary": "Valued platinum guest with high service expectations. One transportation complaint resolved satisfactorily. Known for appreciating attention to detail and personalized service. Ensure premium vehicle selection for all future bookings."
+    },
+
 }
 
 
@@ -210,10 +114,10 @@ class DemoIncidentHistoryPlugin:
                         }
                     }
                 },
-                "player_id": {
+                "customer_id": {
                     "type": "string",
                     "x-ui": {
-                        "help": "Player ID to retrieve incident history for (required for get_by_player operation)"
+                        "help": "Customer ID to retrieve incident history for (required for get_by_player operation)"
                     }
                 },
                 "include_risk_assessment": {
@@ -452,9 +356,9 @@ class DemoIncidentHistoryPlugin:
         incident_history_schema = {
             "type": "object",
             "properties": {
-                "player_id": {
+                "customer_id": {
                     "type": "string",
-                    "description": "Unique player identifier"
+                    "description": "Unique customer identifier"
                 },
                 "incidents": {
                     "type": "array",
@@ -501,7 +405,7 @@ class DemoIncidentHistoryPlugin:
                     "description": "Summary of incident history and player status"
                 }
             },
-            "required": ["player_id", "incidents", "watchlist_status", "self_exclusion"],
+            "required": ["customer_id", "incidents", "watchlist_status", "self_exclusion"],
             "description": "Complete incident history for a player"
         }
         
@@ -571,7 +475,7 @@ class DemoIncidentHistoryPlugin:
         """Get incident history for a specified player ID.
         
         Args:
-            params: Parameters including player_id string
+            params: Parameters including customer_id string
             
         Returns:
             Dict containing incident history in ToolResult format
@@ -579,39 +483,39 @@ class DemoIncidentHistoryPlugin:
         # Simulate realistic API delay
         await asyncio.sleep(random.uniform(0.5, 2.0))
         
-        player_id = params.get("player_id")
+        customer_id = params.get("customer_id")
         
-        if not player_id:
+        if not customer_id:
             return {
                 "status": "error",
                 "data": None,
-                "diagnostics": ["No player_id provided"],
+                "diagnostics": ["No customer_id provided"],
                 "cost": {"api_calls": 0}
             }
         
-        if not isinstance(player_id, str):
+        if not isinstance(customer_id, str):
             return {
                 "status": "error",
                 "data": None,
-                "diagnostics": ["player_id must be a string"],
+                "diagnostics": ["customer_id must be a string"],
                 "cost": {"api_calls": 0}
             }
         
         # Retrieve incident history for requested player
         diagnostics = ["Demo mode: using synthesized data"]
 
-        if player_id in DEMO_INCIDENT_HISTORIES:
+        if customer_id in DEMO_INCIDENT_HISTORIES:
             return {
                 "status": "success",
                 "data": {
-                    "incident_history": DEMO_INCIDENT_HISTORIES[player_id],
+                    "incident_history": DEMO_INCIDENT_HISTORIES[customer_id],
                     "found": True
                 },
                 "diagnostics": diagnostics,
                 "cost": {"api_calls": 0}
             }
         else:
-            diagnostics.append(f"Player not found: {player_id}")
+            diagnostics.append(f"Player not found: {customer_id}")
             return {
                 "status": "success",
                 "data": {
