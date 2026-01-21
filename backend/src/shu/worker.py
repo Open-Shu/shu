@@ -87,6 +87,66 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
     return workload_types
 
 
+async def _handle_profiling_job(job) -> None:
+    """Handle a PROFILING workload job.
+
+    Runs the profiling orchestrator for the specified document.
+
+    Args:
+        job: The job containing document_id in payload.
+
+    Raises:
+        ValueError: If document_id is missing from payload.
+        Exception: If profiling fails (triggers retry).
+    """
+    document_id = job.payload.get("document_id")
+    if not document_id:
+        raise ValueError("PROFILING job missing document_id in payload")
+
+    logger.info(
+        "Processing profiling job",
+        extra={"job_id": job.id, "document_id": document_id}
+    )
+
+    from .core.database import get_async_session_local
+    from .core.config import get_config_manager, get_settings_instance
+    from .services.side_call_service import SideCallService
+    from .services.profiling_orchestrator import ProfilingOrchestrator
+
+    settings = get_settings_instance()
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        config_manager = get_config_manager()
+        side_call_service = SideCallService(session, config_manager)
+        orchestrator = ProfilingOrchestrator(session, settings, side_call_service)
+
+        result = await orchestrator.run_for_document(document_id)
+
+        if result.success:
+            logger.info(
+                "Profiling job completed successfully",
+                extra={
+                    "job_id": job.id,
+                    "document_id": document_id,
+                    "profiling_mode": result.profiling_mode.value if result.profiling_mode else None,
+                    "tokens_used": result.tokens_used,
+                    "duration_ms": result.duration_ms,
+                }
+            )
+        else:
+            # Log error but raise exception to trigger retry
+            logger.error(
+                "Profiling job failed",
+                extra={
+                    "job_id": job.id,
+                    "document_id": document_id,
+                    "error": result.error,
+                }
+            )
+            raise Exception(f"Profiling failed for document {document_id}: {result.error}")
+
+
 async def process_job(job):
     """Process a job based on its workload type and payload.
 
@@ -114,15 +174,8 @@ async def process_job(job):
 
     # Route to appropriate handler
     if workload_type == WorkloadType.PROFILING:
-        # TODO: Implement in task 11.1 (profiling migration)
-        logger.warning(
-            "PROFILING workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
-
+        await _handle_profiling_job(job)
+    
     elif workload_type == WorkloadType.MAINTENANCE:
         # TODO: Implement in task 11.2 (scheduler migration)
         logger.warning(

@@ -64,8 +64,6 @@ def _build_skipped_result(
     }
 
 
-
-
 async def _trigger_profiling_if_enabled(document_id: str) -> None:
     """Trigger async document profiling if enabled (SHU-344).
 

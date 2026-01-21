@@ -9,6 +9,7 @@ Tests cover:
 """
 import asyncio
 from typing import Any, Dict
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -26,122 +27,115 @@ from integ.base_integration_test import BaseIntegrationTestSuite, create_test_ru
 async def test_profiling_job_enqueued(client, db, auth_headers):
     """Test that document profiling jobs are enqueued to the queue."""
     from shu.core.config import get_settings_instance
-    
+
     settings = get_settings_instance()
-    original_profiling_enabled = settings.enable_document_profiling
-    
+
+    # Reset queue backend to ensure clean state
+    reset_queue_backend()
+
     try:
-        # Enable profiling
-        settings.enable_document_profiling = True
-        
-        # Reset queue backend to ensure clean state
-        reset_queue_backend()
-        
-        # Create a knowledge base
-        kb_response = await client.post(
-            "/api/v1/knowledge-bases",
-            json={"name": "Test KB for Profiling", "description": "Test"},
-            headers=auth_headers,
-        )
-        assert kb_response.status_code == 201
-        kb_id = kb_response.json()["data"]["id"]
-        
-        # Ingest a document (should trigger profiling job enqueue)
-        result = await ingest_text(
-            db,
-            kb_id,
-            plugin_name="test_plugin",
-            user_id="test_user",
-            title="Test Document",
-            content="This is a test document for profiling.",
-            source_id="test_doc_1",
-        )
-        
-        assert result["document_id"] is not None
-        document_id = result["document_id"]
-        
-        # Check that a profiling job was enqueued
-        backend = await get_queue_backend()
-        queue_name = get_queue_name(WorkloadType.PROFILING)
-        
-        # Peek at the queue to see if job is there
-        jobs = await backend.peek(queue_name, limit=10)
-        
-        # Find the job for our document
-        profiling_job = None
-        for job in jobs:
-            if job.payload.get("document_id") == document_id:
-                profiling_job = job
-                break
-        
-        assert profiling_job is not None, "Profiling job should be enqueued"
-        assert profiling_job.payload["action"] == "profile_document"
-        assert profiling_job.payload["document_id"] == document_id
-        assert profiling_job.max_attempts == 5
-        assert profiling_job.visibility_timeout == 600
-        
+        # Use patch to enable profiling without mutating the singleton
+        with patch.object(settings, 'enable_document_profiling', True):
+            # Create a knowledge base
+            kb_response = await client.post(
+                "/api/v1/knowledge-bases",
+                json={"name": "Test KB for Profiling", "description": "Test"},
+                headers=auth_headers,
+            )
+            assert kb_response.status_code == 201
+            kb_id = kb_response.json()["data"]["id"]
+
+            # Ingest a document (should trigger profiling job enqueue)
+            result = await ingest_text(
+                db,
+                kb_id,
+                plugin_name="test_plugin",
+                user_id="test_user",
+                title="Test Document",
+                content="This is a test document for profiling.",
+                source_id="test_doc_1",
+            )
+
+            assert result["document_id"] is not None
+            document_id = result["document_id"]
+
+            # Check that a profiling job was enqueued
+            backend = await get_queue_backend()
+            queue_name = get_queue_name(WorkloadType.PROFILING)
+
+            # Peek at the queue to see if job is there
+            jobs = await backend.peek(queue_name, limit=10)
+
+            # Find the job for our document
+            profiling_job = None
+            for job in jobs:
+                if job.payload.get("document_id") == document_id:
+                    profiling_job = job
+                    break
+
+            assert profiling_job is not None, "Profiling job should be enqueued"
+            assert profiling_job.payload["action"] == "profile_document"
+            assert profiling_job.payload["document_id"] == document_id
+            assert profiling_job.max_attempts == 5
+            assert profiling_job.visibility_timeout == 600
+
     finally:
-        # Restore original setting
-        settings.enable_document_profiling = original_profiling_enabled
         reset_queue_backend()
 
 
 async def test_profiling_job_can_be_dequeued(client, db, auth_headers):
     """Test that profiling jobs can be dequeued and processed."""
     from shu.core.config import get_settings_instance
-    
+
     settings = get_settings_instance()
-    original_profiling_enabled = settings.enable_document_profiling
-    
+
+    # Reset queue backend
+    reset_queue_backend()
+
     try:
-        # Enable profiling
-        settings.enable_document_profiling = True
-        
-        # Reset queue backend
-        reset_queue_backend()
-        
-        # Create a knowledge base
-        kb_response = await client.post(
-            "/api/v1/knowledge-bases",
-            json={"name": "Test KB for Dequeue", "description": "Test"},
-            headers=auth_headers,
-        )
-        assert kb_response.status_code == 201
-        kb_id = kb_response.json()["data"]["id"]
-        
-        # Ingest a document
-        result = await ingest_text(
-            db,
-            kb_id,
-            plugin_name="test_plugin",
-            user_id="test_user",
-            title="Test Document",
-            content="This is a test document.",
-            source_id="test_doc_2",
-        )
-        
-        document_id = result["document_id"]
-        
-        # Dequeue the job
-        backend = await get_queue_backend()
-        queue_name = get_queue_name(WorkloadType.PROFILING)
-        
-        job = await backend.dequeue(queue_name, timeout_seconds=1)
-        
-        assert job is not None, "Should be able to dequeue profiling job"
-        assert job.payload["document_id"] == document_id
-        assert job.attempts == 1  # Should be incremented after dequeue
-        
-        # Acknowledge the job
-        ack_result = await backend.acknowledge(job)
-        assert ack_result is True
-        
-        # Verify job is no longer in queue
-        job2 = await backend.dequeue(queue_name, timeout_seconds=1)
-        assert job2 is None, "Job should not be redelivered after acknowledgment"
-        
+        # Use patch to enable profiling without mutating the singleton
+        with patch.object(settings, 'enable_document_profiling', True):
+            # Create a knowledge base
+            kb_response = await client.post(
+                "/api/v1/knowledge-bases",
+                json={"name": "Test KB for Dequeue", "description": "Test"},
+                headers=auth_headers,
+            )
+            assert kb_response.status_code == 201
+            kb_id = kb_response.json()["data"]["id"]
+
+            # Ingest a document
+            result = await ingest_text(
+                db,
+                kb_id,
+                plugin_name="test_plugin",
+                user_id="test_user",
+                title="Test Document",
+                content="This is a test document.",
+                source_id="test_doc_2",
+            )
+
+            document_id = result["document_id"]
+
+            # Dequeue the job
+            backend = await get_queue_backend()
+            queue_name = get_queue_name(WorkloadType.PROFILING)
+
+            job = await backend.dequeue(queue_name, timeout_seconds=1)
+
+            assert job is not None, "Should be able to dequeue profiling job"
+            assert job.payload["document_id"] == document_id
+            assert job.attempts == 1  # Should be incremented after dequeue
+
+            # Acknowledge the job
+            ack_result = await backend.acknowledge(job)
+            assert ack_result is True
+
+            # Verify job is no longer in queue
+            job2 = await backend.dequeue(queue_name, timeout_seconds=1)
+            assert job2 is None, "Job should not be redelivered after acknowledgment"
+
     finally:
-        settings.enable_document_profiling = original_profiling_enabled
         reset_queue_backend()
 
 
