@@ -35,19 +35,13 @@ DEMO_PLAYER_PROFILES = {
             "newspaper": "financial_times"
         },
         "transportation_preferences": {
+            "type": "rental",
             "preferred_vehicle": "mercedes_s_class",
             "vehicle_color": "black",
             "special_requirements": ["spacious", "quiet", "wifi"],
             "driver_language": "english"
         },
         "preferences": {
-            "games": [
-                {"game": "blackjack", "skill_level": "expert", "preference_score": 10},
-                {"game": "baccarat", "skill_level": "intermediate", "preference_score": 7},
-                {"game": "poker", "skill_level": "advanced", "preference_score": 5}
-            ],
-            "table_preference": "quiet_tables",
-            "table_limits": {"min": 100, "max": 5000},
             "beverage": "green_tea",
             "dining": [
                 {"restaurant": "Jade Palace", "cuisine": "asian_fusion", "visits": 12},
@@ -69,8 +63,8 @@ DEMO_PLAYER_PROFILES = {
         },
         "service_preferences": {
             "tailor_interest": True,
-            "spa_interest": True,
-            "spa_preferences": ["massage", "sauna"],
+            "spa_interest": False,
+            "spa_preferences": [],
             "concierge_services": ["restaurant_reservations", "event_tickets"],
             "activities": ["golf", "yacht_charter"]
         },
@@ -116,10 +110,6 @@ DEMO_PLAYER_PROFILES = {
             }
         ],
         "financial": {
-            "credit_line": 50000.00,
-            "credit_used": 0.00,
-            "average_bet": 500.00,
-            "average_session_buy_in": 10000.00,
             "lifetime_value": 125000.00,
             "ytd_value": 15000.00,
             "last_30_days_value": 8000.00
@@ -127,16 +117,9 @@ DEMO_PLAYER_PROFILES = {
         "visit_history": {
             "total_visits": 47,
             "last_visit": "2026-01-10",
-            "average_visit_duration_hours": 4.5,
+            "average_visit_duration_days": 4.5,
             "preferred_days": ["friday", "saturday"],
             "preferred_times": ["evening", "night"]
-        },
-        "analytics": {
-            "win_loss_ratio": 0.45,
-            "volatility": "medium",
-            "churn_risk": "low",
-            "upsell_potential": "high",
-            "social_influence": "medium"
         },
         "special_dates": [
             {"type": "birthday", "date": "1978-06-15"},
@@ -146,7 +129,7 @@ DEMO_PLAYER_PROFILES = {
             {
                 "date": "2025-12-20",
                 "author": "Host Manager Lisa Wong",
-                "note": "Prefers personal greeting, dislikes crowds. Mentioned interest in private blackjack tables."
+                "note": "Prefers personal greeting, dislikes crowds."
             },
             {
                 "date": "2026-01-05",
@@ -163,14 +146,6 @@ DEMO_PLAYER_PROFILES = {
                 "author": "Executive Host Sarah Al-Mansouri",
                 "note": "Guest mentioned interest in visiting hotel tailor for custom suits. Prefers quiet, professional service. Traveling with spouse who enjoys spa and shopping."
             }
-        ],
-        "pre_generated_questions": [
-            "What comps has David Chen received in the last 3 months?",
-            "What are David Chen's preferred games and table limits?",
-            "When was David Chen's last visit and what was his play pattern?",
-            "What dining preferences does David Chen have?",
-            "Are there any special occasions coming up for David Chen?",
-            "What is David Chen's lifetime value and current tier status?"
         ]
     },
 

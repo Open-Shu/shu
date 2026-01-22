@@ -256,7 +256,9 @@ export default function ExperiencesAdmin() {
     const highlightImport = searchParams.get('action') === 'import-morning-briefing';
     
     const [deleteTarget, setDeleteTarget] = useState(null);
-    const [runDialogExperience, setRunDialogExperience] = useState(null);
+    const [runDialogExperienceId, setRunDialogExperienceId] = useState(null);
+    const [runDialogExperienceName, setRunDialogExperienceName] = useState('');
+    const [runDialogExperienceSteps, setRunDialogExperienceSteps] = useState([]);
     const [importWizardOpen, setImportWizardOpen] = useState(false);
     const [prePopulatedYAML, setPrePopulatedYAML] = useState('');
     const [showFirstTimeAlert, setShowFirstTimeAlert] = useState(false);
@@ -344,7 +346,9 @@ export default function ExperiencesAdmin() {
     };
 
     const handleRun = (experience) => {
-        setRunDialogExperience(experience);
+        setRunDialogExperienceId(experience.id);
+        setRunDialogExperienceName(experience.name);
+        setRunDialogExperienceSteps(experience.steps || []);
     };
 
     const handleHistory = (experience) => {
@@ -548,13 +552,18 @@ export default function ExperiencesAdmin() {
             />
 
             {/* Run Dialog */}
-            {runDialogExperience && (
+            {runDialogExperienceId && (
                 <ExperienceRunDialog
-                    open={!!runDialogExperience}
-                    onClose={() => setRunDialogExperience(null)}
-                    experienceId={runDialogExperience.id}
-                    experienceName={runDialogExperience.name}
-                    steps={runDialogExperience.steps || []}
+                    key={runDialogExperienceId}
+                    open={!!runDialogExperienceId}
+                    onClose={() => {
+                        setRunDialogExperienceId(null);
+                        setRunDialogExperienceName('');
+                        setRunDialogExperienceSteps([]);
+                    }}
+                    experienceId={runDialogExperienceId}
+                    experienceName={runDialogExperienceName}
+                    steps={runDialogExperienceSteps}
                 />
             )}
 

@@ -27,7 +27,7 @@ DEMO_INCIDENT_HISTORIES = {
                 "type": "complaint",
                 "severity": "medium",
                 "category": "transportation",
-                "description": "Guest complained that the car sent for airport pickup was too small for luggage and companion. Mercedes E-Class was provided but guest expected S-Class or larger for platinum tier.",
+                "description": "Guest complained that the car provided as a rental was too small for luggage and companion. Mercedes E-Class was provided but guest expected S-Class or larger for platinum tier.",
                 "resolution": "Apologized and upgraded to Mercedes S-Class for return trip. Issued 5000 loyalty points as compensation. Updated profile to ensure S-Class or equivalent for future bookings.",
                 "resolved_by": "Transportation Manager Ahmed Hassan",
                 "resolution_time_minutes": 45,
@@ -49,9 +49,6 @@ DEMO_INCIDENT_HISTORIES = {
             }
         ],
         "watchlist_status": "none",
-        "self_exclusion": False,
-        "regulatory_flags": [],
-        "credit_flags": [],
         "behavioral_notes": {
             "temperament": "professional_and_courteous",
             "service_expectations": "very_high",

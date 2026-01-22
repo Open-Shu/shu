@@ -21,11 +21,6 @@ AVAILABLE_VEHICLES = {
         "color": "black",
         "features": ["wifi", "privacy_partition", "champagne_bar", "massage_seats"],
         "capacity": {"passengers": 4, "luggage": 4},
-        "driver": {
-            "name": "Mohammed Al-Rashid",
-            "languages": ["english", "arabic"],
-            "rating": 4.9
-        },
         "available": True
     },
     "DXB-ROLLS-PHANTOM-001": {
@@ -36,11 +31,6 @@ AVAILABLE_VEHICLES = {
         "color": "black",
         "features": ["wifi", "privacy_partition", "champagne_bar", "starlight_ceiling"],
         "capacity": {"passengers": 4, "luggage": 5},
-        "driver": {
-            "name": "Ahmed Al-Maktoum",
-            "languages": ["english", "arabic", "french"],
-            "rating": 5.0
-        },
         "available": True
     }
 }
@@ -157,7 +147,7 @@ class DemoCarServicePlugin:
                         "help": "Customer name for booking"
                     }
                 },
-                "pickup_location": {
+                "car_delivery_location": {
                     "type": "string",
                     "x-ui": {
                         "help": "Pickup location address"
@@ -186,7 +176,7 @@ class DemoCarServicePlugin:
                         "help": "Preferred vehicle type"
                     }
                 },
-                "pickup_time": {
+                "car_delivery_time": {
                     "type": "string",
                     "format": "date-time",
                     "x-ui": {
@@ -235,17 +225,6 @@ class DemoCarServicePlugin:
                         "luggage": {"type": "integer"}
                     }
                 },
-                "driver": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "languages": {
-                            "type": "array",
-                            "items": {"type": "string"}
-                        },
-                        "rating": {"type": "number"}
-                    }
-                },
                 "available": {"type": "boolean"}
             }
         }
@@ -258,11 +237,10 @@ class DemoCarServicePlugin:
                 "customer_name": {"type": "string"},
                 "vehicle_id": {"type": "string"},
                 "vehicle": {"type": "string"},
-                "pickup_location": {"type": "string"},
-                "pickup_time": {"type": "string", "format": "date-time"},
+                "car_delivery_location": {"type": "string"},
+                "car_delivery_time": {"type": "string", "format": "date-time"},
                 "destination": {"type": "string"},
                 "estimated_duration_minutes": {"type": "integer"},
-                "driver": {"type": "string"},
                 "special_instructions": {"type": "string"},
                 "status": {"type": "string"},
                 "confirmation_code": {"type": "string"}
@@ -329,10 +307,10 @@ class DemoCarServicePlugin:
                     code="missing_parameter"
                 )
             
-            pickup_location = params.get("pickup_location")
-            if not pickup_location:
+            car_delivery_location = params.get("car_delivery_location")
+            if not car_delivery_location:
                 return ToolResult.err(
-                    "pickup_location is required for book operation",
+                    "car_delivery_location is required for book operation",
                     code="missing_parameter"
                 )
             
@@ -362,13 +340,13 @@ class DemoCarServicePlugin:
             booking_id = f"CAR-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{_booking_counter:03d}"
             
             # Calculate pickup time (15 minutes from now if not specified)
-            pickup_time_str = params.get("pickup_time")
-            if pickup_time_str:
-                pickup_time = datetime.fromisoformat(pickup_time_str.replace('Z', '+00:00'))
+            car_delivery_time_str = params.get("car_delivery_time")
+            if car_delivery_time_str:
+                car_delivery_time = datetime.fromisoformat(car_delivery_time_str.replace('Z', '+00:00'))
             else:
                 # Default to 15 minutes from now in Dubai time (UTC+4)
-                pickup_time = datetime.now(timezone.utc) + timedelta(minutes=15)
-                pickup_time = pickup_time.replace(tzinfo=timezone(timedelta(hours=4)))
+                car_delivery_time = datetime.now(timezone.utc) + timedelta(minutes=15)
+                car_delivery_time = car_delivery_time.replace(tzinfo=timezone(timedelta(hours=4)))
             
             # Add special instructions for David Chen (CUST-5678) based on incident history
             special_instructions = notes
@@ -385,11 +363,10 @@ class DemoCarServicePlugin:
                 "customer_name": customer_name,
                 "vehicle_id": vehicle["vehicle_id"],
                 "vehicle": f"{vehicle['make']} {vehicle['model']}",
-                "pickup_location": pickup_location,
-                "pickup_time": pickup_time.isoformat(),
+                "car_delivery_location": car_delivery_location,
+                "car_delivery_time": car_delivery_time.isoformat(),
                 "destination": dropoff_location,
                 "estimated_duration_minutes": 25,
-                "driver": vehicle["driver"]["name"],
                 "special_instructions": special_instructions,
                 "status": "confirmed",
                 "confirmation_code": f"DXB-{booking_id}"
@@ -432,11 +409,10 @@ class DemoCarServicePlugin:
                 "customer_name": "David Chen",
                 "vehicle_id": "DXB-MERC-S580-001",
                 "vehicle": "Mercedes-Benz S 580",
-                "pickup_location": "Dubai International Airport - Terminal 3 - VIP Arrivals",
-                "pickup_time": datetime.now(timezone(timedelta(hours=4))).isoformat(),
+                "car_delivery_location": "Dubai International Airport - Terminal 3 - VIP Arrivals",
+                "car_delivery_time": datetime.now(timezone(timedelta(hours=4))).isoformat(),
                 "destination": "Azure Pearl Hotel",
                 "estimated_duration_minutes": 25,
-                "driver": "Mohammed Al-Rashid",
                 "special_instructions": "Platinum guest with companion. Previous complaint about vehicle size - S-Class minimum required.",
                 "status": "confirmed",
                 "confirmation_code": f"DXB-{booking_id}"

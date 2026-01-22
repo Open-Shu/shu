@@ -44,6 +44,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
     const [llmContent, setLlmContent] = useState('');
     const [error, setError] = useState(null);
     const abortControllerRef = useRef(null);
+    const executionStartedRef = useRef(false); // Track if execution has started
 
     const toggleStepExpanded = (stepKey) => {
         setExpandedSteps(prev => ({
@@ -200,6 +201,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
     };
 
     const startExecution = React.useCallback(async () => {
+        console.log('[ExperienceRunDialog] startExecution called for experience:', experienceId);
         try {
             abortControllerRef.current = new AbortController();
 
@@ -303,21 +305,26 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
 
     // Reset state when opening
     useEffect(() => {
-        if (open) {
+        console.log('[ExperienceRunDialog] useEffect triggered - open:', open, 'experienceId:', experienceId, 'executionStarted:', executionStartedRef.current);
+        if (open && !executionStartedRef.current) {
+            executionStartedRef.current = true;
             setStatus('running');
             setStepStates({});
             setExpandedSteps({});
             setLlmContent('');
             setError(null);
 
+            console.log('[ExperienceRunDialog] Starting execution for experience:', experienceId);
             startExecution();
-        } else {
+        } else if (!open) {
             // Cleanup on close
+            executionStartedRef.current = false;
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
         }
-    }, [open, startExecution]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]); // Only depend on 'open', not 'startExecution' to avoid double execution
 
     // Handle incoming events (helper function merged into startExecution loop)
     // const handleEvent = ... removed to avoid stale closures
