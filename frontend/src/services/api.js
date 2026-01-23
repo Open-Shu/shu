@@ -352,6 +352,7 @@ export const chatAPI = {
   // Conversation management
   createConversation: (data) => api.post('/chat/conversations', data),
   createConversationWithModelConfig: (data) => api.post('/chat/conversations', data),
+  createConversationFromExperience: (runId, data = {}) => api.post(`/chat/conversations/from-experience/${runId}`, data),
   listConversations: (params = {}) => api.get('/chat/conversations', { params }),
   getConversation: (id) => api.get(`/chat/conversations/${id}`),
   updateConversation: (id, data) => api.put(`/chat/conversations/${id}`, data),

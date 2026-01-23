@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQuery } from 'react-query';
+import { useNavigate } from 'react-router-dom';
 import {
     Box,
     Button,
@@ -20,16 +21,23 @@ import {
     Alert,
     Chip,
 } from '@mui/material';
+import { Chat as ChatIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { format } from 'date-fns';
-import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
 import MarkdownRenderer from './shared/MarkdownRenderer';
 import { formatDateTimeFull } from '../utils/timezoneFormatter';
+import log from '../utils/log';
 
 export default function ExperienceRunDetailDialog({ open, onClose, runId, timezone }) {
     const theme = useTheme();
+    const navigate = useNavigate();
     const isDarkMode = theme.palette.mode === 'dark';
+    
+    // State for conversation creation
+    const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+    const [conversationError, setConversationError] = useState(null);
     
     const { data: run, isLoading, error } = useQuery(
         ['experience-run', runId],
@@ -50,6 +58,40 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
             return new Date(a.started_at) - new Date(b.started_at);
         });
     }, [run]);
+
+    const handleStartConversation = async () => {
+        if (!runId || !run?.result_content) {
+            setConversationError('No result content available to start conversation');
+            return;
+        }
+
+        try {
+            setIsCreatingConversation(true);
+            setConversationError(null);
+            
+            // Create conversation from experience run
+            const response = await chatAPI.createConversationFromExperience(runId);
+            const conversation = extractDataFromResponse(response);
+            
+            log.info('Started conversation from experience run', { 
+                conversationId: conversation.id, 
+                runId: runId
+            });
+            
+            // Navigate to chat with conversation ID as query parameter
+            const targetUrl = `/chat?conversationId=${conversation.id}`;
+            log.info('Navigating to conversation', { targetUrl, conversationId: conversation.id });
+            
+            // This ensures navigation happens before component unmounts
+            navigate(targetUrl);
+            onClose();
+        } catch (error) {
+            log.error('Failed to start conversation from experience:', error);
+            setConversationError(formatError(error) || 'Failed to start conversation. Please try again.');
+        } finally {
+            setIsCreatingConversation(false);
+        }
+    };
 
 
 
@@ -88,6 +130,13 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
 
                 {run && (
                     <Stack spacing={3}>
+                        {/* Conversation Error Alert */}
+                        {conversationError && (
+                            <Alert severity="error" onClose={() => setConversationError(null)}>
+                                {conversationError}
+                            </Alert>
+                        )}
+
                         {/* Status Banner */}
                         <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
                             <Grid container spacing={2} alignItems="center">
@@ -202,6 +251,16 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
             </DialogContent>
             <DialogActions>
                 <Button onClick={onClose}>Close</Button>
+                {run?.result_content && (
+                    <Button
+                        variant="contained"
+                        startIcon={<ChatIcon />}
+                        onClick={handleStartConversation}
+                        disabled={isCreatingConversation}
+                    >
+                        {isCreatingConversation ? 'Starting...' : 'Start Conversation'}
+                    </Button>
+                )}
             </DialogActions>
         </Dialog>
     );
