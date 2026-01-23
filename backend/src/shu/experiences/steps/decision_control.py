@@ -9,13 +9,10 @@ This is designed for demo scenarios and uses deterministic rules rather
 than LLM calls for predictable demo behavior.
 
 Supported Decision Types:
-- table_reservation: Decide whether to proactively reserve tables for VIP players (casino)
-- vip_host_notification: Decide whether to alert VIP hosts for high-value arrivals (casino)
-- security_alert: Decide whether to alert security for banned/watchlist players (casino)
-- alcohol_service: Decide whether to cut off alcohol service based on consumption tracking (casino)
-- car_service: Decide whether to book luxury car service for VIP hotel guests (hotel)
-- tailor_notification: Decide whether to notify hotel tailor for VIP guests (hotel)
-- restaurant_reservation: Decide whether to reserve restaurant table for VIP hotel guests (hotel)
+- car_service_decision: Decide whether to book luxury car service for VIP hotel guests
+- tailor_notification_decision: Decide whether to notify hotel tailor for VIP guests
+- restaurant_decision: Decide whether to reserve restaurant table for VIP hotel guests
+- spa_service_decision: Decide whether to offer spa services based on guest preferences
 """
 
 from typing import Dict, Any, Optional
@@ -83,7 +80,10 @@ class DecisionControlStep:
                 return self._simple_decision(True, "Restaurant reservation approved for evening arrival.")
             elif step_key == "spa_service_decision":
                 return self._simple_decision(False, "Customer mentioned that they don't enjoy spa treatments in the past.")
-            return None
+            else:
+                # Unknown decision type - return safe default
+                logger.warning(f"Unrecognized decision step_key: {step_key}")
+                return self._simple_decision(False, f"Unrecognized decision '{step_key}': no action taken")
                 
         except Exception as e:
             logger.exception(f"Decision control step failed: {e}")

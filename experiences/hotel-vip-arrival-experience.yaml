@@ -1,5 +1,5 @@
 # Experience Export: Dubai Hotel VIP Arrival Experience
-# Generated on: 2026-01-21 16:00:40
+# Generated on: 2026-01-23 12:15:19
 # 
 # This YAML file contains placeholders for user-specific values:
 # - { trigger_type }: How the experience will be triggered (Cron, Scheduled, Manual)
@@ -102,8 +102,8 @@ steps:
     notes: VIP arrival - proactive booking based on customer tier and past preferences
     passengers: 2
     customer_id: CUST-5678
-    pickup_location: Dubai International Airport - Terminal 3
     dropoff_location: Azure Pearl Hotel
+    car_delivery_location: Dubai International Airport - Terminal 3
   condition_template: '{{ steps.car_service_decision.data.should_execute }}'
 - step_key: tailor_notification_decision
   step_type: decision_control

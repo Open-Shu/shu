@@ -702,6 +702,17 @@ class ExperienceExecutor:
         # In the future, we could pass a host object with audit capabilities
         result = await decision_step.execute(step.step_key, config, context, host=None)
         
+        # Guard against None return (should not happen with current implementation, but defensive)
+        if result is None:
+            logger.warning(
+                f"Decision control step '{step.step_key}' returned None, using safe default"
+            )
+            result = {
+                "should_execute": False,
+                "rationale": "No decision returned",
+                "metadata": {}
+            }
+        
         logger.info(
             f"Decision control step '{step.step_key}' executed: "
             f"should_execute={result.get('should_execute')}, "
