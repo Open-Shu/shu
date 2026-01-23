@@ -152,7 +152,10 @@ class TestDecisionControlStep:
         # Verify audit log was called
         mock_host.audit.log.assert_called_once()
         call_args = mock_host.audit.log.call_args[0][0]
+        # Verify correlation_id is present (not raw exception)
+        assert "correlation_id" in call_args
         assert "error" in call_args
+        assert call_args["error"] == "Decision evaluation failed"
         assert call_args["step"] == "decision_control"
 
     @pytest.mark.asyncio
@@ -177,7 +180,9 @@ class TestDecisionControlStep:
         
         assert result["should_execute"] is False
         assert "Decision evaluation failed" in result["rationale"]
-        assert "Test error" in result["rationale"]
+        # Verify correlation ID is present (not raw exception)
+        assert "correlation ID:" in result["rationale"]
+        assert "correlation_id" in result
         assert result["confidence"] == 0.0
         assert result["error"] is True
 

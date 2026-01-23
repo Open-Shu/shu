@@ -61,7 +61,7 @@ async def create_sse_stream_generator(event_generator, error_context: str = "str
     except GeneratorExit:
         # Client disconnected - log but don't treat as error
         logger.info(f"Client disconnected from {error_context} stream")
-    except Exception as e:
+    except Exception:
         # Log full exception details server-side for debugging
         logger.exception(f"Streaming error during {error_context}")
         # Send sanitized error to client without exposing internal details
@@ -73,7 +73,8 @@ async def create_sse_stream_generator(event_generator, error_context: str = "str
         try:
             yield f"data: {json.dumps(error_payload)}\n\n"
         except Exception:
-            logger.error(f"Failed to send error event to client during {error_context}")
+            # Log with traceback when failing to send error event
+            logger.exception(f"Failed to send error event to client during {error_context}")
     finally:
         # Always send DONE marker to properly close the stream
         try:

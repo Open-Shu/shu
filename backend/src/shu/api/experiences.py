@@ -510,7 +510,7 @@ async def run_experience(
                     continue
         except GeneratorExit:
             logger.info("Client disconnected from experience stream")
-        except Exception as e:
+        except Exception:
             # Generate correlation ID for error tracking
             correlation_id = str(uuid.uuid4())
             # Log full exception details server-side with correlation ID
@@ -527,13 +527,15 @@ async def run_experience(
             }
             try:
                 yield f"data: {json.dumps(error_event)}\n\n"
-            except Exception:
-                logger.error("Failed to send error event to client")
+            except Exception as send_exc:
+                # Log with traceback when failing to send error event
+                logger.exception("Failed to send error event to client", exc_info=send_exc)
         finally:
             try:
                 yield "data: [DONE]\n\n"
-            except Exception:
-                logger.debug("Could not send DONE marker - connection likely closed")
+            except Exception as done_exc:
+                # Log with traceback when failing to send DONE marker
+                logger.exception("Could not send DONE marker - connection likely closed", exc_info=done_exc)
     
     return StreamingResponse(
         event_generator(),

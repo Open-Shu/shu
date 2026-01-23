@@ -15,8 +15,9 @@ Supported Decision Types:
 - spa_service_decision: Decide whether to offer spa services based on guest preferences
 """
 
-from typing import Dict, Any, Optional
 import logging
+import uuid
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +89,27 @@ class DecisionControlStep:
                 logger.warning(f"Unrecognized decision step_key: {step_key}")
                 return self._simple_decision(False, f"Unrecognized decision '{step_key}': no action taken")
                 
-        except Exception as e:
-            logger.exception("Decision control step failed")
+        except Exception:
+            # Generate correlation ID for error tracking
+            correlation_id = str(uuid.uuid4())
+            # Log full exception details server-side with correlation ID
+            logger.exception("Decision control step failed", extra={"correlation_id": correlation_id})
+            
+            # Log to host audit if available (with correlation ID, not raw exception)
             if host and hasattr(host, "audit"):
                 await host.audit.log({
-                    "error": str(e),
-                    "step": "decision_control"
+                    "correlation_id": correlation_id,
+                    "step": "decision_control",
+                    "error": "Decision evaluation failed"
                 })
             
+            # Return sanitized error to caller without exposing internal details
             return {
                 "should_execute": False,
-                "rationale": f"Decision evaluation failed: {str(e)}",
+                "rationale": f"Decision evaluation failed (correlation ID: {correlation_id})",
                 "confidence": 0.0,
-                "error": True
+                "error": True,
+                "correlation_id": correlation_id
             }
     
     def _simple_decision(self, should_execute: bool, rationale: str) -> Dict[str, Any]:
