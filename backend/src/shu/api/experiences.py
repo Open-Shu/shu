@@ -5,6 +5,7 @@ This module provides REST API endpoints for managing experiences,
 including CRUD operations, run management, and user dashboard data.
 """
 
+import uuid
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -510,11 +511,19 @@ async def run_experience(
         except GeneratorExit:
             logger.info("Client disconnected from experience stream")
         except Exception as e:
-            logger.exception("Experience execution error", extra={"experience_id": experience_id})
+            # Generate correlation ID for error tracking
+            correlation_id = str(uuid.uuid4())
+            # Log full exception details server-side with correlation ID
+            logger.exception(
+                "Experience execution error",
+                extra={"experience_id": experience_id, "correlation_id": correlation_id}
+            )
+            # Send sanitized error to client without exposing internal details
             error_event = {
                 "type": "error",
-                "message": str(e),
-                "error": "An error occurred during experience execution"
+                "code": "EXPERIENCE_EXECUTION_FAILED",
+                "message": "An internal error occurred during experience execution",
+                "id": correlation_id
             }
             try:
                 yield f"data: {json.dumps(error_event)}\n\n"

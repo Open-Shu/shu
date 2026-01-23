@@ -60,6 +60,7 @@ class DecisionControlStep:
         Execute the decision control step.
         
         Args:
+            step_key: Unique identifier for the decision type (e.g., 'car_service_decision')
             config: Step configuration including decision criteria
             context: Workflow context with player data
             host: Optional host capabilities for logging
@@ -68,6 +69,9 @@ class DecisionControlStep:
             Decision result with should_execute, rationale, and metadata
         """
         try:
+            # Silence ARG002 - config and context intentionally unused in demo logic
+            _ = config
+            _ = context
 
             logger.info(step_key)
 

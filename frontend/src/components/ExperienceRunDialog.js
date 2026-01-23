@@ -27,6 +27,7 @@ import { experiencesAPI } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
 import MarkdownRenderer from './shared/MarkdownRenderer';
 import DataRenderer from './shared/DataRenderer';
+import log from '../utils/log';
 
 export default function ExperienceRunDialog({ open, onClose, experienceId, experienceName, steps = [] }) {
     const theme = useTheme();
@@ -48,7 +49,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
     };
 
     const startExecution = React.useCallback(async () => {
-        console.log('[ExperienceRunDialog] startExecution called for experience:', experienceId);
+        log.debug('[ExperienceRunDialog] startExecution called for experience:', experienceId);
         try {
             abortControllerRef.current = new AbortController();
 
@@ -150,9 +151,9 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
         }
     }, [experienceId]);
 
-    // Reset state when opening
+     // Reset state when opening
     useEffect(() => {
-        console.log('[ExperienceRunDialog] useEffect triggered - open:', open, 'experienceId:', experienceId, 'executionStarted:', executionStartedRef.current);
+        log.debug('[ExperienceRunDialog] useEffect triggered - open:', open, 'experienceId:', experienceId, 'executionStarted:', executionStartedRef.current);
         if (open && !executionStartedRef.current) {
             executionStartedRef.current = true;
             setStatus('running');
@@ -161,7 +162,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
             setLlmContent('');
             setError(null);
 
-            console.log('[ExperienceRunDialog] Starting execution for experience:', experienceId);
+            log.debug('[ExperienceRunDialog] Starting execution for experience:', experienceId);
             startExecution();
         } else if (!open) {
             // Cleanup on close
@@ -241,6 +242,8 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                                                         size="small"
                                                         onClick={() => toggleStepExpanded(step.step_key)}
                                                         sx={{ ml: 1 }}
+                                                        aria-label={isExpanded ? `Collapse step ${step.step_key}` : `Expand step ${step.step_key}`}
+                                                        aria-expanded={isExpanded}
                                                     >
                                                         {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                                                     </IconButton>

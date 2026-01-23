@@ -1,4 +1,3 @@
-import React from 'react';
 import {
     Box,
     Chip,
@@ -83,8 +82,12 @@ export default function DataRenderer({ data, depth = 0 }) {
         }
         
         // If array of objects with similar structure, render as table
-        if (data.every(item => typeof item === 'object' && !Array.isArray(item))) {
-            const allKeys = [...new Set(data.flatMap(item => Object.keys(item)))];
+        // Explicitly exclude null since typeof null === 'object'
+        if (data.every(item => item !== null && typeof item === 'object' && !Array.isArray(item))) {
+            // Only extract keys from non-null objects
+            const allKeys = [...new Set(data.flatMap(item => 
+                item !== null ? Object.keys(item) : []
+            ))];
             
             return (
                 <TableContainer>

@@ -236,6 +236,8 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
                                                                 size="small"
                                                                 onClick={() => toggleStepExpanded(step.step_key)}
                                                                 sx={{ ml: 1 }}
+                                                                aria-label={isExpanded ? `Collapse step ${step.step_key}` : `Expand step ${step.step_key}`}
+                                                                aria-expanded={isExpanded}
                                                             >
                                                                 {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                                                             </IconButton>

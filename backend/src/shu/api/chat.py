@@ -62,11 +62,13 @@ async def create_sse_stream_generator(event_generator, error_context: str = "str
         # Client disconnected - log but don't treat as error
         logger.info(f"Client disconnected from {error_context} stream")
     except Exception as e:
+        # Log full exception details server-side for debugging
         logger.exception(f"Streaming error during {error_context}")
+        # Send sanitized error to client without exposing internal details
         error_payload = {
             'type': 'error',
-            'error': str(e),
-            'message': f'An error occurred during {error_context}'
+            'code': 'STREAM_ERROR',
+            'message': 'An internal streaming error occurred'
         }
         try:
             yield f"data: {json.dumps(error_payload)}\n\n"
