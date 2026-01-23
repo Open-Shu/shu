@@ -1,10 +1,10 @@
 Shu – Contributors
 
 Primary author and original designer:
-- Jon McClure <jon@maxwellbiosciences.com>
+- Jon McClure <jon@openshu.ai>
 
 Co-author:
-- Patrick Gruber <patrick@maxwellbiosciences.com>
+- Patrick Gruber <patrick@openshu.ai>
 
 Other Contributors:
 - (list as needed)
