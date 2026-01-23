@@ -17,13 +17,6 @@ import {
     Alert,
     Collapse,
     IconButton,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    Chip,
 } from '@mui/material';
 import {
     ExpandMore as ExpandMoreIcon,
@@ -33,6 +26,7 @@ import { useTheme } from '@mui/material/styles';
 import { experiencesAPI } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
 import MarkdownRenderer from './shared/MarkdownRenderer';
+import DataRenderer from './shared/DataRenderer';
 
 export default function ExperienceRunDialog({ open, onClose, experienceId, experienceName, steps = [] }) {
     const theme = useTheme();
@@ -51,153 +45,6 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
             ...prev,
             [stepKey]: !prev[stepKey]
         }));
-    };
-
-    // Helper function to render data in a human-readable format
-    const renderDataValue = (value) => {
-        if (value === null || value === undefined) {
-            return <Typography variant="body2" color="text.secondary" fontStyle="italic">null</Typography>;
-        }
-        
-        if (typeof value === 'boolean') {
-            return <Chip label={value ? 'true' : 'false'} size="small" color={value ? 'success' : 'default'} />;
-        }
-        
-        if (typeof value === 'number') {
-            return <Typography variant="body2">{value}</Typography>;
-        }
-        
-        if (typeof value === 'string') {
-            // Check if it's a date string
-            if (value.match(/^\d{4}-\d{2}-\d{2}/) && !isNaN(Date.parse(value))) {
-                return <Typography variant="body2">{new Date(value).toLocaleString()}</Typography>;
-            }
-            return <Typography variant="body2">{value}</Typography>;
-        }
-        
-        if (Array.isArray(value)) {
-            if (value.length === 0) {
-                return <Typography variant="body2" color="text.secondary" fontStyle="italic">empty array</Typography>;
-            }
-            // For arrays of primitives, show as chips
-            if (value.every(item => typeof item !== 'object')) {
-                return (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {value.map((item, idx) => (
-                            <Chip key={idx} label={String(item)} size="small" variant="outlined" />
-                        ))}
-                    </Box>
-                );
-            }
-            // For arrays of objects, show count
-            return <Typography variant="body2" color="text.secondary">{value.length} items</Typography>;
-        }
-        
-        if (typeof value === 'object') {
-            return <Typography variant="body2" color="text.secondary">object</Typography>;
-        }
-        
-        return <Typography variant="body2">{String(value)}</Typography>;
-    };
-
-    // Helper function to render nested data structure
-    const renderDataStructure = (data, depth = 0) => {
-        if (!data || typeof data !== 'object') {
-            return renderDataValue(data);
-        }
-
-        if (Array.isArray(data)) {
-            if (data.length === 0) {
-                return <Typography variant="body2" color="text.secondary" fontStyle="italic">Empty array</Typography>;
-            }
-            
-            // If array of objects with similar structure, render as table
-            if (data.every(item => typeof item === 'object' && !Array.isArray(item))) {
-                const allKeys = [...new Set(data.flatMap(item => Object.keys(item)))];
-                
-                return (
-                    <TableContainer>
-                        <Table size="small">
-                            <TableHead>
-                                <TableRow>
-                                    {allKeys.map(key => (
-                                        <TableCell key={key} sx={{ fontWeight: 600 }}>
-                                            {key.replace(/_/g, ' ')}
-                                        </TableCell>
-                                    ))}
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {data.map((item, idx) => (
-                                    <TableRow key={idx}>
-                                        {allKeys.map(key => (
-                                            <TableCell key={key}>
-                                                {renderDataValue(item[key])}
-                                            </TableCell>
-                                        ))}
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                );
-            }
-            
-            // Otherwise, render as list
-            return (
-                <Stack spacing={1}>
-                    {data.map((item, idx) => (
-                        <Box key={idx} sx={{ pl: 2, borderLeft: 2, borderColor: 'divider' }}>
-                            {renderDataStructure(item, depth + 1)}
-                        </Box>
-                    ))}
-                </Stack>
-            );
-        }
-
-        // Render object as key-value pairs
-        const entries = Object.entries(data);
-        if (entries.length === 0) {
-            return <Typography variant="body2" color="text.secondary" fontStyle="italic">Empty object</Typography>;
-        }
-
-        return (
-            <Stack spacing={1.5}>
-                {entries.map(([key, value]) => {
-                    const isNested = value && typeof value === 'object';
-                    
-                    return (
-                        <Box key={key}>
-                            <Typography 
-                                variant="caption" 
-                                sx={{ 
-                                    fontWeight: 600, 
-                                    color: 'text.secondary',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: 0.5,
-                                    display: 'block',
-                                    mb: 0.5
-                                }}
-                            >
-                                {key.replace(/_/g, ' ')}
-                            </Typography>
-                            {isNested ? (
-                                <Box sx={{ 
-                                    pl: 2, 
-                                    borderLeft: 2, 
-                                    borderColor: 'divider',
-                                    mt: 0.5
-                                }}>
-                                    {renderDataStructure(value, depth + 1)}
-                                </Box>
-                            ) : (
-                                renderDataValue(value)
-                            )}
-                        </Box>
-                    );
-                })}
-            </Stack>
-        );
     };
 
     const startExecution = React.useCallback(async () => {
@@ -341,13 +188,21 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                 if (reason === 'backdropClick' && status === 'running') return;
                 onClose();
             }}
-            fullScreen
+            maxWidth={false}
+            PaperProps={{
+                sx: {
+                    width: '95vw',
+                    height: '95vh',
+                    maxWidth: '95vw',
+                    maxHeight: '95vh',
+                }
+            }}
         >
             <DialogTitle>
                 Execute: {experienceName}
                 {status === 'running' && <Typography variant="caption" sx={{ ml: 2 }}>Running...</Typography>}
             </DialogTitle>
-            <DialogContent dividers sx={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+            <DialogContent dividers sx={{ height: 'calc(95vh - 120px)', display: 'flex', flexDirection: 'column' }}>
                 <Stack spacing={3} sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                     {error && (
                         <Alert severity="error">{error}</Alert>
@@ -410,7 +265,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                                                             >
                                                                 Step Output Data:
                                                             </Typography>
-                                                            {renderDataStructure(state.data)}
+                                                            <DataRenderer data={state.data} />
                                                         </Paper>
                                                     </Box>
                                                 </Collapse>

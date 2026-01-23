@@ -502,11 +502,29 @@ async def run_experience(
                 input_params=run_request.input_params if run_request else {},
                 current_user=current_user,
             ):
-                yield f"data: {json.dumps(event.to_dict())}\n\n"
+                try:
+                    yield f"data: {json.dumps(event.to_dict())}\n\n"
+                except Exception:
+                    logger.exception("Error serializing event")
+                    continue
+        except GeneratorExit:
+            logger.info("Client disconnected from experience stream")
         except Exception as e:
             logger.exception("Experience execution error", extra={"experience_id": experience_id})
-            error_event = {"type": "error", "message": str(e)}
-            yield f"data: {json.dumps(error_event)}\n\n"
+            error_event = {
+                "type": "error",
+                "message": str(e),
+                "error": "An error occurred during experience execution"
+            }
+            try:
+                yield f"data: {json.dumps(error_event)}\n\n"
+            except Exception:
+                logger.error("Failed to send error event to client")
+        finally:
+            try:
+                yield "data: [DONE]\n\n"
+            except Exception:
+                logger.debug("Could not send DONE marker - connection likely closed")
     
     return StreamingResponse(
         event_generator(),

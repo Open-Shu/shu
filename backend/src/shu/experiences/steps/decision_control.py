@@ -16,7 +16,6 @@ Supported Decision Types:
 """
 
 from typing import Dict, Any, Optional
-from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -86,7 +85,7 @@ class DecisionControlStep:
                 return self._simple_decision(False, f"Unrecognized decision '{step_key}': no action taken")
                 
         except Exception as e:
-            logger.exception(f"Decision control step failed: {e}")
+            logger.exception("Decision control step failed")
             if host and hasattr(host, "audit"):
                 await host.audit.log({
                     "error": str(e),
