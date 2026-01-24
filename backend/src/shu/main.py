@@ -371,7 +371,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
-        description="Independent Shu API for the Max AI ecosystem",
+        description="Shu RAG API",
         version=settings.version,
         debug=settings.debug,
         docs_url="/docs" if settings.debug else None,
@@ -699,7 +699,7 @@ def custom_openapi():
     openapi_schema = get_openapi(
         title=settings.app_name,
         version=settings.version,
-        description="Independent RAG backend and API for the Max AI ecosystem",
+        description="Shu - RAG backend and API",
         routes=app.routes,
     )
 
