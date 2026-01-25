@@ -152,6 +152,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/docs",
             "/redoc",
             "/openapi.json",
+            "/static/",  # Self-hosted static assets (e.g., ReDoc JS)
             "/api/v1/settings/branding/assets/",
         ]
         for prefix in public_prefixes:

@@ -11,11 +11,13 @@ import traceback
 import sys
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .core.config import get_settings_instance
@@ -375,11 +377,38 @@ def create_app() -> FastAPI:
         version=settings.version,
         debug=settings.debug,
         docs_url="/docs" if settings.debug else None,
-        redoc_url="/redoc" if settings.debug else None,
+        redoc_url=None,  # Disabled; we serve a self-hosted version below
         openapi_url="/openapi.json" if settings.debug else None,
         lifespan=lifespan,
         redirect_slashes=False,  # Disable automatic redirects; we normalize via middleware and dual-route registration
     )
+
+    # Mount static files for self-hosted assets (e.g., ReDoc JS)
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    # Custom ReDoc route using self-hosted JS (avoids CDN tracking prevention issues)
+    if settings.debug:
+        @app.get("/redoc", include_in_schema=False)
+        async def redoc_html() -> HTMLResponse:
+            return HTMLResponse(
+                f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{settings.app_name} - ReDoc</title>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css?family=Montserrat:300,400,700|Roboto:300,400,700" rel="stylesheet">
+    <style>body {{ margin: 0; padding: 0; }}</style>
+</head>
+<body>
+    <noscript>ReDoc requires Javascript to function. Please enable it to browse the documentation.</noscript>
+    <redoc spec-url="/openapi.json"></redoc>
+    <script src="/static/redoc.standalone.js"></script>
+</body>
+</html>"""
+            )
 
     # Add middleware
     setup_middleware(app)

@@ -38,7 +38,7 @@
 
 ### API & Infrastructure
 - **FastAPI Backend**: High-performance async API with OpenAPI documentation
-- **Background Scheduler**: Redis-backed job scheduling for plugin feeds
+- **Background Scheduler**: In-process job scheduling for plugin feeds and experiences
 - **Docker & Kubernetes Ready**: Complete containerization with health checks
 - **Database Migrations**: Alembic-based schema management
 
@@ -68,7 +68,7 @@ graph TD
         end
 
         L[(PostgreSQL + pgvector)]
-        M[(Redis)]
+        M[(Redis - optional)]
 
         E --> F
         G --> F
@@ -83,7 +83,8 @@ graph TD
         J --> F
         J --> I
         K --> L
-        G --> M
+        H -.-> M
+        K -.-> M
     end
 
     subgraph "Clients"
@@ -103,47 +104,27 @@ graph TD
 ### Prerequisites
 
 - **PostgreSQL** with pgvector extension
-- **Redis** (required for progress tracking and caching)
+- **Redis** (optional - enables distributed caching; in-memory fallback for single-node)
 - **Docker** and Docker Compose (recommended)
 - **Python 3.11+** (for local development)
 - **Node.js 16+** (for frontend development)
 
-### Redis Setup
+### Optional: Redis Setup
 
-Shu requires Redis for progress tracking and caching. Choose one of the following options:
+Redis is optional but recommended for production deployments. When available, Shu uses Redis for distributed caching and job queues. Without Redis, Shu falls back to in-memory implementations suitable for single-node deployments.
 
-#### Option A: macOS (Homebrew)
 ```bash
-# Install Redis
-brew install redis
+# macOS
+brew install redis && brew services start redis
 
-# Start Redis service
-brew services start redis
-
-# Verify Redis is running
-redis-cli ping  # Should return "PONG"
-```
-
-#### Option B: Docker
-```bash
-# Run Redis in Docker
+# Docker
 docker run -d --name shu-redis -p 6379:6379 redis:alpine
 
-# Verify Redis is running
-docker exec shu-redis redis-cli ping  # Should return "PONG"
-```
-
-#### Option C: Linux (Ubuntu/Debian)
-```bash
-# Install Redis
-sudo apt update
-sudo apt install redis-server
-
-# Start Redis service
+# Linux (Ubuntu/Debian)
+sudo apt update && sudo apt install redis-server
 sudo systemctl start redis-server
-sudo systemctl enable redis-server
 
-# Verify Redis is running
+# Verify
 redis-cli ping  # Should return "PONG"
 ```
 
@@ -267,8 +248,8 @@ redis-cli ping  # Should return "PONG"
 3. **Set environment variables:**
    ```bash
    export SHU_DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/shu
-   export SHU_REDIS_URL=redis://localhost:6379
    export PYTHONPATH=$(pwd)/backend/src
+   # Optional: export SHU_REDIS_URL=redis://localhost:6379  # For distributed caching
    ```
 
 4. **Start the backend server:**
@@ -339,10 +320,10 @@ Shu uses environment variables for configuration. Key settings include:
 # Database
 SHU_DATABASE_URL=postgresql://user:password@host:5432/database
 
-# Redis (Required)
-SHU_REDIS_URL=redis://localhost:6379
-SHU_REDIS_CONNECTION_TIMEOUT=5
-SHU_REDIS_SOCKET_TIMEOUT=5
+# Redis (Optional - enables distributed caching for multi-node deployments)
+# SHU_REDIS_URL=redis://localhost:6379
+# SHU_REDIS_CONNECTION_TIMEOUT=5
+# SHU_REDIS_SOCKET_TIMEOUT=5
 
 # API
 SHU_API_HOST=0.0.0.0
