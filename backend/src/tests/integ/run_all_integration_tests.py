@@ -5,8 +5,19 @@ This script discovers and runs all test suites (integration and unit) in the tes
 It provides a unified interface for running all tests or specific test suites.
 """
 
-import sys
+# =============================================================================
+# TEST ENVIRONMENT CONFIGURATION
+# Must be set BEFORE any shu imports to ensure settings pick up test overrides
+# =============================================================================
 import os
+
+# Disable rate limiting for test runs - the test suite makes many API calls
+# and rate limiting causes cascade failures unrelated to actual test logic
+os.environ["SHU_ENABLE_RATE_LIMITING"] = "false"
+
+# =============================================================================
+
+import sys
 import asyncio
 import importlib
 import importlib.util
