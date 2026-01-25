@@ -220,7 +220,7 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 
 ## **8. Documentation Standards**
 - **Docstrings** for all public functions and classes
-- Update `SHU_TECHNICAL_ROADMAP.md` and `EXECUTIVE_STATUS_REPORT.md` for architectural and status changes
+- Update `SHU_TECHNICAL_ROADMAP.md` for architectural and roadmap changes
 - Code comments for complex logic, not obvious operations
 
 ## **9. Dependency Management**
@@ -244,8 +244,7 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 ## **12. Phase-Specific Standards**
 - **Phase isolation** - each phase should be independently testable
 - **Backward compatibility** when possible
-- **Clean interfaces** between components (like FastAPI for Phase 3)
-- **No OpenWebUI integration** in core RAG pipeline code
+- **Clean interfaces** between components
 
 ## **13. Naming Conventions**
 - **Files**: `snake_case.py`

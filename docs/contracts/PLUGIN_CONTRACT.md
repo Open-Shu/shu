@@ -2,12 +2,11 @@
 
 Implementation Status: Partial
 
-
-> Terminology: The platform standardizes on 'plugin' instead of 'tool'. This document was renamed from TOOL_CONTRACT.md; all terminology and routes refer to plugins. Where legacy names remain in older examples, read them as plugins.
+> Terminology: The platform standardizes on 'plugin' instead of 'tool'. This document was renamed from TOOL_CONTRACT.md; all terminology and routes refer to plugins.
 
 ## Limitations / Known Issues
+
 - Schema may evolve with initial plugin conversions
-- v1 will supercede the MVP v0 implementation (src/shu/agent/*). We will not maintain dual support; MVP paths will be removed once v1 plugins and orchestration are migrated and green in integration tests.
 
 
 

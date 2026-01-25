@@ -6,89 +6,96 @@
 
 ## Key Features
 
-### Multi-Source Document Processing
-- **Google Drive Integration**: Sync documents from Google Shared Drives
-- **Filesystem Support**: Process local files and directories
-- **Extensible Architecture**: Plugin system for additional source types
-- **Smart Text Extraction**: Support for PDF, DOCX, Google Docs, and more
+### Plugin Ecosystem
+- **Extensible Plugin System**: Python plugins with manifest-based discovery and host capabilities
+- **Plugin Feeds**: Scheduled background ingestion from external sources (Gmail, Google Drive, etc.)
+- **Connected Accounts**: OAuth-based provider identity for secure external service access
+- **Host Capabilities**: Plugins access KB ingestion, secrets, HTTP, caching via standardized APIs
 
-### Advanced RAG Capabilities
+### Knowledge Base & RAG
+- **Multi-Source Ingestion**: Documents from plugins, file uploads, or direct API
 - **Vector Similarity Search**: Semantic search using sentence-transformers
 - **Hybrid Search**: Combination of semantic and keyword search
-- **Configurable Chunking**: Smart document chunking with overlap control
+- **Document Profiling**: LLM-powered document and chunk profiling for enhanced retrieval
 - **Multiple Knowledge Bases**: Multi-tenant support with isolated knowledge bases
 
-### API
-- **FastAPI Framework**: High-performance async API with automatic OpenAPI documentation
-- **Background Job Processing**: Async sync operations with job tracking and management
-- **Health Monitoring**: Health checks for Kubernetes deployment
-- **Error Handling**: Error handling with detailed logging and standardized response envelopes
+### Chat & Conversations
+- **Streaming Chat**: Real-time LLM responses with server-sent events
+- **RAG Integration**: Automatic context retrieval from knowledge bases
+- **Multi-Provider LLM Support**: OpenAI, Anthropic, Google Gemini, Azure, Ollama
+- **Conversation Memory**: Persistent conversation history with cross-session context
 
-### React Admin Panel
-- **Dashboard**: System overview with health monitoring and quick statistics
-- **Knowledge Base Management**: Full CRUD operations for knowledge bases
-- **Sync Job Monitoring**: Real-time monitoring and management of sync operations
-- **Query Tester**: Interactive testing of vector similarity and hybrid search
-- **Health Monitor**: Comprehensive system health monitoring
+### Experiences (Workflows)
+- **Configurable Workflows**: Compose plugins, KB queries, and LLM synthesis into reusable experiences
+- **Scheduled Execution**: Cron-based triggers for automated workflows
+- **Step-Based Processing**: Multi-step workflows with data flow between steps
 
 ### Authentication & Security
-- **Dual Authentication System**: Google OAuth + Password authentication
-- **Secure Registration Model**: Self-registered users inactive by default, require admin activation
-- **Role Enforcement**: Self-registered users forced to "regular_user" role (no privilege escalation)
+- **Dual Authentication**: Google OAuth + password authentication
+- **Role-Based Access Control**: Admin, Power User, Regular User, Read Only roles
 - **JWT Token Management**: Secure access and refresh token handling
-- **Role-Based Access Control (RBAC)**: Admin, Power User, Regular User, Read Only roles
-- **Database-Driven Users**: All authentication data stored in PostgreSQL with bcrypt password hashing
-- **Frontend Authorization**: Role-based UI component access control
+- **Provider Identity**: Secure OAuth token storage for external service connections
 
-### Integration & Scalability
-- **OpenWebUI Filter**: Ready-to-use filter for OpenWebUI integration
-- **Docker Support**: Complete containerization with Docker Compose
+### API & Infrastructure
+- **FastAPI Backend**: High-performance async API with OpenAPI documentation
+- **Background Scheduler**: Redis-backed job scheduling for plugin feeds
+- **Docker & Kubernetes Ready**: Complete containerization with health checks
 - **Database Migrations**: Alembic-based schema management
-- **Multi-Frontend Ready**: API-first design supports multiple frontends and agents
 
 ## Architecture Overview
 
 ```mermaid
 graph TD
-    subgraph "Document Sources"
-        A[Google Drive]
-        B[Filesystem]
-        C[Future Sources]
+    subgraph "External Services"
+        A[Gmail]
+        B[Google Drive]
+        C[Calendar]
+        D[Other APIs]
     end
 
     subgraph "Shu Backend"
-        D[Sync Service]
-        E[Query Service]
-        F[Knowledge Base Management]
-        G[(PostgreSQL + pgvector)]
+        subgraph "Plugin Layer"
+            E[Plugin Registry]
+            F[Plugin Executor]
+            G[Feeds Scheduler]
+        end
 
-        D --> A
-        D --> B
-        D --> C
-        D --> G
-        E --> G
-        F --> G
+        subgraph "Core Services"
+            H[Chat Service]
+            I[Query Service]
+            J[Experience Engine]
+            K[Knowledge Base Service]
+        end
+
+        L[(PostgreSQL + pgvector)]
+        M[(Redis)]
+
+        E --> F
+        G --> F
+        F --> A
+        F --> B
+        F --> C
+        F --> D
+        F --> K
+        H --> I
+        H --> L
+        I --> L
+        J --> F
+        J --> I
+        K --> L
+        G --> M
     end
 
-    subgraph "Frontends & Agents"
-        H[React Admin Panel]
-        I[OpenWebUI Filter]
-        J[Custom Web Apps]
-        K[AI Agents]
-
-        H --> D
-        H --> E
-        H --> F
-        I --> E
-        J --> E
-        K --> E
+    subgraph "Clients"
+        N[React Frontend]
+        O[API Consumers]
     end
 
-    style D fill:#f39c12,stroke:#e67e22
-    style E fill:#d5f5e3,stroke:#2ecc71
-    style F fill:#d5f5e3,stroke:#2ecc71
-    style G fill:#d5f5e3,stroke:#2ecc71
-    style H fill:#eaf2f8,stroke:#3498db
+    N --> H
+    N --> J
+    N --> K
+    O --> H
+    O --> I
 ```
 
 ## Quick Start

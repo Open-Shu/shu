@@ -376,10 +376,7 @@ Source-level settings take precedence over sync-time settings. This allows you t
 - `REACT_APP_DEBUG`: Enable debug mode (`true`/`false`)
 - `REACT_APP_LOG_LEVEL`: Frontend logging level (`debug`, `info`, `warn`, `error`)
 
-#### OpenWebUI Filter Configuration
-- `SHU_API_BASE_URL`: Base URL for Shu API (default: `http://localhost:8000`)
-- `SHU_KNOWLEDGE_BASE_ID`: Knowledge base ID to query (default: `default`)
-- `SHU_API_TIMEOUT`: API request timeout in seconds (default: `30`)
+
 
 
 #### ModernChat (Sliding Window) Configuration — Frontend
@@ -449,11 +446,10 @@ Required environment variables:
 - GOOGLE_SERVICE_ACCOUNT_JSON: absolute or relative path to the service account JSON
 - GOOGLE_ADMIN_USER_EMAIL: admin user to impersonate when using the Admin Directory API (for GChat participant resolution)
 
-Code references (server):
+Plugin references:
 - Gmail: plugins/shu_gmail_digest (manifest.py, plugin.py)
 - Calendar: plugins/shu_calendar_events (manifest.py, plugin.py)
 - Google Chat: plugins/shu_gchat_digest (manifest.py, plugin.py)
-- Orchestrator: src/shu/agent/orchestrator.py
 
 
 Legacy Implementation Note:
