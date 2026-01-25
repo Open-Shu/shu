@@ -564,27 +564,46 @@ try {
 ```
 
 ### D) Streaming chat in the frontend (SSE)
-- Endpoint: POST /api/v1/chat/conversations/{id}/send with { stream: true }
-- Client sends Accept: text/event-stream and reads SSE lines
-- End-of-stream marker: data: [DONE]
+- Endpoint: POST /api/v1/chat/conversations/{id}/send (streams SSE by default)
+- Client sends `Accept: text/event-stream` and reads SSE `data:` lines
+- Request body uses `message` (not `content`) and optional fields like `rag_rewrite_mode`, `knowledge_base_id`, `attachment_ids`
+- End-of-stream marker: `data: [DONE]`
 
 Minimal usage (see chatAPI.streamMessage):
 ```javascript
-const resp = await chatAPI.streamMessage(conversationId, { content: "Hello" });
+const resp = await chatAPI.streamMessage(conversationId, {
+  message: "Hello",
+  rag_rewrite_mode: "no_rag",
+});
+if (!resp.ok || !resp.body) throw new Error(`SSE failed: ${resp.status}`);
+
 const reader = resp.body.getReader();
 const decoder = new TextDecoder();
-let buf = '';
+let buffer = '';
+let sawDone = false;
+
 while (true) {
   const { value, done } = await reader.read();
-  if (done) break;
-  buf += decoder.decode(value, { stream: true });
-  for (const line of buf.split('\n')) {
-    if (!line.startsWith('data:')) continue;
-    const payload = line.slice(5).trim();
-    if (payload === '[DONE]') break;
-    const { content } = JSON.parse(payload);
-    appendToUI(content);
+  buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+  const lines = buffer.split('\n');
+  buffer = lines.pop() || '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (payload === '[DONE]') { sawDone = true; break; }
+
+    let evt = null;
+    try { evt = JSON.parse(payload); } catch { continue; }
+
+    if (evt?.event === 'content_delta') appendToUI(evt.content);
+    if (evt?.event === 'final_message') handleFinalMessage(evt.content);
+
+    // Errors may arrive either as { event: "error", content: "..." } or as { error: "..." }
+    if (evt?.event === 'error' || evt?.error) handleError(evt.content || evt.error);
   }
+  if (sawDone) break;
+  if (done) break;
 }
 ```
 
@@ -713,27 +732,26 @@ POST /api/v1/chat/conversations
 }
 ```
 
-**2. Send a Message (Non-Streaming)**
+**2. Send a Message (SSE stream)**
 ```bash
 POST /api/v1/chat/conversations/{conversation_id}/send
 {
   "message": "What's our vacation policy?",
-  "use_rag": true
+  "rag_rewrite_mode": "no_rag"
 }
 ```
 
-**3. Stream a Response (Real-time)**
-Streaming allows the AI response to appear word-by-word as it's generated, like ChatGPT.
+The response is a Server-Sent Events (SSE) stream. Each `data:` line is either:
+- a JSON object (usually containing `{ "event": "..." }` and often `content`), or
+- the terminal marker `[DONE]`.
 
-```bash
-GET /api/v1/chat/conversations/{conversation_id}/stream?message=Hello&use_rag=true
-```
+Note: In some error cases the stream may include a payload like `{ "error": "..." }`.
 
-The response comes back as Server-Sent Events (SSE)-formatted lines:
+Example (shape only; payloads are illustrative):
 ```
-data: {"content": "Hello"}
-data: {"content": " there"}
-data: {"content": "!"}
+data: {"event":"content_delta","content":"Hello"}
+data: {"event":"content_delta","content":" there"}
+data: {"event":"final_message","content":{...}}
 data: [DONE]
 ```
 
@@ -751,6 +769,9 @@ Note: OCR is used elsewhere (e.g., knowledge base ingestion). For chat attachmen
 - PDFs (.pdf)
 - Text files (.txt, .md)
 - Word documents (.docx)
+- Images (.png, .jpg, .jpeg, .gif, .webp)
+
+Note: Chat uploads currently use fast extraction (no OCR). For image uploads, extracted text may be empty.
 
 Configurable via SHU_CHAT_ATTACHMENT_ALLOWED_TYPES.
 
@@ -942,33 +963,22 @@ curl -sS -X POST http://localhost:8000/api/v1/chat/conversations \
 
 ### Exercise 2: Send a Simple Message (Non-Streaming)
 
-**What this does:** Sends a message and gets the complete AI response at once.
+**What this does:** Sends a message and streams an SSE response. (You can still treat it as "complete" by consuming until the final event + `[DONE]`.)
 
 ```bash
-curl -sS -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
+curl -sS -N -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
  -H "Authorization: $AUTH" \
+ -H "Accept: text/event-stream" \
  -H "Content-Type: application/json" \
- -d '{"message":"Hello! Can you introduce yourself?","use_rag":false}'
+ -d '{"message":"Hello! Can you introduce yourself?","rag_rewrite_mode":"no_rag"}'
 ```
 
-**Expected response:**
-```json
-{
-  "data": {
-    "user_message": {
-      "id": "message-uuid",
-      "content": "Hello! Can you introduce yourself?",
-      "role": "user",
-      "created_at": "2025-01-21T10:30:00Z"
-    },
-    "assistant_message": {
-      "id": "message-uuid",
-      "content": "Hello! I'm Shu, your AI assistant...",
-      "role": "assistant",
-      "created_at": "2025-01-21T10:30:01Z"
-    }
-  }
-}
+**Expected response (SSE):**
+```
+data: {"event":"content_delta","content":"Hello"}
+...
+data: {"event":"final_message","content":{...}}
+data: [DONE]
 ```
 
 ### Exercise 3: Stream a Response (Real-time)
@@ -976,16 +986,19 @@ curl -sS -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_i
 **What this does:** Gets the AI response word-by-word as it's generated, like ChatGPT.
 
 ```bash
-curl -sS -N "http://localhost:8000/api/v1/chat/conversations/<conversation_id>/stream?message=Tell%20me%20a%20short%20story&use_rag=false" \
- -H "Authorization: $AUTH"
+curl -sS -N -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
+ -H "Authorization: $AUTH" \
+ -H "Accept: text/event-stream" \
+ -H "Content-Type: application/json" \
+ -d '{"message":"Tell me a short story","rag_rewrite_mode":"no_rag"}'
 ```
 
 **Expected response (streaming):**
 ```
-data: {"content": "Once"}
-data: {"content": " upon"}
-data: {"content": " a"}
-data: {"content": " time"}
+data: {"event":"content_delta","content":"Once"}
+data: {"event":"content_delta","content":" upon"}
+data: {"event":"content_delta","content":" a"}
+data: {"event":"content_delta","content":" time"}
 ...
 data: [DONE]
 ```
@@ -1001,17 +1014,18 @@ echo "This is a test document about Shu AI platform. It helps users manage infor
 
 **4b. Upload the file:**
 ```bash
-curl -sS -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/attachments \
- -H "Authorization: $AUTH" \
- -F "file=@test_document.txt"
+export ATTACHMENT_ID=$(curl -sS -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/attachments \
+  -H "Authorization: $AUTH" \
+  -F "file=@test_document.txt" | jq -r '.data.attachment_id')
 ```
 
 **4c. Ask about the file content:**
 ```bash
-curl -sS -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
+curl -sS -N -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
  -H "Authorization: $AUTH" \
+ -H "Accept: text/event-stream" \
  -H "Content-Type: application/json" \
- -d '{"message":"What does the uploaded document say about Shu?","use_rag":false}'
+ -d '{"message":"What does the uploaded document say about Shu?","rag_rewrite_mode":"no_rag","attachment_ids":["'$ATTACHMENT_ID'"]}'
 ```
 
 The AI should reference the content from your uploaded file in its response!
@@ -1021,10 +1035,11 @@ The AI should reference the content from your uploaded file in its response!
 **What this does:** Uses RAG to search knowledge bases and provide informed answers.
 
 ```bash
-curl -sS -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
+curl -sS -N -X POST http://localhost:8000/api/v1/chat/conversations/<conversation_id>/send \
  -H "Authorization: $AUTH" \
+ -H "Accept: text/event-stream" \
  -H "Content-Type: application/json" \
- -d '{"message":"What are the main features of Shu?","use_rag":true}'
+ -d '{"message":"What are the main features of Shu?","rag_rewrite_mode":"raw_query","knowledge_base_id":"<knowledge_base_id_if_needed>"}'
 ```
 
 If you have knowledge bases configured, the AI will search them and provide more detailed, accurate answers based on your documents.

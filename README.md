@@ -164,12 +164,12 @@ redis-cli ping  # Should return "PONG"
 3. **Backend-only stack (API + Postgres + Redis, no frontend)**:
 
    ```bash
-   make up-api
+   make up
    # or
    docker compose -f deployment/compose/docker-compose.yml up -d
    ```
 
-   To also run the dev API with auto-reload on port 8001, use `make up-api-dev` or `make up-full-dev`.
+   To run the dev API with auto-reload on port 8000, use `make up-dev` (backend only) or `make up-full-dev`.
 
 4. **Verify the system**:
 
@@ -184,8 +184,10 @@ redis-cli ping  # Should return "PONG"
 5. **Stop the stack:**
 
    ```bash
-   make down        # normal shutdown
-   make force-down  # aggressive shutdown; also removes shu-frontend if present
+   make down  # stop containers (docker compose down --remove-orphans)
+
+   # Optional: also remove volumes (destructive to local DB data)
+   docker compose -f deployment/compose/docker-compose.yml down -v --remove-orphans
    ```
 
 
@@ -284,13 +286,15 @@ Once running, access the generated API documentation:
 
 ```
 /api/v1/
+├── auth/                       # Authentication (login, tokens, user management)
 ├── health/                     # Health checks and monitoring
-├── knowledge-bases/            # Knowledge base management (CRUD)
-├── source-types/              # Available source types and validation
-├── sync/                      # Document synchronization and job management
-├── query/                     # Search and retrieval operations
-├── experiences/               # Experience workflow management (CRUD and execution)
-└── model-configurations/      # Model configuration management
+├── chat/                       # Chat conversations with LLM + RAG
+├── knowledge-bases/            # Knowledge base management (CRUD, documents)
+├── query/                      # Direct search and retrieval operations
+├── plugins/                    # Plugin management (registry, feeds, execution)
+├── experiences/                # Workflow automation (CRUD and execution)
+├── llm/                        # LLM provider configuration
+└── model-configurations/       # Model configuration management
 ```
 
 ## React Admin Panel
@@ -301,7 +305,7 @@ The Shu React Admin Panel provides a web interface for managing the system:
 - **Dashboard**: System overview with health monitoring and quick statistics
 - **Knowledge Base Management**: Create, edit, and delete knowledge bases
 - **Experience Management**: Create, configure, and execute workflow experiences
-- **Sync Job Monitoring**: Real-time monitoring and management of sync operations
+- **Plugin Feeds**: Configure scheduled feeds, trigger runs, and view recent executions (Admin → Feeds)
 - **Query Tester**: Interactive testing of vector similarity and hybrid search
 - **Health Monitor**: System health monitoring
 
@@ -318,7 +322,7 @@ Shu uses environment variables for configuration. Key settings include:
 ### Backend Configuration
 ```bash
 # Database
-SHU_DATABASE_URL=postgresql://user:password@host:5432/database
+SHU_DATABASE_URL=postgresql+asyncpg://user:password@host:5432/database
 
 # Redis (Optional - enables distributed caching for multi-node deployments)
 # SHU_REDIS_URL=redis://localhost:6379
@@ -371,7 +375,8 @@ Add both keys to your `.env` file or environment variables.
 # React Admin Panel
 # Optional: if API host differs from the frontend host; else same-origin is used
 REACT_APP_API_BASE_URL=http://localhost:8000
-REACT_APP_ENVIRONMENT=development
+
+# Optional: enable verbose console logging
 REACT_APP_DEBUG=true
 ```
 
@@ -452,15 +457,13 @@ curl -X POST http://localhost:8000/api/v1/llm/providers/{provider_id}/models \
 
 ### OAuth Token Migration
 
-If you have existing OAuth credentials, encrypt them after setting up the encryption key:
+Shu stores OAuth tokens encrypted at rest.
 
-```bash
-# Dry run to see what would be encrypted
-python scripts/encrypt_existing_oauth_tokens.py --dry-run
+If you have an existing database that contains *plaintext* OAuth tokens from earlier
+development versions, those rows will not decrypt once `SHU_OAUTH_ENCRYPTION_KEY` is enabled.
 
-# Perform the actual encryption
-python scripts/encrypt_existing_oauth_tokens.py
-```
+Currently there is no bundled bulk migration script. The recommended approach is to
+re-connect affected provider accounts so tokens are re-stored encrypted.
 
 ## Testing
 
@@ -471,7 +474,7 @@ See the testing guide for current commands and scope:
 Typical local runs:
 ```bash
 # Backend integration tests
-python -m tests.integ.run_all_integration_tests
+cd backend/src && python -m tests.integ.run_all_integration_tests
 
 # Backend unit tests
 python -m pytest backend/src/tests/unit
@@ -491,7 +494,7 @@ curl http://localhost:8000/api/v1/knowledge-bases
 # Query operations
 curl -X POST http://localhost:8000/api/v1/query/{kb_id}/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "test query", "search_type": "hybrid"}'
+  -d '{"query": "test query", "query_type": "hybrid"}'
 ```
 
 For detailed testing procedures, see [TESTING.md](./docs/policies/TESTING.md).
@@ -508,7 +511,7 @@ response = requests.post(
     "http://localhost:8000/api/v1/query/kb_id/search",
     json={
         "query": "your question",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 5
     }
 )
@@ -543,9 +546,9 @@ frontend/
 ### Development Workflow
 
 1. **Make changes to source code**
-2. **Run tests**: `python -m tests.integ.run_all_integration_tests`
-3. **Update database schema**: `python -m alembic revision --autogenerate -m "description"`
-4. **Apply migrations**: `python -m alembic upgrade head`
+2. **Run tests**: `cd backend/src && python -m tests.integ.run_all_integration_tests`
+3. **Update database schema**: `python -m alembic -c backend/alembic.ini revision --autogenerate -m "description"`
+4. **Apply migrations**: `python -m alembic -c backend/alembic.ini upgrade head`
 5. **Frontend development**: `cd frontend && npm start`
 
 
@@ -569,7 +572,6 @@ docker compose -f deployment/compose/docker-compose.yml up -d --scale shu-api=3
 Shu is designed for Kubernetes deployment with:
 - Health checks for liveness and readiness probes
 - Configurable scaling and resource limits
-- Automated sync jobs via CronJobs
 - Monitoring and logging integration
 
 
