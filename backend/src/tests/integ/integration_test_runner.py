@@ -13,7 +13,7 @@ import os
 
 # Disable rate limiting for test runs - the test suite makes many API calls
 # and rate limiting causes cascade failures unrelated to actual test logic
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "false")
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
 
 # =============================================================================
 

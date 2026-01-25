@@ -77,8 +77,8 @@ const [manualModels, setManualModels] = useState([]);
     organization_id: '',
     is_active: true,
     provider_capabilities: createDefaultProviderCapabilities(),
-    rate_limit_rpm: 60,
-    rate_limit_tpm: 60000,
+    rate_limit_rpm: 0,  // 0 = unlimited
+    rate_limit_tpm: 0,  // 0 = unlimited
     budget_limit_monthly: null
   }));
   const [error, setError] = useState(null);
@@ -182,6 +182,19 @@ const [manualModels, setManualModels] = useState([]);
       }));
     }
   }, [createDialogOpen, providerCapabilitiesCreate, providerCapabilitiesDirtyCreate]);
+
+  // Sync rate limit defaults from provider type definition when creating
+  useEffect(() => {
+    if (createDialogOpen && providerTypeDefCreate) {
+      const rpmDefault = providerTypeDefCreate.rate_limit_rpm_default ?? 0;
+      const tpmDefault = providerTypeDefCreate.rate_limit_tpm_default ?? 0;
+      setNewProvider((prev) => ({
+        ...prev,
+        rate_limit_rpm: rpmDefault,
+        rate_limit_tpm: tpmDefault,
+      }));
+    }
+  }, [createDialogOpen, providerTypeDefCreate]);
 
   useEffect(() => {
     if (editDialogOpen && providerTypeDef?.base_url_template && !apiEndpointDirtyEdit && (!editProvider?.api_endpoint)) {
@@ -384,8 +397,8 @@ const resetNewProvider = () => {
       organization_id: '',
       is_active: true,
     provider_capabilities: createDefaultProviderCapabilities(),
-    rate_limit_rpm: 60,
-    rate_limit_tpm: 60000,
+    rate_limit_rpm: 0,  // 0 = unlimited
+    rate_limit_tpm: 0,  // 0 = unlimited
     budget_limit_monthly: null,
   });
   setApiEndpointDirtyCreate(false);

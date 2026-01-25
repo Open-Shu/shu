@@ -2,7 +2,7 @@ import os
 import logging
 
 # Set env BEFORE importing test runner/app so settings pick up test overrides
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "true")  # rate limiter shouldn't interfere at these counts
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "true")  # rate limiter shouldn't interfere at these counts
 os.environ["SHU_PLUGIN_QUOTA_DAILY_REQUESTS_DEFAULT"] = "2"  # allow 2 per day
 os.environ["SHU_PLUGIN_QUOTA_MONTHLY_REQUESTS_DEFAULT"] = "0"  # disable monthly for this test
 
