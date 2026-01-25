@@ -2,7 +2,7 @@ import os
 import logging
 
 # Set env BEFORE importing test runner/app so settings pick up test overrides
-os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "true")
+os.environ["SHU_ENABLE_API_RATE_LIMITING"] = "true"
 os.environ["SHU_API_RATE_LIMIT_USER_REQUESTS"] = "2"  # 2 requests per period
 os.environ["SHU_API_RATE_LIMIT_USER_PERIOD"] = "60"   # per 60 seconds
 

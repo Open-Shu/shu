@@ -2,9 +2,9 @@ import os
 import logging
 
 # Ensure rate limiting is enabled but with lenient globals so override effects are visible
-os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "true")
-os.environ["SHU_RATE_LIMIT_USER_REQUESTS"] = "100"
-os.environ["SHU_RATE_LIMIT_USER_PERIOD"] = "60"
+os.environ["SHU_ENABLE_API_RATE_LIMITING"] = "true"
+os.environ["SHU_API_RATE_LIMIT_USER_REQUESTS"] = "100"
+os.environ["SHU_API_RATE_LIMIT_USER_PERIOD"] = "60"
 os.environ.setdefault("SHU_PLUGIN_QUOTA_DAILY_REQUESTS_DEFAULT", "0")
 os.environ.setdefault("SHU_PLUGIN_QUOTA_MONTHLY_REQUESTS_DEFAULT", "0")
 
