@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+from unittest.mock import patch, AsyncMock
 import urllib.parse
 import asyncio
 
@@ -37,7 +38,7 @@ async def test_exchange_and_refresh_code_using_stub(client, db, auth_headers):
     # Stub _post_form to emulate token endpoint for both exchange and refresh
     calls: List[Dict[str, Any]] = []
 
-    async def _stub_post_form(url: str, data: Dict[str, str]) -> Dict[str, Any]:
+    async def _stub_post_form(self, url: str, data: Dict[str, str]) -> Dict[str, Any]:
         calls.append({"url": url, "data": data.copy()})
         if data.get("grant_type") == "authorization_code":
             return {
@@ -55,18 +56,18 @@ async def test_exchange_and_refresh_code_using_stub(client, db, auth_headers):
         return {"error": "unsupported_grant_type"}
 
     auth = AuthCapability(plugin_name="unit_test", user_id="user-1")
-    # Monkeypatch
-    auth._post_form = _stub_post_form  # type: ignore[attr-defined]
 
-    # Exchange code
-    body = await auth.exchange_authorization_code(
-        token_url="https://auth.example.com/token",
-        client_id="client-123",
-        client_secret="secret-xyz",
-        code="abc",
-        redirect_uri="https://app.example.com/callback",
-        code_verifier="verifier-123",
-    )
+    # Patch at class level to avoid immutable instance attribute error
+    with patch.object(AuthCapability, "_post_form", _stub_post_form):
+        # Exchange code
+        body = await auth.exchange_authorization_code(
+            token_url="https://auth.example.com/token",
+            client_id="client-123",
+            client_secret="secret-xyz",
+            code="abc",
+            redirect_uri="https://app.example.com/callback",
+            code_verifier="verifier-123",
+        )
     assert body.get("access_token") == "access-1"
     assert body.get("refresh_token") == "refresh-1"
 

@@ -122,9 +122,11 @@ async def test_enhanced_rag_context_formatting(client, db, auth_headers):
         headers=auth_headers
     )
     assert message_response.status_code == 200, message_response.text
-    message_response = await process_streaming_result(message_response)
-    assert message_response["content"] is not None
-    assert message_response["content"] == "Echo: What is the test document about?", message_response
+    result = await process_streaming_result(message_response)
+    assert result is not None, f"Expected result but got None from streaming result"
+    # Handle both dict (new format) and string (old format) responses
+    content = result.get("content") if isinstance(result, dict) else result
+    assert content == "Echo: What is the test document about?", f"Got unexpected content: {content}"
 
 
 async def test_rag_performance_caching(client, db, auth_headers):
@@ -194,9 +196,11 @@ async def test_rag_performance_caching(client, db, auth_headers):
     )
 
     assert second_response.status_code == 200
-    second_response = await process_streaming_result(second_response)
-    assert second_response["content"] is not None
-    assert second_response["content"] == "Echo: What is the test document about?", second_response
+    second_result = await process_streaming_result(second_response)
+    assert second_result is not None, f"Expected result but got None from streaming result"
+    # Handle both dict (new format) and string (old format) responses
+    second_content = second_result.get("content") if isinstance(second_result, dict) else second_result
+    assert second_content == "Echo: What is the test document about?", f"Got unexpected content: {second_content}"
 
 
 class RAGIntegrationTestSuite(BaseIntegrationTestSuite):

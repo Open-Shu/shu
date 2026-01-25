@@ -219,23 +219,27 @@ class _DenyHttpImportsCtx:
 
 
 class Executor:
-    def __init__(self):
+    def __init__(self, settings: Optional[Any] = None):
         """
         Initialize executor rate limiters from configuration.
-        
-        If rate limiting is enabled in the global settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")
+
+        If rate limiting is enabled in settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")
         and a provider/model TokenBucketRateLimiter (namespace "rl:plugin:prov") using the configured requests-per-period and period to
         derive capacity and refill rate. On any initialization error, log the failure and leave both limiter attributes set to None.
+
+        Args:
+            settings: Application settings (uses get_settings_instance if not provided)
         """
         self._limiter = None  # per-user/per-tool limiter
         self._provider_limiter = None  # provider/model limiter
         try:
-            s = get_settings_instance()
-            if s.enable_rate_limiting:
+            if settings is None:
+                settings = get_settings_instance()
+            if settings.enable_rate_limiting:
                 from ..core.rate_limiting import TokenBucketRateLimiter
                 # Per-user defaults using settings directly
-                rpm = s.rate_limit_user_requests
-                period = s.rate_limit_user_period
+                rpm = settings.rate_limit_user_requests
+                period = settings.rate_limit_user_period
                 capacity = max(1, rpm)
                 refill_per_second = max(1, int(rpm / max(1, period)))
                 self._limiter = TokenBucketRateLimiter(

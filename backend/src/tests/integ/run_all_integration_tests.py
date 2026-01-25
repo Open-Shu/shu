@@ -11,9 +11,11 @@ It provides a unified interface for running all tests or specific test suites.
 # =============================================================================
 import os
 
-# Disable rate limiting for test runs - the test suite makes many API calls
-# and rate limiting causes cascade failures unrelated to actual test logic
-os.environ["SHU_ENABLE_RATE_LIMITING"] = "false"
+# Disable rate limiting for test runs by default - the test suite makes many API calls
+# and rate limiting causes cascade failures unrelated to actual test logic.
+# Tests that specifically test rate limiting behavior can set this to "true" before
+# importing this module, and setdefault will preserve their value.
+os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "false")
 
 # =============================================================================
 
@@ -107,6 +109,7 @@ class MasterTestRunner:
             return False
 
         suite = self.test_suites[suite_key]
+
         print(f"🚀 Running {suite.get_suite_name()}")
 
         # Import the test runner function

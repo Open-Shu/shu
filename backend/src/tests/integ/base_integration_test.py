@@ -18,28 +18,28 @@ from integ.integration_test_runner import run_integration_test_suite
 class BaseIntegrationTestSuite(ABC):
     """
     Base class for creating integration test suites.
-    
+
     Subclasses should implement:
     - get_test_functions(): Return list of test functions
     - get_suite_name(): Return descriptive name for the test suite
     - get_suite_description(): Return description for CLI help
     """
-    
+
     @abstractmethod
     def get_test_functions(self) -> List[Callable]:
         """Return list of test functions for this suite."""
         pass
-    
+
     @abstractmethod
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         pass
-    
+
     @abstractmethod
     def get_suite_description(self) -> str:
         """Return description of this test suite for CLI help."""
         pass
-    
+
     def get_cli_examples(self) -> str:
         """Return CLI usage examples. Override to customize."""
         script_name = os.path.basename(sys.argv[0])

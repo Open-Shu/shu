@@ -266,7 +266,7 @@ class RateLimitService:
     def enabled(self) -> bool:
         """
         Whether rate limiting is enabled according to the service settings.
-        
+
         Returns:
             `true` if rate limiting is enabled, `false` otherwise.
         """
@@ -354,7 +354,7 @@ class RateLimitService:
     async def check_api_limit(self, user_id: str) -> RateLimitResult:
         """
         Enforces the configured API rate limit for the given user.
-        
+
         Returns:
             RateLimitResult containing whether the request is allowed. When denied, `retry_after_seconds` indicates how long to wait; the result also includes `remaining`, `limit`, and `reset_seconds` metadata.
         """
@@ -367,12 +367,12 @@ class RateLimitService:
     async def check_auth_limit(self, identifier: str) -> RateLimitResult:
         """
         Enforce a stricter authentication rate limit for the given identifier.
-        
+
         Used for brute-force protection: when disabled this returns an allowed result with large remaining/limit; otherwise the configured auth limiter is applied.
-        
+
         Parameters:
             identifier (str): Email address or IP address that identifies the actor being rate-limited.
-        
+
         Returns:
             RateLimitResult: Outcome of the rate limit check, including `allowed`, `retry_after_seconds`, `remaining`, `limit`, and `reset_seconds`.
         """

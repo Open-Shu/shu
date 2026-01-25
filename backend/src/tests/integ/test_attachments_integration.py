@@ -160,7 +160,8 @@ async def test_upload_unsupported_type(client, db, auth_headers):
     conversation_id = await _create_conversation(client, auth_headers)
 
     logger.info("=== EXPECTED TEST OUTPUT: Unsupported type error is expected ===")
-    files = {"file": ("image.jpg", b"fakejpegdata", "image/jpeg")}
+    # Use .exe which is not in the allowed list: pdf, docx, txt, md, png, jpg, jpeg, gif, webp
+    files = {"file": ("program.exe", b"MZ\x00\x00", "application/x-msdownload")}
     resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
     # Our API returns 400 for unsupported type
     assert resp.status_code == 400, resp.text

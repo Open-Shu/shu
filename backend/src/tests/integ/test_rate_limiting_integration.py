@@ -1,14 +1,46 @@
-import os
 import logging
+from contextlib import contextmanager
 
-# Set env BEFORE importing test runner/app so settings pick up test overrides
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "true")
-os.environ["SHU_RATE_LIMIT_USER_REQUESTS"] = "2"  # 2 requests per period
-os.environ["SHU_RATE_LIMIT_USER_PERIOD"] = "60"   # per 60 seconds
-
-from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script  # noqa: E402
+from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _enable_rate_limiting():
+    """
+    Temporarily enable rate limiting on the global EXECUTOR.
+
+    Modifies the existing EXECUTOR instance in-place by setting its _limiter
+    and _provider_limiter attributes. This is necessary because API routes
+    import EXECUTOR at module load time and hold a direct reference to the
+    original object.
+    """
+    from shu.plugins.executor import EXECUTOR
+    from shu.core.rate_limiting import TokenBucketRateLimiter
+
+    # Save original limiters
+    old_limiter = EXECUTOR._limiter
+    old_provider_limiter = EXECUTOR._provider_limiter
+
+    # Create and install new rate limiters
+    # High default capacity - per-plugin limits set via API will override
+    EXECUTOR._limiter = TokenBucketRateLimiter(
+        namespace="rl:plugin:user",
+        capacity=100,
+        refill_per_second=2,
+    )
+    EXECUTOR._provider_limiter = TokenBucketRateLimiter(
+        namespace="rl:plugin:prov",
+        capacity=100,
+        refill_per_second=2,
+    )
+    try:
+        yield
+    finally:
+        # Restore original limiters
+        EXECUTOR._limiter = old_limiter
+        EXECUTOR._provider_limiter = old_provider_limiter
 
 
 # --- Test functions ---
@@ -24,7 +56,7 @@ async def test_tool_per_user_rate_limit_429(client, db, auth_headers):
     )
     assert resp.status_code == 200, resp.text
 
-    # Ensure per-tool limits align with the env for this test (test isolation)
+    # Ensure per-tool limits align with the test requirements
     # Also explicitly disable any provider-level caps that may have been set by other tests
     resp = await client.put(
         "/api/v1/plugins/admin/test_schema/limits",
@@ -42,26 +74,28 @@ async def test_tool_per_user_rate_limit_429(client, db, auth_headers):
 
     body = {"params": {"q": "hello"}}
 
-    # First two requests should pass
-    r1 = await client.post("/api/v1/plugins/test_schema/execute", json=body, headers=auth_headers)
-    assert r1.status_code == 200, r1.text
+    # Enable rate limiting for this test via DI
+    with _enable_rate_limiting():
+        # First two requests should pass
+        r1 = await client.post("/api/v1/plugins/test_schema/execute", json=body, headers=auth_headers)
+        assert r1.status_code == 200, r1.text
 
-    r2 = await client.post("/api/v1/plugins/test_schema/execute", json=body, headers=auth_headers)
-    assert r2.status_code == 200, r2.text
+        r2 = await client.post("/api/v1/plugins/test_schema/execute", json=body, headers=auth_headers)
+        assert r2.status_code == 200, r2.text
 
-    # Third request should be rate limited (per user per tool)
-    r3 = await client.post("/api/v1/plugins/test_schema/execute", json=body, headers=auth_headers)
-    assert r3.status_code == 429, r3.text
-    data = r3.json()
-    # Expect FastAPI HTTPException detail or our envelope
-    detail = data.get("detail") if isinstance(data, dict) else None
-    if isinstance(detail, dict):
-        assert detail.get("error") == "rate_limited"
-        assert "retry_after" in detail
-    else:
-        # Some middleware may wrap as {error:{code:...}}
-        err = data.get("error") if isinstance(data, dict) else None
-        assert err is not None, f"unexpected body: {data}"
+        # Third request should be rate limited (per user per tool)
+        r3 = await client.post("/api/v1/plugins/test_schema/execute", json=body, headers=auth_headers)
+        assert r3.status_code == 429, r3.text
+        data = r3.json()
+        # Expect FastAPI HTTPException detail or our envelope
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, dict):
+            assert detail.get("error") == "rate_limited"
+            assert "retry_after" in detail
+        else:
+            # Some middleware may wrap as {error:{code:...}}
+            err = data.get("error") if isinstance(data, dict) else None
+            assert err is not None, f"unexpected body: {data}"
 
 
 # --- Suite wrapper ---
