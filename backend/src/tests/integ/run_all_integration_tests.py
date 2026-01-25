@@ -13,9 +13,9 @@ import os
 
 # Disable rate limiting for test runs by default - the test suite makes many API calls
 # and rate limiting causes cascade failures unrelated to actual test logic.
-# Tests that specifically test rate limiting behavior can set this to "true" before
-# importing this module, and setdefault will preserve their value.
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "false")
+# Tests that specifically test rate limiting behavior use the _enable_rate_limiting()
+# context manager to temporarily enable rate limiting on the EXECUTOR instance.
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
 
 # =============================================================================
 

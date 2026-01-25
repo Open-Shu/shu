@@ -10,7 +10,7 @@ import os, sys
 from typing import Any, Dict
 
 # Disable rate limiting for this test module to avoid redis dependency
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "0")
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "0")
 
 from sqlalchemy import select
 

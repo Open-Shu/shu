@@ -6,7 +6,7 @@ import asyncio
 import os, sys
 
 # Disable rate limiting to isolate validation behavior
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "0")
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "0")
 
 from shu.models.plugin_registry import PluginDefinition
 from integ.integration_test_runner import run_integration_tests

@@ -473,7 +473,7 @@ def setup_middleware(app: FastAPI) -> None:
         logger.warning("TrustedHostMiddleware not enforcing host validation; set SHU_ALLOWED_HOSTS for non-dev deployments")
 
     # Rate limiting middleware (applied after authentication to have user context)
-    if settings.enable_rate_limiting:
+    if settings.enable_api_rate_limiting:
         try:
             app.add_middleware(RateLimitMiddleware)
             logger.info("Rate limiting middleware enabled")
