@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.config import get_settings
 from shu.models.llm_provider import LLMProvider
 from shu.services.providers.adapter_base import BaseProviderAdapter, ProviderAdapterContext, ProviderCapabilities, get_adapter, get_adapter_from_provider
 from shu.services.providers.parameter_definitions import serialize_parameter_mapping
@@ -24,9 +25,13 @@ class ProviderTypeDefinitionSchema(BaseModel):
     endpoints: Optional[Dict[str, Any]] = None
     auth: Optional[Dict[str, Any]] = None
     provider_capabilities: Optional[Dict[str, Any]] = {}
+    # Rate limit defaults (from config, 0 = unlimited)
+    rate_limit_rpm_default: int = 0
+    rate_limit_tpm_default: int = 0
 
     @classmethod
     def build_from_default(cls, record: ProviderTypeDefinition, adapter: BaseProviderAdapter):
+        settings = get_settings()
         return ProviderTypeDefinitionSchema(
             id=record.id,
             key=record.key,
@@ -37,10 +42,13 @@ class ProviderTypeDefinitionSchema(BaseModel):
             parameter_mapping=serialize_parameter_mapping(adapter.get_parameter_mapping()),
             endpoints=adapter.get_endpoint_settings(),
             provider_capabilities=adapter.get_capabilities().to_dict(include_disabled=True, supported_mask=adapter.get_capabilities()),
+            rate_limit_rpm_default=settings.llm_rate_limit_rpm_default,
+            rate_limit_tpm_default=settings.llm_rate_limit_tpm_default,
         )
     
     @classmethod
     def build_from_existing(cls, db_session: AsyncSession, provider: LLMProvider):
+        settings = get_settings()
         adapter = get_adapter_from_provider(db_session, provider)
         capabilities = adapter.get_field_with_override("get_capabilities")
         return ProviderTypeDefinitionSchema(
@@ -53,6 +61,8 @@ class ProviderTypeDefinitionSchema(BaseModel):
             parameter_mapping=serialize_parameter_mapping(adapter.get_parameter_mapping()),
             endpoints=adapter.get_endpoint_settings(),
             provider_capabilities=capabilities,
+            rate_limit_rpm_default=settings.llm_rate_limit_rpm_default,
+            rate_limit_tpm_default=settings.llm_rate_limit_tpm_default,
         )
     
     @classmethod

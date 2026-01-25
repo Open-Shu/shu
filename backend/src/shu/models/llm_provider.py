@@ -33,9 +33,9 @@ class LLMProvider(BaseModel):
     # Provider capabilities
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     
-    # Rate limiting (per-provider limits, 0 = disabled)
-    rate_limit_rpm = Column(Integer, default=60, nullable=False)  # Requests per minute
-    rate_limit_tpm = Column(Integer, default=60000, nullable=False)  # Tokens per minute
+    # Rate limiting (per-provider limits, 0 = unlimited/disabled)
+    rate_limit_rpm = Column(Integer, default=0, nullable=False)  # Requests per minute, 0 = unlimited
+    rate_limit_tpm = Column(Integer, default=0, nullable=False)  # Tokens per minute, 0 = unlimited
     budget_limit_monthly = Column(DECIMAL(10, 2), nullable=True)  # Monthly budget limit
     
     # Additional configuration

@@ -8,7 +8,7 @@ from sqlalchemy import select
 os.environ.setdefault("SHU_PLUGINS_SCHEDULER_ENABLED", "true")
 os.environ.setdefault("SHU_PLUGINS_SCHEDULER_TICK_SECONDS", "1")
 os.environ.setdefault("SHU_PLUGINS_SCHEDULER_BATCH_LIMIT", "5")
-os.environ.setdefault("SHU_ENABLE_RATE_LIMITING", "false")
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
 # Make stale RUNNING cleanup aggressive for tests
 os.environ.setdefault("SHU_PLUGINS_SCHEDULER_RUNNING_TIMEOUT_SECONDS", "1")
 

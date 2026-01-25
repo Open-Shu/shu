@@ -231,11 +231,11 @@ class Executor:
         self._provider_limiter = None  # provider/model limiter
         try:
             s = get_settings_instance()
-            if s.enable_rate_limiting:
+            if s.enable_api_rate_limiting:
                 from ..core.rate_limiting import TokenBucketRateLimiter
                 # Per-user defaults using settings directly
-                rpm = s.rate_limit_user_requests
-                period = s.rate_limit_user_period
+                rpm = s.api_rate_limit_user_requests
+                period = s.api_rate_limit_user_period
                 capacity = max(1, rpm)
                 refill_per_second = max(1, int(rpm / max(1, period)))
                 self._limiter = TokenBucketRateLimiter(
@@ -488,8 +488,8 @@ class Executor:
             daily = int(limits.get("quota_daily_requests") or s.plugin_quota_daily_requests_default or 0)
             monthly = int(limits.get("quota_monthly_requests") or s.plugin_quota_monthly_requests_default or 0)
             # Rate limit using settings directly
-            rl_req = int(limits.get("rate_limit_user_requests") or s.rate_limit_user_requests or 60)
-            rl_period = int(limits.get("rate_limit_user_period") or s.rate_limit_user_period or 60)
+            rl_req = int(limits.get("rate_limit_user_requests") or s.api_rate_limit_user_requests or 60)
+            rl_period = int(limits.get("rate_limit_user_period") or s.api_rate_limit_user_period or 60)
             # Provider caps (optional per-tool override)
             provider_name = str(limits.get("provider_name") or "").strip()
             provider_rpm = int(limits.get("provider_rpm") or 0)
