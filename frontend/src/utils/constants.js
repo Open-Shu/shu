@@ -6,7 +6,7 @@ const primaryDark = '#1E3A5F';
 const accentRed = '#E53E3E';
 const neutralGray = '#6B7280';
 
-const defaultLogoUrl = '/logo-wide.png';
+const defaultLogoUrl = '/logo.png';
 const defaultFaviconUrl = '/favicon.png';
 
 export const lightThemeBase = {

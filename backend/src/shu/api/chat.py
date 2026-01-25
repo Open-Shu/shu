@@ -5,13 +5,12 @@ This module provides REST API endpoints for managing chat conversations,
 messages, and LLM interactions.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status, UploadFile, File
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile, File
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict, Any, List, Optional, Union, Literal
+from typing import Dict, Any, List, Optional, Literal
 from pydantic import BaseModel, Field
-import logging
 import json
 import traceback
 from datetime import datetime, timezone
@@ -27,7 +26,6 @@ from ..schemas.envelope import SuccessResponse
 from ..schemas.query import RagRewriteMode
 from ..schemas.chat import ConversationFromExperienceRequest
 from ..services.chat_service import ChatService
-from ..services.chat_streaming import ProviderResponseEvent
 from ..services.attachment_service import AttachmentService
 from ..auth.models import User
 from ..models.llm_provider import Message, Conversation
@@ -37,6 +35,52 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 settings = get_settings_instance()
+
+
+# Helper function for robust SSE streaming
+async def create_sse_stream_generator(event_generator, error_context: str = "streaming"):
+    """
+    Wrap an async event generator with robust error handling for SSE streaming.
+    
+    Args:
+        event_generator: Async generator that yields events with to_dict() method
+        error_context: Context string for error messages (e.g., "send_message", "regenerate_message")
+    
+    Yields:
+        SSE-formatted data strings
+    """
+    try:
+        async for event in event_generator:
+            try:
+                payload = event.to_dict()
+                yield f"data: {json.dumps(payload)}\n\n"
+            except Exception:
+                logger.exception(f"Error serializing event during {error_context}")
+                # Continue to next event rather than breaking the stream
+                continue
+    except GeneratorExit:
+        # Client disconnected - log but don't treat as error
+        logger.info(f"Client disconnected from {error_context} stream")
+    except Exception:
+        # Log full exception details server-side for debugging
+        logger.exception(f"Streaming error during {error_context}")
+        # Send sanitized error to client without exposing internal details
+        error_payload = {
+            'type': 'error',
+            'code': 'STREAM_ERROR',
+            'message': 'An internal streaming error occurred'
+        }
+        try:
+            yield f"data: {json.dumps(error_payload)}\n\n"
+        except Exception:
+            # Log with traceback when failing to send error event
+            logger.exception(f"Failed to send error event to client during {error_context}")
+    finally:
+        # Always send DONE marker to properly close the stream
+        try:
+            yield "data: [DONE]\n\n"
+        except Exception:
+            logger.debug(f"Could not send DONE marker during {error_context} - connection likely closed")
 
 
 # Pydantic models for API requests/responses
@@ -954,30 +998,26 @@ async def send_message(
 
         # Send message and get response
         async def stream_generator():
-            try:
-                async for event in await chat_service.send_message(
-                    conversation_id=conversation_id,
-                    user_message=request_data.message,
-                    current_user=current_user,
-                    knowledge_base_id=request_data.knowledge_base_id,
-                    rag_rewrite_mode=request_data.rag_rewrite_mode,
-                    client_temp_id=getattr(request_data, "client_temp_id", None),
-                    ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
-                    attachment_ids=request_data.attachment_ids,
-                ):
-                    payload = event.to_dict()
-                    yield f"data: {json.dumps(payload)}\n\n"
-            except Exception as e:
-                logger.exception("Streaming error during send_message")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            finally:
-                yield "data: [DONE]\n\n"
+            event_gen = await chat_service.send_message(
+                conversation_id=conversation_id,
+                user_message=request_data.message,
+                current_user=current_user,
+                knowledge_base_id=request_data.knowledge_base_id,
+                rag_rewrite_mode=request_data.rag_rewrite_mode,
+                client_temp_id=getattr(request_data, "client_temp_id", None),
+                ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
+                attachment_ids=request_data.attachment_ids,
+            )
+            async for data in create_sse_stream_generator(event_gen, "send_message"):
+                yield data
 
         return StreamingResponse(
             stream_generator(),
             media_type="text/event-stream",
             headers={
-                "Cache-Control": "no-cache"
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
             }
         )
 
@@ -1160,26 +1200,21 @@ async def regenerate_message(
         chat_service = ChatService(db, config_manager)
 
         async def stream_generator():
-            try:
-                async for event in await chat_service.regenerate_message(
-                    message_id=message_id,
-                    current_user=current_user,
-                    parent_message_id=request.parent_message_id,
-                    rag_rewrite_mode=request.rag_rewrite_mode,
-                ):
-                    payload = event.to_dict()
-                    yield f"data: {json.dumps(payload)}\n\n"
-            except Exception as e:
-                logger.exception("Streaming error during regenerate_message")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            finally:
-                yield "data: [DONE]\n\n"
+            event_gen = await chat_service.regenerate_message(
+                message_id=message_id,
+                current_user=current_user,
+                parent_message_id=request.parent_message_id,
+                rag_rewrite_mode=request.rag_rewrite_mode,
+            )
+            async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
+                yield data
 
         return StreamingResponse(
             stream_generator(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
                 "Connection": "keep-alive"
             }
         )

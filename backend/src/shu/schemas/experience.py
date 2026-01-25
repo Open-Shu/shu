@@ -35,6 +35,7 @@ class StepType(str, Enum):
     """Types of experience steps."""
     PLUGIN = "plugin"
     KNOWLEDGE_BASE = "knowledge_base"
+    DECISION_CONTROL = "decision_control"
     # Future: AGENT_NETWORK = "agent_network"
 
 
