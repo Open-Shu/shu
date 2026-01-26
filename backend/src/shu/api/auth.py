@@ -276,7 +276,7 @@ class UserService:
             last_login=datetime.now(timezone.utc) if is_active else None
         )
 
-        if user_role == UserRole.ADMIN.value:
+        if user_role == UserRole.ADMIN:
             if is_first_user:
                 logger.info(f"Creating first user as admin: {google_user['email']}")
             else:
@@ -311,24 +311,14 @@ class UserService:
         email = microsoft_user["email"]
         microsoft_id = microsoft_user["microsoft_id"]
 
-        # Check if this email is already registered with a different auth method
+        # Check if this email is already registered with password auth (can't link SSO to password accounts)
         auth_method = await self.get_user_auth_method(db, email)
-        if auth_method is not None and auth_method != "microsoft":
-            if auth_method == "password":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses password authentication. Please use the username & password login flow."
-                )
-            elif auth_method == "google":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Google authentication. Please use the Google login flow."
-                )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow."
-                )
+        if auth_method == "password":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account uses password authentication. Please use the username & password login flow."
+            )
+        # Note: Other SSO providers (google) are allowed - the linking flow below will add Microsoft identity
 
         # Check if user exists via ProviderIdentity
         stmt = select(ProviderIdentity).where(
@@ -407,7 +397,7 @@ class UserService:
             last_login=datetime.now(timezone.utc) if is_active else None
         )
 
-        if user_role == UserRole.ADMIN.value:
+        if user_role == UserRole.ADMIN:
             if is_first_user:
                 logger.info("Creating first user as admin via Microsoft", email=email)
             else:
