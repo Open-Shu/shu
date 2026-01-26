@@ -1,24 +1,26 @@
 """Authentication API endpoints for Shu"""
 
-from fastapi import APIRouter, HTTPException, Depends, status
-from starlette.requests import Request
-from fastapi.responses import RedirectResponse
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
-from typing import Dict, Any, List
-import logging
-import uuid
 from datetime import datetime, timezone
+import logging
+from typing import Dict, Any, List
 
+import certifi
+import httpx
+from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
+
+from ..api.dependencies import get_db
 from ..auth import User, UserRole, JWTManager
 from ..auth.rbac import get_current_user, require_admin
 from ..auth.password_auth import password_auth_service
-from ..schemas.envelope import SuccessResponse
 from ..core.config import get_settings_instance
 from ..core.rate_limiting import get_rate_limit_service
-from ..api.dependencies import get_db
+from ..models.provider_identity import ProviderIdentity
+from ..schemas.envelope import SuccessResponse
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +81,6 @@ async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
         ValueError: If `id_token` is missing, the token payload is invalid or incomplete,
                     verification fails, or a network error occurs during verification.
     """
-    import httpx, certifi
-
     if not id_token:
         raise ValueError("Missing Google ID token")
 
@@ -94,7 +94,7 @@ async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
             raise ValueError(f"Google token verification failed: HTTP {resp.status_code}: {text}")
         data = resp.json()
     except httpx.HTTPError as e:
-        logger.error("Google token verification network error: %s", e)
+        logger.error("Google token verification network error", error=str(e), exc_info=True)
         raise ValueError(f"Network error during Google token verification: {e}")
 
     # Map to our expected fields
@@ -107,6 +107,59 @@ async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
         "email": email,
         "name": data.get("name") or email.split("@")[0],
         "picture": data.get("picture"),
+    }
+
+
+async def _get_microsoft_user_info(access_token: str) -> Dict[str, Any]:
+    """
+    Get Microsoft user information using an access token via Microsoft Graph API.
+
+    Parameters:
+        access_token (str): The Microsoft access token.
+
+    Returns:
+        dict: A mapping with keys:
+            - `microsoft_id` (str): The Microsoft account identifier.
+            - `email` (str): The user's email address.
+            - `name` (str): The user's display name.
+            - `picture` (Optional[str]): URL of the user's avatar, if available.
+
+    Raises:
+        ValueError: If token is missing, verification fails, or network error occurs.
+    """
+    if not access_token:
+        raise ValueError("Missing Microsoft access token")
+
+    url = "https://graph.microsoft.com/v1.0/me"
+
+    try:
+        async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json"
+                }
+            )
+        if resp.status_code != 200:
+            text = resp.text[:300]
+            raise ValueError(f"Microsoft user info request failed: HTTP {resp.status_code}: {text}")
+        data = resp.json()
+    except httpx.HTTPError as e:
+        logger.error("Microsoft user info network error", error=str(e), exc_info=True)
+        raise ValueError(f"Network error during Microsoft user info request: {e}")
+
+    # Map to our expected fields
+    user_id = data.get("id")
+    email = data.get("mail") or data.get("userPrincipalName")
+    if not user_id or not email:
+        raise ValueError("Invalid Microsoft user info response: missing id or email")
+
+    return {
+        "microsoft_id": user_id,
+        "email": email,
+        "name": data.get("displayName") or email.split("@")[0],
+        "picture": None,  # Microsoft Graph /me doesn't return photo URL directly
     }
 
 
@@ -221,6 +274,137 @@ class UserService:
         db.add(user)
         await db.commit()
         await db.refresh(user)
+
+        if not is_active:
+            raise HTTPException(
+                status_code=status.HTTP_201_CREATED,
+                detail="Account was created, but will need to be activated. Please contact an administrator for activation."
+            )
+
+        return user
+
+    async def authenticate_or_create_microsoft_user(self, microsoft_user: Dict[str, Any], db: AsyncSession) -> User:
+        """Authenticate user with Microsoft identity or create new user.
+
+        Parameters:
+            microsoft_user: Dict containing 'microsoft_id', 'email', 'name', 'picture' from Microsoft Graph.
+            db: AsyncSession for database operations.
+
+        Returns:
+            User: The authenticated or newly created user.
+
+        Raises:
+            HTTPException: If user exists with password auth or account is inactive.
+        """
+        email = microsoft_user["email"]
+        microsoft_id = microsoft_user["microsoft_id"]
+
+        # Check if this email is already registered with password auth
+        auth_method = await self.get_user_auth_method(db, email)
+        if auth_method == "password":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account uses password authentication. Please use the username & password login flow."
+            )
+
+        # Check if user exists via ProviderIdentity
+        stmt = select(ProviderIdentity).where(
+            ProviderIdentity.provider_key == "microsoft",
+            ProviderIdentity.account_id == microsoft_id
+        )
+        result = await db.execute(stmt)
+        existing_identity = result.scalar_one_or_none()
+
+        if existing_identity:
+            # User exists via Microsoft identity, fetch the user
+            user_stmt = select(User).where(User.id == existing_identity.user_id)
+            user_result = await db.execute(user_stmt)
+            existing_user = user_result.scalar_one_or_none()
+
+            if not existing_user:
+                # Orphaned identity - should not happen
+                logger.warning("Orphaned ProviderIdentity found", microsoft_id=microsoft_id)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="User account data inconsistency. Please contact support."
+                )
+
+            if not existing_user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User account is inactive. Please contact an administrator for activation."
+                )
+
+            # Update last login
+            existing_user.last_login = datetime.now(timezone.utc)
+            await db.commit()
+            return existing_user
+
+        # Check if user exists by email (could be Google user wanting to add Microsoft)
+        email_stmt = select(User).where(User.email == email)
+        email_result = await db.execute(email_stmt)
+        existing_user_by_email = email_result.scalar_one_or_none()
+
+        if existing_user_by_email:
+            # User exists with same email (e.g., Google user), link Microsoft identity
+            if not existing_user_by_email.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User account is inactive. Please contact an administrator for activation."
+                )
+
+            # Create ProviderIdentity link
+            provider_identity = ProviderIdentity(
+                user_id=existing_user_by_email.id,
+                provider_key="microsoft",
+                account_id=microsoft_id,
+                primary_email=email,
+                display_name=microsoft_user["name"],
+                avatar_url=microsoft_user.get("picture"),
+            )
+            db.add(provider_identity)
+            existing_user_by_email.last_login = datetime.now(timezone.utc)
+            await db.commit()
+            logger.info("Linked Microsoft identity to existing user", email=email)
+            return existing_user_by_email
+
+        # Create new user
+        is_first_user = await self.is_first_user(db)
+        user_role = await self.determine_user_role(email, is_first_user)
+        is_active = await self.is_active(user_role, is_first_user)
+
+        user = User(
+            email=email,
+            name=microsoft_user["name"],
+            google_id=None,  # Microsoft users don't have a google_id
+            picture_url=microsoft_user.get("picture"),
+            role=user_role.value,
+            auth_method="microsoft",
+            is_active=is_active,
+            last_login=datetime.now(timezone.utc) if is_active else None
+        )
+
+        if user_role == UserRole.ADMIN.value:
+            if is_first_user:
+                logger.info("Creating first user as admin via Microsoft", email=email)
+            else:
+                logger.info("Creating admin user from configured list via Microsoft", email=email)
+
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+        # Create ProviderIdentity for Microsoft
+        provider_identity = ProviderIdentity(
+            user_id=user.id,
+            provider_key="microsoft",
+            account_id=microsoft_id,
+            primary_email=email,
+            display_name=microsoft_user["name"],
+            avatar_url=microsoft_user.get("picture"),
+        )
+        db.add(provider_identity)
+        await db.commit()
 
         if not is_active:
             raise HTTPException(
@@ -619,6 +803,71 @@ async def google_exchange_login(request: CodeRequest, db: AsyncSession = Depends
     except Exception as e:
         logger.error(f"google_exchange_login error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google login exchange failed")
+
+
+@router.get("/microsoft/login")
+async def microsoft_login(current_user: User | None = Depends(lambda: None)):
+    """Redirect to Microsoft OAuth via provider adapter (host_auth flow)."""
+    try:
+        from ..plugins.host.auth_capability import AuthCapability
+        from ..providers.registry import get_auth_adapter
+        auth = AuthCapability(plugin_name="admin", user_id=str(current_user.id) if current_user else "anonymous")
+        adapter = get_auth_adapter("microsoft", auth)
+        # SSO scopes: identity + basic profile
+        res = await adapter.build_authorization_url(scopes=["openid", "email", "profile", "User.Read"])
+        url = res.get("url")
+        if not url:
+            raise ValueError("Failed to build Microsoft authorization URL")
+        return RedirectResponse(url=url)
+    except Exception as e:
+        logger.error("microsoft_login error", error=str(e), exc_info=True)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Microsoft SSO redirect unavailable: {e}")
+
+
+@router.post("/microsoft/exchange-login", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
+async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depends(get_db)):
+    """Exchange an OAuth authorization code for Microsoft access token and issue Shu JWTs.
+
+    This supports the Microsoft OAuth redirect login flow.
+    """
+    try:
+        from ..plugins.host.auth_capability import AuthCapability
+        from ..providers.registry import get_auth_adapter
+
+        # SSO scopes for user info
+        scopes = ["openid", "email", "profile", "User.Read"]
+
+        auth = AuthCapability(plugin_name="admin", user_id="anonymous")
+        adapter = get_auth_adapter("microsoft", auth)
+
+        # Exchange the code for tokens
+        tok = await adapter.exchange_code(code=request.code, scopes=scopes)
+        access_token = tok.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Microsoft did not return access_token")
+
+        # Get user info using access token
+        microsoft_user = await _get_microsoft_user_info(access_token)
+
+        # Authenticate or create user
+        user = await user_service.authenticate_or_create_microsoft_user(microsoft_user, db)
+
+        # Create JWT tokens
+        jwt_access_token = user_service.jwt_manager.create_access_token(user.to_dict())
+        jwt_refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
+
+        response_data = TokenResponse(
+            access_token=jwt_access_token,
+            refresh_token=jwt_refresh_token,
+            user=user.to_dict()
+        )
+        return SuccessResponse(data=response_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("microsoft_exchange_login error", error=str(e), exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed")
 
 
 @router.get("/users", response_model=SuccessResponse[List[Dict[str, Any]]])

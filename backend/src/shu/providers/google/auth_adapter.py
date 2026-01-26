@@ -144,13 +144,14 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         from google_auth_oauthlib.flow import Flow  # type: ignore
 
         settings = self._auth._settings
-        if not (settings.google_client_id and settings.google_client_secret and settings.google_redirect_uri):
+        redirect_uri = settings.get_oauth_redirect_uri("google")
+        if not (settings.google_client_id and settings.google_client_secret and redirect_uri):
             raise RuntimeError("Google OAuth is not configured")
 
         # Validate redirect URI is absolute (Google requires full origin + path)
-        parsed = urlparse(settings.google_redirect_uri)
+        parsed = urlparse(redirect_uri)
         if not parsed.scheme or not parsed.netloc:
-            raise RuntimeError("GOOGLE_REDIRECT_URI must be an absolute URL, e.g., http://localhost:8000/auth/callback")
+            raise RuntimeError("OAUTH_REDIRECT_URI must be an absolute URL, e.g., http://localhost:8000/auth/callback")
 
         flow = Flow.from_client_config(
             {
@@ -159,12 +160,12 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                     "client_secret": settings.google_client_secret,
                     "auth_uri": "https://accounts.google.com/o/oauth2/v2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [settings.google_redirect_uri],
+                    "redirect_uris": [redirect_uri],
                 }
             },
             scopes=scopes,
         )
-        flow.redirect_uri = settings.google_redirect_uri
+        flow.redirect_uri = redirect_uri
         authorization_url, state = flow.authorization_url(
             access_type="offline",
             include_granted_scopes=False,  # Do not implicitly request previously granted scopes; honor requested scopes only
@@ -176,7 +177,8 @@ class GoogleAuthAdapter(BaseAuthAdapter):
     async def exchange_code(self, *, code: str, scopes: Optional[List[str]] = None) -> Dict[str, Any]:
         import requests
         settings = self._auth._settings
-        if not (settings.google_client_id and settings.google_client_secret and settings.google_redirect_uri):
+        redirect_uri = settings.get_oauth_redirect_uri("google")
+        if not (settings.google_client_id and settings.google_client_secret and redirect_uri):
             raise RuntimeError("Google OAuth is not configured")
         resp = requests.post(
             "https://oauth2.googleapis.com/token",
@@ -184,7 +186,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                 "code": code,
                 "client_id": settings.google_client_id,
                 "client_secret": settings.google_client_secret,
-                "redirect_uri": settings.google_redirect_uri,
+                "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -220,11 +222,13 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                 pass
         meta: Dict[str, Any] = {}
         try:
+            # Check if OAuth is configured (client_id, client_secret, and redirect URI via unified or legacy settings)
+            redirect_uri = settings.get_oauth_redirect_uri("google") if hasattr(settings, "get_oauth_redirect_uri") else getattr(settings, "google_redirect_uri", None)
             meta = {
                 "user_oauth_configured": bool(
                     getattr(settings, "google_client_id", None)
                     and getattr(settings, "google_client_secret", None)
-                    and getattr(settings, "google_redirect_uri", None)
+                    and redirect_uri
                 ),
                 "service_account_configured": bool(
                     getattr(settings, "google_service_account_json", None) or getattr(settings, "google_service_account_file", None)

@@ -35,6 +35,7 @@ async def get_public_config():
 
     config = PublicConfig(
         google_client_id=settings.google_client_id or "",
+        microsoft_client_id=settings.microsoft_client_id or "",
         app_name=settings.app_name,
         version=settings.version,
         environment=settings.environment,

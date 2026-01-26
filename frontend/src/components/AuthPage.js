@@ -7,6 +7,7 @@ import configService from '../services/config';
 const AuthPage = () => {
   const [authMode, setAuthMode] = useState('password'); // 'google', 'password', 'register'
   const [googleSsoEnabled, setGoogleSsoEnabled] = useState(false);
+  const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -16,9 +17,11 @@ const AuthPage = () => {
         await configService.fetchConfig();
         if (!isMounted) return;
         setGoogleSsoEnabled(configService.isGoogleSsoEnabled());
+        setMicrosoftSsoEnabled(configService.isMicrosoftSsoEnabled());
       } catch (error) {
         if (!isMounted) return;
         setGoogleSsoEnabled(false);
+        setMicrosoftSsoEnabled(false);
       }
     };
 
@@ -55,6 +58,7 @@ const AuthPage = () => {
             onSwitchToRegister={handleSwitchToRegister}
             onSwitchToGoogle={handleSwitchToGoogle}
             isGoogleSsoEnabled={googleSsoEnabled}
+            isMicrosoftSsoEnabled={microsoftSsoEnabled}
           />
         );
     case 'register':
@@ -66,6 +70,7 @@ const AuthPage = () => {
           onSwitchToRegister={handleSwitchToRegister}
           onSwitchToGoogle={handleSwitchToGoogle}
           isGoogleSsoEnabled={googleSsoEnabled}
+          isMicrosoftSsoEnabled={microsoftSsoEnabled}
         />
       );
   }
