@@ -11,7 +11,7 @@ These tests verify Microsoft SSO authentication workflows:
 
 import sys
 import logging
-import time
+import uuid
 from typing import List, Callable
 from unittest.mock import patch, AsyncMock
 
@@ -90,7 +90,7 @@ async def test_microsoft_login_endpoint_returns_redirect(client, db, auth_header
 
 async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
     """Test Microsoft SSO creates a new user when none exists."""
-    unique_id = int(time.time())
+    unique_id = uuid.uuid4().hex
     unique_email = f"ms_new_user_{unique_id}@example.com"
     mock_user = {
         "microsoft_id": f"ms_new_{unique_id}",
@@ -119,7 +119,7 @@ async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
 
 async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
     """Test Microsoft SSO logs in an existing Microsoft user."""
-    unique_id = int(time.time())
+    unique_id = uuid.uuid4().hex
     unique_email = f"ms_existing_{unique_id}@example.com"
     microsoft_id = f"ms_existing_id_{unique_id}"
     
@@ -165,7 +165,7 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
 
 async def test_microsoft_exchange_login_links_to_existing_google_user(client, db, auth_headers):
     """Test Microsoft SSO links to existing user with same email (e.g., Google user)."""
-    unique_id = int(time.time())
+    unique_id = uuid.uuid4().hex
     unique_email = f"ms_link_{unique_id}@example.com"
     google_id = f"google_id_{unique_id}"
     microsoft_id = f"ms_link_id_{unique_id}"
@@ -202,7 +202,7 @@ async def test_microsoft_exchange_login_links_to_existing_google_user(client, db
 
 async def test_microsoft_exchange_login_password_conflict(client, db, auth_headers):
     """Test Microsoft SSO returns 409 when user exists with password auth."""
-    unique_id = int(time.time())
+    unique_id = uuid.uuid4().hex
     unique_email = f"ms_pwd_conflict_{unique_id}@example.com"
     
     # Create existing password user using ORM
@@ -238,7 +238,7 @@ async def test_microsoft_exchange_login_password_conflict(client, db, auth_heade
 
 async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
     """Test Microsoft SSO returns 400 when user account is inactive."""
-    unique_id = int(time.time())
+    unique_id = uuid.uuid4().hex
     unique_email = f"ms_inactive_{unique_id}@example.com"
     microsoft_id = f"ms_inactive_id_{unique_id}"
     

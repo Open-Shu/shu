@@ -219,12 +219,24 @@ class UserService:
         # Verify Google ID token via Google's tokeninfo endpoint
         google_user = await _verify_google_id_token(google_token)
 
+        # Check if this email is already registered with a different auth method
         auth_method = await user_service.get_user_auth_method(db, google_user["email"])
-        if auth_method == "password":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="The provided account was created using a password. Please use the username & password login flow."
-            )
+        if auth_method is not None and auth_method != "google":
+            if auth_method == "password":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses password authentication. Please use the username & password login flow."
+                )
+            elif auth_method == "microsoft":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow."
+                )
 
         # Check if user exists in database
         stmt = select(User).where(User.google_id == google_user["google_id"])
@@ -299,13 +311,24 @@ class UserService:
         email = microsoft_user["email"]
         microsoft_id = microsoft_user["microsoft_id"]
 
-        # Check if this email is already registered with password auth
+        # Check if this email is already registered with a different auth method
         auth_method = await self.get_user_auth_method(db, email)
-        if auth_method == "password":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This account uses password authentication. Please use the username & password login flow."
-            )
+        if auth_method is not None and auth_method != "microsoft":
+            if auth_method == "password":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses password authentication. Please use the username & password login flow."
+                )
+            elif auth_method == "google":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses Google authentication. Please use the Google login flow."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow."
+                )
 
         # Check if user exists via ProviderIdentity
         stmt = select(ProviderIdentity).where(
@@ -626,11 +649,22 @@ async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = 
     """
     try:
         auth_method = await user_service.get_user_auth_method(db, request.email)
-        if auth_method == "google":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="The provided account was created using Google. Please use the Google login flow."
-            )
+        if auth_method is not None and auth_method != "password":
+            if auth_method == "google":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses Google authentication. Please use the Google login flow."
+                )
+            elif auth_method == "microsoft":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow."
+                )
 
         user = await password_auth_service.authenticate_user(request.email, request.password, db)
 
