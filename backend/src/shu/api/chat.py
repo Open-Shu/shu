@@ -124,6 +124,7 @@ class MessageCreate(BaseModel):
     content: str = Field(..., description="Message content")
     model_id: Optional[str] = Field(None, description="Model ID for assistant messages")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Message metadata")
+    attachment_ids: Optional[List[str]] = Field(None, description="List of attachment IDs to link to this message")
 
 
 class MessageAttachmentInfo(BaseModel):
@@ -910,6 +911,7 @@ async def add_message(
             content=message_data.content,
             model_id=message_data.model_id,
             metadata=message_data.metadata,
+            attachment_ids=message_data.attachment_ids,
         )
 
         # Build response manually to avoid SQLAlchemy relationship issues

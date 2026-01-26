@@ -152,6 +152,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/docs",
             "/redoc",
             "/openapi.json",
+            "/static/",  # Self-hosted static assets (e.g., ReDoc JS)
             "/api/v1/settings/branding/assets/",
         ]
         for prefix in public_prefixes:
@@ -467,8 +468,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Process request
         response = await call_next(request)
 
-        # Add rate limit headers to successful responses
-        for header, value in result.to_headers().items():
-            response.headers[header] = value
+        # Add rate limit headers to successful responses only.
+        # Don't overwrite headers on 429 responses - they may contain
+        # rate limit info from a downstream handler (e.g., per-plugin limits).
+        if response.status_code != 429:
+            for header, value in result.to_headers().items():
+                response.headers[header] = value
 
         return response

@@ -253,7 +253,7 @@ class RateLimitService:
             settings = get_settings_instance()
 
         self._settings = settings
-        self._enabled = getattr(settings, "enable_rate_limiting", True)
+        self._enabled = getattr(settings, "enable_api_rate_limiting", False)
 
         # Initialize limiters lazily
         self._api_limiter: Optional[TokenBucketRateLimiter] = None
@@ -266,7 +266,7 @@ class RateLimitService:
     def enabled(self) -> bool:
         """
         Whether rate limiting is enabled according to the service settings.
-        
+
         Returns:
             `true` if rate limiting is enabled, `false` otherwise.
         """
@@ -275,13 +275,13 @@ class RateLimitService:
     def _get_api_limiter(self) -> TokenBucketRateLimiter:
         """
         Get the TokenBucketRateLimiter used for API rate limiting, creating and configuring it from settings if not already initialized.
-        
+
         Returns:
-            TokenBucketRateLimiter: Limiter configured for the "rl:api" namespace. Capacity is taken from `settings.rate_limit_requests` (default 100) and `refill_per_second` is computed as capacity divided by `settings.rate_limit_period` (default 60).
+            TokenBucketRateLimiter: Limiter configured for the "rl:api" namespace. Capacity is taken from `settings.api_rate_limit_requests` (default 100) and `refill_per_second` is computed as capacity divided by `settings.api_rate_limit_period` (default 60).
         """
         if self._api_limiter is None:
-            requests = getattr(self._settings, "rate_limit_requests", 100)
-            period = getattr(self._settings, "rate_limit_period", 60)
+            requests = getattr(self._settings, "api_rate_limit_requests", 100)
+            period = getattr(self._settings, "api_rate_limit_period", 60)
             self._api_limiter = TokenBucketRateLimiter(
                 namespace="rl:api",
                 capacity=requests,
@@ -293,15 +293,15 @@ class RateLimitService:
     def _get_auth_limiter(self) -> TokenBucketRateLimiter:
         """
         Get or create a TokenBucketRateLimiter configured for authentication with strict, slow-refill limits.
-        
-        Reads `strict_rate_limit_requests` from settings (default 10) for capacity and sets `refill_per_second` to 1.
-        
+
+        Reads `strict_api_rate_limit_requests` from settings (default 10) for capacity and sets `refill_per_second` to 1.
+
         Returns:
             TokenBucketRateLimiter: Limiter instance used for auth rate limiting.
         """
         if self._auth_limiter is None:
             # Use strict limits for auth endpoints
-            requests = getattr(self._settings, "strict_rate_limit_requests", 10)
+            requests = getattr(self._settings, "strict_api_rate_limit_requests", 10)
             self._auth_limiter = TokenBucketRateLimiter(
                 namespace="rl:auth",
                 capacity=requests,
@@ -354,7 +354,7 @@ class RateLimitService:
     async def check_api_limit(self, user_id: str) -> RateLimitResult:
         """
         Enforces the configured API rate limit for the given user.
-        
+
         Returns:
             RateLimitResult containing whether the request is allowed. When denied, `retry_after_seconds` indicates how long to wait; the result also includes `remaining`, `limit`, and `reset_seconds` metadata.
         """
@@ -367,12 +367,12 @@ class RateLimitService:
     async def check_auth_limit(self, identifier: str) -> RateLimitResult:
         """
         Enforce a stricter authentication rate limit for the given identifier.
-        
+
         Used for brute-force protection: when disabled this returns an allowed result with large remaining/limit; otherwise the configured auth limiter is applied.
-        
+
         Parameters:
             identifier (str): Email address or IP address that identifies the actor being rate-limited.
-        
+
         Returns:
             RateLimitResult: Outcome of the rate limit check, including `allowed`, `retry_after_seconds`, `remaining`, `limit`, and `reset_seconds`.
         """

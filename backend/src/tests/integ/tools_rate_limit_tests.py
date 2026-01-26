@@ -9,10 +9,10 @@ import asyncio
 import os, sys
 
 # Enable rate limiting for this test
-os.environ["SHU_ENABLE_RATE_LIMITING"] = "1"
+os.environ["SHU_ENABLE_API_RATE_LIMITING"] = "1"
 # Configure a very small bucket to force 429 on immediate consecutive calls
-os.environ["SHU_RATE_LIMIT_USER_REQUESTS"] = "1"   # capacity
-os.environ["SHU_RATE_LIMIT_USER_PERIOD"] = "60"    # seconds (only used to compute refill)
+os.environ["SHU_API_RATE_LIMIT_USER_REQUESTS"] = "1"   # capacity
+os.environ["SHU_API_RATE_LIMIT_USER_PERIOD"] = "60"    # seconds (only used to compute refill)
 
 from shu.models.plugin_registry import PluginDefinition
 from integ.integration_test_runner import run_integration_tests

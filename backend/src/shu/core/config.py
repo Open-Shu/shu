@@ -142,12 +142,17 @@ class Settings(BaseSettings):
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
-    # Rate limiting
-    enable_rate_limiting: bool = Field(True, alias="SHU_ENABLE_RATE_LIMITING")
-    rate_limit_requests: int = Field(100, alias="SHU_RATE_LIMIT_REQUESTS")
-    rate_limit_period: int = Field(60, alias="SHU_RATE_LIMIT_PERIOD")  # seconds
-    rate_limit_user_requests: int = Field(50, alias="SHU_RATE_LIMIT_USER_REQUESTS")  # per user
-    rate_limit_user_period: int = Field(60, alias="SHU_RATE_LIMIT_USER_PERIOD")  # seconds
+    # API Rate Limiting (HTTP request throttling, not LLM-specific)
+    enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
+    api_rate_limit_requests: int = Field(100, alias="SHU_API_RATE_LIMIT_REQUESTS")  # requests per period
+    api_rate_limit_period: int = Field(60, alias="SHU_API_RATE_LIMIT_PERIOD")  # seconds
+    api_rate_limit_user_requests: int = Field(50, alias="SHU_API_RATE_LIMIT_USER_REQUESTS")  # per user per period
+    api_rate_limit_user_period: int = Field(60, alias="SHU_API_RATE_LIMIT_USER_PERIOD")  # seconds
+
+    # LLM Provider Rate Limiting Defaults (0 = unlimited)
+    # These are used as defaults when creating new providers; per-provider overrides are stored in the database
+    llm_rate_limit_rpm_default: int = Field(0, alias="SHU_LLM_RATE_LIMIT_RPM_DEFAULT")  # requests per minute, 0 = unlimited
+    llm_rate_limit_tpm_default: int = Field(0, alias="SHU_LLM_RATE_LIMIT_TPM_DEFAULT")  # tokens per minute, 0 = unlimited
 
     # Quotas (per-plugin/per-user)
     plugin_quota_daily_requests_default: int = Field(0, alias="SHU_PLUGIN_QUOTA_DAILY_REQUESTS_DEFAULT")
@@ -360,9 +365,9 @@ class Settings(BaseSettings):
     user_language_default: str = Field("en", alias="SHU_USER_LANGUAGE_DEFAULT")
     user_timezone_default: str = Field("UTC", alias="SHU_USER_TIMEZONE_DEFAULT")
 
-    # Strict Rate Limiting Configuration
-    strict_rate_limit_requests: int = Field(10, alias="SHU_STRICT_RATE_LIMIT_REQUESTS")
-    strict_rate_limit_user_requests: int = Field(5, alias="SHU_STRICT_RATE_LIMIT_USER_REQUESTS")
+    # Strict API Rate Limiting (for auth endpoints - brute force protection)
+    strict_api_rate_limit_requests: int = Field(10, alias="SHU_STRICT_API_RATE_LIMIT_REQUESTS")
+    strict_api_rate_limit_user_requests: int = Field(5, alias="SHU_STRICT_API_RATE_LIMIT_USER_REQUESTS")
     max_pagination_limit: int = Field(1000, alias="SHU_MAX_PAGINATION_LIMIT")
 
     # OCR Configuration

@@ -29,12 +29,12 @@ pytest-asyncio has inherent issues with async event loops that caused frequent t
 - **Readable Output**: Progress is reported with TEST 1/N format and readable results
 - **Extensible**: Easy to add new test suites for different features
 
-### **Current Status (snapshot)**
-- **6 Integration Test Suites**: 60 integration tests, last documented run at 100% pass rate
-- **2 Unit Test Suites**: 16 unit tests, last documented run at 100% pass rate
-- **Total Execution Time**: <1.0 seconds for all tests at last documented run
-- **Migration**: COMPLETE - All pytest files removed
+### **Current Test Coverage**
+- **Integration Test Suites**: Multiple suites covering LLM, auth, RBAC, config, chat, and more
+- **Unit Test Suites**: Focused unit tests for core business logic
 - **Output Format**: TEST 1/N style progress
+
+Note: Run the test suite to get current pass/fail status. Test results are inherently temporal and can change with any code modification.
 
 ## Quick Start
 
@@ -80,12 +80,12 @@ tests/
 ├── base_unit_test.py                  # Base class for unit tests
 ├── run_all_integration_tests.py       # Master runner (DO NOT MODIFY)
 ├── test_template.py                   # Copy this for new test suites
-├── test_llm_integration.py           # LLM provider tests (10 tests)
-├── test_auth_integration.py          # Authentication tests (10 tests)
-├── test_rbac_integration.py          # RBAC tests (11 tests)
-├── test_config_integration.py        # Configuration tests (11 tests)
-├── test_llm_unit_migrated.py         # LLM unit tests (10 tests)
-├── test_api_key_unit.py               # API key unit tests (6 tests)
+├── test_llm_integration.py           # LLM provider tests 
+├── test_auth_integration.py          # Authentication tests
+├── test_rbac_integration.py          # RBAC tests
+├── test_config_integration.py        # Configuration tests
+├── test_llm_unit_migrated.py         # LLM unit tests
+├── test_api_key_unit.py               # API key unit tests 
 └── test_*_integration.py             # Your new test suites go here
 ```
 
@@ -533,42 +533,24 @@ def test_something(client, db, auth_headers):  # Not async
 ### **Integration Test Suites**
 
 #### **LLM Provider Integration Tests** (`test_llm_integration.py`)
-- **Tests**: 10 integration tests (snapshot)
 - **Coverage**: CRUD operations, API key security, validation, error handling
-- **Performance**: 0.071s execution time (snapshot)
-- **Status**: 100% passing at last documented run
 
 #### **Authentication Integration Tests** (`test_auth_integration.py`)
-- **Tests**: 10 integration tests (snapshot)
 - **Coverage**: Authentication, authorization, RBAC, JWT tokens, security
-- **Performance**: 0.053s execution time (snapshot)
-- **Status**: 100% passing at last documented run
 
 #### **RBAC Integration Tests** (`test_rbac_integration.py`)
-- **Tests**: 11 integration tests (snapshot)
 - **Coverage**: Role-based access control, endpoint protection, permission enforcement
-- **Performance**: 0.206s execution time (snapshot)
-- **Status**: 100% passing at last documented run
 
 #### **Configuration Integration Tests** (`test_config_integration.py`)
-- **Tests**: 11 integration tests (snapshot)
 - **Coverage**: Public config endpoint, security validation, performance testing
-- **Performance**: 0.020s execution time (snapshot)
-- **Status**: 100% passing at last documented run
 
-### **Unit Test Suites** (snapshot)
+### **Unit Test Suites**
 
 #### **LLM Unit Tests** (`test_llm_unit_migrated.py`)
-- **Tests**: 10 unit tests (snapshot)
 - **Coverage**: Business logic, data validation, response formatting
-- **Performance**: <0.01s execution time (snapshot)
-- **Status**: 100% passing at last documented run
 
 #### **API Key Unit Tests** (`test_api_key_unit.py`)
-- **Tests**: 6 unit tests (snapshot)
 - **Coverage**: API key display, security, boolean logic
-- **Performance**: <0.01s execution time (snapshot)
-- **Status**: 100% passing at last documented run
 
 ## Debugging Tests
 

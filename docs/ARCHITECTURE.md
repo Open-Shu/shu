@@ -1,6 +1,6 @@
-# Shu Architecture: Extensible AI Operating System for Work
+# Shu Architecture: Extensible AI Knowledge Platform
 
-**Last Updated**: 2025-10-02
+**Last Updated**: 2025-01-25
 
 
 ## Quick System Index (for session hydration)
@@ -72,8 +72,7 @@ Use this section to locate live systems quickly and avoid reinventing them. Each
   - Integration tests: tests/*
 
 Cross-References
-- Project plan and execution pointer: docs/SHU_TECHNICAL_ROADMAP.md and docs/EXECUTIVE_STATUS_REPORT.md
-- Product strategy: docs/PRODUCT_STRATEGY.md
+- Project plan and roadmap: docs/SHU_TECHNICAL_ROADMAP.md
 
 
 ## Vision

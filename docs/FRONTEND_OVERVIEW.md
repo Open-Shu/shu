@@ -5,12 +5,12 @@ This document is the quick reference for the React frontend located at `./fronte
 ## What exists right now
 - Framework: React 18
 - Libraries: Material‑UI (MUI), React Query, Axios, React Router
-- Admin Console: Dashboard, Knowledge Base Management, Sync Job Monitoring, Query Tester, Health Monitor
+- Admin Console: Dashboard, Knowledge Base Management, Plugin Feeds, Query Tester, Health Monitor
 - Dev server: `npm start` (http://localhost:3000)
 - Build: `npm run build`
 - API base URL: `REACT_APP_API_BASE_URL` (optional). If unset, frontend assumes same‑origin behind ingress
 - Source layout (from README):
-  - `src/components/` — Dashboard, KnowledgeBases, SyncJobs, QueryTester, LLMTester, HealthMonitor, ModernChat, etc.
+  - `src/components/` — Dashboard, KnowledgeBases, PluginsAdmin, PluginsAdminFeeds, QueryTester, LLMTester, HealthMonitor, ModernChat, etc.
   - `src/layouts/` — AdminLayout, UserLayout
   - `src/services/api.js` — Axios configuration
 
@@ -18,7 +18,7 @@ This document is the quick reference for the React frontend located at `./fronte
 
 ## Frontend-first principle
 - Treat UI/UX as a primary surface: build API features with clear, intuitive UI flows in mind (Plugins Admin Feeds, KB Feeds, Chat Plugin Picker)
-- Replace legacy Source/Sync Jobs with Plugin Feeds and in-chat tools as soon as parity is reached
+- Replace legacy “Sync Jobs” terminology with Plugin Feeds and in-chat tools as soon as parity is reached
 - Avoid parallel systems; reuse contracts/components (schema→form, identity gating, approvals)
 
 Always do this at session start (parallel to backend docs):
@@ -39,7 +39,9 @@ Always do this at session start (parallel to backend docs):
 - Primary backend endpoints currently referenced in README:
   - Health checks: `/health/*`
   - Knowledge Bases: `/knowledge-bases/*`
-  - Sync Jobs: `/sync/*`
+  - Chat: `/chat/*`
+  - Plugins: `/plugins/*`
+  - Plugin Feeds (Admin): `/plugins/admin/feeds/*`
   - Query: `/query/*`
 
 ### Plugins v1 endpoints to use from UI (API path: /plugins)
@@ -132,7 +134,7 @@ Update (2025-12-09): Plugin Subscriptions page now includes a Plugin Secrets sec
 ## Development Commands (expected)
 
 Streaming completion contract:
-- Backend emits a final SSE event before [DONE]: {"event":"final_message","message": <Message>}
+- Backend emits a final SSE event before [DONE]: {"event":"final_message","content": <Message>}
 - Frontend uses this to replace the streaming placeholder without any follow-up fetch
 
 - Install: `cd frontend && npm install`

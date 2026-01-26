@@ -1,95 +1,104 @@
 # Shu
 
+> **⚠️ Development Status**: Shu is in active development. The `main` branch may not be stable at any given commit. Use tagged releases for the most stable versions. A formal release process is coming soon.
 
 **Shu** is an extensible AI knowledge platform for individuals, teams, and organizations. It combines a plugin ecosystem, knowledge base and retrieval, conversational interfaces, and background automation into a single platform. This repository contains the core backend API and React-based admin console. Shu currently supports multi-source retrieval-augmented generation (RAG) via its knowledge base and plugin feeds, but RAG is only one part of the broader system.
 
-
+See our website for more information: [https://www.openshu.ai](https://www.openshu.ai)
 
 ## Key Features
 
-### Multi-Source Document Processing
-- **Google Drive Integration**: Sync documents from Google Shared Drives
-- **Filesystem Support**: Process local files and directories
-- **Extensible Architecture**: Plugin system for additional source types
-- **Smart Text Extraction**: Support for PDF, DOCX, Google Docs, and more
+### Plugin Ecosystem
+- **Extensible Plugin System**: Python plugins with manifest-based discovery and host capabilities
+- **Plugin Feeds**: Scheduled background ingestion from external sources (Gmail, Google Drive, etc.)
+- **Connected Accounts**: OAuth-based provider identity for secure external service access
+- **Host Capabilities**: Plugins access KB ingestion, secrets, HTTP, caching via standardized APIs
 
-### Advanced RAG Capabilities
+### Knowledge Base & RAG
+- **Multi-Source Ingestion**: Documents from plugins, file uploads, or direct API
 - **Vector Similarity Search**: Semantic search using sentence-transformers
 - **Hybrid Search**: Combination of semantic and keyword search
-- **Configurable Chunking**: Smart document chunking with overlap control
+- **Document Profiling**: LLM-powered document and chunk profiling for enhanced retrieval
 - **Multiple Knowledge Bases**: Multi-tenant support with isolated knowledge bases
 
-### API
-- **FastAPI Framework**: High-performance async API with automatic OpenAPI documentation
-- **Background Job Processing**: Async sync operations with job tracking and management
-- **Health Monitoring**: Health checks for Kubernetes deployment
-- **Error Handling**: Error handling with detailed logging and standardized response envelopes
+### Chat & Conversations
+- **Streaming Chat**: Real-time LLM responses with server-sent events
+- **RAG Integration**: Automatic context retrieval from knowledge bases
+- **Multi-Provider LLM Support**: OpenAI, Anthropic, Google Gemini, Azure, Ollama
+- **Conversation Memory**: Persistent conversation history with cross-session context
 
-### React Admin Panel
-- **Dashboard**: System overview with health monitoring and quick statistics
-- **Knowledge Base Management**: Full CRUD operations for knowledge bases
-- **Sync Job Monitoring**: Real-time monitoring and management of sync operations
-- **Query Tester**: Interactive testing of vector similarity and hybrid search
-- **Health Monitor**: Comprehensive system health monitoring
+### Experiences (Workflows)
+- **Configurable Workflows**: Compose plugins, KB queries, and LLM synthesis into reusable experiences
+- **Scheduled Execution**: Cron-based triggers for automated workflows
+- **Step-Based Processing**: Multi-step workflows with data flow between steps
 
 ### Authentication & Security
-- **Dual Authentication System**: Google OAuth + Password authentication
-- **Secure Registration Model**: Self-registered users inactive by default, require admin activation
-- **Role Enforcement**: Self-registered users forced to "regular_user" role (no privilege escalation)
+- **Dual Authentication**: Google OAuth + password authentication
+- **Role-Based Access Control**: Admin, Power User, Regular User, Read Only roles
 - **JWT Token Management**: Secure access and refresh token handling
-- **Role-Based Access Control (RBAC)**: Admin, Power User, Regular User, Read Only roles
-- **Database-Driven Users**: All authentication data stored in PostgreSQL with bcrypt password hashing
-- **Frontend Authorization**: Role-based UI component access control
+- **Provider Identity**: Secure OAuth token storage for external service connections
 
-### Integration & Scalability
-- **OpenWebUI Filter**: Ready-to-use filter for OpenWebUI integration
-- **Docker Support**: Complete containerization with Docker Compose
+### API & Infrastructure
+- **FastAPI Backend**: High-performance async API with OpenAPI documentation
+- **Background Scheduler**: In-process job scheduling for plugin feeds and experiences
+- **Docker & Kubernetes Ready**: Complete containerization with health checks
 - **Database Migrations**: Alembic-based schema management
-- **Multi-Frontend Ready**: API-first design supports multiple frontends and agents
 
 ## Architecture Overview
 
 ```mermaid
 graph TD
-    subgraph "Document Sources"
-        A[Google Drive]
-        B[Filesystem]
-        C[Future Sources]
+    subgraph "External Services"
+        A[Gmail]
+        B[Google Drive]
+        C[Calendar]
+        D[Other APIs]
     end
 
     subgraph "Shu Backend"
-        D[Sync Service]
-        E[Query Service]
-        F[Knowledge Base Management]
-        G[(PostgreSQL + pgvector)]
+        subgraph "Plugin Layer"
+            E[Plugin Registry]
+            F[Plugin Executor]
+            G[Feeds Scheduler]
+        end
 
-        D --> A
-        D --> B
-        D --> C
-        D --> G
-        E --> G
-        F --> G
+        subgraph "Core Services"
+            H[Chat Service]
+            I[Query Service]
+            J[Experience Engine]
+            K[Knowledge Base Service]
+        end
+
+        L[(PostgreSQL + pgvector)]
+        M[(Redis - optional)]
+
+        E --> F
+        G --> F
+        F --> A
+        F --> B
+        F --> C
+        F --> D
+        F --> K
+        H --> I
+        H --> L
+        I --> L
+        J --> F
+        J --> I
+        K --> L
+        H -.-> M
+        K -.-> M
     end
 
-    subgraph "Frontends & Agents"
-        H[React Admin Panel]
-        I[OpenWebUI Filter]
-        J[Custom Web Apps]
-        K[AI Agents]
-
-        H --> D
-        H --> E
-        H --> F
-        I --> E
-        J --> E
-        K --> E
+    subgraph "Clients"
+        N[React Frontend]
+        O[API Consumers]
     end
 
-    style D fill:#f39c12,stroke:#e67e22
-    style E fill:#d5f5e3,stroke:#2ecc71
-    style F fill:#d5f5e3,stroke:#2ecc71
-    style G fill:#d5f5e3,stroke:#2ecc71
-    style H fill:#eaf2f8,stroke:#3498db
+    N --> H
+    N --> J
+    N --> K
+    O --> H
+    O --> I
 ```
 
 ## Quick Start
@@ -97,47 +106,27 @@ graph TD
 ### Prerequisites
 
 - **PostgreSQL** with pgvector extension
-- **Redis** (required for progress tracking and caching)
+- **Redis** (optional - enables distributed caching; in-memory fallback for single-node)
 - **Docker** and Docker Compose (recommended)
 - **Python 3.11+** (for local development)
 - **Node.js 16+** (for frontend development)
 
-### Redis Setup
+### Optional: Redis Setup
 
-Shu requires Redis for progress tracking and caching. Choose one of the following options:
+Redis is optional but recommended for production deployments. When available, Shu uses Redis for distributed caching and job queues. Without Redis, Shu falls back to in-memory implementations suitable for single-node deployments.
 
-#### Option A: macOS (Homebrew)
 ```bash
-# Install Redis
-brew install redis
+# macOS
+brew install redis && brew services start redis
 
-# Start Redis service
-brew services start redis
-
-# Verify Redis is running
-redis-cli ping  # Should return "PONG"
-```
-
-#### Option B: Docker
-```bash
-# Run Redis in Docker
+# Docker
 docker run -d --name shu-redis -p 6379:6379 redis:alpine
 
-# Verify Redis is running
-docker exec shu-redis redis-cli ping  # Should return "PONG"
-```
-
-#### Option C: Linux (Ubuntu/Debian)
-```bash
-# Install Redis
-sudo apt update
-sudo apt install redis-server
-
-# Start Redis service
+# Linux (Ubuntu/Debian)
+sudo apt update && sudo apt install redis-server
 sudo systemctl start redis-server
-sudo systemctl enable redis-server
 
-# Verify Redis is running
+# Verify
 redis-cli ping  # Should return "PONG"
 ```
 
@@ -177,12 +166,12 @@ redis-cli ping  # Should return "PONG"
 3. **Backend-only stack (API + Postgres + Redis, no frontend)**:
 
    ```bash
-   make up-api
+   make up
    # or
    docker compose -f deployment/compose/docker-compose.yml up -d
    ```
 
-   To also run the dev API with auto-reload on port 8001, use `make up-api-dev` or `make up-full-dev`.
+   To run the dev API with auto-reload on port 8000, use `make up-dev` (backend only) or `make up-full-dev`.
 
 4. **Verify the system**:
 
@@ -197,8 +186,10 @@ redis-cli ping  # Should return "PONG"
 5. **Stop the stack:**
 
    ```bash
-   make down        # normal shutdown
-   make force-down  # aggressive shutdown; also removes shu-frontend if present
+   make down  # stop containers (docker compose down --remove-orphans)
+
+   # Optional: also remove volumes (destructive to local DB data)
+   docker compose -f deployment/compose/docker-compose.yml down -v --remove-orphans
    ```
 
 
@@ -261,8 +252,8 @@ redis-cli ping  # Should return "PONG"
 3. **Set environment variables:**
    ```bash
    export SHU_DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/shu
-   export SHU_REDIS_URL=redis://localhost:6379
    export PYTHONPATH=$(pwd)/backend/src
+   # Optional: export SHU_REDIS_URL=redis://localhost:6379  # For distributed caching
    ```
 
 4. **Start the backend server:**
@@ -297,13 +288,15 @@ Once running, access the generated API documentation:
 
 ```
 /api/v1/
+├── auth/                       # Authentication (login, tokens, user management)
 ├── health/                     # Health checks and monitoring
-├── knowledge-bases/            # Knowledge base management (CRUD)
-├── source-types/              # Available source types and validation
-├── sync/                      # Document synchronization and job management
-├── query/                     # Search and retrieval operations
-├── experiences/               # Experience workflow management (CRUD and execution)
-└── model-configurations/      # Model configuration management
+├── chat/                       # Chat conversations with LLM + RAG
+├── knowledge-bases/            # Knowledge base management (CRUD, documents)
+├── query/                      # Direct search and retrieval operations
+├── plugins/                    # Plugin management (registry, feeds, execution)
+├── experiences/                # Workflow automation (CRUD and execution)
+├── llm/                        # LLM provider configuration
+└── model-configurations/       # Model configuration management
 ```
 
 ## React Admin Panel
@@ -314,7 +307,7 @@ The Shu React Admin Panel provides a web interface for managing the system:
 - **Dashboard**: System overview with health monitoring and quick statistics
 - **Knowledge Base Management**: Create, edit, and delete knowledge bases
 - **Experience Management**: Create, configure, and execute workflow experiences
-- **Sync Job Monitoring**: Real-time monitoring and management of sync operations
+- **Plugin Feeds**: Configure scheduled feeds, trigger runs, and view recent executions (Admin → Feeds)
 - **Query Tester**: Interactive testing of vector similarity and hybrid search
 - **Health Monitor**: System health monitoring
 
@@ -331,12 +324,12 @@ Shu uses environment variables for configuration. Key settings include:
 ### Backend Configuration
 ```bash
 # Database
-SHU_DATABASE_URL=postgresql://user:password@host:5432/database
+SHU_DATABASE_URL=postgresql+asyncpg://user:password@host:5432/database
 
-# Redis (Required)
-SHU_REDIS_URL=redis://localhost:6379
-SHU_REDIS_CONNECTION_TIMEOUT=5
-SHU_REDIS_SOCKET_TIMEOUT=5
+# Redis (Optional - enables distributed caching for multi-node deployments)
+# SHU_REDIS_URL=redis://localhost:6379
+# SHU_REDIS_CONNECTION_TIMEOUT=5
+# SHU_REDIS_SOCKET_TIMEOUT=5
 
 # API
 SHU_API_HOST=0.0.0.0
@@ -384,7 +377,8 @@ Add both keys to your `.env` file or environment variables.
 # React Admin Panel
 # Optional: if API host differs from the frontend host; else same-origin is used
 REACT_APP_API_BASE_URL=http://localhost:8000
-REACT_APP_ENVIRONMENT=development
+
+# Optional: enable verbose console logging
 REACT_APP_DEBUG=true
 ```
 
@@ -465,15 +459,13 @@ curl -X POST http://localhost:8000/api/v1/llm/providers/{provider_id}/models \
 
 ### OAuth Token Migration
 
-If you have existing OAuth credentials, encrypt them after setting up the encryption key:
+Shu stores OAuth tokens encrypted at rest.
 
-```bash
-# Dry run to see what would be encrypted
-python scripts/encrypt_existing_oauth_tokens.py --dry-run
+If you have an existing database that contains *plaintext* OAuth tokens from earlier
+development versions, those rows will not decrypt once `SHU_OAUTH_ENCRYPTION_KEY` is enabled.
 
-# Perform the actual encryption
-python scripts/encrypt_existing_oauth_tokens.py
-```
+Currently there is no bundled bulk migration script. The recommended approach is to
+re-connect affected provider accounts so tokens are re-stored encrypted.
 
 ## Testing
 
@@ -484,7 +476,7 @@ See the testing guide for current commands and scope:
 Typical local runs:
 ```bash
 # Backend integration tests
-python -m tests.integ.run_all_integration_tests
+cd backend/src && python -m tests.integ.run_all_integration_tests
 
 # Backend unit tests
 python -m pytest backend/src/tests/unit
@@ -504,7 +496,7 @@ curl http://localhost:8000/api/v1/knowledge-bases
 # Query operations
 curl -X POST http://localhost:8000/api/v1/query/{kb_id}/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "test query", "search_type": "hybrid"}'
+  -d '{"query": "test query", "query_type": "hybrid"}'
 ```
 
 For detailed testing procedures, see [TESTING.md](./docs/policies/TESTING.md).
@@ -521,7 +513,7 @@ response = requests.post(
     "http://localhost:8000/api/v1/query/kb_id/search",
     json={
         "query": "your question",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 5
     }
 )
@@ -556,9 +548,9 @@ frontend/
 ### Development Workflow
 
 1. **Make changes to source code**
-2. **Run tests**: `python -m tests.integ.run_all_integration_tests`
-3. **Update database schema**: `python -m alembic revision --autogenerate -m "description"`
-4. **Apply migrations**: `python -m alembic upgrade head`
+2. **Run tests**: `cd backend/src && python -m tests.integ.run_all_integration_tests`
+3. **Update database schema**: `python -m alembic -c backend/alembic.ini revision --autogenerate -m "description"`
+4. **Apply migrations**: `python -m alembic -c backend/alembic.ini upgrade head`
 5. **Frontend development**: `cd frontend && npm start`
 
 
@@ -582,7 +574,6 @@ docker compose -f deployment/compose/docker-compose.yml up -d --scale shu-api=3
 Shu is designed for Kubernetes deployment with:
 - Health checks for liveness and readiness probes
 - Configurable scaling and resource limits
-- Automated sync jobs via CronJobs
 - Monitoring and logging integration
 
 

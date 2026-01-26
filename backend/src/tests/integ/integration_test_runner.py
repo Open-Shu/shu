@@ -5,9 +5,20 @@ This framework provides reliable integration testing without pytest-asyncio conf
 It uses a single event loop and real database connections to test actual application workflows.
 """
 
+# =============================================================================
+# TEST ENVIRONMENT CONFIGURATION
+# Must be set BEFORE any shu imports to ensure settings pick up test overrides
+# =============================================================================
+import os
+
+# Disable rate limiting for test runs - the test suite makes many API calls
+# and rate limiting causes cascade failures unrelated to actual test logic
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
+
+# =============================================================================
+
 import asyncio
 import logging
-import os
 import traceback
 from typing import List, Callable, Dict, Any, Optional
 from datetime import datetime

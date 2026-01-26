@@ -5,8 +5,21 @@ This script discovers and runs all test suites (integration and unit) in the tes
 It provides a unified interface for running all tests or specific test suites.
 """
 
-import sys
+# =============================================================================
+# TEST ENVIRONMENT CONFIGURATION
+# Must be set BEFORE any shu imports to ensure settings pick up test overrides
+# =============================================================================
 import os
+
+# Disable rate limiting for test runs by default - the test suite makes many API calls
+# and rate limiting causes cascade failures unrelated to actual test logic.
+# Tests that specifically test rate limiting behavior use the _enable_rate_limiting()
+# context manager to temporarily enable rate limiting on the EXECUTOR instance.
+os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
+
+# =============================================================================
+
+import sys
 import asyncio
 import importlib
 import importlib.util
@@ -96,6 +109,7 @@ class MasterTestRunner:
             return False
 
         suite = self.test_suites[suite_key]
+
         print(f"🚀 Running {suite.get_suite_name()}")
 
         # Import the test runner function

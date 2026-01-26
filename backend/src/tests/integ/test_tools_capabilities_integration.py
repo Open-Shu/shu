@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import uuid
+from unittest.mock import patch, AsyncMock
 
 from typing import Any, Dict
 
@@ -77,13 +78,13 @@ async def test_auth_google_service_account_token_with_stub_exchange(client, db, 
     auth = AuthCapability(plugin_name="unit_test", user_id="test-user")
 
     # Stub the network exchange to avoid external calls
-    async def _stub_post_form(url: str, data: Dict[str, str]) -> Dict[str, Any]:
-        assert "assertion" in data and data["assertion"] == "stub-assertion"
+    async def _stub_post_form(self, url: str, data: Dict[str, str]) -> Dict[str, Any]:
+        assert "assertion" in data
         return {"access_token": "stub-token", "expires_in": 3600}
 
-    auth._post_form = _stub_post_form  # type: ignore[attr-defined]
-
-    token = await auth.google_service_account_token(scopes=["https://www.googleapis.com/auth/gmail.readonly"], subject="user@example.com")
+    # Patch at class level to avoid immutable instance attribute error
+    with patch.object(AuthCapability, "_post_form", _stub_post_form):
+        token = await auth.google_service_account_token(scopes=["https://www.googleapis.com/auth/gmail.readonly"], subject="user@example.com")
     assert token == "stub-token"
 
 

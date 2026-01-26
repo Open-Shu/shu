@@ -80,21 +80,16 @@ class Host:
     def __delattr__(self, name: str) -> None:
         raise AttributeError(f"Host attributes cannot be deleted")
 
-    def __getattr__(self, name: str):  # only called if normal attribute access fails
-        cap_map = {
-            "http": "http",
-            "identity": "identity",
-            "auth": "auth",
-            "kb": "kb",
-            "secrets": "secrets",
-            "storage": "storage",
-            "cursor": "cursor",
-            "cache": "cache",
-            "ocr": "ocr",
-        }
-        if name in cap_map and cap_map[name] not in self._declared_caps:
-            raise CapabilityDenied(cap_map[name])
-        raise AttributeError(name)
+    # Capability names that require declaration before access
+    _CAP_NAMES = frozenset(("http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr"))
+
+    def __getattribute__(self, name: str) -> Any:
+        # For capability attributes, check if declared before returning
+        if name in Host._CAP_NAMES:
+            declared = object.__getattribute__(self, "_declared_caps")
+            if name not in declared:
+                raise CapabilityDenied(name)
+        return object.__getattribute__(self, name)
 
 
 def make_host(*, plugin_name: str, user_id: str, user_email: Optional[str], capabilities: Optional[List[str]] = None, provider_identities: Optional[Dict[str, List[Dict[str, Any]]]] = None, host_context: Optional[Dict[str, Any]] = None) -> Host:

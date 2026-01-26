@@ -15,7 +15,7 @@ services:
       - SHU_API_HOST=0.0.0.0
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=production
-      - SHU_APP_VERSION=0.0.5
+      - SHU_APP_VERSION=0.0.6
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"
@@ -51,7 +51,7 @@ services:
       - SHU_API_HOST=0.0.0.0
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=development
-      - SHU_APP_VERSION=0.0.5-dev      
+      - SHU_APP_VERSION=0.0.6-dev      
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"

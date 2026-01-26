@@ -6,6 +6,7 @@ Follows custom integration test framework. Negative tests log expected error out
 import sys
 import os
 import logging
+import uuid
 from typing import List, Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
@@ -14,14 +15,30 @@ from integ.expected_error_context import expect_validation_errors, expect_authen
 
 logger = logging.getLogger(__name__)
 
-# Test fixtures borrowed from chat integration patterns
-PROVIDER_DATA = {
-    "name": "Test Provider for Attachments",
-    "provider_type": "openai",
-    "api_endpoint": "https://api.openai.com/v1",
-    "api_key": "test-api-key-attachments",
-    "is_active": True
-}
+
+def _get_unique_provider_data() -> dict:
+    """Generate provider data with unique name to avoid conflicts between test runs."""
+    unique_id = uuid.uuid4().hex[:8]
+    return {
+        "name": f"Test Provider Attachments {unique_id}",
+        "provider_type": "openai",
+        "api_endpoint": "https://api.openai.com/v1",
+        "api_key": "test-api-key-attachments",
+        "is_active": True
+    }
+
+
+def _get_unique_model_config_data() -> dict:
+    """Generate model config data with unique name."""
+    unique_id = uuid.uuid4().hex[:8]
+    return {
+        "name": f"Test Attachments Assistant {unique_id}",
+        "description": "Model configuration for attachments integration",
+        "is_active": True,
+        "created_by": "test-user",
+        "knowledge_base_ids": []
+    }
+
 
 MODEL_DATA = {
     "model_name": "gpt-4",
@@ -32,18 +49,11 @@ MODEL_DATA = {
     "supports_streaming": True,
 }
 
-MODEL_CONFIG_DATA = {
-    "name": "Test Attachments Assistant",
-    "description": "Model configuration for attachments integration",
-    "is_active": True,
-    "created_by": "test-user",
-    "knowledge_base_ids": []
-}
-
 
 async def _create_conversation(client, auth_headers) -> str:
-    # Create provider
-    provider_resp = await client.post("/api/v1/llm/providers", json=PROVIDER_DATA, headers=auth_headers)
+    # Create provider with unique name
+    provider_data = _get_unique_provider_data()
+    provider_resp = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
     assert provider_resp.status_code == 201, provider_resp.text
     provider_id = extract_data(provider_resp)["id"]
 
@@ -51,9 +61,10 @@ async def _create_conversation(client, auth_headers) -> str:
     model_resp = await client.post(f"/api/v1/llm/providers/{provider_id}/models", json=MODEL_DATA, headers=auth_headers)
     assert model_resp.status_code == 200, model_resp.text
 
-    # Create model configuration
+    # Create model configuration with unique name
+    model_config_data = _get_unique_model_config_data()
     model_config = {
-        **MODEL_CONFIG_DATA,
+        **model_config_data,
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
     }
@@ -149,7 +160,8 @@ async def test_upload_unsupported_type(client, db, auth_headers):
     conversation_id = await _create_conversation(client, auth_headers)
 
     logger.info("=== EXPECTED TEST OUTPUT: Unsupported type error is expected ===")
-    files = {"file": ("image.jpg", b"fakejpegdata", "image/jpeg")}
+    # Use .exe which is not in the allowed list: pdf, docx, txt, md, png, jpg, jpeg, gif, webp
+    files = {"file": ("program.exe", b"MZ\x00\x00", "application/x-msdownload")}
     resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
     # Our API returns 400 for unsupported type
     assert resp.status_code == 400, resp.text

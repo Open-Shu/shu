@@ -236,7 +236,7 @@ class TestProviderRateLimits:
 
         # Create mock settings - no global LLM limits needed
         mock_settings = MagicMock()
-        mock_settings.enable_rate_limiting = True
+        mock_settings.enable_api_rate_limiting = True
 
         service = RateLimitService(settings=mock_settings)
 
@@ -257,7 +257,7 @@ class TestProviderRateLimits:
 
         # Create mock settings - no global LLM limits needed
         mock_settings = MagicMock()
-        mock_settings.enable_rate_limiting = True
+        mock_settings.enable_api_rate_limiting = True
 
         service = RateLimitService(settings=mock_settings)
 
@@ -292,36 +292,36 @@ class TestRateLimitService:
         from shu.core.rate_limiting import RateLimitService
 
         mock_settings = MagicMock()
-        mock_settings.enable_rate_limiting = True
-        mock_settings.rate_limit_requests = 100
-        mock_settings.rate_limit_period = 60
-        mock_settings.strict_rate_limit_requests = 10
+        mock_settings.enable_api_rate_limiting = True
+        mock_settings.api_rate_limit_requests = 100
+        mock_settings.api_rate_limit_period = 60
+        mock_settings.strict_api_rate_limit_requests = 10
         # Note: LLM rate limits are per-provider, not global
 
         service = RateLimitService(settings=mock_settings)
 
         assert service.enabled is True
-    
+
     def test_service_disabled(self):
         """Service respects disabled setting."""
         from shu.core.rate_limiting import RateLimitService
-        
+
         mock_settings = MagicMock()
-        mock_settings.enable_rate_limiting = False
-        
+        mock_settings.enable_api_rate_limiting = False
+
         service = RateLimitService(settings=mock_settings)
-        
+
         assert service.enabled is False
-    
+
     @pytest.mark.asyncio
     async def test_check_api_limit_disabled_allows(self):
         """Disabled service allows all requests."""
         from shu.core.rate_limiting import RateLimitService
-        
+
         mock_settings = MagicMock()
-        mock_settings.enable_rate_limiting = False
-        
+        mock_settings.enable_api_rate_limiting = False
+
         service = RateLimitService(settings=mock_settings)
         result = await service.check_api_limit("user:123")
-        
+
         assert result.allowed is True
