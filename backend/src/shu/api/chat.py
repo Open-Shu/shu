@@ -5,13 +5,12 @@ This module provides REST API endpoints for managing chat conversations,
 messages, and LLM interactions.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status, UploadFile, File
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile, File
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict, Any, List, Optional, Union, Literal
+from typing import Dict, Any, List, Optional, Literal
 from pydantic import BaseModel, Field
-import logging
 import json
 import traceback
 from datetime import datetime, timezone
@@ -27,7 +26,6 @@ from ..schemas.envelope import SuccessResponse
 from ..schemas.query import RagRewriteMode
 from ..schemas.chat import ConversationFromExperienceRequest
 from ..services.chat_service import ChatService
-from ..services.chat_streaming import ProviderResponseEvent
 from ..services.attachment_service import AttachmentService
 from ..auth.models import User
 from ..models.llm_provider import Message, Conversation
@@ -37,6 +35,41 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 settings = get_settings_instance()
+
+
+def _sanitize_chat_error_message(error_content: str) -> str:
+    """
+    Sanitize error messages for chat endpoints while preserving important backend errors.
+    
+    This function provides selective error sanitization:
+    - Rate limit errors are preserved so users understand throttling
+    - Timeout errors are preserved so users know the request took too long
+    - Service unavailable errors are preserved so users know the backend is down
+    - All other errors (API keys, auth, config, DB, etc.) are replaced with generic messages
+    
+    Args:
+        error_content: The original error message from the provider or backend
+        
+    Returns:
+        Either the original error message (for allowed errors) or a sanitized generic message
+    """
+    if not error_content:
+        return "The request failed. You may want to try another model."
+    
+    error_lower = error_content.lower()
+    
+    # Only preserve these specific error types
+    if "rate limit" in error_lower or "too many requests" in error_lower:
+        return error_content
+    
+    if "timeout" in error_lower or "timed out" in error_lower:
+        return error_content
+    
+    if "service unavailable" in error_lower or "temporarily unavailable" in error_lower:
+        return error_content
+    
+    # Sanitize all other errors (API keys, auth, config, DB, malformed requests, etc.)
+    return "The request failed. You may want to try another model."
 
 
 # Pydantic models for API requests/responses
@@ -456,16 +489,16 @@ async def create_conversation_from_experience(
         
         return create_success_response(data=_build_conversation_response(conversation))
     
-    except ShuException as e:
-        logger.error(f"Error creating conversation from experience: {e}")
+    except ShuException as exc:
+        logger.error(f"Error creating conversation from experience: {exc}")
         return create_error_response(
-            code=e.error_code,
-            message=e.message,
-            status_code=e.status_code
+            code=exc.error_code,
+            message=exc.message,
+            status_code=exc.status_code
         )
-    except HTTPException as e:
+    except HTTPException as exc:
         # Handle HTTPExceptions from service layer
-        logger.error(f"HTTP error creating conversation from experience: {e.detail}")
+        logger.error(f"HTTP error creating conversation from experience: {exc.detail}")
         
         # Map status codes to appropriate error codes
         error_code_map = {
@@ -475,14 +508,14 @@ async def create_conversation_from_experience(
         }
         
         return create_error_response(
-            code=error_code_map.get(e.status_code, "INTERNAL_ERROR"),
-            message=e.detail,
-            status_code=e.status_code
+            code=error_code_map.get(exc.status_code, "INTERNAL_ERROR"),
+            message=exc.detail,
+            status_code=exc.status_code
         )
-    except Exception as e:
+    except Exception as exc:
         # Convert exception to string to avoid lazy-loading issues with SQLAlchemy objects
-        error_msg = str(e)
-        error_type = type(e).__name__
+        error_msg = str(exc)
+        error_type = type(exc).__name__
         tb = traceback.format_exc()
         logger.error(
             f"Unexpected error creating conversation from experience: {error_type}: {error_msg}\n{tb}",
@@ -967,11 +1000,17 @@ async def send_message(
                     ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
                     attachment_ids=request_data.attachment_ids,
                 ):
+                    # Sanitize error messages for regular chat users
+                    if event.type == "error":
+                        event.content = _sanitize_chat_error_message(event.content or "")
+                    
                     payload = event.to_dict()
                     yield f"data: {json.dumps(payload)}\n\n"
             except Exception as e:
                 logger.exception("Streaming error during send_message")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                # Return a generic error message to users - detailed errors are for /test endpoint only
+                user_error = "An error occurred while processing your request. Please try again."
+                yield f"data: {json.dumps({'error': user_error})}\n\n"
             finally:
                 yield "data: [DONE]\n\n"
 
@@ -1169,11 +1208,17 @@ async def regenerate_message(
                     parent_message_id=request.parent_message_id,
                     rag_rewrite_mode=request.rag_rewrite_mode,
                 ):
+                    # Sanitize error messages for regular chat users
+                    if event.type == "error":
+                        event.content = _sanitize_chat_error_message(event.content or "")
+                    
                     payload = event.to_dict()
                     yield f"data: {json.dumps(payload)}\n\n"
             except Exception as e:
                 logger.exception("Streaming error during regenerate_message")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                # Return a generic error message to users - detailed errors are for /test endpoint only
+                user_error = "An error occurred while processing your request. Please try again."
+                yield f"data: {json.dumps({'error': user_error})}\n\n"
             finally:
                 yield "data: [DONE]\n\n"
 

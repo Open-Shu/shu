@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -556,10 +557,17 @@ describe('LLMTester - Property 5: Pre-population', () => {
  * Feature: open-source-fixes, Property 14: LLM Tester Resource Cleanup
  * Validates: Requirements 8.1, 8.2
  * 
- * Property: For any LLM Tester test execution, both the temporary model
- * configuration and conversation should be cleaned up, even if the test fails.
+ * Property: For any LLM Tester test execution, the test endpoint is called
+ * and resources are managed by the backend (no client-side cleanup needed).
+ * 
+ * Note: The LLM Tester now uses the dedicated test endpoint (modelConfigAPI.test)
+ * which handles resource management server-side. These tests verify the test
+ * endpoint is called correctly and results are displayed properly.
  */
 describe('LLMTester - Property 14: Resource Cleanup', () => {
+  // Increase timeout for this suite due to multiple async operations
+  jest.setTimeout(15000);
+
   beforeEach(() => {
     jest.clearAllMocks();
     
@@ -571,7 +579,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     api.formatError = jest.fn().mockImplementation((error) => error?.message || 'Unknown error');
   });
 
-  test('conversation is cleaned up after successful test', async () => {
+  test('test endpoint is called with correct parameters on successful test', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-cleanup-1',
@@ -587,25 +595,19 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       is_active: true,
     };
 
-    const testConversation = {
-      id: 'conv-cleanup-1',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
-    };
-
-    const testMessage = {
-      id: 'msg-cleanup-1',
-      role: 'assistant',
-      content: 'Test response',
-      model_id: testConfig.model_name,
-      message_metadata: {
-        usage: { total_tokens: 100 },
-      },
+    const testResult = {
+      success: true,
+      response: 'Test response from LLM',
+      model_used: 'gpt-4',
+      token_usage: { total_tokens: 100 },
+      response_time_ms: 500,
+      prompt_applied: false,
     };
 
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockResolvedValue({ data: testResult }),
     };
     
     api.llmAPI = {
@@ -614,28 +616,6 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
-    };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockResolvedValue({ data: testConversation }),
-      streamMessage: jest.fn().mockResolvedValue({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: jest.fn()
-              .mockResolvedValueOnce({
-                value: new TextEncoder().encode('data: {"content":"Test"}\n'),
-                done: false,
-              })
-              .mockResolvedValueOnce({
-                value: new TextEncoder().encode('data: [DONE]\n'),
-                done: true,
-              }),
-          }),
-        },
-      }),
-      getMessages: jest.fn().mockResolvedValue({ data: [testMessage] }),
-      deleteConversation: jest.fn().mockResolvedValue({}),
     };
 
     // Render component
@@ -657,7 +637,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message');
 
     // Click test button
@@ -666,22 +646,22 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
 
     // Wait for test to complete
     await waitFor(() => {
-      expect(api.chatAPI.createConversation).toHaveBeenCalled();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
-    // Verify: Conversation was created
-    expect(api.chatAPI.createConversation).toHaveBeenCalledWith({
-      title: expect.stringContaining('LLM Tester'),
-      model_configuration_id: testConfig.id,
+    // Verify: Test endpoint was called with correct parameters
+    expect(api.modelConfigAPI.test).toHaveBeenCalledWith(testConfig.id, {
+      test_message: 'Test message',
+      include_knowledge_bases: false,
     });
 
-    // Verify: Conversation was deleted (cleanup occurred)
+    // Verify: Results are displayed
     await waitFor(() => {
-      expect(api.chatAPI.deleteConversation).toHaveBeenCalledWith(testConversation.id);
-    }, { timeout: 5000 });
+      expect(screen.getByText('Test response from LLM')).toBeInTheDocument();
+    });
   });
 
-  test('conversation is cleaned up even when test fails', async () => {
+  test('test endpoint handles failure gracefully', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-cleanup-2',
@@ -697,15 +677,15 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       is_active: true,
     };
 
-    const testConversation = {
-      id: 'conv-cleanup-2',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
+    const testResult = {
+      success: false,
+      error: 'Invalid API key',
     };
 
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockResolvedValue({ data: testResult }),
     };
     
     api.llmAPI = {
@@ -714,12 +694,6 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
-    };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockResolvedValue({ data: testConversation }),
-      streamMessage: jest.fn().mockRejectedValue(new Error('Streaming failed')),
-      deleteConversation: jest.fn().mockResolvedValue({}),
     };
 
     // Render component
@@ -741,28 +715,28 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message that will fail');
 
     // Click test button
     const testButton = getByText('Test LLM Call');
     await userEvent.click(testButton);
 
-    // Wait for test to fail
+    // Wait for test to complete
     await waitFor(() => {
-      expect(api.chatAPI.streamMessage).toHaveBeenCalled();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
-    // Verify: Conversation was created
-    expect(api.chatAPI.createConversation).toHaveBeenCalled();
-
-    // Verify: Conversation was deleted even though test failed (cleanup occurred)
+    // Verify: Error is displayed
     await waitFor(() => {
-      expect(api.chatAPI.deleteConversation).toHaveBeenCalledWith(testConversation.id);
-    }, { timeout: 5000 });
+      expect(screen.getByText(/Invalid API key/i)).toBeInTheDocument();
+    });
+
+    // Verify: Component is still functional
+    expect(getByLabelText('Model Configuration')).toBeInTheDocument();
   });
 
-  test('cleanup continues even if conversation deletion fails', async () => {
+  test('component handles network error gracefully', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-cleanup-3',
@@ -778,25 +752,10 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       is_active: true,
     };
 
-    const testConversation = {
-      id: 'conv-cleanup-3',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
-    };
-
-    const testMessage = {
-      id: 'msg-cleanup-3',
-      role: 'assistant',
-      content: 'Test response',
-      model_id: testConfig.model_name,
-      message_metadata: {
-        usage: { total_tokens: 100 },
-      },
-    };
-
-    // Mock API responses
+    // Mock API responses - test endpoint throws network error
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockRejectedValue(new Error('Network error')),
     };
     
     api.llmAPI = {
@@ -806,31 +765,6 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
     };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockResolvedValue({ data: testConversation }),
-      streamMessage: jest.fn().mockResolvedValue({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: jest.fn()
-              .mockResolvedValueOnce({
-                value: new TextEncoder().encode('data: {"content":"Test"}\n'),
-                done: false,
-              })
-              .mockResolvedValueOnce({
-                value: new TextEncoder().encode('data: [DONE]\n'),
-                done: true,
-              }),
-          }),
-        },
-      }),
-      getMessages: jest.fn().mockResolvedValue({ data: [testMessage] }),
-      deleteConversation: jest.fn().mockRejectedValue(new Error('Cleanup failed')),
-    };
-
-    // Spy on console.warn to verify cleanup error is logged
-    const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -851,7 +785,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message');
 
     // Click test button
@@ -860,17 +794,16 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
 
     // Wait for test to complete
     await waitFor(() => {
-      expect(api.chatAPI.deleteConversation).toHaveBeenCalled();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
-    // Verify: Cleanup was attempted
-    expect(api.chatAPI.deleteConversation).toHaveBeenCalledWith(testConversation.id);
+    // Verify: Error is displayed
+    await waitFor(() => {
+      expect(screen.getByText(/Network error/i)).toBeInTheDocument();
+    });
 
-    // Verify: Component didn't crash despite cleanup failure
+    // Verify: Component didn't crash
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
-
-    // Cleanup
-    consoleWarnSpy.mockRestore();
   });
 });
 
@@ -883,7 +816,23 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
  * Property: For any error that occurs during LLM Tester execution,
  * the component should display the error without crashing.
  */
+
+/**
+ * Unit Tests for Property 15: LLM Tester Error Resilience
+ * 
+ * Feature: open-source-fixes, Property 15: LLM Tester Error Resilience
+ * Validates: Requirements 8.3
+ * 
+ * Property: For any error that occurs during LLM Tester execution,
+ * the component should display the error without crashing.
+ * 
+ * Note: The LLM Tester now uses the dedicated test endpoint (modelConfigAPI.test)
+ * which returns structured error responses. These tests verify error handling.
+ */
 describe('LLMTester - Property 15: Error Resilience', () => {
+  // Increase timeout for this suite due to multiple async operations
+  jest.setTimeout(15000);
+
   beforeEach(() => {
     jest.clearAllMocks();
     
@@ -895,7 +844,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     api.formatError = jest.fn().mockImplementation((error) => error?.message || 'Unknown error');
   });
 
-  test('component displays error when conversation creation fails', async () => {
+  test('component displays error when test endpoint returns failure', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-error-1',
@@ -911,9 +860,15 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       is_active: true,
     };
 
+    const testResult = {
+      success: false,
+      error: 'Invalid API key or authentication failed',
+    };
+
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockResolvedValue({ data: testResult }),
     };
     
     api.llmAPI = {
@@ -922,11 +877,6 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
-    };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockRejectedValue(new Error('Failed to create conversation')),
-      deleteConversation: jest.fn().mockResolvedValue({}),
     };
 
     // Render component
@@ -948,7 +898,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message');
 
     // Click test button
@@ -957,12 +907,13 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     // Wait for error to be displayed
     await waitFor(() => {
-      const errorAlert = screen.getByText(/Error:/i);
-      expect(errorAlert).toBeInTheDocument();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
     // Verify: Error message is displayed
-    expect(screen.getByText(/Failed to create conversation/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Invalid API key or authentication failed/i)).toBeInTheDocument();
+    });
 
     // Verify: Component is still functional (not crashed)
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
@@ -970,7 +921,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     expect(testButton).toBeInTheDocument();
   });
 
-  test('component displays error when streaming fails', async () => {
+  test('component displays error when test endpoint throws exception', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-error-2',
@@ -980,21 +931,16 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     const testConfig = {
       id: 'config-error-2',
-      name: 'Streaming Error Config',
+      name: 'Exception Error Config',
       llm_provider_id: testProvider.id,
       model_name: 'gpt-4',
       is_active: true,
     };
 
-    const testConversation = {
-      id: 'conv-error-2',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
-    };
-
-    // Mock API responses
+    // Mock API responses - test endpoint throws exception
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockRejectedValue(new Error('Server error: 500')),
     };
     
     api.llmAPI = {
@@ -1003,15 +949,6 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
-    };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockResolvedValue({ data: testConversation }),
-      streamMessage: jest.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-      }),
-      deleteConversation: jest.fn().mockResolvedValue({}),
     };
 
     // Render component
@@ -1033,7 +970,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message');
 
     // Click test button
@@ -1042,12 +979,13 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     // Wait for error to be displayed
     await waitFor(() => {
-      const errorAlert = screen.getByText(/Error:/i);
-      expect(errorAlert).toBeInTheDocument();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
     // Verify: Error message is displayed
-    expect(screen.getByText(/Streaming failed with status 500/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Server error: 500/i)).toBeInTheDocument();
+    });
 
     // Verify: Component is still functional (not crashed)
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
@@ -1055,7 +993,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     expect(testButton).toBeInTheDocument();
   });
 
-  test('component displays error when message fetch fails', async () => {
+  test('component displays timeout error with special formatting', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-error-3',
@@ -1065,21 +1003,21 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     const testConfig = {
       id: 'config-error-3',
-      name: 'Message Fetch Error Config',
+      name: 'Timeout Error Config',
       llm_provider_id: testProvider.id,
       model_name: 'gpt-4',
       is_active: true,
     };
 
-    const testConversation = {
-      id: 'conv-error-3',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
+    const testResult = {
+      success: false,
+      error: 'Request timed out after 30 seconds',
     };
 
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockResolvedValue({ data: testResult }),
     };
     
     api.llmAPI = {
@@ -1089,31 +1027,6 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
     };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockResolvedValue({ data: testConversation }),
-      streamMessage: jest.fn().mockResolvedValue({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: jest.fn()
-              .mockResolvedValueOnce({
-                value: new TextEncoder().encode('data: {"content":"Test"}\n'),
-                done: false,
-              })
-              .mockResolvedValueOnce({
-                value: new TextEncoder().encode('data: [DONE]\n'),
-                done: true,
-              }),
-          }),
-        },
-      }),
-      getMessages: jest.fn().mockRejectedValue(new Error('Failed to fetch messages')),
-      deleteConversation: jest.fn().mockResolvedValue({}),
-    };
-
-    // Spy on console.warn to verify metadata fetch error is logged
-    const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1134,31 +1047,28 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message');
 
     // Click test button
     const testButton = getByText('Test LLM Call');
     await userEvent.click(testButton);
 
-    // Wait for streaming to complete and getMessages to be called
+    // Wait for error to be displayed
     await waitFor(() => {
-      expect(api.chatAPI.getMessages).toHaveBeenCalled();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
-    // Verify: Component still shows results tab despite metadata fetch failure
+    // Verify: Timeout error is displayed with special formatting
     await waitFor(() => {
-      // The component should still display results
-      expect(screen.getByText('Results')).toBeInTheDocument();
-    }, { timeout: 2000 });
+      const timeoutElements = screen.getAllByText(/Request Timed Out/i);
+      expect(timeoutElements.length).toBeGreaterThan(0);
+    });
 
     // Verify: Component is still functional (not crashed)
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
     expect(messageInput).toBeInTheDocument();
     expect(testButton).toBeInTheDocument();
-
-    // Cleanup
-    consoleWarnSpy.mockRestore();
   });
 
   test('component handles network timeout gracefully', async () => {
@@ -1171,21 +1081,19 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     const testConfig = {
       id: 'config-error-4',
-      name: 'Timeout Error Config',
+      name: 'Network Timeout Config',
       llm_provider_id: testProvider.id,
       model_name: 'gpt-4',
       is_active: true,
     };
 
-    const testConversation = {
-      id: 'conv-error-4',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
-    };
-
-    // Mock API responses
+    // Mock API responses - test endpoint throws timeout error
+    const timeoutError = new Error('timeout of 30000ms exceeded');
+    timeoutError.code = 'ECONNABORTED';
+    
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn().mockRejectedValue(timeoutError),
     };
     
     api.llmAPI = {
@@ -1194,16 +1102,6 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
-    };
-
-    api.chatAPI = {
-      createConversation: jest.fn().mockResolvedValue({ data: testConversation }),
-      streamMessage: jest.fn().mockImplementation(() => {
-        const error = new Error('Network timeout');
-        error.name = 'AbortError';
-        return Promise.reject(error);
-      }),
-      deleteConversation: jest.fn().mockResolvedValue({}),
     };
 
     // Render component
@@ -1225,7 +1123,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'Test message');
 
     // Click test button
@@ -1234,12 +1132,14 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     // Wait for error to be displayed
     await waitFor(() => {
-      const errorAlert = screen.getByText(/Error:/i);
-      expect(errorAlert).toBeInTheDocument();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalled();
+    }, { timeout: 3000 });
 
-    // Verify: Error message is displayed
-    expect(screen.getByText(/Network timeout/i)).toBeInTheDocument();
+    // Verify: Timeout error is displayed
+    await waitFor(() => {
+      const timeoutElements = screen.getAllByText(/Request Timed Out/i);
+      expect(timeoutElements.length).toBeGreaterThan(0);
+    });
 
     // Verify: Component is still functional (not crashed)
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
@@ -1263,31 +1163,26 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       is_active: true,
     };
 
-    const testConversation1 = {
-      id: 'conv-error-5-1',
-      title: 'LLM Tester - 2024-01-01T00:00:00.000Z',
-      model_configuration_id: testConfig.id,
+    const failResult = {
+      success: false,
+      error: 'First call failed',
     };
 
-    const testConversation2 = {
-      id: 'conv-error-5-2',
-      title: 'LLM Tester - 2024-01-01T00:01:00.000Z',
-      model_configuration_id: testConfig.id,
-    };
-
-    const testMessage = {
-      id: 'msg-error-5',
-      role: 'assistant',
-      content: 'Test response after recovery',
-      model_id: testConfig.model_name,
-      message_metadata: {
-        usage: { total_tokens: 100 },
-      },
+    const successResult = {
+      success: true,
+      response: 'Test response after recovery',
+      model_used: 'gpt-4',
+      token_usage: { total_tokens: 100 },
+      response_time_ms: 500,
+      prompt_applied: false,
     };
 
     // Mock API responses - first call fails, second succeeds
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
+      test: jest.fn()
+        .mockResolvedValueOnce({ data: failResult })
+        .mockResolvedValueOnce({ data: successResult }),
     };
     
     api.llmAPI = {
@@ -1296,37 +1191,6 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
-    };
-
-    let callCount = 0;
-    api.chatAPI = {
-      createConversation: jest.fn().mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.resolve({ data: testConversation1 });
-        }
-        return Promise.resolve({ data: testConversation2 });
-      }),
-      streamMessage: jest.fn()
-        .mockRejectedValueOnce(new Error('First call failed'))
-        .mockResolvedValueOnce({
-          ok: true,
-          body: {
-            getReader: () => ({
-              read: jest.fn()
-                .mockResolvedValueOnce({
-                  value: new TextEncoder().encode('data: {"content":"Success"}\n'),
-                  done: false,
-                })
-                .mockResolvedValueOnce({
-                  value: new TextEncoder().encode('data: [DONE]\n'),
-                  done: true,
-                }),
-            }),
-          },
-        }),
-      getMessages: jest.fn().mockResolvedValue({ data: [testMessage] }),
-      deleteConversation: jest.fn().mockResolvedValue({}),
     };
 
     // Render component
@@ -1348,7 +1212,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     });
 
     // Simulate user input
-    const userEvent = require('@testing-library/user-event').default;
+    // Use userEvent directly (v13 API)
     await userEvent.type(messageInput, 'First test');
 
     // Click test button (first attempt - will fail)
@@ -1357,12 +1221,13 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     // Wait for error to be displayed
     await waitFor(() => {
-      const errorAlert = screen.getByText(/Error:/i);
-      expect(errorAlert).toBeInTheDocument();
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalledTimes(1);
+    }, { timeout: 3000 });
 
     // Verify: First call failed
-    expect(screen.getByText(/First call failed/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/First call failed/i)).toBeInTheDocument();
+    });
 
     // Clear the message input and enter new message
     await userEvent.clear(messageInput);
@@ -1373,12 +1238,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     // Wait for success
     await waitFor(() => {
-      expect(api.chatAPI.streamMessage).toHaveBeenCalledTimes(2);
-    }, { timeout: 5000 });
+      expect(api.modelConfigAPI.test).toHaveBeenCalledTimes(2);
+    }, { timeout: 3000 });
 
-    // Verify: Component recovered - check that Results section is visible
+    // Verify: Component recovered - check that success response is displayed
     await waitFor(() => {
-      expect(screen.getByText('Results')).toBeInTheDocument();
+      expect(screen.getByText('Test response after recovery')).toBeInTheDocument();
     }, { timeout: 2000 });
 
     // Verify: Component is still functional

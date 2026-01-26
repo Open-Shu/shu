@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.models.plugin_execution import CallableTool
 from shu.services.plugin_execution import build_agent_tools
 from shu.services.providers.events import ProviderStreamEvent
-from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, ProviderToolCallEventResult, get_adapter_from_provider
+from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, get_adapter_from_provider
+from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 
 from ..models.llm_provider import LLMProvider
 from ..services.chat_types import ChatContext, ChatMessage
@@ -505,82 +506,43 @@ class UnifiedLLMClient:
         )
 
     def _extract_http_error_details(self, e: httpx.HTTPStatusError, model: str) -> Dict[str, Any]:
-        """Normalize useful fields from an HTTP error response."""
+        """Normalize useful fields from an HTTP error response.
+
+        Uses ErrorSanitizer to extract structured error information from
+        provider responses in a consistent format.
+
+        Args:
+            e: The HTTP status error from httpx.
+            model: The model name being used.
+
+        Returns:
+            Dictionary with normalized error details including:
+                - status: HTTP status code
+                - endpoint: Request endpoint URL
+                - request_id: Provider request ID if available
+                - provider_message: Error message from provider
+                - provider_error_type: Error type/category from provider
+                - provider_error_code: Error code from provider
+                - body: Raw response body
+                - model: Model name
+        """
         status_code = e.response.status_code if e.response is not None else None
         request_id = e.response.headers.get("x-request-id") if e.response is not None else None
         endpoint = str(e.request.url) if getattr(e, "request", None) is not None else None
 
-        body_text = None
-        provider_msg = None
-        provider_type = None
-        provider_code = None
-        body: Any = None
-
+        # Use ErrorSanitizer to extract provider error details
+        provider_error: Dict[str, Any] = {}
         if e.response is not None:
-            try:
-                body_text = e.response.text
-            except Exception:
-                body_text = None
-            if body_text:
-                # TODO: We should extend the providers to contain the error path format. Right now we are just guessing
-                #       where we can find the details.
-                try:
-                    body_json = e.response.json()
-                    if isinstance(body_json, dict):
-                        body = body_json
-                        error_section = body_json.get("error")
-                        if isinstance(error_section, dict):
-                            provider_msg = (
-                                error_section.get("message")
-                                or error_section.get("detail")
-                                or error_section.get("error")
-                                or error_section.get("status")
-                            )
-                            provider_type = (
-                                error_section.get("type")
-                                or error_section.get("status")
-                                or error_section.get("reason")
-                            )
-                            provider_code = error_section.get("code") or error_section.get("status")
-                        elif isinstance(error_section, list) and error_section:
-                            first_error = error_section[0]
-                            if isinstance(first_error, dict):
-                                provider_msg = (
-                                    first_error.get("message")
-                                    or first_error.get("detail")
-                                    or first_error.get("error")
-                                )
-                            provider_type = (
-                                first_error.get("type")
-                                or first_error.get("status")
-                                or first_error.get("reason")
-                            )
-                            provider_code = first_error.get("code") or first_error.get("status")
-                        elif isinstance(error_section, str):
-                            provider_msg = error_section
-                    if provider_msg is None and isinstance(body_json, dict):
-                        provider_msg = (
-                            body_json.get("message")
-                            or body_json.get("detail")
-                            or body_json.get("error_description")
-                        )
-                    if provider_type is None and isinstance(body_json, dict):
-                        provider_type = body_json.get("type") or body_json.get("status")
-                    if provider_code is None and isinstance(body_json, dict):
-                        provider_code = body_json.get("code")
-                    if body is None:
-                        body = body_json
-                except Exception:
-                    body = body_text
+            provider_error = ErrorSanitizer.extract_provider_error(e.response)
 
         return {
             "status": status_code,
             "endpoint": endpoint,
             "request_id": request_id,
-            "provider_message": provider_msg,
-            "provider_error_type": provider_type,
-            "provider_error_code": provider_code,
-            "body": body,
+            "provider_message": provider_error.get("message"),
+            "provider_error_type": provider_error.get("error_type"),
+            "provider_error_code": provider_error.get("error_code"),
+            "body": provider_error.get("raw_body"),
             "model": model,
         }
 
@@ -590,11 +552,36 @@ class UnifiedLLMClient:
         model: str,
         details: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Translate HTTP errors into domain errors with rich logging."""
+        """Translate HTTP errors into domain errors with rich logging and guidance.
+
+        Uses ErrorSanitizer to provide environment-aware error messages.
+        Suggestions are stored in the details dict for optional display by
+        endpoints that want to show them (e.g., /test endpoint), but are NOT
+        included in the exception message to keep chat errors user-friendly.
+
+        Args:
+            e: The HTTP status error from httpx.
+            model: The model name being used.
+            details: Pre-extracted error details (optional).
+
+        Raises:
+            LLMAuthenticationError: For 401 authentication errors.
+            LLMRateLimitError: For 429 rate limit errors.
+            LLMConfigurationError: For 400 bad request errors.
+            LLMProviderError: For other HTTP errors.
+        """
         details = details or self._extract_http_error_details(e, model)
         status_code = details.get("status")
         body_str = self._stringify_error_body(details.get("body"))
 
+        # Get environment for error sanitization
+        settings = get_settings_instance()
+        environment = getattr(settings, "environment", "production")
+
+        # Use ErrorSanitizer to get sanitized error with guidance
+        sanitized = ErrorSanitizer.sanitize_error(details)
+
+        # Always log full error details server-side (Requirement 4.5)
         if status_code and 500 <= status_code < 600:
             logger.error(
                 "LLM upstream error for provider %s: HTTP %s (request_id=%s, endpoint=%s, body=%s)",
@@ -606,29 +593,121 @@ class UnifiedLLMClient:
             )
         elif status_code == 401:
             logger.error(
-                "LLM authentication error for provider %s (request_id=%s)",
+                "LLM authentication error for provider %s (request_id=%s, provider_message=%s)",
                 self.provider.name,
-                details.get("request_id")
+                details.get("request_id"),
+                details.get("provider_message")
             )
-            raise LLMAuthenticationError("Invalid API key or authentication failed", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMAuthenticationError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
         elif status_code == 429:
             logger.error(
-                "LLM rate limit exceeded for provider %s (request_id=%s)",
+                "LLM rate limit exceeded for provider %s (request_id=%s, provider_message=%s)",
                 self.provider.name,
-                details.get("request_id")
+                details.get("request_id"),
+                details.get("provider_message")
             )
-            raise LLMRateLimitError("Rate limit exceeded", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMRateLimitError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
         elif status_code == 400:
             logger.error(
-                "LLM configuration error (400) for provider %s: %s",
+                "LLM configuration error (400) for provider %s: %s (request_id=%s)",
                 self.provider.name,
-                details.get("provider_message") or str(e)
+                details.get("provider_message") or str(e),
+                details.get("request_id")
             )
-            raise LLMConfigurationError("Provider rejected request (HTTP 400)", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMConfigurationError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
+
+        # Log other errors
+        logger.error(
+            "LLM HTTP error for provider %s: HTTP %s (request_id=%s, endpoint=%s, body=%s)",
+            self.provider.name,
+            status_code,
+            details.get("request_id"),
+            details.get("endpoint"),
+            body_str
+        )
 
         if status_code is not None:
-            raise LLMProviderError(f"HTTP error {status_code}", details=details) from e
-        raise LLMProviderError("HTTP error", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMProviderError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
+        raise LLMProviderError(
+            "HTTP error",
+            details=self._build_error_details(details, sanitized, environment)
+        ) from e
+
+    def _format_error_with_suggestions(self, sanitized: SanitizedError) -> str:
+        """Format error message with suggestions on separate lines.
+
+        Args:
+            sanitized: The sanitized error with message and suggestions.
+
+        Returns:
+            Formatted error message with suggestions on new lines.
+        """
+        if not sanitized.suggestions:
+            return sanitized.message
+
+        suggestions_text = "\n".join(f"  • {s}" for s in sanitized.suggestions)
+        return f"{sanitized.message}\n\nSuggestions:\n{suggestions_text}"
+
+    def _build_error_details(
+        self,
+        raw_details: Dict[str, Any],
+        sanitized: SanitizedError,
+        environment: str
+    ) -> Dict[str, Any]:
+        """Build error details dict based on environment.
+
+        In development mode, includes full details for debugging.
+        In production mode, includes only safe information.
+
+        Args:
+            raw_details: Raw error details from provider.
+            sanitized: Sanitized error from ErrorSanitizer.
+            environment: Current environment ('development' or 'production').
+
+        Returns:
+            Dictionary with error details appropriate for the environment.
+        """
+        is_development = environment.lower() in ("development", "dev", "local")
+
+        result: Dict[str, Any] = {
+            "status_code": raw_details.get("status"),
+            "error_type": sanitized.error_type,
+            "error_code": sanitized.error_code,
+            "suggestions": sanitized.suggestions,
+        }
+
+        if is_development:
+            # Include full details in development (Requirement 4.3)
+            result["endpoint"] = raw_details.get("endpoint")
+            result["request_id"] = raw_details.get("request_id")
+            result["provider_message"] = raw_details.get("provider_message")
+            result["model"] = raw_details.get("model")
+            result["body"] = raw_details.get("body")
+        else:
+            # Sanitize details in production (Requirement 4.4)
+            if raw_details.get("provider_message"):
+                result["provider_message"] = ErrorSanitizer.sanitize_string(
+                    raw_details.get("provider_message")
+                )
+            result["model"] = raw_details.get("model")
+
+        return result
 
     async def _retry_or_raise_http_error(
         self,
@@ -698,7 +777,7 @@ class UnifiedLLMClient:
                 models = await self.discover_available_models()
                 if models:
                     return True
-            except:
+            except Exception:
                 pass  # Fall back to chat completion test
 
             # Fallback: Try a simple completion to test the connection

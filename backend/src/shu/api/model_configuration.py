@@ -15,12 +15,13 @@ from ..api.dependencies import get_db
 from ..auth.rbac import require_power_user, require_regular_user
 from ..auth.models import User, UserRole
 from ..core.config import get_config_manager_dependency, ConfigurationManager
-from ..core.exceptions import ShuException, LLMConfigurationError
+from ..core.exceptions import ShuException, LLMConfigurationError, LLMError
 from ..core.response import ShuResponse
 from ..services.chat_service import ChatService
 from ..schemas.query import RagRewriteMode
 from ..services.model_configuration_service import ModelConfigurationService
 from ..services.side_call_service import SideCallService
+from ..services.error_sanitization import ErrorSanitizer
 from ..schemas.model_configuration import (
     ModelConfigurationCreate,
     ModelConfigurationUpdate,
@@ -36,6 +37,42 @@ from ..schemas.envelope import SuccessResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
+
+
+def _format_test_error_with_suggestions(error_message: str) -> str:
+    """Format error message with suggestions for the LLM Tester.
+
+    This function enhances error messages with helpful suggestions for
+    common LLM configuration errors. It's used only in the /test endpoint
+    where detailed error guidance is appropriate.
+
+    Args:
+        error_message: The original error message from the LLM client.
+
+    Returns:
+        Enhanced error message with suggestions on separate lines.
+    """
+    # Build a minimal details dict for ErrorSanitizer
+    # We extract what we can from the error message
+    details: Dict[str, Any] = {"provider_message": error_message}
+
+    # Detect error type from message content
+    error_lower = error_message.lower()
+    if "authentication" in error_lower or "api key" in error_lower or "unauthorized" in error_lower:
+        details["status"] = 401
+    elif "rate limit" in error_lower or "too many requests" in error_lower:
+        details["status"] = 429
+    elif "invalid" in error_lower or "malformed" in error_lower or "required" in error_lower:
+        details["status"] = 400
+
+    # Use ErrorSanitizer to get suggestions
+    sanitized = ErrorSanitizer.sanitize_error(details)
+
+    if not sanitized.suggestions:
+        return error_message
+
+    suggestions_text = "\n".join(f"  • {s}" for s in sanitized.suggestions)
+    return f"{error_message}\n\nSuggestions:\n{suggestions_text}"
 
 
 def _create_side_call_service(db: AsyncSession) -> SideCallService:
@@ -82,7 +119,7 @@ async def create_model_configuration(
     try:
         service = ModelConfigurationService(db)
         side_call_service = _create_side_call_service(db)
-        config = await service.create_model_configuration(config_data)
+        config = await service.create_model_configuration(config_data, created_by=current_user.id)
 
         # If this model is marked for side calls, update the system setting
         if getattr(config_data, "is_side_call_model", False):
@@ -422,10 +459,12 @@ async def test_model_configuration(
 
         # Handle error case - return the error message instead of raising
         if error:
+            # Enhance error with suggestions for the LLM Tester
+            enhanced_error = _format_test_error_with_suggestions(error)
             response_data = ModelConfigurationTestResponse(
                 success=False,
                 response=None,
-                error=error,
+                error=enhanced_error,
                 model_used=f"{config.llm_provider.name}/{config.model_name}",
                 prompt_applied=config.prompt is not None,
                 knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
@@ -456,7 +495,14 @@ async def test_model_configuration(
         raise
     except LLMConfigurationError as e:
         logger.error("Failed to test model configuration %s: %s", config_id, e)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        # Enhance error with suggestions for the LLM Tester
+        enhanced_error = _format_test_error_with_suggestions(str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=enhanced_error)
+    except LLMError as e:
+        logger.error("LLM error testing model configuration %s: %s", config_id, e)
+        # Enhance error with suggestions for the LLM Tester
+        enhanced_error = _format_test_error_with_suggestions(str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=enhanced_error)
     except ShuException as e:
         logger.error("Failed to test model configuration %s: %s", config_id, e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

@@ -465,7 +465,7 @@ class EnsembleStreamingHelper:
                 )
 
             except LLMError as exc:
-                # LLM-specific errors have user-friendly messages
+                # LLM-specific errors - log full details and pass technical message through
                 logger.error(
                     "LLM streaming failed: %s (type=%s, details=%s)",
                     exc.message,
@@ -474,7 +474,7 @@ class EnsembleStreamingHelper:
                     exc_info=True
                 )
                 await service._handle_exception(conversation_id, inputs.model, exc)
-                # Use the exception's message directly - it's already user-friendly
+                # Pass through the technical error message - it will be sanitized by the endpoint
                 await queue.put(
                     self._create_error_event(exc.message, variant_index, inputs, model_snapshot, model_display_name)
                 )

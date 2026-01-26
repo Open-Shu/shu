@@ -44,9 +44,18 @@ class ModelConfigurationService:
     
     async def create_model_configuration(
         self, 
-        config_data: ModelConfigurationCreate
+        config_data: ModelConfigurationCreate,
+        created_by: str
     ) -> ModelConfiguration:
-        """Create a new model configuration."""
+        """Create a new model configuration.
+        
+        Args:
+            config_data: The configuration data from the request.
+            created_by: The user ID of the creator (from authenticated user).
+        
+        Returns:
+            The created ModelConfiguration.
+        """
         try:
             provider = await self._get_and_validate_llm_provider(config_data.llm_provider_id)
             
@@ -130,7 +139,7 @@ class ModelConfigurationService:
                 prompt_id=config_data.prompt_id,
                 is_active=config_data.is_active,
                 parameter_overrides=await self._create_model_configuration_parameter_overrides(config_data, provider),
-                created_by=config_data.created_by,
+                created_by=created_by,
                 functionalities=config_data.functionalities,
             )
             logger.debug("ModelConfiguration overrides keys saved: %s",list(model_config.parameter_overrides.keys()))

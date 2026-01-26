@@ -46,7 +46,7 @@ import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
 import log from '../utils/log';
-function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose = null }) {
+function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   // Component state
   const [selectedConfigId, setSelectedConfigId] = useState(prePopulatedConfigId || '');
   const [userMessage, setUserMessage] = useState('');
@@ -65,25 +65,38 @@ function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose 
   const [titleWeightingEnabled, setTitleWeightingEnabled] = useState(true);
   const [titleWeightMultiplier, setTitleWeightMultiplier] = useState(3.0);
 
-  // Fetch model configurations
-  const { data: configurationsResponse, isLoading: configurationsLoading } = useQuery(
-    'model-configurations',
-    () => modelConfigAPI.list({ include_relationships: true })
+  // Fetch model configurations (including inactive for verification workflow)
+  const { data: configurationsResponse, isLoading: configurationsLoading, refetch: refetchConfigurations } = useQuery(
+    ['model-configurations', { includeInactive: true }],
+    () => modelConfigAPI.list({ include_relationships: true, active_only: false })
   );
   const configurations = extractItemsFromResponse(configurationsResponse);
 
   // Get selected configuration details
   const selectedConfig = configurations.find(c => c.id === selectedConfigId);
 
-  // Pre-populate configuration if provided
+  // Pre-populate configuration if provided - also handle prop changes
+  useEffect(() => {
+    if (prePopulatedConfigId) {
+      // Refetch configurations to ensure we have the latest data (including inactive)
+      refetchConfigurations();
+    }
+  }, [prePopulatedConfigId, refetchConfigurations]);
+
+  // Set selectedConfigId when configurations are loaded and we have a prePopulatedConfigId
+  // This ensures we wait for the configurations to be available before selecting
   useEffect(() => {
     if (prePopulatedConfigId && configurations.length > 0) {
-      setSelectedConfigId(prePopulatedConfigId);
+      // Check if the config exists in the loaded configurations
+      const configExists = configurations.some(c => c.id === prePopulatedConfigId);
+      if (configExists) {
+        setSelectedConfigId(prePopulatedConfigId);
+      }
     }
   }, [prePopulatedConfigId, configurations]);
 
   // Fetch LLM providers (for display purposes only)
-  const { data: providersResponse, isLoading: providersLoading } = useQuery(
+  const { data: providersResponse } = useQuery(
     'llm-providers',
     llmAPI.getProviders
   );
@@ -163,8 +176,10 @@ function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose 
     }
 
     // Use the dedicated test endpoint (non-streaming for better error messages)
+    // Capture start time in local variable to avoid stale state
+    const localStartTime = Date.now();
     setStreamState({ isLoading: true, error: null, data: null });
-    setTestStartTime(Date.now());
+    setTestStartTime(localStartTime);
     setTestDuration(null);
     
     try {
@@ -174,7 +189,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose 
       });
       
       const endTime = Date.now();
-      const duration = endTime - (testStartTime || endTime);
+      const duration = endTime - localStartTime;
       setTestDuration(duration);
       
       const result = extractDataFromResponse(response);
@@ -195,9 +210,9 @@ function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose 
           }
         });
 
-        // Call success callback if provided
-        if (onTestSuccess) {
-          onTestSuccess();
+        // Notify parent that test succeeded
+        if (onTestStatusChange) {
+          onTestStatusChange(true);
         }
       } else {
         // Test returned an error from the provider
@@ -217,7 +232,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose 
       }
     } catch (err) {
       const endTime = Date.now();
-      const duration = endTime - (testStartTime || endTime);
+      const duration = endTime - localStartTime;
       setTestDuration(duration);
       
       // Check if this is a timeout error
@@ -604,10 +619,10 @@ function LLMTester({ prePopulatedConfigId = null, onTestSuccess = null, onClose 
                     </Box>
                   ) : (
                     <Box>
-                      <Typography variant="body2">
-                        Error: {formatError(streamState.error)}
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {formatError(streamState.error)}
                       </Typography>
-                      {streamState.error.duration && (
+                      {streamState.error.duration != null && streamState.error.duration > 0 && (
                         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                           Failed after {formatDuration(streamState.error.duration)}
                         </Typography>

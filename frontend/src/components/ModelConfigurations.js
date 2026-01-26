@@ -48,6 +48,8 @@ const ModelConfigurations = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedConfig, setSelectedConfig] = useState(null);
+  // Store original config data for rollback when edit is cancelled without successful test
+  const [originalConfigData, setOriginalConfigData] = useState(null);
   const [configToDelete, setConfigToDelete] = useState(null);
   const [testMessage, setTestMessage] = useState('Hello, how are you?');
   const [testResults, setTestResults] = useState({});
@@ -78,8 +80,8 @@ const ModelConfigurations = () => {
     data: configurations = [],
     isLoading: configsLoading,
   } = useQuery(
-    'model-configurations',
-    () => modelConfigAPI.list({ include_relationships: true }),
+    ['model-configurations', { includeInactive: true }],
+    () => modelConfigAPI.list({ include_relationships: true, active_only: false }),
     {
       enabled: canManagePromptsAndModels(),
       select: extractItemsFromResponse,
@@ -198,7 +200,7 @@ const ModelConfigurations = () => {
     {
       onSuccess: (response, variables) => {
         log.info('ModelConfigurations - Create success:', response);
-        queryClient.invalidateQueries('model-configurations');
+        queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
         // Invalidate side-call config query if this model is marked for side calls
         if (variables.is_side_call_model) {
           queryClient.invalidateQueries('side-call-config');
@@ -221,7 +223,7 @@ const ModelConfigurations = () => {
     ({ id, data }) => modelConfigAPI.update(id, data),
     {
       onSuccess: (response, variables) => {
-        queryClient.invalidateQueries('model-configurations');
+        queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
 
         const payload = variables?.data || {};
         const isSideCallFlagProvided = Object.prototype.hasOwnProperty.call(
@@ -254,7 +256,7 @@ const ModelConfigurations = () => {
     (id) => modelConfigAPI.delete(id),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries('model-configurations');
+        queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
         setDeleteDialogOpen(false);
         setConfigToDelete(null);
         setError(null);
@@ -431,8 +433,16 @@ const ModelConfigurations = () => {
     };
 
     setFormData(newFormData);
-    // Initialize advanced parameter editors from existing overrides (if any)
+    
+    // Store original config data for rollback if user cancels without successful test
+    // This is the payload format needed for the update API
     const existingOverrides = config.parameter_overrides || {};
+    setOriginalConfigData({
+      ...newFormData,
+      parameter_overrides: existingOverrides,
+    });
+    
+    // Initialize advanced parameter editors from existing overrides (if any)
     setParamOverrides(existingOverrides);
     try {
       setAdvancedJson(JSON.stringify(existingOverrides, null, 2));
@@ -514,7 +524,7 @@ const ModelConfigurations = () => {
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={() => queryClient.invalidateQueries('model-configurations')}
+              onClick={() => queryClient.invalidateQueries(['model-configurations', { includeInactive: true }])}
               disabled={configsLoading}
             >
               Refresh
@@ -693,6 +703,8 @@ const ModelConfigurations = () => {
         onSubmit={handleCreate}
         submitLabel={createMutation.isLoading ? 'Creating...' : 'Create'}
         isSubmitting={createMutation.isLoading}
+        isEditMode={false}
+        existingConfigId={null}
       />
 
       {/* Edit Dialog */}
@@ -719,6 +731,9 @@ const ModelConfigurations = () => {
         onSubmit={handleUpdate}
         submitLabel={updateMutation.isLoading ? 'Saving...' : 'Save'}
         isSubmitting={updateMutation.isLoading}
+        isEditMode={true}
+        existingConfigId={selectedConfig?.id}
+        originalConfigData={originalConfigData}
       />
 
       {/* Delete Dialog */}
