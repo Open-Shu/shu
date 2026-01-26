@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class BrandingSettings(BaseModel):
     """Complete branding payload returned to clients."""
 
-    logo_url: str = Field(default="/logo.png")
+    logo_url: str = Field(default="/logo-wide.png")
     favicon_url: str = Field(default="/favicon.png")
     app_name: Optional[str] = None
     light_theme_overrides: Dict[str, Any] = Field(default_factory=dict)

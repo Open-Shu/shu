@@ -112,7 +112,7 @@ class Settings(BaseSettings):
 
     # Branding configuration
     branding_assets_dir: str = Field("./data/branding", alias="SHU_BRANDING_ASSETS_DIR")
-    branding_default_logo_url: str = Field("/logo.png", alias="SHU_BRANDING_DEFAULT_LOGO_URL")
+    branding_default_logo_url: str = Field("/logo-wide.png", alias="SHU_BRANDING_DEFAULT_LOGO_URL")
     branding_default_favicon_url: str = Field("/favicon.png", alias="SHU_BRANDING_DEFAULT_FAVICON_URL")
     branding_allowed_logo_extensions: List[str] = Field(default_factory=lambda: ["png", "jpg", "jpeg", "svg", "webp"], alias="SHU_BRANDING_ALLOWED_LOGO_EXTENSIONS")
     branding_allowed_favicon_extensions: List[str] = Field(default_factory=lambda: ["ico", "png", "svg", "webp"], alias="SHU_BRANDING_ALLOWED_FAVICON_EXTENSIONS")
