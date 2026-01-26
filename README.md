@@ -4,6 +4,8 @@
 
 **Shu** is an extensible AI knowledge platform for individuals, teams, and organizations. It combines a plugin ecosystem, knowledge base and retrieval, conversational interfaces, and background automation into a single platform. This repository contains the core backend API and React-based admin console. Shu currently supports multi-source retrieval-augmented generation (RAG) via its knowledge base and plugin feeds, but RAG is only one part of the broader system.
 
+See our website for more information: [https://www.openshu.ai](https://www.openshu.ai)
+
 ## Key Features
 
 ### Plugin Ecosystem
