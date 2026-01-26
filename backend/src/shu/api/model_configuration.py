@@ -7,7 +7,7 @@ knowledge bases into user-facing configurations.
 """
 
 import logging
-from typing import List, Optional, Dict, Any, Iterable, Union
+from typing import Optional, Dict, Any, Iterable, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +30,6 @@ from ..schemas.model_configuration import (
     ModelConfigurationTestResponse,
     ModelConfigKBPromptAssignment,
     ModelConfigKBPromptResponse,
-    ModelConfigKBPromptList
 )
 from ..schemas.envelope import SuccessResponse
 
@@ -358,7 +357,7 @@ async def delete_model_configuration(
     "/{config_id}/test",
     response_model=SuccessResponse[ModelConfigurationTestResponse],
     summary="Test Model Configuration",
-    description="Test a model configuration with a sample message"
+    description="Test a model configuration with a sample message (non-streaming for better error messages)"
 )
 async def test_model_configuration(
     config_id: str,
@@ -367,9 +366,13 @@ async def test_model_configuration(
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
-    """Test a model configuration with a sample message."""
+    """
+    Test a model configuration with a sample message.
+    
+    Uses non-streaming mode to ensure providers return detailed error messages.
+    Some providers only return useful configuration errors in non-streaming requests.
+    """
     try:
-
         service = ModelConfigurationService(db)
         config = await service.get_model_configuration(config_id, include_relationships=True)
 
@@ -384,19 +387,38 @@ async def test_model_configuration(
 
         response = ""
         error = None
-        async for event in await chat_service.send_message(
-            conversation_id=conversation.id,
-            user_message=test_data.test_message,
-            current_user=current_user,
-            rag_rewrite_mode=RagRewriteMode.NO_RAG,
-        ):
-            if event.type == "final_message":
-                logger.info(event.content)
-                response = event.content.get("content")
-            if event.type == "error":
-                error = event.content
+        message_metadata: Dict[str, Any] = {}
 
-        await chat_service.delete_conversation(conversation.id)
+        try:
+            async for event in await chat_service.send_message(
+                conversation_id=conversation.id,
+                user_message=test_data.test_message,
+                current_user=current_user,
+                rag_rewrite_mode=RagRewriteMode.NO_RAG,
+                force_no_streaming=True,
+            ):
+                if event.type == "final_message":
+                    response = event.content.get("content")
+                    # Extract message_metadata which contains usage and timing info
+                    message_metadata = event.content.get("message_metadata", {}) or {}
+                if event.type == "error":
+                    error = event.content
+        finally:
+            await chat_service.delete_conversation(conversation.id)
+
+        # Extract usage and timing from message_metadata
+        usage = message_metadata.get("usage", {}) or {}
+        response_time_ms_raw = message_metadata.get("response_time_ms")
+        response_time_ms = int(response_time_ms_raw) if response_time_ms_raw is not None else None
+        
+        # Build token usage dict with proper field names
+        token_usage = {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "cached_tokens": usage.get("cached_tokens", 0),
+            "reasoning_tokens": usage.get("reasoning_tokens", 0),
+        }
 
         # Handle error case - return the error message instead of raising
         if error:
@@ -407,9 +429,9 @@ async def test_model_configuration(
                 model_used=f"{config.llm_provider.name}/{config.model_name}",
                 prompt_applied=config.prompt is not None,
                 knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
-                response_time_ms=0,
-                token_usage={"input_tokens": 0, "output_tokens": 0},
-                metadata={}
+                response_time_ms=response_time_ms,
+                token_usage=token_usage,
+                metadata={"streaming": False}
             )
             return SuccessResponse(data=response_data)
 
@@ -423,19 +445,18 @@ async def test_model_configuration(
             model_used=f"{config.llm_provider.name}/{config.model_name}",
             prompt_applied=config.prompt is not None,
             knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
-            response_time_ms=None,
-            token_usage={"input_tokens": 0, "output_tokens": 0},
-            metadata={}
+            response_time_ms=response_time_ms,
+            token_usage=token_usage,
+            metadata={"streaming": False}
         )
 
         return SuccessResponse(data=response_data)
 
     except HTTPException:
-        # Re-raise HTTPException as-is so FastAPI can handle it
         raise
     except LLMConfigurationError as e:
         logger.error("Failed to test model configuration %s: %s", config_id, e)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e) )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ShuException as e:
         logger.error("Failed to test model configuration %s: %s", config_id, e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

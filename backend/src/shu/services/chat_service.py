@@ -943,6 +943,7 @@ class ChatService:
         client_temp_id: Optional[str] = None,
         ensemble_model_configuration_ids: Optional[List[str]] = None,
         attachment_ids: Optional[List[str]] = None,
+        force_no_streaming: bool = False,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """
         Send a message and get LLM response using the conversation model or an ensemble.
@@ -953,6 +954,7 @@ class ChatService:
             knowledge_base_id: Optional specific knowledge base for RAG (overrides model config KBs)
             rag_rewrite_mode: Strategy for preparing retrieval queries / disabling RAG
             ensemble_model_configuration_ids: Optional additional model configuration IDs to execute
+            force_no_streaming: If True, force non-streaming mode regardless of config settings
 
         Returns:
             Async generator of ProviderResponseEvent for streaming responses to the caller
@@ -1043,6 +1045,7 @@ class ChatService:
             async for event in self.streaming_helper.stream_ensemble_responses(
                 ensemble_inputs=execution_inputs,
                 conversation_id=conversation_id,
+                force_no_streaming=force_no_streaming,
             ):
                 yield event
         return _gen()

@@ -292,6 +292,7 @@ class EnsembleStreamingHelper:
         ensemble_inputs: List["ModelExecutionInputs"],
         conversation_id: str,
         parent_message_id_override: Optional[str] = None,
+        force_no_streaming: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream responses from multiple model configurations in parallel and emit multiplexed server-sent-event style events.
@@ -302,6 +303,7 @@ class EnsembleStreamingHelper:
             ensemble_inputs (List[ModelExecutionInputs]): One entry per model/variant describing provider, model configuration, context, and rate limits to execute.
             conversation_id (str): Identifier of the conversation to which produced assistant messages will be appended.
             parent_message_id_override (Optional[str]): If provided, use this value as the parent message id for all produced messages; otherwise a new UUID is generated and the first variant may reuse it as the message id.
+            force_no_streaming (bool): If True, force non-streaming mode regardless of provider/model configuration settings.
         
         Returns:
             AsyncGenerator[Dict[str, Any], None]: An async generator that yields dictionaries representing ProviderResponseEvent objects (SSE-serializable events) with keys such as `event`/`type`, `content`, `variant_index`, and model/metadata fields.
@@ -364,6 +366,7 @@ class EnsembleStreamingHelper:
                     logger.info("Tool calling enabled for this call")
 
                 allowed_to_stream = (
+                    not force_no_streaming and
                     client.provider.supports_streaming and
                     (getattr(inputs.model_configuration, "functionalities") or {}).get("supports_streaming", False)
                 )
