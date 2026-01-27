@@ -100,11 +100,11 @@ class UserService:
         logger.info(f"User deleted: {user.email} (ID: {user_id})")
         return True
 
-    async def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
+    def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
         # Determine user role
         is_admin_email = email.lower() in [
-            email.lower()
-            for email in self.settings.admin_emails
+            admin_email.lower()
+            for admin_email in self.settings.admin_emails
         ]
 
         if is_first_user or is_admin_email:
@@ -117,7 +117,7 @@ class UserService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none() is None
 
-    async def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
+    def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
         return is_first_user or user_role == UserRole.ADMIN
 
     async def get_user_auth_method(self, db: AsyncSession, email: str) -> str:

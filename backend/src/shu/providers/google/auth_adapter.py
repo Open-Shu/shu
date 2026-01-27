@@ -291,6 +291,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         """
         if not id_token:
             raise ValueError("Missing Google ID token")
+        del access_token # intentionally unused - Google uses id_token
 
         url = "https://oauth2.googleapis.com/tokeninfo"
 
