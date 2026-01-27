@@ -16,7 +16,10 @@ from collections import namedtuple
 from hypothesis import given, strategies as st, settings, HealthCheck
 
 # Add migrations to path for importing the migration module
-MIGRATIONS_PATH = Path(__file__).resolve().parents[5] / "migrations"
+# Path from test file: backend/src/tests/unit/migrations/test_*.py
+# Target: backend/migrations
+# parents[4] = backend/, so backend/migrations is the target
+MIGRATIONS_PATH = Path(__file__).resolve().parents[4] / "migrations"
 if str(MIGRATIONS_PATH) not in sys.path:
     sys.path.insert(0, str(MIGRATIONS_PATH))
 
