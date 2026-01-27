@@ -436,7 +436,7 @@ async def google_exchange_login(
         raise
     except ValueError as e:
         # Adapter errors (token verification failures) come as ValueError
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
     except Exception as e:
         logger.error(f"google_exchange_login error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google login exchange failed")
@@ -510,7 +510,7 @@ async def microsoft_exchange_login(
 
 @router.get("/users", response_model=SuccessResponse[List[Dict[str, Any]]])
 async def get_all_users(
-    current_user: User = Depends(require_admin),
+    _current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):

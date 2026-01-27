@@ -74,7 +74,7 @@ def _mock_adapter_get_user_info_with_existing_user(user_data: dict, existing_use
 
 async def _create_user_with_orm(db, email: str, name: str,
                                  auth_method: str = "google", is_active: bool = True,
-                                 password_hash: str = None):
+                                 password_hash: str | None = None):
     """Create a user using the ORM pattern (consistent with integration_test_runner.py)."""
     from shu.auth.models import User
     
@@ -109,7 +109,7 @@ async def _create_provider_identity(db, user_id: str, provider_key: str, account
     return identity
 
 
-async def test_google_login_endpoint_returns_redirect(client, db, auth_headers):
+async def test_google_login_endpoint_returns_redirect(client, _db, _auth_headers):
     """Test that /auth/google/login returns a redirect to Google OAuth."""
     response = await client.get("/api/v1/auth/google/login", follow_redirects=False)
     # Should redirect to Google OAuth
@@ -119,7 +119,7 @@ async def test_google_login_endpoint_returns_redirect(client, db, auth_headers):
         f"Expected Google OAuth URL, got: {location}"
 
 
-async def test_google_exchange_login_new_user(client, db, auth_headers):
+async def test_google_exchange_login_new_user(client, _db, _auth_headers):
     """Test Google SSO creates a new user when none exists."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_new_user_{unique_id}@example.com"
@@ -148,7 +148,7 @@ async def test_google_exchange_login_new_user(client, db, auth_headers):
         assert data["user"]["email"] == unique_email
 
 
-async def test_google_exchange_login_existing_user_via_provider_identity(client, db, auth_headers):
+async def test_google_exchange_login_existing_user_via_provider_identity(client, db, _auth_headers):
     """Test Google SSO logs in an existing Google user via ProviderIdentity table."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_existing_{unique_id}@example.com"
@@ -193,7 +193,7 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
     assert data["user"]["email"] == unique_email
 
 
-async def test_google_exchange_login_legacy_google_id_backward_compat(client, db, auth_headers):
+async def test_google_exchange_login_legacy_google_id_backward_compat(client, db, _auth_headers):
     """Test Google SSO backward compatibility with legacy google_id column.
     
     This test simulates the case where a user was created before the migration
@@ -253,7 +253,7 @@ async def test_google_exchange_login_legacy_google_id_backward_compat(client, db
     assert identity.account_id == google_id
 
 
-async def test_google_exchange_login_links_to_existing_microsoft_user(client, db, auth_headers):
+async def test_google_exchange_login_links_to_existing_microsoft_user(client, db, _auth_headers):
     """Test Google SSO links to existing user with same email (e.g., Microsoft user)."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_link_{unique_id}@example.com"
@@ -312,7 +312,7 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
     assert google_identity.account_id == google_id
 
 
-async def test_google_exchange_login_password_conflict(client, db, auth_headers):
+async def test_google_exchange_login_password_conflict(client, db, _auth_headers):
     """Test Google SSO returns 409 when user exists with password auth."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_pwd_conflict_{unique_id}@example.com"
@@ -347,7 +347,7 @@ async def test_google_exchange_login_password_conflict(client, db, auth_headers)
     logger.info("=== EXPECTED TEST OUTPUT: 409 conflict occurred as expected ===")
 
 
-async def test_google_exchange_login_inactive_user(client, db, auth_headers):
+async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
     """Test Google SSO returns 400 when user account is inactive."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_inactive_{unique_id}@example.com"
@@ -392,7 +392,7 @@ async def test_google_exchange_login_inactive_user(client, db, auth_headers):
     logger.info("=== EXPECTED TEST OUTPUT: 400 error for inactive user occurred as expected ===")
 
 
-async def test_google_exchange_login_missing_code(client, db, auth_headers):
+async def test_google_exchange_login_missing_code(client, _db, _auth_headers):
     """Test Google SSO returns 422 when code is missing."""
     logger.info("=== EXPECTED TEST OUTPUT: 422 validation error for missing code is expected ===")
     

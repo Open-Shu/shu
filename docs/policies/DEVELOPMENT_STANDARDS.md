@@ -210,7 +210,7 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
   - Split oversized components (> ~500 LOC) into focused subcomponents/dialogs.
   - Split `frontend/src/services/api.js` into domain modules with a shared axios client+interceptors.
 - Enforcement checklist:
-  - [ ] Routers define zero Pydantic models
+  - [ ] Routers define zero shared Pydantic models (inline simple request wrappers are allowed)
   - [ ] Files > ~500 LOC reviewed for decomposition
   - [ ] No env reads outside config.py (backend) / shared axios client (frontend)
   - [ ] Services do not perform direct SQL when a repository exists

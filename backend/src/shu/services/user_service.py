@@ -72,8 +72,8 @@ class UserService:
         # Validate role
         try:
             UserRole(new_role)
-        except ValueError:
-            raise ValueError("Invalid role")
+        except ValueError as e:
+            raise ValueError("Invalid role") from e
 
         user.role = new_role
         await db.commit()
@@ -113,10 +113,9 @@ class UserService:
             return UserRole.REGULAR_USER
 
     async def is_first_user(self, db: AsyncSession) -> bool:
-        count_stmt = select(User)
-        count_result = await db.execute(count_stmt)
-        existing_users = count_result.scalars().all()
-        return len(existing_users) == 0
+        stmt = select(User.id).limit(1)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none() is None
 
     async def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
         return is_first_user or user_role == UserRole.ADMIN
@@ -254,7 +253,7 @@ class UserService:
         
         if not user:
             # Orphaned identity - should not happen
-            logger.warning(f"Orphaned ProviderIdentity found", extra={"provider_key": provider_key, "provider_id": provider_id})
+            logger.warning("Orphaned ProviderIdentity found", extra={"provider_key": provider_key, "provider_id": provider_id})
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="User account data inconsistency. Please contact support."
@@ -353,12 +352,12 @@ class UserService:
                 logger.info(f"Creating admin user from configured list via {provider_key}", extra={"email": email})
         
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()  # Get user.id without committing
         
         # Create ProviderIdentity
         await self._create_provider_identity(user, provider_info, db)
         await db.commit()
+        await db.refresh(user)
         
         if not is_active:
             raise HTTPException(
@@ -370,7 +369,10 @@ class UserService:
 
 
 # Dependency provider for UserService
-def get_user_service() -> UserService:
+def get_user_service() -> UserService:+        from sqlalchemy import exists
++        stmt = select(exists().where(User.id.isnot(None)))
++        result = await db.execute(stmt)
++        return not result.scalar()
     """Dependency provider for UserService.
     
     Use with FastAPI's Depends() for proper dependency injection:

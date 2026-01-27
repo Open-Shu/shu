@@ -34,7 +34,7 @@ class TestRoleActivationConsistency:
         return service
 
     @given(
-        provider_key=st.sampled_from(["google", "microsoft"]),
+        _provider_key=st.sampled_from(["google", "microsoft"]),
         email=st.emails(),
         is_first_user=st.booleans()
     )
@@ -42,7 +42,7 @@ class TestRoleActivationConsistency:
     @pytest.mark.asyncio
     async def test_property_role_activation_consistency_across_providers(
         self, 
-        provider_key: str, 
+        _provider_key: str, 
         email: str, 
         is_first_user: bool
     ):
@@ -87,8 +87,8 @@ class TestRoleActivationConsistency:
             assert is_active is False, "Regular user should be inactive"
 
     @given(
-        provider_key_1=st.sampled_from(["google", "microsoft"]),
-        provider_key_2=st.sampled_from(["google", "microsoft"]),
+        _provider_key_1=st.sampled_from(["google", "microsoft"]),
+        _provider_key_2=st.sampled_from(["google", "microsoft"]),
         email=st.emails(),
         is_first_user=st.booleans()
     )
@@ -96,8 +96,8 @@ class TestRoleActivationConsistency:
     @pytest.mark.asyncio
     async def test_property_same_email_same_role_any_provider(
         self,
-        provider_key_1: str,
-        provider_key_2: str,
+        _provider_key_1: str,
+        _provider_key_2: str,
         email: str,
         is_first_user: bool
     ):

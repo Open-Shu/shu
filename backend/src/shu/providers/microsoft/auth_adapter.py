@@ -222,6 +222,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         Raises:
             ValueError: If access_token is missing, invalid, or request fails
         """
+        del id_token, db  # intentionally unused - Microsoft uses access_token only
         if not access_token:
             raise ValueError("Missing Microsoft access token")
 

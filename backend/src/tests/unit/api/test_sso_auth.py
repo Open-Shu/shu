@@ -388,7 +388,7 @@ class TestHelperMethods:
         mock_db.add = MagicMock()
         mock_db.flush = AsyncMock()
 
-        result = await user_service._create_provider_identity(mock_user, provider_info, mock_db)
+        await user_service._create_provider_identity(mock_user, provider_info, mock_db)
 
         mock_db.add.assert_called_once()
         mock_db.flush.assert_called_once()

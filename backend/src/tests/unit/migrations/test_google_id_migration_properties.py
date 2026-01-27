@@ -112,9 +112,6 @@ class TestMigrationIdempotenceProperty:
             mock_conn = MagicMock()
             mock_inspector = MagicMock()
             
-            # Track which identities exist after each run
-            identities_after_run = set()
-            
             def execute_with_tracking(query, params=None):
                 """Execute with identity tracking."""
                 query_str = str(query)
@@ -136,7 +133,6 @@ class TestMigrationIdempotenceProperty:
                     # Track the created identity
                     if 'user_id' in params:
                         created_identities.add(params['user_id'])
-                        identities_after_run.add(params['user_id'])
                 
                 return result
             

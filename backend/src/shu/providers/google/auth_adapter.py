@@ -305,7 +305,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             data = resp.json()
         except httpx.HTTPError as e:
             logger.error("Google token verification network error", extra={"error": str(e)}, exc_info=True)
-            raise ValueError(f"Network error during Google token verification: {e}")
+            raise ValueError(f"Network error during Google token verification: {e}") from e
 
         sub = data.get("sub")
         email = data.get("email")
