@@ -916,7 +916,13 @@ class UnifiedLLMClient:
                 models = await self.discover_available_models()
                 if models:
                     return True
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    "Model discovery failed for provider %s, falling back to chat completion test: %s",
+                    self.provider.name,
+                    e,
+                    exc_info=True
+                )
                 pass  # Fall back to chat completion test
 
             # Fallback: Try a simple completion to test the connection

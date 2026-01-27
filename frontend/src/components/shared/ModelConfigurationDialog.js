@@ -80,6 +80,7 @@ const ModelConfigurationDialog = ({
       setTestSucceeded(false);
       setConfigSavedDuringSession(false);
       setShowCancelConfirm(false);
+      setIsVerifying(false);
     }
   }, [open]);
   

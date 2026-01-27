@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
 
 
-def _format_test_error_with_suggestions(error_message: str) -> str:
+def _format_test_error_with_suggestions(error_message: Any) -> str:
     """Format error message with suggestions for the LLM Tester.
 
     This function enhances error messages with helpful suggestions for
@@ -52,17 +52,20 @@ def _format_test_error_with_suggestions(error_message: str) -> str:
     This would be more reliable and allow provider-specific guidance.
 
     Args:
-        error_message: The original error message from the LLM client.
+        error_message: The original error message from the LLM client (can be Any type).
 
     Returns:
         Enhanced error message with suggestions on separate lines.
     """
+    # Coerce input to string at the start to handle non-string types
+    error_text = "" if error_message is None else str(error_message)
+    
     # Build a minimal details dict for ErrorSanitizer
     # We extract what we can from the error message
-    details: Dict[str, Any] = {"provider_message": error_message}
+    details: Dict[str, Any] = {"provider_message": error_text}
 
     # Detect error type from message content
-    error_lower = error_message.lower()
+    error_lower = error_text.lower()
     if "authentication" in error_lower or "api key" in error_lower or "unauthorized" in error_lower:
         details["status"] = 401
     elif "rate limit" in error_lower or "too many requests" in error_lower:
@@ -74,10 +77,10 @@ def _format_test_error_with_suggestions(error_message: str) -> str:
     sanitized = ErrorSanitizer.sanitize_error(details)
 
     if not sanitized.suggestions:
-        return error_message
+        return error_text
 
     suggestions_text = "\n".join(f"  • {s}" for s in sanitized.suggestions)
-    return f"{error_message}\n\nSuggestions:\n{suggestions_text}"
+    return f"{error_text}\n\nSuggestions:\n{suggestions_text}"
 
 
 def _create_side_call_service(db: AsyncSession) -> SideCallService:

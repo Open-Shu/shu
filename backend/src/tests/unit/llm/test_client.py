@@ -11,7 +11,7 @@ Tests the enhanced error handling functionality including:
 **Validates: Requirements 4.3, 4.5, 4.6, 4.7, 4.8**
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
 import httpx
@@ -26,7 +26,7 @@ class TestExtractHttpErrorDetails:
         self,
         status_code: int,
         body: Dict[str, Any],
-        headers: Dict[str, str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> httpx.HTTPStatusError:
         """Create a mock HTTP status error for testing."""
         mock_response = MagicMock()
