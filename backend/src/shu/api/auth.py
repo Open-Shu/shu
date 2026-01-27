@@ -502,10 +502,10 @@ async def microsoft_exchange_login(
         raise
     except ValueError as e:
         # Adapter errors (user info request failures) come as ValueError
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
     except Exception as e:
         logger.error("microsoft_exchange_login error", error=str(e), exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed") from e
 
 
 @router.get("/users", response_model=SuccessResponse[List[Dict[str, Any]]])

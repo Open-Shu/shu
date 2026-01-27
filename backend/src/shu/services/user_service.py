@@ -369,10 +369,7 @@ class UserService:
 
 
 # Dependency provider for UserService
-def get_user_service() -> UserService:+        from sqlalchemy import exists
-+        stmt = select(exists().where(User.id.isnot(None)))
-+        result = await db.execute(stmt)
-+        return not result.scalar()
+def get_user_service() -> UserService:
     """Dependency provider for UserService.
     
     Use with FastAPI's Depends() for proper dependency injection:

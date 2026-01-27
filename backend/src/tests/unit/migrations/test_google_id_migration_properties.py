@@ -36,6 +36,7 @@ def mock_alembic_op():
         yield
 
 
+@pytest.mark.usefixtures("mock_alembic_op")
 class TestMigrationIdempotenceProperty:
     """
     Property 4: Migration is idempotent.
@@ -56,7 +57,6 @@ class TestMigrationIdempotenceProperty:
     @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_migration_idempotence(
         self, 
-        mock_alembic_op,
         num_users: int, 
         num_runs: int
     ):
@@ -167,7 +167,6 @@ class TestMigrationIdempotenceProperty:
     @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_no_duplicate_identities_created(
         self, 
-        mock_alembic_op,
         user_ids: list
     ):
         """
@@ -250,7 +249,6 @@ class TestMigrationIdempotenceProperty:
     @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_skips_existing_identities(
         self, 
-        mock_alembic_op,
         existing_identity_ratio: float,
         num_users: int
     ):
