@@ -27,7 +27,7 @@ class TestRoleActivationConsistency:
     @pytest.fixture
     def user_service(self):
         """Create a UserService instance with mocked settings."""
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         service = UserService()
         service.settings = MagicMock()
         service.settings.admin_emails = ["admin@example.com", "superuser@test.org"]
@@ -57,7 +57,7 @@ class TestRoleActivationConsistency:
         2. Admin emails always become admin and are active
         3. Regular users are assigned regular_user role and are inactive
         """
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         from shu.auth.models import UserRole
         
         # Create service with consistent admin_emails config
@@ -110,7 +110,7 @@ class TestRoleActivationConsistency:
         This property verifies that the same email address gets the same role
         regardless of which SSO provider is used.
         """
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         
         # Create two service instances (simulating different provider flows)
         service1 = UserService()
@@ -147,7 +147,7 @@ class TestRoleActivationConsistency:
         This property verifies that the first user is ALWAYS admin and active,
         regardless of their email address.
         """
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         from shu.auth.models import UserRole
         
         service = UserService()
@@ -179,7 +179,7 @@ class TestRoleActivationConsistency:
         
         This property verifies that configured admin emails are ALWAYS admin and active.
         """
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         from shu.auth.models import UserRole
         
         service = UserService()

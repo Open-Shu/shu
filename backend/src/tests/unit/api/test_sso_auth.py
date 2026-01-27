@@ -29,7 +29,7 @@ class TestAuthenticateOrCreateSSOUser:
     @pytest.fixture
     def user_service(self):
         """Create a UserService instance with mocked dependencies."""
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         service = UserService()
         service.settings = MagicMock()
         service.settings.admin_emails = ["admin@example.com"]
@@ -241,8 +241,8 @@ class TestCreateTokenResponse:
     """Tests for create_token_response() helper function."""
 
     def test_create_token_response_returns_valid_response(self):
-        """Test that create_token_response returns a valid TokenResponse."""
-        from shu.api.auth import create_token_response, TokenResponse
+        """Test that create_token_response returns a valid dict for TokenResponse."""
+        from shu.services.user_service import create_token_response
         from shu.auth import JWTManager
 
         mock_user = MagicMock()
@@ -260,10 +260,12 @@ class TestCreateTokenResponse:
 
         response = create_token_response(mock_user, mock_jwt_manager)
 
-        assert isinstance(response, TokenResponse)
-        assert response.access_token == "access-token-123"
-        assert response.refresh_token == "refresh-token-456"
-        assert response.user["user_id"] == "user-uuid"
+        # create_token_response now returns a dict that can be unpacked into TokenResponse
+        assert isinstance(response, dict)
+        assert response["access_token"] == "access-token-123"
+        assert response["refresh_token"] == "refresh-token-456"
+        assert response["token_type"] == "bearer"
+        assert response["user"]["user_id"] == "user-uuid"
         mock_jwt_manager.create_access_token.assert_called_once()
         mock_jwt_manager.create_refresh_token.assert_called_once_with("user-uuid")
 
@@ -274,7 +276,7 @@ class TestHelperMethods:
     @pytest.fixture
     def user_service(self):
         """Create a UserService instance."""
-        from shu.api.auth import UserService
+        from shu.services.user_service import UserService
         return UserService()
 
     @pytest.fixture
