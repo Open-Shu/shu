@@ -16,7 +16,10 @@ from collections import namedtuple
 from hypothesis import given, strategies as st, settings, HealthCheck
 
 # Add migrations to path for importing the migration module
-MIGRATIONS_PATH = Path(__file__).resolve().parents[5] / "migrations"
+# Path from test file: backend/src/tests/unit/migrations/test_*.py
+# Target: backend/migrations
+# parents[4] = backend/, so backend/migrations is the target
+MIGRATIONS_PATH = Path(__file__).resolve().parents[4] / "migrations"
 if str(MIGRATIONS_PATH) not in sys.path:
     sys.path.insert(0, str(MIGRATIONS_PATH))
 
@@ -33,6 +36,7 @@ def mock_alembic_op():
         yield
 
 
+@pytest.mark.usefixtures("mock_alembic_op")
 class TestMigrationIdempotenceProperty:
     """
     Property 4: Migration is idempotent.
@@ -53,7 +57,6 @@ class TestMigrationIdempotenceProperty:
     @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_migration_idempotence(
         self, 
-        mock_alembic_op,
         num_users: int, 
         num_runs: int
     ):
@@ -109,9 +112,6 @@ class TestMigrationIdempotenceProperty:
             mock_conn = MagicMock()
             mock_inspector = MagicMock()
             
-            # Track which identities exist after each run
-            identities_after_run = set()
-            
             def execute_with_tracking(query, params=None):
                 """Execute with identity tracking."""
                 query_str = str(query)
@@ -133,7 +133,6 @@ class TestMigrationIdempotenceProperty:
                     # Track the created identity
                     if 'user_id' in params:
                         created_identities.add(params['user_id'])
-                        identities_after_run.add(params['user_id'])
                 
                 return result
             
@@ -168,7 +167,6 @@ class TestMigrationIdempotenceProperty:
     @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_no_duplicate_identities_created(
         self, 
-        mock_alembic_op,
         user_ids: list
     ):
         """
@@ -251,7 +249,6 @@ class TestMigrationIdempotenceProperty:
     @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_skips_existing_identities(
         self, 
-        mock_alembic_op,
         existing_identity_ratio: float,
         num_users: int
     ):

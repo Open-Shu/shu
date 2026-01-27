@@ -1,12 +1,13 @@
 """Authentication API endpoints for Shu"""
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Literal
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 
 from ..api.dependencies import get_db
@@ -100,8 +101,8 @@ class CreateUserRequest(BaseModel):
     email: str
     name: str
     role: str = "regular_user"
-    password: str = None  # Optional - if not provided, user must use Google OAuth
-    auth_method: str = "password"  # 'password' or 'google'
+    password: str = None  # Optional - if not provided, user must use SSO
+    auth_method: Literal["password", "google", "microsoft"] = "password"
 
 
 @router.post("/login", response_model=SuccessResponse[TokenResponse])
@@ -137,7 +138,7 @@ async def login(
         auth = AuthCapability(plugin_name="admin", user_id="anonymous")
         adapter = get_auth_adapter("google", auth)
 
-        # Get normalized user info from adapter (includes legacy google_id lookup for backward compat)
+        # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(id_token=request.google_token, db=db)
 
         # Authenticate or create user using unified SSO method
@@ -184,7 +185,7 @@ async def register_user(
     try:
 
         is_first_user = await user_service.is_first_user(db)
-        user_role = await user_service.determine_user_role(request.email, is_first_user)
+        user_role = user_service.determine_user_role(request.email, is_first_user)
         is_admin = user_role == UserRole.ADMIN
 
         # Create user with password authentication (inactive by default)
@@ -263,17 +264,8 @@ async def login_with_password(
 
         user = await password_auth_service.authenticate_user(request.email, request.password, db)
 
-        # Create JWT tokens
-        access_token = user_service.jwt_manager.create_access_token(user.to_dict())
-        refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
-
-        response_data = TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=user.to_dict()
-        )
-
-        return SuccessResponse(data=response_data)
+        # Create JWT token response using shared helper
+        return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
 
     except ValueError as e:
         raise HTTPException(
@@ -337,11 +329,7 @@ async def refresh_token(
             )
 
         # Get current user data from database
-        from sqlalchemy import select
-        from ..auth.models import User
-
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
+        user = await user_service.get_user_by_id(user_id, db)
 
         if not user or not user.is_active:
             raise HTTPException(
@@ -349,17 +337,8 @@ async def refresh_token(
                 detail="User not found or inactive"
             )
 
-        # Create new tokens
-        access_token = user_service.jwt_manager.create_access_token(user.to_dict())
-        refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
-
-        response_data = TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=user.to_dict()
-        )
-
-        return SuccessResponse(data=response_data)
+        # Create JWT token response using shared helper
+        return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
 
     except HTTPException:
         raise
@@ -423,7 +402,7 @@ async def google_exchange_login(
         if not id_token:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider did not return id_token")
 
-        # Get normalized user info from adapter (includes legacy google_id lookup for backward compat)
+        # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(id_token=id_token, db=db)
 
         # Authenticate or create user using unified SSO method
@@ -436,7 +415,7 @@ async def google_exchange_login(
         raise
     except ValueError as e:
         # Adapter errors (token verification failures) come as ValueError
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
     except Exception as e:
         logger.error(f"google_exchange_login error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google login exchange failed")
@@ -502,15 +481,15 @@ async def microsoft_exchange_login(
         raise
     except ValueError as e:
         # Adapter errors (user info request failures) come as ValueError
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
     except Exception as e:
         logger.error("microsoft_exchange_login error", error=str(e), exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed") from e
 
 
 @router.get("/users", response_model=SuccessResponse[List[Dict[str, Any]]])
 async def get_all_users(
-    current_user: User = Depends(require_admin),
+    _current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
@@ -561,18 +540,29 @@ async def create_user(
                 admin_created=True  # Admin-created users are active by default
             )
         else:
-            # Create user for Google OAuth (password will be None)
+            # Create user for SSO (password will be None)
+            # Validate role before creating user
+            try:
+                UserRole(request.role)
+            except ValueError as e:
+                raise ValueError(f"Invalid role: {request.role}") from e
+            
             # Admin-created users are active by default
             user = User(
                 email=request.email,
                 name=request.name,
-                auth_method="google",
+                auth_method=request.auth_method,
                 role=request.role,
                 is_active=True  # Admin-created users are active
             )
             db.add(user)
-            await db.commit()
-            await db.refresh(user)
+            
+            try:
+                await db.commit()
+                await db.refresh(user)
+            except IntegrityError as e:
+                await db.rollback()
+                raise ValueError(f"User with email {request.email} already exists") from e
 
         return SuccessResponse(data=user.to_dict())
 

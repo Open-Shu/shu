@@ -6,8 +6,6 @@ These tests verify:
 - Migration is idempotent (running twice produces same result)
 - Migration drops google_id column
 - Downgrade recreates column and restores values
-
-Requirements: 2.3, 2.4, 4.5, 4.6
 """
 
 import pytest
@@ -17,7 +15,10 @@ from unittest.mock import MagicMock, patch, PropertyMock
 from collections import namedtuple
 
 # Add migrations to path for importing the migration module
-MIGRATIONS_PATH = Path(__file__).resolve().parents[5] / "migrations"
+# Path from test file: backend/src/tests/unit/migrations/test_*.py
+# Target: backend/migrations
+# parents[4] = backend/, so backend/migrations is the target
+MIGRATIONS_PATH = Path(__file__).resolve().parents[4] / "migrations"
 if str(MIGRATIONS_PATH) not in sys.path:
     sys.path.insert(0, str(MIGRATIONS_PATH))
 
@@ -35,10 +36,11 @@ def mock_alembic_op():
         yield
 
 
+@pytest.mark.usefixtures("mock_alembic_op")
 class TestGoogleIdMigrationUpgrade:
     """Tests for the upgrade path of the google_id migration."""
 
-    def test_migration_creates_provider_identity_rows(self, mock_alembic_op):
+    def test_migration_creates_provider_identity_rows(self):
         """Test migration creates ProviderIdentity rows for users with google_id."""
         user1 = UserRow(
             id='user-1',
@@ -89,7 +91,7 @@ class TestGoogleIdMigrationUpgrade:
                 mock_op.drop_index.assert_called_once_with("ix_users_google_id", "users")
                 mock_op.drop_column.assert_called_once_with("users", "google_id")
 
-    def test_migration_is_idempotent_skips_existing_identities(self, mock_alembic_op):
+    def test_migration_is_idempotent_skips_existing_identities(self):
         """Test migration skips users who already have ProviderIdentity rows."""
         user1 = UserRow(
             id='user-1',
@@ -131,7 +133,7 @@ class TestGoogleIdMigrationUpgrade:
             mock_op.drop_index.assert_called_once()
             mock_op.drop_column.assert_called_once()
 
-    def test_migration_skips_if_column_already_dropped(self, mock_alembic_op):
+    def test_migration_skips_if_column_already_dropped(self):
         """Test migration does nothing if google_id column doesn't exist."""
         mock_conn = MagicMock()
         mock_inspector = MagicMock()
@@ -152,10 +154,11 @@ class TestGoogleIdMigrationUpgrade:
             mock_op.drop_column.assert_not_called()
 
 
+@pytest.mark.usefixtures("mock_alembic_op")
 class TestGoogleIdMigrationDowngrade:
     """Tests for the downgrade path of the google_id migration."""
 
-    def test_downgrade_recreates_column_and_restores_values(self, mock_alembic_op):
+    def test_downgrade_recreates_column_and_restores_values(self):
         """Test downgrade recreates google_id column and restores values from ProviderIdentity."""
         identity1 = IdentityRestoreRow(identity_id='identity-1', user_id='user-1', account_id='google-sub-1')
         identity2 = IdentityRestoreRow(identity_id='identity-2', user_id='user-2', account_id='google-sub-2')
@@ -167,7 +170,7 @@ class TestGoogleIdMigrationDowngrade:
         select_result = MagicMock()
         select_result.fetchall.return_value = [identity1, identity2]
         
-        # Responses: SELECT identities, UPDATE user1, DELETE identity1, UPDATE user2, DELETE identity2
+        # Execution order: SELECT identities, UPDATE user1, UPDATE user2, DELETE identity1, DELETE identity2
         mock_conn.execute.side_effect = [select_result, MagicMock(), MagicMock(), MagicMock(), MagicMock()]
         
         import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
@@ -190,7 +193,7 @@ class TestGoogleIdMigrationDowngrade:
                 "ix_users_google_id", "users", ["google_id"], unique=True
             )
 
-    def test_downgrade_skips_column_creation_if_exists(self, mock_alembic_op):
+    def test_downgrade_skips_column_creation_if_exists(self):
         """Test downgrade doesn't recreate column if it already exists."""
         mock_conn = MagicMock()
         mock_inspector = MagicMock()
@@ -218,10 +221,11 @@ class TestGoogleIdMigrationDowngrade:
             mock_op.create_index.assert_not_called()
 
 
+@pytest.mark.usefixtures("mock_alembic_op")
 class TestMigrationIdempotence:
     """Tests verifying migration idempotence property."""
 
-    def test_running_upgrade_twice_produces_same_result(self, mock_alembic_op):
+    def test_running_upgrade_twice_produces_same_result(self):
         """Test that running upgrade twice produces the same final state."""
         user1 = UserRow(
             id='user-1',
@@ -274,7 +278,7 @@ class TestMigrationIdempotence:
             mock_op2.drop_column.assert_not_called()
 
 
-    def test_downgrade_only_deletes_restored_identities(self, mock_alembic_op):
+    def test_downgrade_only_deletes_restored_identities(self):
         """Test downgrade only deletes ProviderIdentity rows that were restored to google_id."""
         # This identity will be restored (user has NULL google_id)
         identity_to_restore = IdentityRestoreRow(
@@ -320,10 +324,11 @@ class TestMigrationIdempotence:
             assert delete_calls[0]['id'] == 'identity-1'
 
 
+@pytest.mark.usefixtures("mock_alembic_op")
 class TestDowngradeIdempotence:
     """Tests verifying downgrade idempotence."""
 
-    def test_downgrade_skips_users_with_existing_google_id(self, mock_alembic_op):
+    def test_downgrade_skips_users_with_existing_google_id(self):
         """Test downgrade doesn't overwrite existing google_id values."""
         mock_conn = MagicMock()
         mock_inspector = MagicMock()
@@ -350,7 +355,7 @@ class TestDowngradeIdempotence:
             # Should only execute the SELECT query, no UPDATEs or DELETEs
             assert mock_conn.execute.call_count == 1
 
-    def test_running_downgrade_twice_is_safe(self, mock_alembic_op):
+    def test_running_downgrade_twice_is_safe(self):
         """Test that running downgrade twice doesn't cause errors."""
         identity1 = IdentityRestoreRow(
             identity_id='identity-1',

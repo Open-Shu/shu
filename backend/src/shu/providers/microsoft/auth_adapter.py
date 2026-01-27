@@ -222,6 +222,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         Raises:
             ValueError: If access_token is missing, invalid, or request fails
         """
+        del id_token, db  # intentionally unused - Microsoft uses access_token only
         if not access_token:
             raise ValueError("Missing Microsoft access token")
 
@@ -244,7 +245,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             data = resp.json()
         except httpx.HTTPError as e:
             logger.error("Microsoft user info network error", extra={"error": str(e)}, exc_info=True)
-            raise ValueError(f"Network error during Microsoft user info request: {e}")
+            raise ValueError(f"Network error during Microsoft user info request: {e}") from e
 
         user_id = data.get("id")
         email = data.get("mail") or data.get("userPrincipalName")

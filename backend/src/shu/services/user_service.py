@@ -27,11 +27,13 @@ Usage:
 """
 
 from datetime import datetime, timezone
+import hashlib
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import User, UserRole, JWTManager
@@ -41,6 +43,19 @@ from ..models.provider_identity import ProviderIdentity
 logger = logging.getLogger(__name__)
 
 
+def _redact_email(email: str) -> str:
+    """Redact email for logging - shows first char + domain hash.
+    
+    Example: "user@example.com" -> "u***@a1b2c3d4"
+    """
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    domain_hash = hashlib.sha256(domain.encode()).hexdigest()[:8]
+    first_char = local[0] if local else "*"
+    return f"{first_char}***@{domain_hash}"
+
+
 class UserService:
     """Service for user management operations"""
 
@@ -48,7 +63,7 @@ class UserService:
         self.jwt_manager = JWTManager()
         self.settings = get_settings_instance()
 
-    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User:
+    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> Optional[User]:
         """Get user by ID"""
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
@@ -72,8 +87,8 @@ class UserService:
         # Validate role
         try:
             UserRole(new_role)
-        except ValueError:
-            raise ValueError("Invalid role")
+        except ValueError as e:
+            raise ValueError("Invalid role") from e
 
         user.role = new_role
         await db.commit()
@@ -97,14 +112,14 @@ class UserService:
         await db.delete(user)
         await db.commit()
 
-        logger.info(f"User deleted: {user.email} (ID: {user_id})")
+        logger.info("User deleted", extra={"user_id": user_id, "email_hash": _redact_email(user.email)})
         return True
 
-    async def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
+    def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
         # Determine user role
         is_admin_email = email.lower() in [
-            email.lower()
-            for email in self.settings.admin_emails
+            admin_email.lower()
+            for admin_email in self.settings.admin_emails
         ]
 
         if is_first_user or is_admin_email:
@@ -113,15 +128,14 @@ class UserService:
             return UserRole.REGULAR_USER
 
     async def is_first_user(self, db: AsyncSession) -> bool:
-        count_stmt = select(User)
-        count_result = await db.execute(count_stmt)
-        existing_users = count_result.scalars().all()
-        return len(existing_users) == 0
+        stmt = select(User.id).limit(1)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none() is None
 
-    async def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
+    def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
         return is_first_user or user_role == UserRole.ADMIN
 
-    async def get_user_auth_method(self, db: AsyncSession, email: str) -> str:
+    async def get_user_auth_method(self, db: AsyncSession, email: str) -> Optional[str]:
         auth_method_result = await db.execute(select(User.auth_method).where(User.email == email))
         return auth_method_result.scalar_one_or_none()
 
@@ -133,9 +147,7 @@ class UserService:
         """
         Authenticate or create a user from SSO provider info.
         
-        This method is provider-agnostic. Any provider-specific logic (like backward
-        compatibility for legacy storage) should be handled in the adapter's 
-        get_user_info() method before calling this.
+        This method is provider-agnostic.
         
         Args:
             provider_info: Normalized provider info with keys:
@@ -144,7 +156,6 @@ class UserService:
                 - email: User's email address
                 - name: User's display name
                 - picture: Avatar URL (optional)
-                - existing_user: Optional[User] - Pre-looked-up user from adapter (for backward compat)
             db: Database session
             
         Returns:
@@ -166,24 +177,6 @@ class UserService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This account uses password authentication. Please use the username & password login flow."
             )
-        
-        # Check if adapter already found an existing user (e.g., via legacy google_id lookup)
-        existing_user_from_adapter = provider_info.get("existing_user")
-        if existing_user_from_adapter:
-            if not existing_user_from_adapter.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User account is inactive. Please contact an administrator for activation."
-                )
-            # Ensure ProviderIdentity exists (migration on login)
-            await self._ensure_provider_identity(existing_user_from_adapter, provider_info, db)
-            existing_user_from_adapter.last_login = datetime.now(timezone.utc)
-            # Update avatar if provided and different
-            new_picture = provider_info.get("picture")
-            if new_picture and new_picture != existing_user_from_adapter.picture_url:
-                existing_user_from_adapter.picture_url = new_picture
-            await db.commit()
-            return existing_user_from_adapter
         
         # Look up existing identity in ProviderIdentity table
         user = await self._get_user_by_identity(provider_key, provider_id, db)
@@ -212,10 +205,14 @@ class UserService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="User account is inactive. Please contact an administrator for activation."
                 )
-            await self._create_provider_identity(existing_user, provider_info, db)
+            await self._ensure_provider_identity(existing_user, provider_info, db)
             existing_user.last_login = datetime.now(timezone.utc)
+            # Update avatar if provided and different
+            new_picture = provider_info.get("picture")
+            if new_picture and new_picture != existing_user.picture_url:
+                existing_user.picture_url = new_picture
             await db.commit()
-            logger.info(f"Linked {provider_key} identity to existing user", extra={"email": email})
+            logger.info("Linked provider identity to existing user", extra={"provider_key": provider_key, "user_id": existing_user.id})
             return existing_user
         
         # Create new user
@@ -227,7 +224,7 @@ class UserService:
         provider_id: str,
         db: AsyncSession
     ) -> User | None:
-        """Get user from ProviderIdentity table.
+        """Get user from ProviderIdentity table using a single JOIN query.
         
         Args:
             provider_key: Provider name ("google" or "microsoft")
@@ -237,28 +234,18 @@ class UserService:
         Returns:
             User if found via ProviderIdentity, None otherwise
         """
-        stmt = select(ProviderIdentity).where(
-            ProviderIdentity.provider_key == provider_key,
-            ProviderIdentity.account_id == provider_id
+        from sqlalchemy.orm import joinedload
+        
+        stmt = (
+            select(User)
+            .join(ProviderIdentity, ProviderIdentity.user_id == User.id)
+            .where(
+                ProviderIdentity.provider_key == provider_key,
+                ProviderIdentity.account_id == provider_id
+            )
         )
         result = await db.execute(stmt)
-        existing_identity = result.scalar_one_or_none()
-        
-        if not existing_identity:
-            return None
-        
-        # Fetch the user
-        user_stmt = select(User).where(User.id == existing_identity.user_id)
-        user_result = await db.execute(user_stmt)
-        user = user_result.scalar_one_or_none()
-        
-        if not user:
-            # Orphaned identity - should not happen
-            logger.warning(f"Orphaned ProviderIdentity found", extra={"provider_key": provider_key, "provider_id": provider_id})
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="User account data inconsistency. Please contact support."
-            )
+        user = result.scalar_one_or_none()
         
         return user
 
@@ -269,6 +256,9 @@ class UserService:
         db: AsyncSession
     ) -> None:
         """Ensure ProviderIdentity exists for user, create if missing (migration on login).
+        
+        Handles concurrent inserts gracefully by catching IntegrityError and verifying
+        the identity was created by another concurrent request.
         
         Args:
             user: The user to ensure identity for
@@ -282,7 +272,15 @@ class UserService:
         )
         result = await db.execute(stmt)
         if not result.scalar_one_or_none():
-            await self._create_provider_identity(user, provider_info, db)
+            try:
+                await self._create_provider_identity(user, provider_info, db)
+            except IntegrityError:
+                # Concurrent insert - rollback and verify identity now exists
+                await db.rollback()
+                result = await db.execute(stmt)
+                if not result.scalar_one_or_none():
+                    # Identity still doesn't exist - re-raise the error
+                    raise
 
     async def _create_provider_identity(
         self,
@@ -328,13 +326,14 @@ class UserService:
             
         Raises:
             HTTPException: 201 if user requires activation
+            HTTPException: 409 if user with email already exists (race condition)
         """
         email = provider_info["email"]
         provider_key = provider_info["provider_key"]
         
         is_first_user = await self.is_first_user(db)
-        user_role = await self.determine_user_role(email, is_first_user)
-        is_active = await self.is_active(user_role, is_first_user)
+        user_role = self.determine_user_role(email, is_first_user)
+        is_active = self.is_active(user_role, is_first_user)
         
         user = User(
             email=email,
@@ -348,19 +347,29 @@ class UserService:
         
         if user_role == UserRole.ADMIN:
             if is_first_user:
-                logger.info(f"Creating first user as admin via {provider_key}", extra={"email": email})
+                logger.info("Creating first user as admin", extra={"provider_key": provider_key, "email_hash": _redact_email(email)})
             else:
-                logger.info(f"Creating admin user from configured list via {provider_key}", extra={"email": email})
+                logger.info("Creating admin user from configured list", extra={"provider_key": provider_key, "email_hash": _redact_email(email)})
         
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        
-        # Create ProviderIdentity
-        await self._create_provider_identity(user, provider_info, db)
-        await db.commit()
+        try:
+            db.add(user)
+            await db.flush()  # Get user.id without committing
+            
+            # Create ProviderIdentity (use _ensure for consistency, though race is unlikely here)
+            await self._ensure_provider_identity(user, provider_info, db)
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError as e:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this email already exists"
+            ) from e
         
         if not is_active:
+            # Note: Using HTTPException for 201 is unconventional but allows the service
+            # to signal "created but requires activation" without changing the return type.
+            # The API layer catches this and returns the appropriate response.
             raise HTTPException(
                 status_code=status.HTTP_201_CREATED,
                 detail="Account was created, but will need to be activated. Please contact an administrator for activation."

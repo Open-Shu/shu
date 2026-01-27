@@ -7,8 +7,6 @@ Tests cover:
 - Password auth conflict (409)
 - Inactive user (400)
 - Identity linking for existing email
-
-Requirements: 3.3, 3.4, 3.5, 3.6
 """
 
 import pytest
@@ -190,51 +188,14 @@ class TestAuthenticateOrCreateSSOUser:
 
         with patch.object(user_service, 'get_user_auth_method', return_value="google"):  # Existing Google user
             with patch.object(user_service, '_get_user_by_identity', return_value=None):  # No Microsoft identity yet
-                with patch.object(user_service, '_create_provider_identity', return_value=MagicMock()) as mock_create:
+                with patch.object(user_service, '_ensure_provider_identity', return_value=None) as mock_ensure:
                     mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user)))
                     mock_db.commit = AsyncMock()
 
                     user = await user_service.authenticate_or_create_sso_user(microsoft_provider_info, mock_db)
 
         assert user == mock_user
-        mock_create.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_existing_user_from_adapter_backward_compat(self, user_service, mock_db, google_provider_info):
-        """Test backward compatibility when adapter provides existing_user (legacy google_id lookup)."""
-        mock_user = MagicMock()
-        mock_user.id = "user-uuid"
-        mock_user.email = "test@example.com"
-        mock_user.is_active = True
-        mock_user.picture_url = None
-
-        google_provider_info["existing_user"] = mock_user
-
-        with patch.object(user_service, 'get_user_auth_method', return_value="google"):
-            with patch.object(user_service, '_ensure_provider_identity', return_value=None) as mock_ensure:
-                mock_db.commit = AsyncMock()
-
-                user = await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
-
-        assert user == mock_user
         mock_ensure.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_inactive_user_from_adapter_returns_400(self, user_service, mock_db, google_provider_info):
-        """Test that inactive user from adapter (legacy lookup) returns 400."""
-        mock_user = MagicMock()
-        mock_user.id = "user-uuid"
-        mock_user.email = "test@example.com"
-        mock_user.is_active = False
-
-        google_provider_info["existing_user"] = mock_user
-
-        with patch.object(user_service, 'get_user_auth_method', return_value="google"):
-            with pytest.raises(HTTPException) as exc_info:
-                await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
-
-        assert exc_info.value.status_code == 400
-        assert "inactive" in exc_info.value.detail.lower()
 
 
 class TestCreateTokenResponse:
@@ -287,17 +248,11 @@ class TestHelperMethods:
     @pytest.mark.asyncio
     async def test_get_user_by_identity_returns_user(self, user_service, mock_db):
         """Test _get_user_by_identity returns user when identity exists."""
-        mock_identity = MagicMock()
-        mock_identity.user_id = "user-uuid"
-
         mock_user = MagicMock()
         mock_user.id = "user-uuid"
 
-        # First call returns identity, second returns user
-        mock_db.execute = AsyncMock(side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_identity)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user))
-        ])
+        # Single JOIN query returns user directly
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user)))
 
         result = await user_service._get_user_by_identity("google", "google-123", mock_db)
 
@@ -311,24 +266,6 @@ class TestHelperMethods:
         result = await user_service._get_user_by_identity("google", "google-123", mock_db)
 
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_user_by_identity_raises_on_orphaned_identity(self, user_service, mock_db):
-        """Test _get_user_by_identity raises 500 when identity exists but user doesn't."""
-        mock_identity = MagicMock()
-        mock_identity.user_id = "user-uuid"
-
-        # First call returns identity, second returns None (orphaned)
-        mock_db.execute = AsyncMock(side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_identity)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-        ])
-
-        with pytest.raises(HTTPException) as exc_info:
-            await user_service._get_user_by_identity("google", "google-123", mock_db)
-
-        assert exc_info.value.status_code == 500
-        assert "inconsistency" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_ensure_provider_identity_creates_when_missing(self, user_service, mock_db):
@@ -388,7 +325,7 @@ class TestHelperMethods:
         mock_db.add = MagicMock()
         mock_db.flush = AsyncMock()
 
-        result = await user_service._create_provider_identity(mock_user, provider_info, mock_db)
+        await user_service._create_provider_identity(mock_user, provider_info, mock_db)
 
         mock_db.add.assert_called_once()
         mock_db.flush.assert_called_once()

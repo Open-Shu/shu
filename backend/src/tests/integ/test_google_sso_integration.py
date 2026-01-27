@@ -4,12 +4,9 @@ Google SSO Integration Tests for Shu
 These tests verify Google SSO authentication workflows:
 - New user signup via Google SSO
 - Existing user login via Google SSO (ProviderIdentity)
-- Legacy google_id backward compatibility
 - Email conflict handling (user exists with same email)
 - Password auth conflict (409 response)
 - Inactive account handling
-
-Requirements: 4.2, 4.3
 """
 
 import sys
@@ -54,27 +51,9 @@ def _mock_adapter_get_user_info(user_data: dict):
     return mock
 
 
-def _mock_adapter_get_user_info_with_existing_user(user_data: dict, existing_user):
-    """Create a mock for GoogleAuthAdapter.get_user_info that includes existing_user.
-    
-    This simulates the backward compatibility case where a user is found via
-    legacy google_id column lookup.
-    """
-    mock = AsyncMock()
-    mock.return_value = {
-        "provider_id": user_data.get("google_id"),
-        "provider_key": "google",
-        "email": user_data.get("email"),
-        "name": user_data.get("name"),
-        "picture": user_data.get("picture"),
-        "existing_user": existing_user,
-    }
-    return mock
-
-
 async def _create_user_with_orm(db, email: str, name: str,
                                  auth_method: str = "google", is_active: bool = True,
-                                 password_hash: str = None):
+                                 password_hash: str | None = None):
     """Create a user using the ORM pattern (consistent with integration_test_runner.py)."""
     from shu.auth.models import User
     
@@ -109,7 +88,7 @@ async def _create_provider_identity(db, user_id: str, provider_key: str, account
     return identity
 
 
-async def test_google_login_endpoint_returns_redirect(client, db, auth_headers):
+async def test_google_login_endpoint_returns_redirect(client, _db, _auth_headers):
     """Test that /auth/google/login returns a redirect to Google OAuth."""
     response = await client.get("/api/v1/auth/google/login", follow_redirects=False)
     # Should redirect to Google OAuth
@@ -119,7 +98,7 @@ async def test_google_login_endpoint_returns_redirect(client, db, auth_headers):
         f"Expected Google OAuth URL, got: {location}"
 
 
-async def test_google_exchange_login_new_user(client, db, auth_headers):
+async def test_google_exchange_login_new_user(client, _db, _auth_headers):
     """Test Google SSO creates a new user when none exists."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_new_user_{unique_id}@example.com"
@@ -148,7 +127,7 @@ async def test_google_exchange_login_new_user(client, db, auth_headers):
         assert data["user"]["email"] == unique_email
 
 
-async def test_google_exchange_login_existing_user_via_provider_identity(client, db, auth_headers):
+async def test_google_exchange_login_existing_user_via_provider_identity(client, db, _auth_headers):
     """Test Google SSO logs in an existing Google user via ProviderIdentity table."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_existing_{unique_id}@example.com"
@@ -193,67 +172,7 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
     assert data["user"]["email"] == unique_email
 
 
-async def test_google_exchange_login_legacy_google_id_backward_compat(client, db, auth_headers):
-    """Test Google SSO backward compatibility with legacy google_id column.
-    
-    This test simulates the case where a user was created before the migration
-    and still has their identity stored in the legacy User.google_id column.
-    The adapter's get_user_info() method returns existing_user when it finds
-    a user via the legacy lookup.
-    """
-    unique_id = uuid.uuid4().hex
-    unique_email = f"google_legacy_{unique_id}@example.com"
-    google_id = f"google_legacy_id_{unique_id}"
-    
-    # Create user using ORM (simulating a pre-migration user)
-    user = await _create_user_with_orm(
-        db,
-        email=unique_email,
-        name="Legacy Google User",
-        auth_method="google",
-        is_active=True,
-    )
-    
-    # Note: We don't create a ProviderIdentity - this simulates a pre-migration user
-    # The adapter's get_user_info will return existing_user from legacy lookup
-    
-    mock_user = {
-        "google_id": google_id,
-        "email": unique_email,
-        "name": "Legacy Google User",
-        "picture": None,
-    }
-
-    # Mock the adapter to return existing_user (simulating legacy google_id lookup)
-    with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", 
-               _mock_adapter_get_user_info_with_existing_user(mock_user, user)):
-        with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()):
-            response = await client.post(
-                "/api/v1/auth/google/exchange-login",
-                json={"code": "mock_auth_code"}
-            )
-
-    assert response.status_code == 200, f"Unexpected status: {response.status_code}, body: {response.text}"
-    data = extract_data(response)
-    assert "access_token" in data
-    assert data["user"]["email"] == unique_email
-    
-    # Verify that a ProviderIdentity was created (migration on login)
-    from sqlalchemy import select
-    from shu.models.provider_identity import ProviderIdentity
-    
-    result = await db.execute(
-        select(ProviderIdentity).where(
-            ProviderIdentity.user_id == user.id,
-            ProviderIdentity.provider_key == "google"
-        )
-    )
-    identity = result.scalar_one_or_none()
-    assert identity is not None, "ProviderIdentity should be created during login (migration on login)"
-    assert identity.account_id == google_id
-
-
-async def test_google_exchange_login_links_to_existing_microsoft_user(client, db, auth_headers):
+async def test_google_exchange_login_links_to_existing_microsoft_user(client, db, _auth_headers):
     """Test Google SSO links to existing user with same email (e.g., Microsoft user)."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_link_{unique_id}@example.com"
@@ -312,7 +231,7 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
     assert google_identity.account_id == google_id
 
 
-async def test_google_exchange_login_password_conflict(client, db, auth_headers):
+async def test_google_exchange_login_password_conflict(client, db, _auth_headers):
     """Test Google SSO returns 409 when user exists with password auth."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_pwd_conflict_{unique_id}@example.com"
@@ -347,7 +266,7 @@ async def test_google_exchange_login_password_conflict(client, db, auth_headers)
     logger.info("=== EXPECTED TEST OUTPUT: 409 conflict occurred as expected ===")
 
 
-async def test_google_exchange_login_inactive_user(client, db, auth_headers):
+async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
     """Test Google SSO returns 400 when user account is inactive."""
     unique_id = uuid.uuid4().hex
     unique_email = f"google_inactive_{unique_id}@example.com"
@@ -392,7 +311,7 @@ async def test_google_exchange_login_inactive_user(client, db, auth_headers):
     logger.info("=== EXPECTED TEST OUTPUT: 400 error for inactive user occurred as expected ===")
 
 
-async def test_google_exchange_login_missing_code(client, db, auth_headers):
+async def test_google_exchange_login_missing_code(client, _db, _auth_headers):
     """Test Google SSO returns 422 when code is missing."""
     logger.info("=== EXPECTED TEST OUTPUT: 422 validation error for missing code is expected ===")
     
@@ -414,7 +333,6 @@ class GoogleSSOTestSuite(BaseIntegrationTestSuite):
             test_google_login_endpoint_returns_redirect,
             test_google_exchange_login_new_user,
             test_google_exchange_login_existing_user_via_provider_identity,
-            test_google_exchange_login_legacy_google_id_backward_compat,
             test_google_exchange_login_links_to_existing_microsoft_user,
             test_google_exchange_login_password_conflict,
             test_google_exchange_login_inactive_user,

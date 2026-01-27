@@ -8,8 +8,6 @@ Changes:
 - Drops ix_users_google_id index
 - Drops google_id column from users table
 
-Requirements: 2.3, 2.4, 2.5
-
 Idempotency guarantees:
 - Upgrade: Safe to run multiple times. Skips if google_id column doesn't exist.
            Skips individual users if ProviderIdentity already exists.

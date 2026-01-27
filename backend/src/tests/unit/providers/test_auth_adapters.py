@@ -5,9 +5,6 @@ Tests cover:
 - Google adapter with valid/invalid tokens (mocked)
 - Microsoft adapter with valid/invalid tokens (mocked)
 - Error handling for network failures
-- Legacy google_id lookup in Google adapter
-
-Requirements: 5.1, 5.2, 5.3, 5.4
 """
 
 import pytest
@@ -23,6 +20,7 @@ class TestGoogleAuthAdapterGetUserInfo:
         """Create a mock AuthCapability for adapter initialization."""
         mock = MagicMock()
         mock._settings = MagicMock()
+        mock._settings.google_client_id = "test-google-client-id"
         mock._user_id = "test-user-id"
         return mock
 
@@ -41,7 +39,8 @@ class TestGoogleAuthAdapterGetUserInfo:
             "sub": "google-user-123",
             "email": "test@example.com",
             "name": "Test User",
-            "picture": "https://example.com/photo.jpg"
+            "picture": "https://example.com/photo.jpg",
+            "aud": "test-google-client-id"
         }
 
         with patch("httpx.AsyncClient") as mock_client_class:
@@ -87,6 +86,28 @@ class TestGoogleAuthAdapterGetUserInfo:
                 await google_adapter.get_user_info(id_token="invalid-token")
 
     @pytest.mark.asyncio
+    async def test_get_user_info_audience_mismatch(self, google_adapter):
+        """Test get_user_info raises ValueError when audience doesn't match client ID."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "sub": "google-user-123",
+            "email": "test@example.com",
+            "name": "Test User",
+            "aud": "wrong-client-id"  # Doesn't match test-google-client-id
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            with pytest.raises(ValueError, match="Invalid Google ID token: audience mismatch"):
+                await google_adapter.get_user_info(id_token="valid-token")
+
+    @pytest.mark.asyncio
     async def test_get_user_info_network_error(self, google_adapter):
         """Test get_user_info raises ValueError on network errors."""
         with patch("httpx.AsyncClient") as mock_client_class:
@@ -105,7 +126,8 @@ class TestGoogleAuthAdapterGetUserInfo:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "sub": "google-user-123"
+            "sub": "google-user-123",
+            "aud": "test-google-client-id"
             # Missing email
         }
 
@@ -126,7 +148,8 @@ class TestGoogleAuthAdapterGetUserInfo:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "sub": "google-user-123",
-            "email": "testuser@example.com"
+            "email": "testuser@example.com",
+            "aud": "test-google-client-id"
             # No name provided
         }
 
@@ -142,14 +165,15 @@ class TestGoogleAuthAdapterGetUserInfo:
         assert result["name"] == "testuser"
 
     @pytest.mark.asyncio
-    async def test_get_user_info_legacy_google_id_lookup_skipped_after_migration(self, google_adapter):
-        """Test get_user_info skips legacy google_id lookup after migration (column removed from model)."""
+    async def test_get_user_info_db_param_ignored(self, google_adapter):
+        """Test get_user_info ignores db parameter (kept for interface compatibility)."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "sub": "google-user-123",
             "email": "test@example.com",
-            "name": "Test User"
+            "name": "Test User",
+            "aud": "test-google-client-id"
         }
 
         mock_db = AsyncMock()
@@ -164,40 +188,8 @@ class TestGoogleAuthAdapterGetUserInfo:
             result = await google_adapter.get_user_info(id_token="valid-token", db=mock_db)
 
         assert result["provider_id"] == "google-user-123"
-        # After migration, google_id column is removed from User model,
-        # so legacy lookup is skipped and existing_user is not set
-        assert "existing_user" not in result
-        # Database should not be queried since hasattr(User, "google_id") returns False
+        # db parameter is ignored - no database queries should be made
         mock_db.execute.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_user_info_legacy_column_dropped(self, google_adapter):
-        """Test get_user_info handles case where google_id column has been dropped."""
-        from sqlalchemy.exc import ProgrammingError
-        
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "sub": "google-user-123",
-            "email": "test@example.com",
-            "name": "Test User"
-        }
-
-        mock_db = AsyncMock()
-        # Simulate column not existing - query raises ProgrammingError
-        mock_db.execute = AsyncMock(side_effect=ProgrammingError("column does not exist", None, None))
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            result = await google_adapter.get_user_info(id_token="valid-token", db=mock_db)
-
-        assert result["provider_id"] == "google-user-123"
-        assert "existing_user" not in result
 
 
 class TestMicrosoftAuthAdapterGetUserInfo:

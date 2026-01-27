@@ -262,20 +262,16 @@ class GoogleAuthAdapter(BaseAuthAdapter):
     async def get_user_info(
         self,
         *,
-        access_token: Optional[str] = None,
+        access_token: Optional[str] = None,  # Unused - Google uses id_token
         id_token: Optional[str] = None,
-        db: Optional["AsyncSession"] = None
+        db: Optional["AsyncSession"] = None  # Unused, kept for interface compatibility
     ) -> Dict[str, Any]:
         """Verify Google ID token and return normalized user info.
 
-        If db is provided, also performs backward compatibility lookup for users
-        stored in the legacy User.google_id column (pre-migration users).
-        This lookup will gracefully handle the case where the column has been dropped.
-
         Args:
-            access_token: Not used for Google (Google uses id_token)
+            _access_token: Not used for Google (Google uses id_token)
             id_token: The Google ID token to verify
-            db: Optional database session for legacy google_id lookup
+            db: Unused, kept for interface compatibility
 
         Returns:
             Normalized user info dict with keys:
@@ -284,7 +280,6 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             - email: User's email address
             - name: User's display name
             - picture: Avatar URL (optional)
-            - existing_user: Pre-looked-up user if found via legacy google_id (optional)
 
         Raises:
             ValueError: If id_token is missing, invalid, or verification fails
@@ -293,6 +288,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             raise ValueError("Missing Google ID token")
 
         url = "https://oauth2.googleapis.com/tokeninfo"
+        settings = self._auth._settings
 
         try:
             async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
@@ -305,7 +301,17 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             data = resp.json()
         except httpx.HTTPError as e:
             logger.error("Google token verification network error", extra={"error": str(e)}, exc_info=True)
-            raise ValueError(f"Network error during Google token verification: {e}")
+            raise ValueError(f"Network error during Google token verification: {e}") from e
+
+        # Verify audience claim matches our client ID
+        aud = data.get("aud")
+        expected_client_id = settings.google_client_id
+        if not aud or aud != expected_client_id:
+            logger.error(
+                "Google ID token audience mismatch",
+                extra={"aud": aud, "expected": expected_client_id}
+            )
+            raise ValueError("Invalid Google ID token: audience mismatch")
 
         sub = data.get("sub")
         email = data.get("email")
@@ -313,52 +319,10 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         if not sub or not email:
             raise ValueError("Invalid Google ID token payload: missing sub or email")
 
-        result: Dict[str, Any] = {
+        return {
             "provider_id": sub,
             "provider_key": "google",
             "email": email,
             "name": data.get("name") or email.split("@")[0],
             "picture": data.get("picture"),
         }
-
-        # Backward compatibility: check legacy User.google_id column if it still exists
-        # This allows users who haven't been migrated to ProviderIdentity to still log in
-        if db is not None:
-            existing_user = await self._lookup_legacy_google_user(sub, db)
-            if existing_user:
-                result["existing_user"] = existing_user
-
-        return result
-
-    async def _lookup_legacy_google_user(
-        self,
-        google_id: str,
-        db: "AsyncSession"
-    ) -> Optional["User"]:
-        """Backward compatibility: lookup user by legacy google_id column.
-
-        Returns None if the column has been dropped (post-migration) or if no user is found.
-
-        Args:
-            google_id: The Google sub claim to look up
-            db: Database session
-
-        Returns:
-            User if found via legacy google_id column, None otherwise
-        """
-        from sqlalchemy import select
-        from sqlalchemy.exc import ProgrammingError, OperationalError
-        from ...auth.models import User
-
-        # Check if User model still has google_id attribute
-        if not hasattr(User, "google_id"):
-            return None
-
-        try:
-            stmt = select(User).where(User.google_id == google_id)
-            result = await db.execute(stmt)
-            return result.scalar_one_or_none()
-        except (ProgrammingError, OperationalError, AttributeError):
-            # Column doesn't exist in database (migration already ran)
-            # or other database error - gracefully return None
-            return None
