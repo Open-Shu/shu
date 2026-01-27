@@ -70,6 +70,8 @@ const ModelConfigurationDialog = ({
   const [configSavedDuringSession, setConfigSavedDuringSession] = useState(false);
   // Confirmation dialog state
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // AbortController for canceling in-flight verification requests
+  const verifyAbortControllerRef = useRef(null);
   
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -81,13 +83,21 @@ const ModelConfigurationDialog = ({
       setConfigSavedDuringSession(false);
       setShowCancelConfirm(false);
       setIsVerifying(false);
+      verifyAbortControllerRef.current = null;
     }
   }, [open]);
   
   /**
    * Handle cancel button click - show confirmation if needed.
+   * Blocks closing if verification is in progress.
    */
   const handleCancelClick = () => {
+    // Block closing if verification is in progress
+    if (isVerifying) {
+      setVerifyError('Please wait for verification to complete, or it will be canceled.');
+      return;
+    }
+    
     // If test succeeded or no changes were saved, just close
     if (testSucceeded || !configSavedDuringSession) {
       onClose();
@@ -99,9 +109,18 @@ const ModelConfigurationDialog = ({
   
   /**
    * Handle confirmed cancel - perform rollback and close.
+   * Aborts any in-flight verification before proceeding.
    */
   const handleConfirmedCancel = async () => {
     setShowCancelConfirm(false);
+    
+    // Abort any in-flight verification request
+    if (isVerifying && verifyAbortControllerRef.current) {
+      verifyAbortControllerRef.current.abort();
+      verifyAbortControllerRef.current = null;
+      setIsVerifying(false);
+    }
+    
     await performRollbackAndClose();
   };
   
@@ -109,8 +128,16 @@ const ModelConfigurationDialog = ({
    * Perform rollback and close dialog.
    * - For new configs: delete the temp config if test didn't succeed
    * - For edits: restore original config if test didn't succeed
+   * 
+   * Guards against running while verification is in progress.
    */
   const performRollbackAndClose = async () => {
+    // Guard: Don't proceed if verification is still in progress
+    if (isVerifying) {
+      log.warn('Attempted to rollback while verification in progress - blocking');
+      return;
+    }
+    
     // If config was saved during this session but test didn't succeed, rollback
     if (configSavedDuringSession && !testSucceeded) {
       try {
@@ -134,9 +161,15 @@ const ModelConfigurationDialog = ({
   
   /**
    * Handle dialog close (backdrop click or escape key).
-   * Shows confirmation if needed.
+   * Shows confirmation if needed. Blocks closing if verification is in progress.
    */
   const handleDialogClose = (event, reason) => {
+    // Block closing if verification is in progress
+    if (isVerifying) {
+      setVerifyError('Please wait for verification to complete before closing.');
+      return;
+    }
+    
     // If test succeeded or no changes were saved, just close
     if (testSucceeded || !configSavedDuringSession) {
       onClose();
@@ -150,8 +183,13 @@ const ModelConfigurationDialog = ({
    * Handle verification workflow.
    * Saves config with is_active=true, then opens LLM Tester.
    * User must successfully test before the dialog can close.
+   * Uses AbortController to allow cancellation of in-flight requests.
    */
   const handleVerify = async () => {
+    // Create new AbortController for this verification request
+    const abortController = new AbortController();
+    verifyAbortControllerRef.current = abortController;
+    
     setIsVerifying(true);
     setVerifyError(null);
     setTestSucceeded(false);
@@ -165,6 +203,7 @@ const ModelConfigurationDialog = ({
         } catch (e) {
           setVerifyError('Invalid JSON in advanced parameters');
           setIsVerifying(false);
+          verifyAbortControllerRef.current = null;
           return;
         }
       }
@@ -186,17 +225,38 @@ const ModelConfigurationDialog = ({
       if (isEditMode && existingConfigId) {
         // Update existing config
         const response = await modelConfigAPI.update(existingConfigId, payload);
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after update');
+          return;
+        }
         savedConfig = extractDataFromResponse(response);
         setTempConfigId(existingConfigId);
       } else if (tempConfigId) {
         // Update previously created temp config
         const response = await modelConfigAPI.update(tempConfigId, payload);
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after update');
+          return;
+        }
         savedConfig = extractDataFromResponse(response);
       } else {
         // Create new temp config
         const response = await modelConfigAPI.create(payload);
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after create');
+          return;
+        }
         savedConfig = extractDataFromResponse(response);
         setTempConfigId(savedConfig.id);
+      }
+      
+      // Check if aborted before updating state
+      if (abortController.signal.aborted) {
+        log.debug('Verification aborted before state update');
+        return;
       }
       
       // Invalidate queries to refresh the list
@@ -208,9 +268,18 @@ const ModelConfigurationDialog = ({
       // Open LLM Tester with the saved config
       setShowLLMTester(true);
     } catch (err) {
+      // Don't show error if request was aborted
+      if (abortController.signal.aborted) {
+        log.debug('Verification request was aborted');
+        return;
+      }
       setVerifyError(formatError(err) || 'Failed to save configuration for verification');
     } finally {
-      setIsVerifying(false);
+      // Only clear state if not aborted (abort handler clears it)
+      if (!abortController.signal.aborted) {
+        setIsVerifying(false);
+        verifyAbortControllerRef.current = null;
+      }
     }
   };
   
