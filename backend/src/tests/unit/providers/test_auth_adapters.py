@@ -142,8 +142,8 @@ class TestGoogleAuthAdapterGetUserInfo:
         assert result["name"] == "testuser"
 
     @pytest.mark.asyncio
-    async def test_get_user_info_legacy_google_id_lookup(self, google_adapter):
-        """Test get_user_info performs legacy google_id lookup when db is provided."""
+    async def test_get_user_info_legacy_google_id_lookup_skipped_after_migration(self, google_adapter):
+        """Test get_user_info skips legacy google_id lookup after migration (column removed from model)."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -152,15 +152,7 @@ class TestGoogleAuthAdapterGetUserInfo:
             "name": "Test User"
         }
 
-        mock_user = MagicMock()
-        mock_user.id = "user-uuid"
-        mock_user.email = "test@example.com"
-
         mock_db = AsyncMock()
-        # Mock the user lookup result
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = mock_user
-        mock_db.execute = AsyncMock(return_value=mock_user_result)
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
@@ -172,7 +164,11 @@ class TestGoogleAuthAdapterGetUserInfo:
             result = await google_adapter.get_user_info(id_token="valid-token", db=mock_db)
 
         assert result["provider_id"] == "google-user-123"
-        assert result["existing_user"] == mock_user
+        # After migration, google_id column is removed from User model,
+        # so legacy lookup is skipped and existing_user is not set
+        assert "existing_user" not in result
+        # Database should not be queried since hasattr(User, "google_id") returns False
+        mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_user_info_legacy_column_dropped(self, google_adapter):

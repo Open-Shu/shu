@@ -1,0 +1,273 @@
+"""
+Tests for the google_id to ProviderIdentity migration (r006_0004).
+
+These tests verify:
+- Migration creates ProviderIdentity rows for users with google_id
+- Migration is idempotent (running twice produces same result)
+- Migration drops google_id column
+- Downgrade recreates column and restores values
+
+Requirements: 2.3, 2.4, 4.5, 4.6
+"""
+
+import pytest
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch, PropertyMock
+from collections import namedtuple
+
+# Add migrations to path for importing the migration module
+MIGRATIONS_PATH = Path(__file__).resolve().parents[5] / "migrations"
+if str(MIGRATIONS_PATH) not in sys.path:
+    sys.path.insert(0, str(MIGRATIONS_PATH))
+
+
+# Mock user row returned from database
+UserRow = namedtuple('UserRow', ['id', 'google_id', 'email', 'name', 'picture_url'])
+IdentityRow = namedtuple('IdentityRow', ['id'])
+IdentityRestoreRow = namedtuple('IdentityRestoreRow', ['user_id', 'account_id'])
+
+
+@pytest.fixture
+def mock_alembic_op():
+    """Mock alembic op module."""
+    with patch.dict('sys.modules', {'alembic': MagicMock(), 'alembic.op': MagicMock()}):
+        yield
+
+
+class TestGoogleIdMigrationUpgrade:
+    """Tests for the upgrade path of the google_id migration."""
+
+    def test_migration_creates_provider_identity_rows(self, mock_alembic_op):
+        """Test migration creates ProviderIdentity rows for users with google_id."""
+        user1 = UserRow(
+            id='user-1',
+            google_id='google-sub-1',
+            email='user1@example.com',
+            name='User One',
+            picture_url='https://example.com/pic1.jpg'
+        )
+        user2 = UserRow(
+            id='user-2',
+            google_id='google-sub-2',
+            email='user2@example.com',
+            name='User Two',
+            picture_url=None
+        )
+        
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        # Setup mock responses
+        select_result = MagicMock()
+        select_result.fetchall.return_value = [user1, user2]
+        
+        check_result = MagicMock()
+        check_result.fetchone.return_value = None  # No existing identity
+        
+        mock_conn.execute.side_effect = [select_result, check_result, MagicMock(), check_result, MagicMock()]
+        
+        with patch('helpers.column_exists', return_value=True), \
+             patch('helpers.index_exists', return_value=True):
+            
+            # Import the module fresh
+            import importlib
+            import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+            
+            # Patch the op and sa modules
+            with patch.object(migration_module, 'op') as mock_op, \
+                 patch.object(migration_module, 'sa') as mock_sa, \
+                 patch.object(migration_module, 'column_exists', return_value=True), \
+                 patch.object(migration_module, 'index_exists', return_value=True):
+                
+                mock_op.get_bind.return_value = mock_conn
+                mock_sa.inspect.return_value = mock_inspector
+                
+                migration_module.upgrade()
+                
+                # Verify drop operations were called
+                mock_op.drop_index.assert_called_once_with("ix_users_google_id", "users")
+                mock_op.drop_column.assert_called_once_with("users", "google_id")
+
+    def test_migration_is_idempotent_skips_existing_identities(self, mock_alembic_op):
+        """Test migration skips users who already have ProviderIdentity rows."""
+        user1 = UserRow(
+            id='user-1',
+            google_id='google-sub-1',
+            email='user1@example.com',
+            name='User One',
+            picture_url=None
+        )
+        
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        # Setup mock responses
+        select_result = MagicMock()
+        select_result.fetchall.return_value = [user1]
+        
+        check_result = MagicMock()
+        check_result.fetchone.return_value = IdentityRow(id='existing-identity')  # Identity exists
+        
+        mock_conn.execute.side_effect = [select_result, check_result]
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
+            
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
+            
+            migration_module.upgrade()
+            
+            # Verify no INSERT was executed (only SELECT queries)
+            # The execute calls should be: 1 SELECT users, 1 SELECT identity check
+            assert mock_conn.execute.call_count == 2
+            
+            # Verify drop operations were still called
+            mock_op.drop_index.assert_called_once()
+            mock_op.drop_column.assert_called_once()
+
+    def test_migration_skips_if_column_already_dropped(self, mock_alembic_op):
+        """Test migration does nothing if google_id column doesn't exist."""
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=False):  # Column doesn't exist
+            
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
+            
+            migration_module.upgrade()
+            
+            # Should not execute any queries or drop operations
+            mock_conn.execute.assert_not_called()
+            mock_op.drop_column.assert_not_called()
+
+
+class TestGoogleIdMigrationDowngrade:
+    """Tests for the downgrade path of the google_id migration."""
+
+    def test_downgrade_recreates_column_and_restores_values(self, mock_alembic_op):
+        """Test downgrade recreates google_id column and restores values from ProviderIdentity."""
+        identity1 = IdentityRestoreRow(user_id='user-1', account_id='google-sub-1')
+        identity2 = IdentityRestoreRow(user_id='user-2', account_id='google-sub-2')
+        
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        # Setup mock responses
+        select_result = MagicMock()
+        select_result.fetchall.return_value = [identity1, identity2]
+        
+        mock_conn.execute.side_effect = [select_result, MagicMock(), MagicMock(), MagicMock()]
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=False), \
+             patch.object(migration_module, 'index_exists', return_value=False):
+            
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
+            
+            migration_module.downgrade()
+            
+            # Verify add_column was called
+            mock_op.add_column.assert_called_once()
+            
+            # Verify create_index was called
+            mock_op.create_index.assert_called_once_with(
+                "ix_users_google_id", "users", ["google_id"], unique=True
+            )
+
+    def test_downgrade_skips_column_creation_if_exists(self, mock_alembic_op):
+        """Test downgrade doesn't recreate column if it already exists."""
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        # Setup mock responses
+        select_result = MagicMock()
+        select_result.fetchall.return_value = []
+        
+        mock_conn.execute.side_effect = [select_result, MagicMock()]
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
+            
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
+            
+            migration_module.downgrade()
+            
+            # Should not add column or create index
+            mock_op.add_column.assert_not_called()
+            mock_op.create_index.assert_not_called()
+
+
+class TestMigrationIdempotence:
+    """Tests verifying migration idempotence property."""
+
+    def test_running_upgrade_twice_produces_same_result(self, mock_alembic_op):
+        """Test that running upgrade twice produces the same final state."""
+        user1 = UserRow(
+            id='user-1',
+            google_id='google-sub-1',
+            email='user1@example.com',
+            name='User One',
+            picture_url=None
+        )
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        # First run: column exists
+        mock_conn1 = MagicMock()
+        mock_inspector1 = MagicMock()
+        
+        select_result1 = MagicMock()
+        select_result1.fetchall.return_value = [user1]
+        check_result1 = MagicMock()
+        check_result1.fetchone.return_value = None
+        mock_conn1.execute.side_effect = [select_result1, check_result1, MagicMock()]
+        
+        with patch.object(migration_module, 'op') as mock_op1, \
+             patch.object(migration_module, 'sa') as mock_sa1, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
+            
+            mock_op1.get_bind.return_value = mock_conn1
+            mock_sa1.inspect.return_value = mock_inspector1
+            
+            migration_module.upgrade()
+            
+            # First run should drop column
+            mock_op1.drop_column.assert_called_once()
+        
+        # Second run: column doesn't exist (already dropped)
+        mock_conn2 = MagicMock()
+        mock_inspector2 = MagicMock()
+        
+        with patch.object(migration_module, 'op') as mock_op2, \
+             patch.object(migration_module, 'sa') as mock_sa2, \
+             patch.object(migration_module, 'column_exists', return_value=False):
+            
+            mock_op2.get_bind.return_value = mock_conn2
+            mock_sa2.inspect.return_value = mock_inspector2
+            
+            migration_module.upgrade()
+            
+            # Second run should do nothing
+            mock_conn2.execute.assert_not_called()
+            mock_op2.drop_column.assert_not_called()

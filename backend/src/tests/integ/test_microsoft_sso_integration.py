@@ -50,7 +50,7 @@ def _mock_adapter_get_user_info(user_data: dict):
     return mock
 
 
-async def _create_user_with_orm(db, email: str, name: str, google_id: str = None, 
+async def _create_user_with_orm(db, email: str, name: str,
                                  auth_method: str = "google", is_active: bool = True,
                                  password_hash: str = None):
     """Create a user using the ORM pattern (consistent with integration_test_runner.py)."""
@@ -59,7 +59,6 @@ async def _create_user_with_orm(db, email: str, name: str, google_id: str = None
     user = User(
         email=email,
         name=name,
-        google_id=google_id,
         auth_method=auth_method,
         is_active=is_active,
         password_hash=password_hash,
@@ -138,7 +137,6 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
         db,
         email=unique_email,
         name="Existing MS User",
-        google_id=None,  # Microsoft users don't have google_id
         auth_method="microsoft",
         is_active=True,
     )
@@ -177,17 +175,25 @@ async def test_microsoft_exchange_login_links_to_existing_google_user(client, db
     """Test Microsoft SSO links to existing user with same email (e.g., Google user)."""
     unique_id = uuid.uuid4().hex
     unique_email = f"ms_link_{unique_id}@example.com"
-    google_id = f"google_id_{unique_id}"
     microsoft_id = f"ms_link_id_{unique_id}"
     
-    # Create existing Google user using ORM
-    await _create_user_with_orm(
+    # Create existing Google user using ORM (now uses ProviderIdentity instead of google_id)
+    user = await _create_user_with_orm(
         db,
         email=unique_email,
         name="Google User",
-        google_id=google_id,
         auth_method="google",
         is_active=True,
+    )
+    
+    # Create Google provider identity for the user
+    await _create_provider_identity(
+        db,
+        user_id=user.id,
+        provider_key="google",
+        account_id=f"google_id_{unique_id}",
+        primary_email=unique_email,
+        display_name="Google User",
     )
     
     mock_user = {
@@ -220,7 +226,6 @@ async def test_microsoft_exchange_login_password_conflict(client, db, auth_heade
         db,
         email=unique_email,
         name="Password User",
-        google_id=None,
         auth_method="password",
         is_active=True,
         password_hash="fake_hash",
@@ -257,7 +262,6 @@ async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
         db,
         email=unique_email,
         name="Inactive MS User",
-        google_id=None,
         auth_method="microsoft",
         is_active=False,  # Inactive user
     )

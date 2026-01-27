@@ -409,7 +409,6 @@ class UserService:
         user = User(
             email=email,
             name=provider_info["name"],
-            google_id=None,  # No longer used for new users
             picture_url=provider_info.get("picture"),
             role=user_role.value,
             auth_method=provider_key,

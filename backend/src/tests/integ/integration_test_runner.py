@@ -175,7 +175,6 @@ class IntegrationTestRunner:
             email=f"test-admin-{test_id}@example.com",
             name=f"Test Admin {test_id}",
             role=UserRole.ADMIN.value,
-            google_id=f"test_admin_{test_id}",
             is_active=True
         )
         self.db.add(self.admin_user)
