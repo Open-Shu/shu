@@ -317,3 +317,37 @@ async def test_inject_functions(anthropic_adapter):
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_post_process_payload_injects_max_tokens_default(anthropic_adapter):
+    """Test that post_process_payload injects default max_tokens when not provided."""
+    # Test case 1: No max_tokens provided - should inject default
+    payload_without_max_tokens = {
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }
+    
+    result = await anthropic_adapter.post_process_payload(payload_without_max_tokens)
+    
+    assert "max_tokens" in result
+    assert result["max_tokens"] == 4096
+    assert result["model"] == "claude-3-5-sonnet-20241022"
+    assert result["messages"] == [{"role": "user", "content": "Hello"}]
+
+
+@pytest.mark.asyncio
+async def test_post_process_payload_preserves_user_max_tokens(anthropic_adapter):
+    """Test that post_process_payload preserves user-provided max_tokens."""
+    # Test case 2: max_tokens already provided - should NOT override
+    payload_with_max_tokens = {
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 2000
+    }
+    
+    result = await anthropic_adapter.post_process_payload(payload_with_max_tokens)
+    
+    assert "max_tokens" in result
+    assert result["max_tokens"] == 2000  # Should preserve user value
+    assert result["model"] == "claude-3-5-sonnet-20241022"

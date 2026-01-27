@@ -91,9 +91,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
     render(
@@ -160,9 +158,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
     render(
@@ -228,9 +224,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testKB1, testKB2] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB1, testKB2] });
 
     // Render component with pre-populated config
     render(
@@ -309,9 +303,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testKB] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB] });
 
     // Render component with pre-populated config
     render(
@@ -363,9 +355,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
     render(
@@ -447,9 +437,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testKB] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB] });
 
     // Render component with pre-populated config
     render(
@@ -526,9 +514,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component WITHOUT pre-populated config
     render(
@@ -614,9 +600,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -692,9 +676,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -762,9 +744,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -875,9 +855,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -947,9 +925,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1024,9 +1000,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1100,9 +1074,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1189,9 +1161,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
     
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-    };
+    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(

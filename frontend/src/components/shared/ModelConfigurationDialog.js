@@ -153,6 +153,7 @@ const ModelConfigurationDialog = ({
   const handleVerify = async () => {
     setIsVerifying(true);
     setVerifyError(null);
+    setTestSucceeded(false);
     
     try {
       // Merge typed overrides with advanced JSON

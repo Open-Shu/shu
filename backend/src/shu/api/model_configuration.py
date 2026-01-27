@@ -46,6 +46,11 @@ def _format_test_error_with_suggestions(error_message: str) -> str:
     common LLM configuration errors. It's used only in the /test endpoint
     where detailed error guidance is appropriate.
 
+    TODO: This error type detection should be moved to provider adapters.
+    Each adapter should return structured error information with proper
+    error types/codes instead of us guessing from the message text.
+    This would be more reliable and allow provider-specific guidance.
+
     Args:
         error_message: The original error message from the LLM client.
 

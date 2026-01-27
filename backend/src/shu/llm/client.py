@@ -10,7 +10,9 @@ import httpx
 import httpcore
 import asyncio
 import random
+import hashlib
 from typing import Dict, Any, List, Optional, AsyncGenerator, Union
+from dataclasses import dataclass
 import logging
 from datetime import datetime, timezone
 import jmespath
@@ -35,6 +37,99 @@ from ..utils.path_access import DotPath
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RetryState:
+    """State tracking for retry logic to detect infinite loops."""
+
+    attempts: int = 0
+    last_error_hash: Optional[str] = None
+    identical_error_count: int = 0
+    max_attempts: int = 3
+
+    def _compute_error_hash(self, error: Exception) -> str:
+        """
+        Compute a hash of the error to detect identical errors.
+
+        Args:
+            error: The exception to hash
+
+        Returns:
+            Hash string representing the error
+        """
+        # Create a string representation of the error
+        error_str = f"{type(error).__name__}:{str(error)}"
+
+        # For HTTP errors, include status code and response body
+        if isinstance(error, httpx.HTTPStatusError):
+            status_code = error.response.status_code if error.response else None
+            try:
+                body = error.response.text if error.response else ""
+            except Exception:
+                body = ""
+            error_str = f"{error_str}:status={status_code}:body={body[:200]}"
+
+        # Compute hash
+        return hashlib.md5(error_str.encode()).hexdigest()
+
+    def record_error(self, error: Exception) -> None:
+        """
+        Record an error attempt and track identical errors.
+
+        Args:
+            error: The exception that occurred
+        """
+        self.attempts += 1
+        error_hash = self._compute_error_hash(error)
+
+        if error_hash == self.last_error_hash:
+            self.identical_error_count += 1
+        else:
+            self.identical_error_count = 1
+            self.last_error_hash = error_hash
+
+    def should_retry(self, error: Exception) -> bool:
+        """
+        Determine if retry should occur based on error type and history.
+
+        Returns False if:
+        - Max attempts reached
+        - Same error repeated 3 times (infinite loop detection)
+        - Error is non-retryable (4xx except 429)
+
+        Args:
+            error: The exception to evaluate
+
+        Returns:
+            True if retry should occur, False otherwise
+        """
+        # Check if max attempts reached
+        if self.attempts >= self.max_attempts:
+            return False
+
+        # Check for infinite loop (same error 3 times)
+        if self.is_infinite_loop():
+            return False
+
+        # Check if error is non-retryable
+        if isinstance(error, httpx.HTTPStatusError):
+            status_code = error.response.status_code if error.response else None
+            if status_code:
+                # Non-retryable 4xx errors (except 429 rate limit)
+                if 400 <= status_code < 500 and status_code != 429:
+                    return False
+
+        return True
+
+    def is_infinite_loop(self) -> bool:
+        """
+        Check if we're in an infinite loop (same error 3+ times).
+
+        Returns:
+            True if infinite loop detected, False otherwise
+        """
+        return self.identical_error_count >= 3
 
 
 class LLMResponse:
@@ -255,14 +350,15 @@ class UnifiedLLMClient:
         """
         Execute non-streaming completion with retry/backoff on retryable errors.
         """
-        attempt = 0
+        retry_state = RetryState(max_attempts=self._max_attempts)
+
         while True:
             attempt_start = datetime.now(timezone.utc)
             try:
                 return await self._complete_response(payload, model, attempt_start, request_timeout=request_timeout)
             except httpx.HTTPStatusError as e:
-                await self._retry_or_raise_http_error(e, model, attempt, has_progress=False)
-                attempt += 1
+                await self._retry_or_raise_http_error(e, model, retry_state, has_progress=False)
+                retry_state.record_error(e)
 
     async def _stream_with_retry(
         self,
@@ -273,7 +369,8 @@ class UnifiedLLMClient:
         """
         Wrap streaming response with retry/backoff before any content is emitted.
         """
-        attempt = 0
+        retry_state = RetryState(max_attempts=self._max_attempts)
+
         while True:
             attempt_has_yielded = False
             try:
@@ -282,8 +379,8 @@ class UnifiedLLMClient:
                     yield chunk
                 return
             except httpx.HTTPStatusError as e:
-                await self._retry_or_raise_http_error(e, model, attempt, has_progress=attempt_has_yielded)
-                attempt += 1
+                await self._retry_or_raise_http_error(e, model, retry_state, has_progress=attempt_has_yielded)
+                retry_state.record_error(e)
 
     async def _complete_response(
         self,
@@ -466,15 +563,6 @@ class UnifiedLLMClient:
                 details={"original_error": str(e), "error_type": type(e).__name__}
             ) from e
 
-    def _should_retry_http_error(self, status_code: Optional[int], attempt: int) -> bool:
-        """Return True if the HTTP error is retryable for the current attempt."""
-        if status_code is None:
-            return False
-        if status_code < 500 or status_code >= 600:
-            return False
-        # attempt is zero-indexed; allow retries while total attempts stay within the configured cutoff
-        return (attempt + 1) < self._max_attempts
-
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate exponential backoff delay with decorrelated jitter."""
         exponential = min(self._retry_base_delay * (2 ** attempt), self._retry_max_delay)
@@ -649,21 +737,6 @@ class UnifiedLLMClient:
             details=self._build_error_details(details, sanitized, environment)
         ) from e
 
-    def _format_error_with_suggestions(self, sanitized: SanitizedError) -> str:
-        """Format error message with suggestions on separate lines.
-
-        Args:
-            sanitized: The sanitized error with message and suggestions.
-
-        Returns:
-            Formatted error message with suggestions on new lines.
-        """
-        if not sanitized.suggestions:
-            return sanitized.message
-
-        suggestions_text = "\n".join(f"  • {s}" for s in sanitized.suggestions)
-        return f"{sanitized.message}\n\nSuggestions:\n{suggestions_text}"
-
     def _build_error_details(
         self,
         raw_details: Dict[str, Any],
@@ -713,7 +786,7 @@ class UnifiedLLMClient:
         self,
         error: httpx.HTTPStatusError,
         model: str,
-        attempt: int,
+        retry_state: RetryState,
         has_progress: bool
     ) -> None:
         """
@@ -722,16 +795,82 @@ class UnifiedLLMClient:
         Args:
             error: The original httpx HTTPStatusError.
             model: Model identifier for logging details.
-            attempt: Zero-based attempt index.
+            retry_state: RetryState tracking retry attempts and error history.
             has_progress: True if any data has already been yielded to the caller.
         """
         details = self._extract_http_error_details(error, model)
-        if has_progress or not self._should_retry_http_error(details["status"], attempt):
+
+        # Check for capability mismatch errors (vision, tools, etc.)
+        if self._is_capability_mismatch_error(details):
+            logger.warning(
+                "Capability mismatch detected for provider %s: %s (not retrying)",
+                self.provider.name,
+                details.get("provider_message", "")
+            )
             self._handle_http_status_error(error, model, details)
 
-        delay = self._get_retry_delay(attempt)
-        self._log_retry(details, attempt, delay)
+        # Check if we should retry using RetryState
+        if has_progress or not retry_state.should_retry(error):
+            # Log infinite loop detection
+            if retry_state.is_infinite_loop():
+                logger.warning(
+                    "Infinite loop detected for provider %s: same error repeated %d times (breaking retry loop)",
+                    self.provider.name,
+                    retry_state.identical_error_count
+                )
+            self._handle_http_status_error(error, model, details)
+
+        delay = self._get_retry_delay(retry_state.attempts)
+        self._log_retry(details, retry_state.attempts, delay)
         await asyncio.sleep(delay)
+
+    def _is_capability_mismatch_error(self, details: Dict[str, Any]) -> bool:
+        """
+        Detect if an error is due to a capability mismatch (vision, tools, etc.).
+
+        TODO: This should be moved to provider adapters. Each adapter should implement
+        a method like `is_capability_mismatch_error(error_details)` since providers
+        know their own error formats and capabilities better than generic pattern matching.
+        This would be more reliable and maintainable than guessing from error messages.
+
+        Args:
+            details: Error details extracted from HTTP response.
+
+        Returns:
+            True if error is a capability mismatch, False otherwise.
+        """
+        provider_message = details.get("provider_message", "").lower()
+        provider_error_type = details.get("provider_error_type", "").lower()
+        provider_error_code = details.get("provider_error_code", "").lower()
+
+        # Common patterns for vision capability mismatches
+        vision_patterns = [
+            "vision",
+            "image",
+            "multimodal",
+            "does not support images",
+            "cannot process images",
+            "image_url not supported",
+        ]
+
+        # Common patterns for tool calling mismatches
+        tool_patterns = [
+            "tool",
+            "function",
+            "function_call",
+            "tools not supported",
+            "function calling not supported",
+        ]
+
+        # Check message, type, and code for capability mismatch patterns
+        all_patterns = vision_patterns + tool_patterns
+        for pattern in all_patterns:
+            if (pattern in provider_message or
+                pattern in provider_error_type or
+                pattern in provider_error_code):
+                return True
+
+        return False
 
     async def discover_available_models(self) -> List[Dict[str, Any]]:
         """
