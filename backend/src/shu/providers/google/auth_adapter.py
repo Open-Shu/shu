@@ -262,7 +262,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
     async def get_user_info(
         self,
         *,
-        access_token: Optional[str] = None,
+        _access_token: Optional[str] = None,  # Unused - Google uses id_token
         id_token: Optional[str] = None,
         db: Optional["AsyncSession"] = None
     ) -> Dict[str, Any]:
@@ -273,7 +273,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         This lookup will gracefully handle the case where the column has been dropped.
 
         Args:
-            access_token: Not used for Google (Google uses id_token)
+            _access_token: Not used for Google (Google uses id_token)
             id_token: The Google ID token to verify
             db: Optional database session for legacy google_id lookup
 
@@ -291,9 +291,9 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         """
         if not id_token:
             raise ValueError("Missing Google ID token")
-        del access_token # intentionally unused - Google uses id_token
 
         url = "https://oauth2.googleapis.com/tokeninfo"
+        settings = self._auth._settings
 
         try:
             async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
@@ -307,6 +307,16 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         except httpx.HTTPError as e:
             logger.error("Google token verification network error", extra={"error": str(e)}, exc_info=True)
             raise ValueError(f"Network error during Google token verification: {e}") from e
+
+        # Verify audience claim matches our client ID
+        aud = data.get("aud")
+        expected_client_id = settings.google_client_id
+        if not aud or aud != expected_client_id:
+            logger.error(
+                "Google ID token audience mismatch",
+                extra={"aud": aud, "expected": expected_client_id}
+            )
+            raise ValueError("Invalid Google ID token: audience mismatch")
 
         sub = data.get("sub")
         email = data.get("email")

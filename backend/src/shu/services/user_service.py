@@ -226,7 +226,7 @@ class UserService:
         provider_id: str,
         db: AsyncSession
     ) -> User | None:
-        """Get user from ProviderIdentity table.
+        """Get user from ProviderIdentity table using a single JOIN query.
         
         Args:
             provider_key: Provider name ("google" or "microsoft")
@@ -236,28 +236,18 @@ class UserService:
         Returns:
             User if found via ProviderIdentity, None otherwise
         """
-        stmt = select(ProviderIdentity).where(
-            ProviderIdentity.provider_key == provider_key,
-            ProviderIdentity.account_id == provider_id
+        from sqlalchemy.orm import joinedload
+        
+        stmt = (
+            select(User)
+            .join(ProviderIdentity, ProviderIdentity.user_id == User.id)
+            .where(
+                ProviderIdentity.provider_key == provider_key,
+                ProviderIdentity.account_id == provider_id
+            )
         )
         result = await db.execute(stmt)
-        existing_identity = result.scalar_one_or_none()
-        
-        if not existing_identity:
-            return None
-        
-        # Fetch the user
-        user_stmt = select(User).where(User.id == existing_identity.user_id)
-        user_result = await db.execute(user_stmt)
-        user = user_result.scalar_one_or_none()
-        
-        if not user:
-            # Orphaned identity - should not happen
-            logger.warning("Orphaned ProviderIdentity found", extra={"provider_key": provider_key, "provider_id": provider_id})
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="User account data inconsistency. Please contact support."
-            )
+        user = result.scalar_one_or_none()
         
         return user
 

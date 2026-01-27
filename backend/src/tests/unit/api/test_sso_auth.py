@@ -287,17 +287,11 @@ class TestHelperMethods:
     @pytest.mark.asyncio
     async def test_get_user_by_identity_returns_user(self, user_service, mock_db):
         """Test _get_user_by_identity returns user when identity exists."""
-        mock_identity = MagicMock()
-        mock_identity.user_id = "user-uuid"
-
         mock_user = MagicMock()
         mock_user.id = "user-uuid"
 
-        # First call returns identity, second returns user
-        mock_db.execute = AsyncMock(side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_identity)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user))
-        ])
+        # Single JOIN query returns user directly
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user)))
 
         result = await user_service._get_user_by_identity("google", "google-123", mock_db)
 
@@ -311,24 +305,6 @@ class TestHelperMethods:
         result = await user_service._get_user_by_identity("google", "google-123", mock_db)
 
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_user_by_identity_raises_on_orphaned_identity(self, user_service, mock_db):
-        """Test _get_user_by_identity raises 500 when identity exists but user doesn't."""
-        mock_identity = MagicMock()
-        mock_identity.user_id = "user-uuid"
-
-        # First call returns identity, second returns None (orphaned)
-        mock_db.execute = AsyncMock(side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_identity)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-        ])
-
-        with pytest.raises(HTTPException) as exc_info:
-            await user_service._get_user_by_identity("google", "google-123", mock_db)
-
-        assert exc_info.value.status_code == 500
-        assert "inconsistency" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_ensure_provider_identity_creates_when_missing(self, user_service, mock_db):
