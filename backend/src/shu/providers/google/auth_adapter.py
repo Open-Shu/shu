@@ -346,22 +346,19 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         Returns:
             User if found via legacy google_id column, None otherwise
         """
-        from sqlalchemy import select, text
-        from sqlalchemy.exc import ProgrammingError
+        from sqlalchemy import select
+        from sqlalchemy.exc import ProgrammingError, OperationalError
         from ...auth.models import User
 
-        try:
-            # Check if google_id column exists before querying
-            # This handles the case where migration has already dropped the column
-            result = await db.execute(
-                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'google_id'")
-            )
-            if not result.fetchone():
-                return None  # Column has been dropped
+        # Check if User model still has google_id attribute
+        if not hasattr(User, "google_id"):
+            return None
 
+        try:
             stmt = select(User).where(User.google_id == google_id)
             result = await db.execute(stmt)
             return result.scalar_one_or_none()
-        except (ProgrammingError, AttributeError):
-            # Column doesn't exist or model doesn't have the attribute
+        except (ProgrammingError, OperationalError, AttributeError):
+            # Column doesn't exist in database (migration already ran)
+            # or other database error - gracefully return None
             return None

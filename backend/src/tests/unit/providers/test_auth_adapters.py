@@ -157,14 +157,10 @@ class TestGoogleAuthAdapterGetUserInfo:
         mock_user.email = "test@example.com"
 
         mock_db = AsyncMock()
-        # Mock the column existence check
-        mock_column_result = MagicMock()
-        mock_column_result.fetchone.return_value = ("google_id",)
-        # Mock the user lookup
+        # Mock the user lookup result
         mock_user_result = MagicMock()
         mock_user_result.scalar_one_or_none.return_value = mock_user
-
-        mock_db.execute = AsyncMock(side_effect=[mock_column_result, mock_user_result])
+        mock_db.execute = AsyncMock(return_value=mock_user_result)
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
@@ -181,6 +177,8 @@ class TestGoogleAuthAdapterGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_legacy_column_dropped(self, google_adapter):
         """Test get_user_info handles case where google_id column has been dropped."""
+        from sqlalchemy.exc import ProgrammingError
+        
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -190,10 +188,8 @@ class TestGoogleAuthAdapterGetUserInfo:
         }
 
         mock_db = AsyncMock()
-        # Mock the column existence check - column doesn't exist
-        mock_column_result = MagicMock()
-        mock_column_result.fetchone.return_value = None
-        mock_db.execute = AsyncMock(return_value=mock_column_result)
+        # Simulate column not existing - query raises ProgrammingError
+        mock_db.execute = AsyncMock(side_effect=ProgrammingError("column does not exist", None, None))
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
