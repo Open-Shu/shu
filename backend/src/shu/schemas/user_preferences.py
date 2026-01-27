@@ -12,6 +12,9 @@ Defines request/response models for user preferences including:
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
+# Valid theme options - centralized to avoid divergence
+VALID_THEMES = ['light', 'dark', 'auto']
+
 
 class UserPreferencesBase(BaseModel):
     """Base schema for user preferences with validation."""
@@ -63,9 +66,8 @@ class UserPreferencesBase(BaseModel):
     @classmethod
     def validate_theme(cls, v: str) -> str:
         """Validate theme options."""
-        valid_themes = ['light', 'dark', 'auto']
-        if v not in valid_themes:
-            raise ValueError(f'Theme must be one of: {valid_themes}')
+        if v not in VALID_THEMES:
+            raise ValueError(f'Theme must be one of: {VALID_THEMES}')
         return v
 
 
@@ -98,9 +100,8 @@ class UserPreferencesUpdate(BaseModel):
     def validate_theme(cls, v: Optional[str]) -> Optional[str]:
         """Validate theme options."""
         if v is not None:
-            valid_themes = ['light', 'dark', 'auto']
-            if v not in valid_themes:
-                raise ValueError(f'Theme must be one of: {valid_themes}')
+            if v not in VALID_THEMES:
+                raise ValueError(f'Theme must be one of: {VALID_THEMES}')
         return v
 
 

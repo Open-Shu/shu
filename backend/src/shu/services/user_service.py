@@ -27,11 +27,13 @@ Usage:
 """
 
 from datetime import datetime, timezone
+import hashlib
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import User, UserRole, JWTManager
@@ -41,6 +43,19 @@ from ..models.provider_identity import ProviderIdentity
 logger = logging.getLogger(__name__)
 
 
+def _redact_email(email: str) -> str:
+    """Redact email for logging - shows first char + domain hash.
+    
+    Example: "user@example.com" -> "u***@a1b2c3d4"
+    """
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    domain_hash = hashlib.sha256(domain.encode()).hexdigest()[:8]
+    first_char = local[0] if local else "*"
+    return f"{first_char}***@{domain_hash}"
+
+
 class UserService:
     """Service for user management operations"""
 
@@ -48,7 +63,7 @@ class UserService:
         self.jwt_manager = JWTManager()
         self.settings = get_settings_instance()
 
-    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User:
+    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> Optional[User]:
         """Get user by ID"""
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
@@ -97,7 +112,7 @@ class UserService:
         await db.delete(user)
         await db.commit()
 
-        logger.info(f"User deleted: {user.email} (ID: {user_id})")
+        logger.info("User deleted", extra={"user_id": user_id, "email_hash": _redact_email(user.email)})
         return True
 
     def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
@@ -120,7 +135,7 @@ class UserService:
     def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
         return is_first_user or user_role == UserRole.ADMIN
 
-    async def get_user_auth_method(self, db: AsyncSession, email: str) -> str:
+    async def get_user_auth_method(self, db: AsyncSession, email: str) -> Optional[str]:
         auth_method_result = await db.execute(select(User.auth_method).where(User.email == email))
         return auth_method_result.scalar_one_or_none()
 
@@ -214,7 +229,7 @@ class UserService:
             await self._create_provider_identity(existing_user, provider_info, db)
             existing_user.last_login = datetime.now(timezone.utc)
             await db.commit()
-            logger.info(f"Linked {provider_key} identity to existing user", extra={"email": email})
+            logger.info("Linked provider identity to existing user", extra={"provider_key": provider_key, "user_id": existing_user.id})
             return existing_user
         
         # Create new user
@@ -317,6 +332,7 @@ class UserService:
             
         Raises:
             HTTPException: 201 if user requires activation
+            HTTPException: 409 if user with email already exists (race condition)
         """
         email = provider_info["email"]
         provider_key = provider_info["provider_key"]
@@ -337,17 +353,24 @@ class UserService:
         
         if user_role == UserRole.ADMIN:
             if is_first_user:
-                logger.info(f"Creating first user as admin via {provider_key}", extra={"email": email})
+                logger.info("Creating first user as admin", extra={"provider_key": provider_key, "email_hash": _redact_email(email)})
             else:
-                logger.info(f"Creating admin user from configured list via {provider_key}", extra={"email": email})
+                logger.info("Creating admin user from configured list", extra={"provider_key": provider_key, "email_hash": _redact_email(email)})
         
-        db.add(user)
-        await db.flush()  # Get user.id without committing
-        
-        # Create ProviderIdentity
-        await self._create_provider_identity(user, provider_info, db)
-        await db.commit()
-        await db.refresh(user)
+        try:
+            db.add(user)
+            await db.flush()  # Get user.id without committing
+            
+            # Create ProviderIdentity
+            await self._create_provider_identity(user, provider_info, db)
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this email already exists"
+            )
         
         if not is_active:
             raise HTTPException(

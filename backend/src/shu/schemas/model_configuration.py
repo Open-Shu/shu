@@ -51,10 +51,13 @@ class ModelConfigurationBase(BaseModel):
     @field_validator('prompt_id')
     @classmethod
     def validate_prompt_id(cls, v: Optional[str]) -> Optional[str]:
-        """Validate prompt ID - convert empty string to None."""
-        if v == '':
+        """Validate prompt ID - convert empty or whitespace-only string to None."""
+        if v is None:
             return None
-        return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped
 
 
 class ModelConfigurationCreate(ModelConfigurationBase):
@@ -112,10 +115,13 @@ class ModelConfigurationUpdate(BaseModel):
     @field_validator('prompt_id')
     @classmethod
     def validate_prompt_id(cls, v: Optional[str]) -> Optional[str]:
-        """Validate prompt ID - convert empty string to None."""
-        if v == '':
+        """Validate prompt ID - convert empty or whitespace-only string to None."""
+        if v is None:
             return None
-        return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped
 
 
 class ModelConfigurationResponse(ModelConfigurationBase):

@@ -561,12 +561,12 @@ async def create_user(
                 admin_created=True  # Admin-created users are active by default
             )
         else:
-            # Create user for Google OAuth (password will be None)
+            # Create user for SSO (password will be None)
             # Admin-created users are active by default
             user = User(
                 email=request.email,
                 name=request.name,
-                auth_method="google",
+                auth_method=request.auth_method,
                 role=request.role,
                 is_active=True  # Admin-created users are active
             )
