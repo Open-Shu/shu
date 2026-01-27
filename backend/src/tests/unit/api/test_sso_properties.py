@@ -69,8 +69,8 @@ class TestRoleActivationConsistency:
         is_admin_email = email.lower() in [e.lower() for e in service.settings.admin_emails]
         
         # Get actual role from service
-        role = await service.determine_user_role(email, is_first_user)
-        is_active = await service.is_active(role, is_first_user)
+        role = service.determine_user_role(email, is_first_user)
+        is_active = service.is_active(role, is_first_user)
         
         # Property assertions
         if is_first_user:
@@ -122,11 +122,11 @@ class TestRoleActivationConsistency:
         service2.settings.admin_emails = ["admin@example.com"]
         
         # Get role from both "providers"
-        role1 = await service1.determine_user_role(email, is_first_user)
-        role2 = await service2.determine_user_role(email, is_first_user)
+        role1 = service1.determine_user_role(email, is_first_user)
+        role2 = service2.determine_user_role(email, is_first_user)
         
-        is_active1 = await service1.is_active(role1, is_first_user)
-        is_active2 = await service2.is_active(role2, is_first_user)
+        is_active1 = service1.is_active(role1, is_first_user)
+        is_active2 = service2.is_active(role2, is_first_user)
         
         # Property: same email should get same role regardless of provider
         assert role1 == role2, f"Role should be consistent: {role1} vs {role2}"
@@ -154,8 +154,8 @@ class TestRoleActivationConsistency:
         service.settings = MagicMock()
         service.settings.admin_emails = []  # Empty admin list
         
-        role = await service.determine_user_role(email, is_first_user=True)
-        is_active = await service.is_active(role, is_first_user=True)
+        role = service.determine_user_role(email, is_first_user=True)
+        is_active = service.is_active(role, is_first_user=True)
         
         assert role == UserRole.ADMIN, f"First user must be admin, got {role}"
         assert is_active is True, "First user must be active"
@@ -186,8 +186,8 @@ class TestRoleActivationConsistency:
         service.settings = MagicMock()
         service.settings.admin_emails = ["admin@example.com", "superuser@test.org"]
         
-        role = await service.determine_user_role(admin_email, is_first_user)
-        is_active = await service.is_active(role, is_first_user)
+        role = service.determine_user_role(admin_email, is_first_user)
+        is_active = service.is_active(role, is_first_user)
         
         assert role == UserRole.ADMIN, f"Admin email must be admin, got {role}"
         assert is_active is True, "Admin email user must be active"

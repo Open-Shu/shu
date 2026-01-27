@@ -10,7 +10,7 @@ Defines request/response models for user preferences including:
 """
 
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class UserPreferencesBase(BaseModel):
@@ -59,8 +59,9 @@ class UserPreferencesBase(BaseModel):
     
     # NOTE: Validators for removed RAG/LLM settings deleted
     
-    @validator('theme')
-    def validate_theme(cls, v):
+    @field_validator('theme')
+    @classmethod
+    def validate_theme(cls, v: str) -> str:
         """Validate theme options."""
         valid_themes = ['light', 'dark', 'auto']
         if v not in valid_themes:
@@ -92,8 +93,9 @@ class UserPreferencesUpdate(BaseModel):
     
     # NOTE: Validators for removed RAG/LLM settings deleted
     
-    @validator('theme')
-    def validate_theme(cls, v):
+    @field_validator('theme')
+    @classmethod
+    def validate_theme(cls, v: Optional[str]) -> Optional[str]:
         """Validate theme options."""
         if v is not None:
             valid_themes = ['light', 'dark', 'auto']
@@ -123,6 +125,4 @@ class UserPreferencesResponse(BaseModel):
     summary_search_min_token_length: int
     summary_search_max_tokens: int
     
-    class Config:
-        """Pydantic configuration."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -332,8 +332,8 @@ class UserService:
         provider_key = provider_info["provider_key"]
         
         is_first_user = await self.is_first_user(db)
-        user_role = await self.determine_user_role(email, is_first_user)
-        is_active = await self.is_active(user_role, is_first_user)
+        user_role = self.determine_user_role(email, is_first_user)
+        is_active = self.is_active(user_role, is_first_user)
         
         user = User(
             email=email,
