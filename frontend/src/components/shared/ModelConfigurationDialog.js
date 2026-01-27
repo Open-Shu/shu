@@ -217,14 +217,14 @@ const ModelConfigurationDialog = ({
       const payload = {
         ...formData,
         prompt_id: formData.prompt_id || null,
-        is_active: true, // Save as active - frontend enforces testing
+        is_active: formData.is_active, // Respect user's toggle selection
         ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
       };
       
       let savedConfig;
       if (isEditMode && existingConfigId) {
         // Update existing config
-        const response = await modelConfigAPI.update(existingConfigId, payload);
+        const response = await modelConfigAPI.update(existingConfigId, payload, { signal: abortController.signal });
         // Check if aborted before processing response
         if (abortController.signal.aborted) {
           log.debug('Verification aborted after update');
@@ -234,7 +234,7 @@ const ModelConfigurationDialog = ({
         setTempConfigId(existingConfigId);
       } else if (tempConfigId) {
         // Update previously created temp config
-        const response = await modelConfigAPI.update(tempConfigId, payload);
+        const response = await modelConfigAPI.update(tempConfigId, payload, { signal: abortController.signal });
         // Check if aborted before processing response
         if (abortController.signal.aborted) {
           log.debug('Verification aborted after update');
@@ -243,7 +243,7 @@ const ModelConfigurationDialog = ({
         savedConfig = extractDataFromResponse(response);
       } else {
         // Create new temp config
-        const response = await modelConfigAPI.create(payload);
+        const response = await modelConfigAPI.create(payload, { signal: abortController.signal });
         // Check if aborted before processing response
         if (abortController.signal.aborted) {
           log.debug('Verification aborted after create');

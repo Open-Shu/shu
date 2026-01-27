@@ -386,8 +386,8 @@ export const modelConfigAPI = {
   // Model configuration management
   list: (params = {}) => api.get('/model-configurations', { params }),
   get: (id) => api.get(`/model-configurations/${id}`),
-  create: (data) => api.post('/model-configurations', data),
-  update: (id, data) => api.put(`/model-configurations/${id}`, data),
+  create: (data, options = {}) => api.post('/model-configurations', data, { signal: options.signal }),
+  update: (id, data, options = {}) => api.put(`/model-configurations/${id}`, data, { signal: options.signal }),
   delete: (id) => api.delete(`/model-configurations/${id}`),
 
   // Testing
