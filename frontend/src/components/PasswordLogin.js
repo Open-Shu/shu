@@ -17,14 +17,16 @@ import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName } from '../utils/constants';
 import { useMicrosoftOAuth } from '../hooks/useMicrosoftOAuth';
 
-// Microsoft icon SVG component
+// Microsoft logo - using official asset from Microsoft identity platform branding guidelines
+// https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
 const MicrosoftIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-    <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-    <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-    <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-  </svg>
+  <img 
+    src="/ms-symbollockup_mssymbol_19.svg" 
+    alt="" 
+    width="20" 
+    height="20" 
+    style={{ display: 'block' }}
+  />
 );
 
 const PasswordLogin = ({ 

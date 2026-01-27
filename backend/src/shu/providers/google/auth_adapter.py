@@ -222,8 +222,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                 pass
         meta: Dict[str, Any] = {}
         try:
-            # Check if OAuth is configured (client_id, client_secret, and redirect URI via unified or legacy settings)
-            redirect_uri = settings.get_oauth_redirect_uri("google") if hasattr(settings, "get_oauth_redirect_uri") else getattr(settings, "google_redirect_uri", None)
+            redirect_uri = settings.get_oauth_redirect_uri("google")
             meta = {
                 "user_oauth_configured": bool(
                     getattr(settings, "google_client_id", None)
