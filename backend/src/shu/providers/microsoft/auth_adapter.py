@@ -115,20 +115,21 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
 
     async def build_authorization_url(self, *, scopes: List[str]) -> Dict[str, Any]:
         s = self._auth._settings
-        if not (getattr(s, "microsoft_client_id", None) and getattr(s, "microsoft_redirect_uri", None)):
+        redirect_uri = s.get_oauth_redirect_uri("microsoft") if hasattr(s, "get_oauth_redirect_uri") else getattr(s, "microsoft_redirect_uri", None)
+        if not (getattr(s, "microsoft_client_id", None) and redirect_uri):
             raise RuntimeError("Microsoft OAuth is not configured")
         # Ensure offline_access scope for refresh tokens
         scope_list = list({*(scopes or []), "offline_access"})
         res = self._auth.build_authorization_url(  # type: ignore
             auth_url=self._auth_url(),
             client_id=s.microsoft_client_id,
-            redirect_uri=s.microsoft_redirect_uri,
+            redirect_uri=redirect_uri,
             scopes=scope_list,
             include_pkce=False,  # keep simple; we don't persist code_verifier yet
             extra_params={
                 "response_mode": "query",
                 "state": "provider=microsoft",
-                "prompt": "consent",
+                "prompt": "select_account",
             },
         )
         return {"url": res.get("url"), "state": "provider=microsoft"}
@@ -136,7 +137,8 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
     async def exchange_code(self, *, code: str, scopes: Optional[List[str]] = None) -> Dict[str, Any]:
         import requests
         s = self._auth._settings
-        if not (getattr(s, "microsoft_client_id", None) and getattr(s, "microsoft_client_secret", None) and getattr(s, "microsoft_redirect_uri", None)):
+        redirect_uri = s.get_oauth_redirect_uri("microsoft") if hasattr(s, "get_oauth_redirect_uri") else getattr(s, "microsoft_redirect_uri", None)
+        if not (getattr(s, "microsoft_client_id", None) and getattr(s, "microsoft_client_secret", None) and redirect_uri):
             raise RuntimeError("Microsoft OAuth is not configured")
         scope_str = " ".join(list({*(scopes or []), "offline_access"})) if scopes else "offline_access"
         resp = requests.post(
@@ -144,7 +146,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             data={
                 "client_id": s.microsoft_client_id,
                 "client_secret": s.microsoft_client_secret,
-                "redirect_uri": s.microsoft_redirect_uri,
+                "redirect_uri": redirect_uri,
                 "code": code,
                 "grant_type": "authorization_code",
                 "scope": scope_str,

@@ -134,6 +134,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/refresh",
             "/api/v1/auth/google/login",
             "/api/v1/auth/google/exchange-login",
+            "/api/v1/auth/microsoft/login",
+            "/api/v1/auth/microsoft/exchange-login",
             # Host-auth OAuth callbacks must be public (popup redirects from Google)
             "/api/v1/host/auth/callback",
             "/auth/callback",

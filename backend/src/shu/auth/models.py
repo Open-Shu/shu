@@ -22,7 +22,7 @@ class User(BaseModel):
     email = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
     role = Column(String, default=UserRole.REGULAR_USER.value)  # Store as string
-    google_id = Column(String, unique=True, nullable=False, index=True)
+    google_id = Column(String, unique=True, nullable=True, index=True)  # Nullable for non-Google auth users
     picture_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=False)  # Users require admin activation by default
     last_login = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -39,6 +39,10 @@ class User(BaseModel):
     group_memberships = relationship("UserGroupMembership", foreign_keys="UserGroupMembership.user_id", back_populates="user", cascade="all, delete-orphan")
     kb_permissions = relationship("KnowledgeBasePermission", foreign_keys="KnowledgeBasePermission.user_id", back_populates="user", cascade="all, delete-orphan")
     owned_knowledge_bases = relationship("KnowledgeBase", foreign_keys="KnowledgeBase.owner_id", back_populates="owner")
+
+    # Provider relationships (OAuth identities and credentials)
+    provider_identities = relationship("ProviderIdentity", foreign_keys="ProviderIdentity.user_id", cascade="all, delete-orphan")
+    provider_credentials = relationship("ProviderCredential", foreign_keys="ProviderCredential.user_id", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(email='{self.email}', role='{self.role}')>"
