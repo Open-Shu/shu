@@ -9,6 +9,12 @@ Changes:
 - Drops google_id column from users table
 
 Requirements: 2.3, 2.4, 2.5
+
+Idempotency guarantees:
+- Upgrade: Safe to run multiple times. Skips if google_id column doesn't exist.
+           Skips individual users if ProviderIdentity already exists.
+- Downgrade: Safe to run multiple times. Only recreates column if missing.
+             Only restores values for users that don't already have google_id set.
 """
 
 from alembic import op
@@ -29,7 +35,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    """Migrate google_id to ProviderIdentity and drop column."""
+    """Migrate google_id to ProviderIdentity and drop column.
+    
+    Idempotent: Safe to run multiple times.
+    - If google_id column doesn't exist, does nothing.
+    - If ProviderIdentity already exists for a user, skips that user.
+    - If index doesn't exist, skips index drop.
+    """
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
@@ -48,6 +60,7 @@ def upgrade() -> None:
 
     for user in users_with_google_id:
         # Check if ProviderIdentity already exists (idempotent)
+        # Check by user_id + provider_key + account_id (unique constraint)
         existing = conn.execute(
             text("""
                 SELECT id FROM provider_identities 
@@ -75,50 +88,71 @@ def upgrade() -> None:
                 }
             )
 
-    # Drop index if it exists
+    # Drop index if it exists (idempotent)
     if index_exists(inspector, "users", "ix_users_google_id"):
         op.drop_index("ix_users_google_id", "users")
 
-    # Drop google_id column
+    # Drop google_id column (only if it exists - already checked above)
     op.drop_column("users", "google_id")
 
 
 def downgrade() -> None:
-    """Restore google_id column and migrate data back from ProviderIdentity."""
+    """Restore google_id column and migrate data back from ProviderIdentity.
+    
+    Idempotent: Safe to run multiple times.
+    - If google_id column already exists, skips column creation.
+    - Only updates users where google_id is NULL (doesn't overwrite existing values).
+    - If index already exists, skips index creation.
+    - Only deletes ProviderIdentity rows that were successfully restored.
+    """
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
-    # Add google_id column back if it doesn't exist
+    # Add google_id column back if it doesn't exist (idempotent)
     if not column_exists(inspector, "users", "google_id"):
         op.add_column(
             "users",
             sa.Column("google_id", sa.String(), nullable=True)
         )
+        # Re-inspect after adding column
+        inspector = sa.inspect(conn)
 
     # Restore google_id values from ProviderIdentity
+    # Only restore for users where google_id is currently NULL (idempotent)
     google_identities = conn.execute(
         text("""
-            SELECT user_id, account_id 
-            FROM provider_identities 
-            WHERE provider_key = 'google'
+            SELECT pi.id as identity_id, pi.user_id, pi.account_id 
+            FROM provider_identities pi
+            JOIN users u ON u.id = pi.user_id
+            WHERE pi.provider_key = 'google'
+            AND u.google_id IS NULL
         """)
     ).fetchall()
 
+    restored_identity_ids = []
     for identity in google_identities:
         conn.execute(
             text("""
                 UPDATE users 
                 SET google_id = :google_id 
                 WHERE id = :user_id
+                AND google_id IS NULL
             """),
             {"user_id": identity.user_id, "google_id": identity.account_id}
         )
+        restored_identity_ids.append(identity.identity_id)
 
-    # Recreate unique index
+    # Recreate unique index if it doesn't exist (idempotent)
     if not index_exists(inspector, "users", "ix_users_google_id"):
         op.create_index("ix_users_google_id", "users", ["google_id"], unique=True)
 
-    # Remove migrated ProviderIdentity rows
-    conn.execute(
-        text("DELETE FROM provider_identities WHERE provider_key = 'google'")
-    )
+    # Remove only the ProviderIdentity rows that were restored
+    # This preserves any Google identities created after the migration
+    for identity_id in restored_identity_ids:
+        conn.execute(
+            text("""
+                DELETE FROM provider_identities 
+                WHERE id = :id
+            """),
+            {"id": identity_id}
+        )

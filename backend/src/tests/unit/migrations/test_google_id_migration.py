@@ -25,7 +25,7 @@ if str(MIGRATIONS_PATH) not in sys.path:
 # Mock user row returned from database
 UserRow = namedtuple('UserRow', ['id', 'google_id', 'email', 'name', 'picture_url'])
 IdentityRow = namedtuple('IdentityRow', ['id'])
-IdentityRestoreRow = namedtuple('IdentityRestoreRow', ['user_id', 'account_id'])
+IdentityRestoreRow = namedtuple('IdentityRestoreRow', ['identity_id', 'user_id', 'account_id'])
 
 
 @pytest.fixture
@@ -157,8 +157,8 @@ class TestGoogleIdMigrationDowngrade:
 
     def test_downgrade_recreates_column_and_restores_values(self, mock_alembic_op):
         """Test downgrade recreates google_id column and restores values from ProviderIdentity."""
-        identity1 = IdentityRestoreRow(user_id='user-1', account_id='google-sub-1')
-        identity2 = IdentityRestoreRow(user_id='user-2', account_id='google-sub-2')
+        identity1 = IdentityRestoreRow(identity_id='identity-1', user_id='user-1', account_id='google-sub-1')
+        identity2 = IdentityRestoreRow(identity_id='identity-2', user_id='user-2', account_id='google-sub-2')
         
         mock_conn = MagicMock()
         mock_inspector = MagicMock()
@@ -167,7 +167,8 @@ class TestGoogleIdMigrationDowngrade:
         select_result = MagicMock()
         select_result.fetchall.return_value = [identity1, identity2]
         
-        mock_conn.execute.side_effect = [select_result, MagicMock(), MagicMock(), MagicMock()]
+        # Responses: SELECT identities, UPDATE user1, DELETE identity1, UPDATE user2, DELETE identity2
+        mock_conn.execute.side_effect = [select_result, MagicMock(), MagicMock(), MagicMock(), MagicMock()]
         
         import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
         
@@ -271,3 +272,133 @@ class TestMigrationIdempotence:
             # Second run should do nothing
             mock_conn2.execute.assert_not_called()
             mock_op2.drop_column.assert_not_called()
+
+
+    def test_downgrade_only_deletes_restored_identities(self, mock_alembic_op):
+        """Test downgrade only deletes ProviderIdentity rows that were restored to google_id."""
+        # This identity will be restored (user has NULL google_id)
+        identity_to_restore = IdentityRestoreRow(
+            identity_id='identity-1', 
+            user_id='user-1', 
+            account_id='google-sub-1'
+        )
+        
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        # Track DELETE calls
+        delete_calls = []
+        
+        def track_execute(query, params=None):
+            query_str = str(query)
+            result = MagicMock()
+            
+            if 'SELECT' in query_str:
+                # Return only identities where user.google_id IS NULL
+                result.fetchall.return_value = [identity_to_restore]
+            elif 'DELETE' in query_str:
+                delete_calls.append(params)
+            
+            return result
+        
+        mock_conn.execute.side_effect = track_execute
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
+            
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
+            
+            migration_module.downgrade()
+            
+            # Should only delete the identity that was restored
+            assert len(delete_calls) == 1
+            assert delete_calls[0]['id'] == 'identity-1'
+
+
+class TestDowngradeIdempotence:
+    """Tests verifying downgrade idempotence."""
+
+    def test_downgrade_skips_users_with_existing_google_id(self, mock_alembic_op):
+        """Test downgrade doesn't overwrite existing google_id values."""
+        mock_conn = MagicMock()
+        mock_inspector = MagicMock()
+        
+        # The SELECT query joins with users WHERE google_id IS NULL
+        # So if a user already has google_id set, they won't be in the result
+        select_result = MagicMock()
+        select_result.fetchall.return_value = []  # No users need restoration
+        
+        mock_conn.execute.side_effect = [select_result]
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
+            
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
+            
+            migration_module.downgrade()
+            
+            # Should only execute the SELECT query, no UPDATEs or DELETEs
+            assert mock_conn.execute.call_count == 1
+
+    def test_running_downgrade_twice_is_safe(self, mock_alembic_op):
+        """Test that running downgrade twice doesn't cause errors."""
+        identity1 = IdentityRestoreRow(
+            identity_id='identity-1',
+            user_id='user-1', 
+            account_id='google-sub-1'
+        )
+        
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        # First downgrade: column doesn't exist, identity needs restoration
+        mock_conn1 = MagicMock()
+        mock_inspector1 = MagicMock()
+        
+        select_result1 = MagicMock()
+        select_result1.fetchall.return_value = [identity1]
+        mock_conn1.execute.side_effect = [select_result1, MagicMock(), MagicMock()]
+        
+        with patch.object(migration_module, 'op') as mock_op1, \
+             patch.object(migration_module, 'sa') as mock_sa1, \
+             patch.object(migration_module, 'column_exists', return_value=False), \
+             patch.object(migration_module, 'index_exists', return_value=False):
+            
+            mock_op1.get_bind.return_value = mock_conn1
+            mock_sa1.inspect.return_value = mock_inspector1
+            
+            migration_module.downgrade()
+            
+            mock_op1.add_column.assert_called_once()
+            mock_op1.create_index.assert_called_once()
+        
+        # Second downgrade: column exists, no identities need restoration
+        mock_conn2 = MagicMock()
+        mock_inspector2 = MagicMock()
+        
+        select_result2 = MagicMock()
+        select_result2.fetchall.return_value = []  # No users need restoration
+        mock_conn2.execute.side_effect = [select_result2]
+        
+        with patch.object(migration_module, 'op') as mock_op2, \
+             patch.object(migration_module, 'sa') as mock_sa2, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
+            
+            mock_op2.get_bind.return_value = mock_conn2
+            mock_sa2.inspect.return_value = mock_inspector2
+            
+            migration_module.downgrade()
+            
+            # Second run should not add column or create index
+            mock_op2.add_column.assert_not_called()
+            mock_op2.create_index.assert_not_called()
