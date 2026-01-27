@@ -15,11 +15,15 @@ The UserService handles:
 - User CRUD operations (get, update, delete)
 
 Usage:
-    from shu.services.user_service import user_service, create_token_response
+    from shu.services.user_service import UserService, get_user_service, create_token_response
     
-    # In endpoint:
-    user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-    return create_token_response(user, user_service.jwt_manager)
+    # In endpoint with dependency injection:
+    async def endpoint(
+        user_service: UserService = Depends(get_user_service),
+        db: AsyncSession = Depends(get_db)
+    ):
+        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        return create_token_response(user, user_service.jwt_manager)
 """
 
 from datetime import datetime, timezone
@@ -365,8 +369,18 @@ class UserService:
         return user
 
 
-# Module-level instance for dependency injection
-user_service = UserService()
+# Dependency provider for UserService
+def get_user_service() -> UserService:
+    """Dependency provider for UserService.
+    
+    Use with FastAPI's Depends() for proper dependency injection:
+    
+        async def endpoint(
+            user_service: UserService = Depends(get_user_service)
+        ):
+            ...
+    """
+    return UserService()
 
 
 def create_token_response(user: User, jwt_manager: JWTManager):

@@ -15,7 +15,7 @@ from ..auth.rbac import get_current_user, require_admin
 from ..auth.password_auth import password_auth_service
 from ..core.rate_limiting import get_rate_limit_service
 from ..schemas.envelope import SuccessResponse
-from ..services.user_service import user_service, create_token_response
+from ..services.user_service import UserService, get_user_service, create_token_response
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,7 @@ class CreateUserRequest(BaseModel):
 async def login(
     request: LoginRequest,
     db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
     _rate_limit: None = Depends(_check_auth_rate_limit),
 ):
     """
@@ -120,6 +121,7 @@ async def login(
     Parameters:
         request (LoginRequest): Payload containing the Google ID token.
         db (AsyncSession): Database session injected via dependency.
+        user_service (UserService): User service injected via dependency.
         _rate_limit: Rate limiting dependency (enforces auth rate limits).
     
     Returns:
@@ -160,7 +162,11 @@ async def login(
         )
 
 @router.post("/register", response_model=SuccessResponse[Dict[str, str]], dependencies=[Depends(_check_auth_rate_limit)])
-async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register_user(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+):
     """
     Register a new user account using email and password.
     
@@ -215,13 +221,18 @@ async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get
         )
 
 @router.post("/login/password", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
-async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = Depends(get_db)):
+async def login_with_password(
+    request: PasswordLoginRequest,
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+):
     """
     Authenticate a user using email and password and return JWT tokens and user info.
     
     Parameters:
         request (PasswordLoginRequest): Contains the user's `email` and `password`.
         db (AsyncSession): Database session (typically injected via dependency).
+        user_service (UserService): User service injected via dependency.
     
     Returns:
         SuccessResponse: Contains a TokenResponse with `access_token`, `refresh_token`, `token_type`, and `user` (user data dictionary).
@@ -309,7 +320,11 @@ async def change_password(
 
 
 @router.post("/refresh", response_model=SuccessResponse[TokenResponse])
-async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+async def refresh_token(
+    request: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+):
     """Refresh access token using refresh token"""
     try:
         # Verify refresh token and get user_id
@@ -381,7 +396,11 @@ class CodeRequest(BaseModel):
 
 
 @router.post("/google/exchange-login", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
-async def google_exchange_login(request: CodeRequest, db: AsyncSession = Depends(get_db)):
+async def google_exchange_login(
+    request: CodeRequest,
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+):
     """Exchange an OAuth authorization code for Google ID token and issue Shu JWTs.
 
     This supports the explicit redirect fallback login flow (popup or top-level redirect).
@@ -443,7 +462,11 @@ async def microsoft_login(current_user: User | None = Depends(lambda: None)):
 
 
 @router.post("/microsoft/exchange-login", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
-async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depends(get_db)):
+async def microsoft_exchange_login(
+    request: CodeRequest,
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+):
     """Exchange an OAuth authorization code for Microsoft access token and issue Shu JWTs.
 
     This supports the Microsoft OAuth redirect login flow.
@@ -486,7 +509,11 @@ async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depe
 
 
 @router.get("/users", response_model=SuccessResponse[List[Dict[str, Any]]])
-async def get_all_users(current_user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def get_all_users(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+):
     """Get all users (admin only)"""
     users = await user_service.get_all_users(db)
     return SuccessResponse(data=[user.to_dict() for user in users])
@@ -496,7 +523,8 @@ async def update_user(
     user_id: str,
     request: UserUpdateRequest,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Update user role and status (admin only)"""
     try:
@@ -564,7 +592,8 @@ async def create_user(
 async def activate_user(
     user_id: str,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Activate a user account (admin only)"""
     try:
@@ -597,7 +626,8 @@ async def activate_user(
 async def deactivate_user(
     user_id: str,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Deactivate a user account (admin only)"""
     try:
@@ -637,7 +667,8 @@ async def deactivate_user(
 async def delete_user(
     user_id: str,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Delete user (admin only)"""
     try:
