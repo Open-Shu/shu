@@ -33,10 +33,20 @@ def _mock_microsoft_adapter():
     return mock
 
 
-def _mock_microsoft_user_info(user_data: dict):
-    """Create a mock for _get_microsoft_user_info."""
+def _mock_adapter_get_user_info(user_data: dict):
+    """Create a mock for MicrosoftAuthAdapter.get_user_info.
+    
+    Converts legacy test data format to normalized provider info format.
+    """
     mock = AsyncMock()
-    mock.return_value = user_data
+    # Convert legacy format (microsoft_id, email, name, picture) to normalized format
+    mock.return_value = {
+        "provider_id": user_data.get("microsoft_id"),
+        "provider_key": "microsoft",
+        "email": user_data.get("email"),
+        "name": user_data.get("name"),
+        "picture": user_data.get("picture"),
+    }
     return mock
 
 
@@ -99,7 +109,7 @@ async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
         "picture": None,
     }
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
         with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()):
             response = await client.post(
                 "/api/v1/auth/microsoft/exchange-login",
@@ -150,7 +160,7 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
         "picture": None,
     }
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
         with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()):
             response = await client.post(
                 "/api/v1/auth/microsoft/exchange-login",
@@ -187,7 +197,7 @@ async def test_microsoft_exchange_login_links_to_existing_google_user(client, db
         "picture": None,
     }
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
         with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()):
             response = await client.post(
                 "/api/v1/auth/microsoft/exchange-login",
@@ -225,7 +235,7 @@ async def test_microsoft_exchange_login_password_conflict(client, db, auth_heade
 
     logger.info("=== EXPECTED TEST OUTPUT: 409 conflict error for password auth user is expected ===")
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
         with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()):
             response = await client.post(
                 "/api/v1/auth/microsoft/exchange-login",
@@ -271,7 +281,7 @@ async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
 
     logger.info("=== EXPECTED TEST OUTPUT: 400 error for inactive user is expected ===")
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
         with patch("shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()):
             response = await client.post(
                 "/api/v1/auth/microsoft/exchange-login",
