@@ -49,22 +49,25 @@ ALLOWED_IMAGE_MIME_TYPES = {
 
 async def _validate_and_read_upload(
     file: UploadFile,
+    allowed_mime_types: set[str] = ALLOWED_IMAGE_MIME_TYPES,
     max_size_bytes: int = MAX_UPLOAD_SIZE_BYTES,
     chunk_size: int = UPLOAD_CHUNK_SIZE_BYTES
 ) -> bytes:
     """
-    Validate and read an uploaded file with size limits and streaming.
+    Validate and read an uploaded file with MIME type and size limits.
     
-    This function implements defense-in-depth file validation:
-    1. Pre-read validation: Checks file.size metadata if available (most efficient)
-    2. During-read validation: Validates size while streaming in chunks (fallback)
+    This function implements comprehensive file validation:
+    1. MIME type validation: Checks file.content_type against allowed types
+    2. Pre-read size validation: Checks file.size metadata if available (most efficient)
+    3. During-read size validation: Validates size while streaming in chunks (fallback)
     
-    The two-stage approach is necessary because file.size may not always be available
-    (depends on client sending Content-Length header). Streaming reads prevent
-    memory exhaustion even for permitted large files.
+    The two-stage size validation is necessary because file.size may not always be
+    available (depends on client sending Content-Length header). Streaming reads
+    prevent memory exhaustion even for permitted large files.
     
     Args:
         file: The FastAPI UploadFile to validate and read
+        allowed_mime_types: Set of allowed MIME types (default: image types)
         max_size_bytes: Maximum allowed file size in bytes (default: 10MB)
         chunk_size: Size of chunks for streaming reads (default: 1MB)
         
@@ -72,9 +75,16 @@ async def _validate_and_read_upload(
         bytes: The complete file content
         
     Raises:
-        HTTPException: If file exceeds size limit at any validation stage
+        HTTPException: If file type is invalid or exceeds size limit at any validation stage
     """
-    # Stage 1: Pre-read validation using metadata (if available)
+    # Validate MIME type before reading
+    if file.content_type not in allowed_mime_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type: {file.content_type}. Allowed types: {', '.join(sorted(allowed_mime_types))}."
+        )
+    
+    # Stage 1: Pre-read size validation using metadata (if available)
     # This is the most efficient check - prevents reading oversized files entirely
     if file.size is not None and file.size > max_size_bytes:
         raise HTTPException(
@@ -500,17 +510,7 @@ async def test_model_configuration(
         attachment_ids = []
         if file:
             try:
-                # Validate file type before reading
-                if file.content_type not in ALLOWED_IMAGE_MIME_TYPES:
-                    await file.close()
-                    await chat_service.delete_conversation(conversation.id)
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid file type: {file.content_type}. Only image files are supported."
-                    )
-                
-                # Validate and read file with size limits and streaming
-                # This uses a two-stage validation approach (see _validate_and_read_upload)
+                # Validate and read file (MIME type, size limits, streaming)
                 file_content = await _validate_and_read_upload(file)
                 
                 attachment_service = AttachmentService(db)
