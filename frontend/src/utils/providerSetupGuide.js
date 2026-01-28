@@ -11,16 +11,17 @@ export const PROVIDER_SETUP_INSTRUCTIONS = {
       'Sign up or log in at platform.openai.com',
       'Navigate to API Keys section (platform.openai.com/api-keys)',
       'Click "Create new secret key" and copy it immediately',
-      'Paste the key below (starts with "sk-")',
+      'Paste the key below (starts with "sk-", "sk-proj-", or "sk-admin-")',
       'Set your API endpoint to https://api.openai.com/v1 (default)'
     ],
-    apiKeyFormat: 'sk-...',
+    apiKeyFormat: 'sk-, sk-proj-, sk-admin-',
     apiKeyUrl: 'https://platform.openai.com/api-keys',
     defaultEndpoint: 'https://api.openai.com/v1',
     testTips: [
       'Ensure your API key has sufficient credits',
       'Check that your organization ID is correct (if using one)',
-      'Verify your network can reach api.openai.com'
+      'Verify your network can reach api.openai.com',
+      'OpenAI keys may start with sk-, sk-proj-, or sk-admin- depending on key type'
     ]
   },
   anthropic: {
@@ -158,6 +159,16 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Try increasing the timeout value if the provider is slow'
     ]
   },
+  connection_refused: {
+    title: 'Connection Refused',
+    suggestions: [
+      'For local providers: Ensure the service is running (e.g., Ollama, LM Studio)',
+      'Verify the endpoint URL and port number are correct',
+      'Check that the service is listening on the specified port',
+      'For remote providers: Verify the server is accessible',
+      'Check firewall settings that may block the connection'
+    ]
+  },
   network: {
     title: 'Network Error',
     suggestions: [
@@ -207,7 +218,9 @@ export const formatConnectionTestError = (error, statusCode) => {
     suggestions = CONNECTION_TEST_SUGGESTIONS[429].suggestions;
   } else if (statusCode >= 500) {
     suggestions = CONNECTION_TEST_SUGGESTIONS[500].suggestions;
-  } else if (error.code === 'ECONNREFUSED' || error.message?.includes('timeout')) {
+  } else if (error.code === 'ECONNREFUSED') {
+    suggestions = CONNECTION_TEST_SUGGESTIONS.connection_refused.suggestions;
+  } else if (error.message?.includes('timeout')) {
     suggestions = CONNECTION_TEST_SUGGESTIONS.timeout.suggestions;
   } else {
     suggestions = CONNECTION_TEST_SUGGESTIONS.network.suggestions;

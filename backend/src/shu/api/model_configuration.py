@@ -38,6 +38,68 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
 
+# Constants
+MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024  # 1MB chunks for streaming reads
+ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/gif",
+    "image/webp", "image/bmp", "image/tiff"
+}
+
+
+async def _validate_and_read_upload(
+    file: UploadFile,
+    max_size_bytes: int = MAX_UPLOAD_SIZE_BYTES,
+    chunk_size: int = UPLOAD_CHUNK_SIZE_BYTES
+) -> bytes:
+    """
+    Validate and read an uploaded file with size limits and streaming.
+    
+    This function implements defense-in-depth file validation:
+    1. Pre-read validation: Checks file.size metadata if available (most efficient)
+    2. During-read validation: Validates size while streaming in chunks (fallback)
+    
+    The two-stage approach is necessary because file.size may not always be available
+    (depends on client sending Content-Length header). Streaming reads prevent
+    memory exhaustion even for permitted large files.
+    
+    Args:
+        file: The FastAPI UploadFile to validate and read
+        max_size_bytes: Maximum allowed file size in bytes (default: 10MB)
+        chunk_size: Size of chunks for streaming reads (default: 1MB)
+        
+    Returns:
+        bytes: The complete file content
+        
+    Raises:
+        HTTPException: If file exceeds size limit at any validation stage
+    """
+    # Stage 1: Pre-read validation using metadata (if available)
+    # This is the most efficient check - prevents reading oversized files entirely
+    if file.size is not None and file.size > max_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File too large: {file.size} bytes. Maximum size is {max_size_bytes} bytes ({max_size_bytes // (1024 * 1024)}MB)."
+        )
+    
+    # Stage 2: Stream file in chunks with size validation during read
+    # This catches oversized files even if metadata was unavailable
+    file_content = bytearray()
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        file_content.extend(chunk)
+        
+        # Validate accumulated size doesn't exceed limit
+        if len(file_content) > max_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File too large: exceeds {max_size_bytes} bytes ({max_size_bytes // (1024 * 1024)}MB)."
+            )
+    
+    return bytes(file_content)
+
 
 def _format_test_error_with_suggestions(error_message: Any) -> str:
     """Format error message with suggestions for the LLM Tester.
@@ -438,7 +500,19 @@ async def test_model_configuration(
         attachment_ids = []
         if file:
             try:
-                file_content = await file.read()
+                # Validate file type before reading
+                if file.content_type not in ALLOWED_IMAGE_MIME_TYPES:
+                    await file.close()
+                    await chat_service.delete_conversation(conversation.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid file type: {file.content_type}. Only image files are supported."
+                    )
+                
+                # Validate and read file with size limits and streaming
+                # This uses a two-stage validation approach (see _validate_and_read_upload)
+                file_content = await _validate_and_read_upload(file)
+                
                 attachment_service = AttachmentService(db)
                 attachment, _ = await attachment_service.save_upload(
                     conversation_id=conversation.id,
@@ -447,14 +521,22 @@ async def test_model_configuration(
                     file_bytes=file_content
                 )
                 attachment_ids.append(attachment.id)
+            except HTTPException:
+                # Re-raise HTTP exceptions (including validation errors)
+                await file.close()
+                await chat_service.delete_conversation(conversation.id)
+                raise
             except Exception as e:
                 logger.error(f"Failed to create attachment for test: {e}")
                 # Clean up conversation
+                await file.close()
                 await chat_service.delete_conversation(conversation.id)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Failed to process image attachment: {str(e)}"
                 )
+            finally:
+                await file.close()
 
         response = ""
         error = None
