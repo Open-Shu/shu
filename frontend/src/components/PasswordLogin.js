@@ -15,25 +15,63 @@ import GoogleIcon from '@mui/icons-material/Google';
 import api, { extractDataFromResponse } from '../services/api';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName } from '../utils/constants';
+import { useMicrosoftOAuth } from '../hooks/useMicrosoftOAuth';
 
-const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnabled = false }) => {
+// Microsoft logo - using official asset from Microsoft identity platform branding guidelines
+// https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
+const MicrosoftIcon = () => (
+  <img 
+    src="/ms-symbollockup_mssymbol_19.svg" 
+    alt="" 
+    width="20" 
+    height="20" 
+    style={{ display: 'block' }}
+  />
+);
+
+const PasswordLogin = ({ 
+  onSwitchToRegister, 
+  onSwitchToGoogle, 
+  isGoogleSsoEnabled = false,
+  isMicrosoftSsoEnabled = false,
+}) => {
   const [formData, setFormData] = useState({
     email: '',
     password: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
   const logoUrl = branding?.logoUrl;
+
+  // Microsoft OAuth hook
+  const { startLogin: startMicrosoftLogin, loading: microsoftLoading } = useMicrosoftOAuth({
+    onSuccess: ({ accessToken, refreshToken }) => {
+      localStorage.setItem('shu_token', accessToken);
+      if (refreshToken) {
+        localStorage.setItem('shu_refresh_token', refreshToken);
+      }
+      window.location.href = '/';
+    },
+    onError: (errorMessage) => {
+      setError(errorMessage);
+    },
+    onPendingActivation: () => {
+      setSuccessMessage(
+        'Your account has been created but requires administrator activation before you can sign in.'
+      );
+    },
+  });
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
-    // Clear error when user starts typing
     if (error) setError(null);
+    if (successMessage) setSuccessMessage(null);
   };
 
   const validateForm = () => {
@@ -60,9 +98,9 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
 
     setLoading(true);
     setError(null);
+    setSuccessMessage(null);
 
     try {
-      // Login with password
       const response = await api.post('/auth/login/password', {
         email: formData.email,
         password: formData.password
@@ -71,11 +109,9 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
       const responseData = extractDataFromResponse(response);
       const { access_token, refresh_token } = responseData;
 
-      // Store tokens
       localStorage.setItem('shu_token', access_token);
       localStorage.setItem('shu_refresh_token', refresh_token);
 
-      // Redirect to main app (the auth wrapper will handle the redirect)
       window.location.href = '/';
 
     } catch (err) {
@@ -87,6 +123,14 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
       setLoading(false);
     }
   };
+
+  const handleMicrosoftLogin = () => {
+    setError(null);
+    setSuccessMessage(null);
+    startMicrosoftLogin();
+  };
+
+  const isAnyLoading = loading || microsoftLoading;
 
   return (
     <Container maxWidth="sm">
@@ -104,9 +148,9 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
               src={logoUrl}
               alt={appDisplayName}
               style={{
-                height: '60px', // Fixed height for normal proportions
-                width: 'auto', // Maintain aspect ratio
-                maxWidth: '100%', // Don't exceed container width
+                height: '60px',
+                width: 'auto',
+                maxWidth: '100%',
                 marginBottom: '1rem',
               }}
             />
@@ -124,6 +168,12 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
             </Alert>
           )}
 
+          {successMessage && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              {successMessage}
+            </Alert>
+          )}
+
           <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
             <TextField
               margin="normal"
@@ -137,7 +187,7 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
               type="email"
               value={formData.email}
               onChange={handleChange}
-              disabled={loading}
+              disabled={isAnyLoading}
             />
             
             <TextField
@@ -151,7 +201,7 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
               autoComplete="current-password"
               value={formData.password}
               onChange={handleChange}
-              disabled={loading}
+              disabled={isAnyLoading}
             />
 
             <Button
@@ -160,7 +210,7 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
               variant="contained"
               size="large"
               startIcon={loading ? <CircularProgress size={20} /> : <LoginIcon />}
-              disabled={loading}
+              disabled={isAnyLoading}
               sx={{ mt: 3, mb: 2, py: 1.5 }}
             >
               {loading ? 'Signing in...' : 'Sign In'}
@@ -180,10 +230,34 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
                   size="large"
                   startIcon={<GoogleIcon />}
                   onClick={onSwitchToGoogle}
-                  disabled={loading}
+                  disabled={isAnyLoading}
                   sx={{ mb: 2, py: 1.5 }}
                 >
                   Sign in with Google
+                </Button>
+              </>
+            )}
+
+            {isMicrosoftSsoEnabled && (
+              <>
+                {!isGoogleSsoEnabled && (
+                  <Divider sx={{ my: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      OR
+                    </Typography>
+                  </Divider>
+                )}
+
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  size="large"
+                  startIcon={microsoftLoading ? <CircularProgress size={20} /> : <MicrosoftIcon />}
+                  onClick={handleMicrosoftLogin}
+                  disabled={isAnyLoading}
+                  sx={{ mb: 2, py: 1.5 }}
+                >
+                  {microsoftLoading ? 'Signing in...' : 'Sign in with Microsoft'}
                 </Button>
               </>
             )}
@@ -192,7 +266,7 @@ const PasswordLogin = ({ onSwitchToRegister, onSwitchToGoogle, isGoogleSsoEnable
               <Button
                 variant="text"
                 onClick={onSwitchToRegister}
-                disabled={loading}
+                disabled={isAnyLoading}
               >
                 Don't have an account? Register
               </Button>

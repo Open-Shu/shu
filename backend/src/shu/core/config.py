@@ -53,15 +53,18 @@ class Settings(BaseSettings):
     # Google Drive configuration
     google_service_account_json: Optional[str] = Field(None, alias="GOOGLE_SERVICE_ACCOUNT_JSON")
 
+    # Unified OAuth redirect URI (shared by all providers)
+    oauth_redirect_uri: str = Field("http://localhost:8000/auth/callback", alias="OAUTH_REDIRECT_URI")
+
     # Google SSO configuration
     google_client_id: Optional[str] = Field(None, alias="GOOGLE_CLIENT_ID")
     google_client_secret: Optional[str] = Field(None, alias="GOOGLE_CLIENT_SECRET")
-    google_redirect_uri: str = Field("http://localhost:8000/auth/callback", alias="GOOGLE_REDIRECT_URI")
+    # Legacy: Use OAUTH_REDIRECT_URI instead. This is kept for backward compatibility.
+    google_redirect_uri: Optional[str] = Field(None, alias="GOOGLE_REDIRECT_URI")
 
     # Microsoft 365 OAuth configuration
     microsoft_client_id: Optional[str] = Field(None, alias="MICROSOFT_CLIENT_ID")
     microsoft_client_secret: Optional[str] = Field(None, alias="MICROSOFT_CLIENT_SECRET")
-    microsoft_redirect_uri: Optional[str] = Field(None, alias="MICROSOFT_REDIRECT_URI")
     microsoft_tenant_id: Optional[str] = Field(None, alias="MICROSOFT_TENANT_ID")
 
     # Google Workspace configuration for organizational intelligence
@@ -465,6 +468,31 @@ class Settings(BaseSettings):
         if v.lower() not in valid_modes:
             raise ValueError(f"Worker mode must be one of: {valid_modes}")
         return v.lower()
+
+    def get_oauth_redirect_uri(self, provider: str = "google") -> str:
+        """Get the effective OAuth redirect URI for a provider.
+
+        Uses OAUTH_REDIRECT_URI as the primary setting. Falls back to legacy
+        GOOGLE_REDIRECT_URI with a deprecation warning if set.
+
+        Args:
+            provider: The OAuth provider ("google" or "microsoft")
+
+        Returns:
+            The effective redirect URI to use
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Check for legacy Google-specific setting
+        if provider == "google" and self.google_redirect_uri:
+            logger.warning(
+                "Deprecated: GOOGLE_REDIRECT_URI is set. Use OAUTH_REDIRECT_URI instead. "
+                "Support for GOOGLE_REDIRECT_URI will be removed in a future release."
+            )
+            return self.google_redirect_uri
+
+        return self.oauth_redirect_uri
 
     model_config = SettingsConfigDict(
         env_file=".env",

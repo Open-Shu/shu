@@ -13,6 +13,7 @@ class UploadRestrictions(BaseModel):
 class PublicConfig(BaseModel):
     """Public configuration that can be safely exposed to frontend"""
     google_client_id: str
+    microsoft_client_id: str
     app_name: str
     version: str
     environment: str

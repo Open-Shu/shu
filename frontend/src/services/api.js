@@ -244,6 +244,7 @@ export const authAPI = {
   deactivateUser: (userId) => api.patch(`/auth/users/${userId}/deactivate`),
 
   exchangeGoogleLogin: (code) => api.post('/auth/google/exchange-login', { code }),
+  exchangeMicrosoftLogin: (code) => api.post('/auth/microsoft/exchange-login', { code }),
 };
 
 // Health endpoints

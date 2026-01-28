@@ -76,6 +76,15 @@ class ConfigService {
     return typeof clientId === 'string' && clientId.trim().length > 0;
   }
 
+  getMicrosoftClientId() {
+    return this.config?.microsoft_client_id;
+  }
+
+  isMicrosoftSsoEnabled() {
+    const clientId = this.getMicrosoftClientId();
+    return typeof clientId === 'string' && clientId.trim().length > 0;
+  }
+
   getAppName() {
     // Fallback to backend default to avoid stale hardcoding
     return this.config?.app_name || 'Shu';
