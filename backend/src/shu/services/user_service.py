@@ -170,16 +170,17 @@ class UserService:
         provider_id = provider_info["provider_id"]
         provider_key = provider_info["provider_key"]
         
-        # Check for password auth conflict
-        auth_method = await self.get_user_auth_method(db, email)
-        if auth_method == "password":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This account uses password authentication. Please use the username & password login flow."
-            )
-        
         # Look up existing identity in ProviderIdentity table
         user = await self._get_user_by_identity(provider_key, provider_id, db)
+        if not user:
+            # Check for password auth conflict only when no identity match exists
+            auth_method = await self.get_user_auth_method(db, email)
+            if auth_method == "password":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This account uses password authentication. Please use the username & password login flow."
+                )
+        
         if user:
             if not user.is_active:
                 raise HTTPException(
