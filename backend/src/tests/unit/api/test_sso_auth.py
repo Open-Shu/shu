@@ -154,9 +154,10 @@ class TestAuthenticateOrCreateSSOUser:
     @pytest.mark.asyncio
     async def test_password_auth_conflict_returns_409(self, user_service, mock_db, google_provider_info):
         """Test that password auth conflict returns 409."""
-        with patch.object(user_service, 'get_user_auth_method', return_value="password"):
-            with pytest.raises(HTTPException) as exc_info:
-                await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
+        with patch.object(user_service, '_get_user_by_identity', new_callable=AsyncMock, return_value=None):
+            with patch.object(user_service, 'get_user_auth_method', new_callable=AsyncMock, return_value="password"):
+                with pytest.raises(HTTPException) as exc_info:
+                    await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
 
         assert exc_info.value.status_code == 409
         assert "password authentication" in exc_info.value.detail.lower()
