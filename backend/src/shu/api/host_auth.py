@@ -81,6 +81,9 @@ async def get_host_auth_status(
                 try:
                     for s in pi.scopes or []:
                         s_str = str(s)
+                        # Normalize Microsoft scopes in fallback path
+                        if p == "microsoft" and s_str and not s_str.startswith("https://"):
+                            s_str = f"https://graph.microsoft.com/{s_str}"
                         if s_str not in scopes_union:
                             scopes_union.append(s_str)
                 except Exception:
@@ -345,7 +348,19 @@ async def host_auth_exchange(
                 detail="Failed to obtain tokens from provider",
             )
 
-        final_scopes = token_scopes or requested_scopes
+        # Normalize Microsoft scopes: add URL prefix if missing
+        if provider == "microsoft":
+            normalized_scopes = []
+            for scope in (token_scopes or requested_scopes):
+                if scope and not scope.startswith("https://"):
+                    # Microsoft returns short-form scopes like "Mail.Read"
+                    # but manifests declare them as "https://graph.microsoft.com/Mail.Read"
+                    normalized_scopes.append(f"https://graph.microsoft.com/{scope}")
+                else:
+                    normalized_scopes.append(scope)
+            final_scopes = normalized_scopes
+        else:
+            final_scopes = token_scopes or requested_scopes
         # Log what we will persist for diagnosis of scope issues
         try:
             logger.info(
