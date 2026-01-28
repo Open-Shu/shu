@@ -721,20 +721,39 @@ const ModelConfigurationDialog = ({
             </FormControl>
           </Grid>
           <Grid item xs={12} sm={6}>
-            <FormControl fullWidth disabled={!formData.llm_provider_id}>
-              <InputLabel>Model</InputLabel>
-              <Select
-                value={formData.model_name}
-                onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
-                label="Model"
-              >
-                {models.map((model) => (
-                  <MenuItem key={model.id} value={model.model_name}>
-                    {model.display_name || model.model_name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <FormControl fullWidth disabled={!formData.llm_provider_id}>
+                <InputLabel>Model</InputLabel>
+                <Select
+                  value={formData.model_name}
+                  onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
+                  label="Model"
+                >
+                  {models.map((model) => (
+                    <MenuItem key={model.id} value={model.model_name}>
+                      {model.display_name || model.model_name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Tooltip title={
+                <Box>
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    Select the specific model to use from your provider.
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                    Examples:
+                  </Typography>
+                  <Typography variant="body2" component="div">
+                    • OpenAI: gpt-4, gpt-3.5-turbo<br/>
+                    • Anthropic: claude-3-opus, claude-3-sonnet<br/>
+                    • Ollama: llama2, mistral, codellama
+                  </Typography>
+                </Box>
+              }>
+                <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
+              </Tooltip>
+            </Box>
           </Grid>
           <Grid item xs={12}>
             <FormControl fullWidth>
@@ -1199,12 +1218,26 @@ const ModelConfigurationDialog = ({
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
               />
               <Typography variant="body2">Active</Typography>
+              <Tooltip title="When active, this configuration will be available for use in conversations and experiences. Inactive configurations are hidden from selection.">
+                <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
+              </Tooltip>
             </Box>
             {capabilityToggles.map(({ funcKey, value, label }) => {
               // Determine if this is a tools or vision capability
               const isToolsCapability = funcKey === 'supports_tools' || funcKey === 'supports_tool_calling';
               const isVisionCapability = funcKey === 'supports_vision';
               const showWarning = value && (isToolsCapability || isVisionCapability);
+              
+              // Tooltip text for each capability
+              const getTooltipText = () => {
+                if (isToolsCapability) {
+                  return "Enables the model to call functions/tools during generation. Required for plugin execution and structured outputs. Not all models support this feature.";
+                }
+                if (isVisionCapability) {
+                  return "Enables the model to process and understand images in conversations. Required for image analysis. Not all models support this feature.";
+                }
+                return "Toggle this capability for the model configuration.";
+              };
               
               return (
                 <Box key={funcKey}>
@@ -1220,6 +1253,9 @@ const ModelConfigurationDialog = ({
                       })}
                     />
                     <Typography variant="body2">{label}</Typography>
+                    <Tooltip title={getTooltipText()}>
+                      <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
+                    </Tooltip>
                   </Box>
                   {showWarning && (
                     <Alert severity="warning" sx={{ mt: 0.5, mb: 1, py: 0.5 }}>
@@ -1248,6 +1284,9 @@ const ModelConfigurationDialog = ({
                 onChange={(e) => setFormData({ ...formData, is_side_call_model: e.target.checked })}
               />
               <Typography variant="body2">Use model for side calls</Typography>
+              <Tooltip title="Side calls are optimized LLM requests for UI features like prompt assistance, title generation, and summaries. Only one model should have this enabled at a time.">
+                <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
+              </Tooltip>
             </Box>
           </Grid>
           <Grid item xs={12}>

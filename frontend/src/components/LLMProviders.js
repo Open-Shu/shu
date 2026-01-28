@@ -37,6 +37,7 @@ import { useAuth } from '../hooks/useAuth';
 import LLMProviderForm from './shared/LLMProviderForm';
 import { log } from '../utils/log';
 import PageHelpHeader from './PageHelpHeader';
+import { formatConnectionTestError } from '../utils/providerSetupGuide';
 
 const createDefaultProviderCapabilities = () => ({});
 
@@ -320,9 +321,16 @@ const [manualModels, setManualModels] = useState([]);
         }));
       },
       onError: (err, id) => {
+        const statusCode = err.response?.status;
+        const errorResult = formatConnectionTestError(err, statusCode);
+        
         setTestResults(prev => ({
           ...prev,
-          [id]: { success: false, message: formatError(err).message }
+          [id]: { 
+            success: false, 
+            message: errorResult.message,
+            suggestions: errorResult.suggestions
+          }
         }));
       }
     }
@@ -734,7 +742,23 @@ const handleEditProvider = (provider) => {
                       severity={testResults[provider.id].success ? 'success' : 'error'}
                       sx={{ mt: 1, fontSize: '0.75rem' }}
                     >
-                      {testResults[provider.id].message}
+                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                        {testResults[provider.id].message}
+                      </Typography>
+                      {testResults[provider.id].suggestions && testResults[provider.id].suggestions.length > 0 && (
+                        <Box sx={{ mt: 1 }}>
+                          <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                            Suggestions:
+                          </Typography>
+                          <ul style={{ margin: '4px 0 0 0', paddingLeft: 20 }}>
+                            {testResults[provider.id].suggestions.map((suggestion, index) => (
+                              <li key={index}>
+                                <Typography variant="caption">{suggestion}</Typography>
+                              </li>
+                            ))}
+                          </ul>
+                        </Box>
+                      )}
                     </Alert>
                   )}
                 </CardContent>

@@ -13,12 +13,15 @@ import {
   Typography,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
+  Alert,
+  Link
 } from '@mui/material';
-import { InfoOutlined, ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
+import { InfoOutlined, ExpandMore as ExpandMoreIcon, HelpOutline } from '@mui/icons-material';
 import SecureTextField from '../SecureTextField';
 import NotImplemented from '../NotImplemented';
 import HelpTooltip from '../HelpTooltip';
+import { getProviderSetupInstructions } from '../../utils/providerSetupGuide';
 
 /**
  * Shared form for Create/Edit LLM Provider dialogs.
@@ -31,6 +34,7 @@ import HelpTooltip from '../HelpTooltip';
  * - endpointsOverride: object map of overrides (or {})
  * - onUpdateEndpointField: (epKey, field, value) => void
  */
+
 const LLMProviderForm = ({
   provider,
   onProviderChange,
@@ -61,8 +65,37 @@ const LLMProviderForm = ({
     return { ...(typeof b === 'object' ? b : {}), ...(typeof o === 'object' ? o : {}) };
   };
 
+  // Get setup instructions for current provider type
+  const setupInstructions = getProviderSetupInstructions(provider.provider_type);
+
   return (
     <Grid container spacing={2}>
+      {/* Setup Instructions Alert */}
+      {setupInstructions && (
+        <Grid item xs={12}>
+          <Alert severity="info" icon={<HelpOutline />}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
+              {setupInstructions.title}
+            </Typography>
+            <Typography variant="body2" component="div">
+              <ol style={{ margin: 0, paddingLeft: 20 }}>
+                {setupInstructions.steps.map((step, index) => (
+                  <li key={index}>{step}</li>
+                ))}
+              </ol>
+            </Typography>
+            {setupInstructions.apiKeyUrl && (
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>API Key Location:</strong>{' '}
+                <Link href={setupInstructions.apiKeyUrl} target="_blank" rel="noopener noreferrer">
+                  {setupInstructions.apiKeyUrl}
+                </Link>
+              </Typography>
+            )}
+          </Alert>
+        </Grid>
+      )}
+
       <Grid item xs={12} sm={6}>
         <TextField
           fullWidth
@@ -90,14 +123,48 @@ const LLMProviderForm = ({
       </Grid>
 
       <Grid item xs={12}>
-        <SecureTextField
-          label="API Key"
-          value={provider.api_key || ''}
-          onChange={(e) => onProviderChange({ ...provider, api_key: e.target.value })}
-          hasExistingValue={!!provider.has_api_key}
-          placeholder={provider.has_api_key ? 'Leave empty to keep existing key' : undefined}
-          editPlaceholder="Enter API key"
-        />
+        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+          <Box sx={{ flex: 1 }}>
+            <SecureTextField
+              label="API Key"
+              value={provider.api_key || ''}
+              onChange={(e) => onProviderChange({ ...provider, api_key: e.target.value })}
+              hasExistingValue={!!provider.has_api_key}
+              placeholder={provider.has_api_key ? 'Leave empty to keep existing key' : undefined}
+              editPlaceholder="Enter API key"
+              helperText={setupInstructions ? `Format: ${setupInstructions.apiKeyFormat}` : undefined}
+            />
+          </Box>
+          <Tooltip title={
+            <Box>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                Enter your API key for this provider. Keep this secure and never share it.
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                Where to find your API key:
+              </Typography>
+              <Typography variant="body2" component="div">
+                • <strong>OpenAI:</strong> platform.openai.com/api-keys<br/>
+                • <strong>Anthropic:</strong> console.anthropic.com/settings/keys<br/>
+                • <strong>Ollama:</strong> No API key needed (local)<br/>
+                • <strong>LM Studio:</strong> No API key needed (local)<br/>
+                • <strong>Azure OpenAI:</strong> Azure Portal → Your resource → Keys and Endpoint
+              </Typography>
+              {setupInstructions && (
+                <>
+                  <Typography variant="body2" sx={{ fontWeight: 'bold', mt: 1, mb: 0.5 }}>
+                    Expected format:
+                  </Typography>
+                  <Typography variant="body2">
+                    {setupInstructions.apiKeyFormat}
+                  </Typography>
+                </>
+              )}
+            </Box>
+          }>
+            <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help', mt: 3 }} />
+          </Tooltip>
+        </Box>
       </Grid>
 
       <Grid item xs={12} sm={6}>
@@ -178,13 +245,35 @@ const LLMProviderForm = ({
                 </Typography>
 
                 <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="API Endpoint"
-                    value={provider.api_endpoint}
-                    onChange={(e) => onProviderChange({ ...provider, api_endpoint: e.target.value })}
-                    margin="normal"
-                  />
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                    <TextField
+                      fullWidth
+                      label="API Endpoint"
+                      value={provider.api_endpoint}
+                      onChange={(e) => onProviderChange({ ...provider, api_endpoint: e.target.value })}
+                      margin="normal"
+                      helperText={setupInstructions ? `Default: ${setupInstructions.defaultEndpoint}` : 'Base URL for API requests'}
+                    />
+                    <Tooltip title={
+                      <Box>
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          The base URL where API requests will be sent.
+                        </Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                          Common endpoints:
+                        </Typography>
+                        <Typography variant="body2" component="div">
+                          • <strong>OpenAI:</strong> https://api.openai.com/v1<br/>
+                          • <strong>Anthropic:</strong> https://api.anthropic.com<br/>
+                          • <strong>Ollama:</strong> http://localhost:11434<br/>
+                          • <strong>LM Studio:</strong> http://localhost:1234/v1<br/>
+                          • <strong>Azure:</strong> https://your-resource.openai.azure.com
+                        </Typography>
+                      </Box>
+                    }>
+                      <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help', mt: 3 }} />
+                    </Tooltip>
+                  </Box>
                 </Grid>
               </Box>
 
