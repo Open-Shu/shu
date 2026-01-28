@@ -219,7 +219,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
       // Create FormData to send file with test request
       const formData = new FormData();
       formData.append('test_message', userMessage);
-      formData.append('include_knowledge_bases', hasKnowledgeBases.toString());
+      formData.append('include_knowledge_bases', enablePostProcessing.toString());
       
       if (selectedFile) {
         formData.append('file', selectedFile);

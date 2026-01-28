@@ -16,7 +16,7 @@ import {
   Paper,
   Typography,
   Box,
-  Tooltip,
+  IconButton,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -26,6 +26,7 @@ import {
 } from '@mui/material';
 import { InfoOutlined, ExpandMore as ExpandMoreIcon, PlayArrow as VerifyIcon } from '@mui/icons-material';
 import LLMTester from '../LLMTester';
+import HelpTooltip from '../HelpTooltip';
 import { modelConfigAPI, formatError, extractDataFromResponse } from '../../services/api';
 import log from '../../utils/log';
 
@@ -736,23 +737,24 @@ const ModelConfigurationDialog = ({
                   ))}
                 </Select>
               </FormControl>
-              <Tooltip title={
-                <Box>
-                  <Typography variant="body2" sx={{ mb: 1 }}>
-                    Select the specific model to use from your provider.
-                  </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-                    Examples:
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • OpenAI: gpt-4, gpt-3.5-turbo<br/>
-                    • Anthropic: claude-3-opus, claude-3-sonnet<br/>
-                    • Ollama: llama2, mistral, codellama
-                  </Typography>
-                </Box>
-              }>
-                <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
-              </Tooltip>
+              <HelpTooltip
+                title={
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Select the specific model to use from your provider.
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                      Examples:
+                    </Typography>
+                    <Typography variant="body2" component="div">
+                      • OpenAI: gpt-4, gpt-3.5-turbo<br/>
+                      • Anthropic: claude-3-opus, claude-3-sonnet<br/>
+                      • Ollama: llama2, mistral, codellama
+                    </Typography>
+                  </Box>
+                }
+                ariaLabel="Model selection help"
+              />
             </Box>
           </Grid>
           <Grid item xs={12}>
@@ -1190,12 +1192,13 @@ const ModelConfigurationDialog = ({
                 </Box>
 
                 <Box>
-                  <Typography variant="subtitle2">
-                    Advanced JSON &nbsp;
-                    <Tooltip title="JSON overrides beyond mapped parameters. This form accepts any valid JSON and will apply parameters dynamically during requests.">
-                      <InfoOutlined fontSize="small" color="action" />
-                    </Tooltip>
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="subtitle2">Advanced JSON</Typography>
+                    <HelpTooltip
+                      title="JSON overrides beyond mapped parameters. This form accepts any valid JSON and will apply parameters dynamically during requests."
+                      ariaLabel="Advanced JSON help"
+                    />
+                  </Box>
                   <TextField
                     fullWidth
                     multiline
@@ -1218,9 +1221,10 @@ const ModelConfigurationDialog = ({
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
               />
               <Typography variant="body2">Active</Typography>
-              <Tooltip title="When active, this configuration will be available for use in conversations and experiences. Inactive configurations are hidden from selection.">
-                <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
-              </Tooltip>
+              <HelpTooltip
+                title="When active, this configuration will be available for use in conversations and experiences. Inactive configurations are hidden from selection."
+                ariaLabel="Active status help"
+              />
             </Box>
             {capabilityToggles.map(({ funcKey, value, label }) => {
               // Determine if this is a tools or vision capability
@@ -1253,9 +1257,10 @@ const ModelConfigurationDialog = ({
                       })}
                     />
                     <Typography variant="body2">{label}</Typography>
-                    <Tooltip title={getTooltipText()}>
-                      <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
-                    </Tooltip>
+                    <HelpTooltip
+                      title={getTooltipText()}
+                      ariaLabel={`${label} help`}
+                    />
                   </Box>
                   {showWarning && (
                     <Alert severity="warning" sx={{ mt: 0.5, mb: 1, py: 0.5 }}>
@@ -1284,9 +1289,10 @@ const ModelConfigurationDialog = ({
                 onChange={(e) => setFormData({ ...formData, is_side_call_model: e.target.checked })}
               />
               <Typography variant="body2">Use model for side calls</Typography>
-              <Tooltip title="Side calls are optimized LLM requests for UI features like prompt assistance, title generation, and summaries. Only one model should have this enabled at a time.">
-                <InfoOutlined fontSize="small" color="action" sx={{ cursor: 'help' }} />
-              </Tooltip>
+              <HelpTooltip
+                title="Side calls are optimized LLM requests for UI features like prompt assistance, title generation, and summaries. Only one model should have this enabled at a time."
+                ariaLabel="Side calls help"
+              />
             </Box>
           </Grid>
           <Grid item xs={12}>
