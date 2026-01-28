@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from 'react-query';
 import {
   Dialog,
@@ -20,12 +20,14 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  FormControlLabel,
   Switch,
   Alert,
+  CircularProgress,
 } from '@mui/material';
-import { InfoOutlined, ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
-import NotImplemented from '../NotImplemented';
+import { InfoOutlined, ExpandMore as ExpandMoreIcon, PlayArrow as VerifyIcon } from '@mui/icons-material';
+import LLMTester from '../LLMTester';
+import { modelConfigAPI, formatError, extractDataFromResponse } from '../../services/api';
+import log from '../../utils/log';
 
 const ModelConfigurationDialog = ({
   open,
@@ -50,8 +52,259 @@ const ModelConfigurationDialog = ({
   submitLabel,
   isSubmitting,
   submitError,
+  // New props for verification workflow
+  isEditMode = false,
+  existingConfigId = null,
+  // Original config data for rollback (passed from parent for edit mode)
+  originalConfigData = null,
 }) => {
   const queryClient = useQueryClient();
+  
+  // Verification workflow state
+  const [showLLMTester, setShowLLMTester] = useState(false);
+  const [tempConfigId, setTempConfigId] = useState(null);
+  const [verifyError, setVerifyError] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [testSucceeded, setTestSucceeded] = useState(false);
+  // Track if config was saved during this session (for rollback logic)
+  const [configSavedDuringSession, setConfigSavedDuringSession] = useState(false);
+  // Confirmation dialog state
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // AbortController for canceling in-flight verification requests
+  const verifyAbortControllerRef = useRef(null);
+  
+  // Reset state when dialog opens/closes
+  useEffect(() => {
+    if (open) {
+      setTempConfigId(null);
+      setVerifyError(null);
+      setShowLLMTester(false);
+      setTestSucceeded(false);
+      setConfigSavedDuringSession(false);
+      setShowCancelConfirm(false);
+      setIsVerifying(false);
+      verifyAbortControllerRef.current = null;
+    }
+  }, [open]);
+  
+  /**
+   * Handle cancel button click - show confirmation if needed.
+   * Blocks closing if verification is in progress.
+   */
+  const handleCancelClick = () => {
+    // Block closing if verification is in progress
+    if (isVerifying) {
+      setVerifyError('Please wait for verification to complete, or it will be canceled.');
+      return;
+    }
+    
+    // If test succeeded or no changes were saved, just close
+    if (testSucceeded || !configSavedDuringSession) {
+      onClose();
+      return;
+    }
+    // Show confirmation dialog
+    setShowCancelConfirm(true);
+  };
+  
+  /**
+   * Handle confirmed cancel - perform rollback and close.
+   * Aborts any in-flight verification before proceeding.
+   */
+  const handleConfirmedCancel = async () => {
+    setShowCancelConfirm(false);
+    
+    // Abort any in-flight verification request
+    if (isVerifying && verifyAbortControllerRef.current) {
+      verifyAbortControllerRef.current.abort();
+      verifyAbortControllerRef.current = null;
+      setIsVerifying(false);
+    }
+    
+    await performRollbackAndClose();
+  };
+  
+  /**
+   * Perform rollback and close dialog.
+   * - For new configs: delete the temp config if test didn't succeed
+   * - For edits: restore original config if test didn't succeed
+   * 
+   * Guards against running while verification is in progress.
+   */
+  const performRollbackAndClose = async () => {
+    // Guard: Don't proceed if verification is still in progress
+    if (isVerifying) {
+      log.warn('Attempted to rollback while verification in progress - blocking');
+      return;
+    }
+    
+    // If config was saved during this session but test didn't succeed, rollback
+    if (configSavedDuringSession && !testSucceeded) {
+      try {
+        if (isEditMode && existingConfigId && originalConfigData) {
+          // Restore original config for edits
+          await modelConfigAPI.update(existingConfigId, originalConfigData);
+        } else if (tempConfigId && !isEditMode) {
+          // Delete temp config for new configs
+          await modelConfigAPI.delete(tempConfigId);
+        }
+        // Invalidate queries to refresh the list
+        queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+      } catch (err) {
+        // Log error but don't block close - user can manually fix
+        log.error('Failed to rollback config:', err);
+      }
+    }
+    
+    onClose();
+  };
+  
+  /**
+   * Handle dialog close (backdrop click or escape key).
+   * Shows confirmation if needed. Blocks closing if verification is in progress.
+   */
+  const handleDialogClose = (event, reason) => {
+    // Block closing if verification is in progress
+    if (isVerifying) {
+      setVerifyError('Please wait for verification to complete before closing.');
+      return;
+    }
+    
+    // If test succeeded or no changes were saved, just close
+    if (testSucceeded || !configSavedDuringSession) {
+      onClose();
+      return;
+    }
+    // Show confirmation dialog instead of closing directly
+    setShowCancelConfirm(true);
+  };
+  
+  /**
+   * Handle verification workflow.
+   * Saves config with is_active=true, then opens LLM Tester.
+   * User must successfully test before the dialog can close.
+   * Uses AbortController to allow cancellation of in-flight requests.
+   */
+  const handleVerify = async () => {
+    // Create new AbortController for this verification request
+    const abortController = new AbortController();
+    verifyAbortControllerRef.current = abortController;
+    
+    setIsVerifying(true);
+    setVerifyError(null);
+    setTestSucceeded(false);
+    
+    try {
+      // Merge typed overrides with advanced JSON
+      let extra = {};
+      if (advancedJson && advancedJson.trim()) {
+        try {
+          extra = JSON.parse(advancedJson);
+        } catch (e) {
+          setVerifyError('Invalid JSON in advanced parameters');
+          setIsVerifying(false);
+          verifyAbortControllerRef.current = null;
+          return;
+        }
+      }
+      const merged = { ...extra, ...paramOverrides };
+      const pruned = Object.fromEntries(
+        Object.entries(merged).filter(([_, v]) =>
+          v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '') && !(typeof v === 'number' && Number.isNaN(v))
+        )
+      );
+      
+      const payload = {
+        ...formData,
+        prompt_id: formData.prompt_id || null,
+        is_active: formData.is_active, // Respect user's toggle selection
+        ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
+      };
+      
+      let savedConfig;
+      if (isEditMode && existingConfigId) {
+        // Update existing config
+        const response = await modelConfigAPI.update(existingConfigId, payload, { signal: abortController.signal });
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after update');
+          return;
+        }
+        savedConfig = extractDataFromResponse(response);
+        setTempConfigId(existingConfigId);
+      } else if (tempConfigId) {
+        // Update previously created temp config
+        const response = await modelConfigAPI.update(tempConfigId, payload, { signal: abortController.signal });
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after update');
+          return;
+        }
+        savedConfig = extractDataFromResponse(response);
+      } else {
+        // Create new temp config
+        const response = await modelConfigAPI.create(payload, { signal: abortController.signal });
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after create');
+          return;
+        }
+        savedConfig = extractDataFromResponse(response);
+        setTempConfigId(savedConfig.id);
+      }
+      
+      // Check if aborted before updating state
+      if (abortController.signal.aborted) {
+        log.debug('Verification aborted before state update');
+        return;
+      }
+      
+      // Invalidate queries to refresh the list
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+      
+      // Mark that config was saved during this session (for rollback logic)
+      setConfigSavedDuringSession(true);
+      
+      // Open LLM Tester with the saved config
+      setShowLLMTester(true);
+    } catch (err) {
+      // Don't show error if request was aborted
+      if (abortController.signal.aborted) {
+        log.debug('Verification request was aborted');
+        return;
+      }
+      setVerifyError(formatError(err) || 'Failed to save configuration for verification');
+    } finally {
+      // Only clear state if not aborted (abort handler clears it)
+      if (!abortController.signal.aborted) {
+        setIsVerifying(false);
+        verifyAbortControllerRef.current = null;
+      }
+    }
+  };
+  
+  /**
+   * Handle successful test from LLM Tester.
+   * Closes the dialog since config is already saved as active.
+   */
+  const handleTestSuccess = async () => {
+    setShowLLMTester(false);
+    
+    // Invalidate queries to ensure UI is up to date
+    queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+    
+    // Also invalidate side-call config if needed
+    if (formData.is_side_call_model) {
+      queryClient.invalidateQueries('side-call-config');
+    }
+    
+    // Close the dialog - config is already saved as active
+    onClose();
+  };
+  
+  // Check if form is valid for verification
+  const isFormValidForVerify = formData.name && formData.llm_provider_id && formData.model_name;
+  
   const selectedKnowledgeBases = useMemo(() => {
     if (!knowledgeBases || !Array.isArray(knowledgeBases) || !formData.knowledge_base_ids) return [];
     return knowledgeBases.filter((kb) => formData.knowledge_base_ids.includes(kb.id));
@@ -424,7 +677,7 @@ const ModelConfigurationDialog = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={handleDialogClose} maxWidth="md" fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         {submitError && (
@@ -947,21 +1200,48 @@ const ModelConfigurationDialog = ({
               />
               <Typography variant="body2">Active</Typography>
             </Box>
-            {capabilityToggles.map(({ funcKey, value, label }) => (
-              <Box key={funcKey} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Switch
-                  checked={!!value}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    functionalities: {
-                      ...(formData.functionalities || {}),
-                      [funcKey]: e.target.checked,
-                    },
-                  })}
-                />
-                <Typography variant="body2">{label}</Typography>
-              </Box>
-            ))}
+            {capabilityToggles.map(({ funcKey, value, label }) => {
+              // Determine if this is a tools or vision capability
+              const isToolsCapability = funcKey === 'supports_tools' || funcKey === 'supports_tool_calling';
+              const isVisionCapability = funcKey === 'supports_vision';
+              const showWarning = value && (isToolsCapability || isVisionCapability);
+              
+              return (
+                <Box key={funcKey}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Switch
+                      checked={!!value}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        functionalities: {
+                          ...(formData.functionalities || {}),
+                          [funcKey]: e.target.checked,
+                        },
+                      })}
+                    />
+                    <Typography variant="body2">{label}</Typography>
+                  </Box>
+                  {showWarning && (
+                    <Alert severity="warning" sx={{ mt: 0.5, mb: 1, py: 0.5 }}>
+                      {isToolsCapability && (
+                        <>
+                          <strong>Tool calling support varies by model.</strong> Not all models support function/tool calling. 
+                          If your model doesn't support this feature, you may encounter errors or unexpected behavior. 
+                          Use the "Verify & Save" button to test your configuration.
+                        </>
+                      )}
+                      {isVisionCapability && (
+                        <>
+                          <strong>Vision support varies by model.</strong> Not all models can process images. 
+                          If your model doesn't support vision, image attachments will be filtered out or may cause errors. 
+                          Use the "Verify & Save" button to test your configuration.
+                        </>
+                      )}
+                    </Alert>
+                  )}
+                </Box>
+              );
+            })}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Switch
                 checked={formData.is_side_call_model || false}
@@ -972,9 +1252,6 @@ const ModelConfigurationDialog = ({
           </Grid>
           <Grid item xs={12}>
             <Box sx={{ mt: 0.5 }}>
-              <NotImplemented label="Model vision toggle is informational; runtime enforcement not implemented" />
-            </Box>
-            <Box sx={{ mt: 0.5 }}>
               <Typography variant="body2" color="text.secondary">
                 <strong>Side Calls:</strong> When enabled, this model will be used for optimized LLM side-calls like prompt assistance, title generation, and UI summaries. Only one model should have this enabled at a time.
               </Typography>
@@ -982,19 +1259,93 @@ const ModelConfigurationDialog = ({
           </Grid>
 
         </Grid>
+        
+        {/* Error Alert */}
+        {verifyError && (
+          <Alert severity="error" sx={{ mt: 2, '& .MuiAlert-message': { whiteSpace: 'pre-wrap' } }}>
+            {verifyError}
+          </Alert>
+        )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button onClick={() => {
-          onSubmit();
-          // Invalidate side-call config query if this model is marked for side calls
-          if (formData.is_side_call_model) {
-            handleSaveSuccess();
-          }
-        }} variant="contained" disabled={isSubmitting || !formData.name || !formData.llm_provider_id || !formData.model_name}>
-          {submitLabel}
+        <Button onClick={handleCancelClick}>Cancel</Button>
+        <Button
+          variant="contained"
+          startIcon={isVerifying ? <CircularProgress size={16} /> : <VerifyIcon />}
+          onClick={handleVerify}
+          disabled={!isFormValidForVerify || isVerifying || isSubmitting}
+        >
+          {isVerifying ? 'Verifying...' : 'Verify & Save'}
         </Button>
       </DialogActions>
+      
+      {/* Cancel Confirmation Dialog */}
+      <Dialog
+        open={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        maxWidth="sm"
+      >
+        <DialogTitle>Discard Changes?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {isEditMode
+              ? 'Your configuration changes have not been verified. Cancelling will restore the configuration to its last working state.'
+              : 'Your new configuration has not been verified. Cancelling will discard it entirely.'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            To keep your changes, go back and complete a successful test, then click "Save Configuration".
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCancelConfirm(false)}>
+            Go Back
+          </Button>
+          <Button
+            onClick={handleConfirmedCancel}
+            color="error"
+            variant="contained"
+          >
+            {isEditMode ? 'Restore Original' : 'Discard'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* LLM Tester Modal for Verification */}
+      <Dialog
+        open={showLLMTester}
+        onClose={() => setShowLLMTester(false)}
+        maxWidth="xl"
+        fullWidth
+      >
+        <DialogTitle>
+          Verify Configuration
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Test your configuration to verify it works correctly. After a successful test, click "Save Configuration" to complete.
+          </Typography>
+          <LLMTester
+            prePopulatedConfigId={tempConfigId || existingConfigId}
+            onTestSuccess={handleTestSuccess}
+            onTestStatusChange={setTestSucceeded}
+            onClose={() => setShowLLMTester(false)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowLLMTester(false)}>
+            {testSucceeded ? 'Close' : 'Back to Edit'}
+          </Button>
+          {testSucceeded && (
+            <Button
+              variant="contained"
+              color="success"
+              onClick={handleTestSuccess}
+            >
+              Save Configuration
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 };

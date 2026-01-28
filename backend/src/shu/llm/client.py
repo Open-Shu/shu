@@ -10,7 +10,9 @@ import httpx
 import httpcore
 import asyncio
 import random
+import hashlib
 from typing import Dict, Any, List, Optional, AsyncGenerator, Union
+from dataclasses import dataclass
 import logging
 from datetime import datetime, timezone
 import jmespath
@@ -19,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.models.plugin_execution import CallableTool
 from shu.services.plugin_execution import build_agent_tools
 from shu.services.providers.events import ProviderStreamEvent
-from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, ProviderToolCallEventResult, get_adapter_from_provider
+from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, get_adapter_from_provider
+from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 
 from ..models.llm_provider import LLMProvider
 from ..services.chat_types import ChatContext, ChatMessage
@@ -34,6 +37,99 @@ from ..utils.path_access import DotPath
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RetryState:
+    """State tracking for retry logic to detect infinite loops."""
+
+    attempts: int = 0
+    last_error_hash: Optional[str] = None
+    identical_error_count: int = 0
+    max_attempts: int = 3
+
+    def _compute_error_hash(self, error: Exception) -> str:
+        """
+        Compute a hash of the error to detect identical errors.
+
+        Args:
+            error: The exception to hash
+
+        Returns:
+            Hash string representing the error
+        """
+        # Create a string representation of the error
+        error_str = f"{type(error).__name__}:{str(error)}"
+
+        # For HTTP errors, include status code and response body
+        if isinstance(error, httpx.HTTPStatusError):
+            status_code = error.response.status_code if error.response else None
+            try:
+                body = error.response.text if error.response else ""
+            except Exception:
+                body = ""
+            error_str = f"{error_str}:status={status_code}:body={body[:200]}"
+
+        # Compute hash
+        return hashlib.md5(error_str.encode()).hexdigest()
+
+    def record_error(self, error: Exception) -> None:
+        """
+        Record an error attempt and track identical errors.
+
+        Args:
+            error: The exception that occurred
+        """
+        self.attempts += 1
+        error_hash = self._compute_error_hash(error)
+
+        if error_hash == self.last_error_hash:
+            self.identical_error_count += 1
+        else:
+            self.identical_error_count = 1
+            self.last_error_hash = error_hash
+
+    def should_retry(self, error: Exception) -> bool:
+        """
+        Determine if retry should occur based on error type and history.
+
+        Returns False if:
+        - Max attempts reached
+        - Same error repeated 3 times (infinite loop detection)
+        - Error is non-retryable (4xx except 429)
+
+        Args:
+            error: The exception to evaluate
+
+        Returns:
+            True if retry should occur, False otherwise
+        """
+        # Check if max attempts reached
+        if self.attempts >= self.max_attempts:
+            return False
+
+        # Check for infinite loop (same error 3 times)
+        if self.is_infinite_loop():
+            return False
+
+        # Check if error is non-retryable
+        if isinstance(error, httpx.HTTPStatusError):
+            status_code = error.response.status_code if error.response else None
+            if status_code:
+                # Non-retryable 4xx errors (except 429 rate limit)
+                if 400 <= status_code < 500 and status_code != 429:
+                    return False
+
+        return True
+
+    def is_infinite_loop(self) -> bool:
+        """
+        Check if we're in an infinite loop (same error 3+ times).
+
+        Returns:
+            True if infinite loop detected, False otherwise
+        """
+        return self.identical_error_count >= 3
 
 
 class LLMResponse:
@@ -69,12 +165,20 @@ class LLMResponse:
 class UnifiedLLMClient:
     """Universal LLM client supporting OpenAI-compatible APIs."""
 
-    def __init__(self, db_session: AsyncSession, provider: LLMProvider, conversation_owner_id: Optional[str] = None):
-
+    def __init__(
+        self,
+        db_session: AsyncSession,
+        provider: LLMProvider,
+        conversation_owner_id: Optional[str] = None,
+        settings: Optional[Any] = None
+    ):
         self.provider = provider
         self.conversation_owner_id = conversation_owner_id
         self.db_session = db_session
         self.provider_adapter = get_adapter_from_provider(db_session, provider, self.conversation_owner_id)
+
+        # Inject settings instance for testability
+        self.settings = settings if settings is not None else get_settings_instance()
 
         headers = self._build_client_headers()
 
@@ -83,10 +187,8 @@ class UnifiedLLMClient:
 
         # Use globally configured LLM timeouts
         try:
-            from ..core.config import get_settings_instance
-            _settings = get_settings_instance()
-            self._llm_timeout = float(getattr(_settings, "llm_global_timeout", 30))
-            self._llm_stream_read_timeout = float(getattr(_settings, "llm_streaming_read_timeout", 120))
+            self._llm_timeout = float(getattr(self.settings, "llm_global_timeout", 30))
+            self._llm_stream_read_timeout = float(getattr(self.settings, "llm_streaming_read_timeout", 120))
         except Exception:
             self._llm_timeout = 30.0
             self._llm_stream_read_timeout = 120.0
@@ -254,14 +356,15 @@ class UnifiedLLMClient:
         """
         Execute non-streaming completion with retry/backoff on retryable errors.
         """
-        attempt = 0
+        retry_state = RetryState(max_attempts=self._max_attempts)
+
         while True:
             attempt_start = datetime.now(timezone.utc)
             try:
                 return await self._complete_response(payload, model, attempt_start, request_timeout=request_timeout)
             except httpx.HTTPStatusError as e:
-                await self._retry_or_raise_http_error(e, model, attempt, has_progress=False)
-                attempt += 1
+                await self._retry_or_raise_http_error(e, model, retry_state, has_progress=False)
+                retry_state.record_error(e)
 
     async def _stream_with_retry(
         self,
@@ -272,7 +375,8 @@ class UnifiedLLMClient:
         """
         Wrap streaming response with retry/backoff before any content is emitted.
         """
-        attempt = 0
+        retry_state = RetryState(max_attempts=self._max_attempts)
+
         while True:
             attempt_has_yielded = False
             try:
@@ -281,8 +385,8 @@ class UnifiedLLMClient:
                     yield chunk
                 return
             except httpx.HTTPStatusError as e:
-                await self._retry_or_raise_http_error(e, model, attempt, has_progress=attempt_has_yielded)
-                attempt += 1
+                await self._retry_or_raise_http_error(e, model, retry_state, has_progress=attempt_has_yielded)
+                retry_state.record_error(e)
 
     async def _complete_response(
         self,
@@ -455,8 +559,7 @@ class UnifiedLLMClient:
             # Unknown error - preserve original for debugging
             logger.error("Encountered streaming error: %s (type: %s)", e, type(e).__name__, exc_info=True)
             # Show details only in development environment
-            settings = get_settings_instance()
-            if settings.environment == "development":
+            if self.settings.environment == "development":
                 user_message = f"Unexpected error from AI provider: {type(e).__name__}: {e}"
             else:
                 user_message = "An unexpected error occurred with the AI provider. Please try again."
@@ -464,15 +567,6 @@ class UnifiedLLMClient:
                 user_message,
                 details={"original_error": str(e), "error_type": type(e).__name__}
             ) from e
-
-    def _should_retry_http_error(self, status_code: Optional[int], attempt: int) -> bool:
-        """Return True if the HTTP error is retryable for the current attempt."""
-        if status_code is None:
-            return False
-        if status_code < 500 or status_code >= 600:
-            return False
-        # attempt is zero-indexed; allow retries while total attempts stay within the configured cutoff
-        return (attempt + 1) < self._max_attempts
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate exponential backoff delay with decorrelated jitter."""
@@ -505,82 +599,43 @@ class UnifiedLLMClient:
         )
 
     def _extract_http_error_details(self, e: httpx.HTTPStatusError, model: str) -> Dict[str, Any]:
-        """Normalize useful fields from an HTTP error response."""
+        """Normalize useful fields from an HTTP error response.
+
+        Uses ErrorSanitizer to extract structured error information from
+        provider responses in a consistent format.
+
+        Args:
+            e: The HTTP status error from httpx.
+            model: The model name being used.
+
+        Returns:
+            Dictionary with normalized error details including:
+                - status: HTTP status code
+                - endpoint: Request endpoint URL
+                - request_id: Provider request ID if available
+                - provider_message: Error message from provider
+                - provider_error_type: Error type/category from provider
+                - provider_error_code: Error code from provider
+                - body: Raw response body
+                - model: Model name
+        """
         status_code = e.response.status_code if e.response is not None else None
         request_id = e.response.headers.get("x-request-id") if e.response is not None else None
         endpoint = str(e.request.url) if getattr(e, "request", None) is not None else None
 
-        body_text = None
-        provider_msg = None
-        provider_type = None
-        provider_code = None
-        body: Any = None
-
+        # Use ErrorSanitizer to extract provider error details
+        provider_error: Dict[str, Any] = {}
         if e.response is not None:
-            try:
-                body_text = e.response.text
-            except Exception:
-                body_text = None
-            if body_text:
-                # TODO: We should extend the providers to contain the error path format. Right now we are just guessing
-                #       where we can find the details.
-                try:
-                    body_json = e.response.json()
-                    if isinstance(body_json, dict):
-                        body = body_json
-                        error_section = body_json.get("error")
-                        if isinstance(error_section, dict):
-                            provider_msg = (
-                                error_section.get("message")
-                                or error_section.get("detail")
-                                or error_section.get("error")
-                                or error_section.get("status")
-                            )
-                            provider_type = (
-                                error_section.get("type")
-                                or error_section.get("status")
-                                or error_section.get("reason")
-                            )
-                            provider_code = error_section.get("code") or error_section.get("status")
-                        elif isinstance(error_section, list) and error_section:
-                            first_error = error_section[0]
-                            if isinstance(first_error, dict):
-                                provider_msg = (
-                                    first_error.get("message")
-                                    or first_error.get("detail")
-                                    or first_error.get("error")
-                                )
-                            provider_type = (
-                                first_error.get("type")
-                                or first_error.get("status")
-                                or first_error.get("reason")
-                            )
-                            provider_code = first_error.get("code") or first_error.get("status")
-                        elif isinstance(error_section, str):
-                            provider_msg = error_section
-                    if provider_msg is None and isinstance(body_json, dict):
-                        provider_msg = (
-                            body_json.get("message")
-                            or body_json.get("detail")
-                            or body_json.get("error_description")
-                        )
-                    if provider_type is None and isinstance(body_json, dict):
-                        provider_type = body_json.get("type") or body_json.get("status")
-                    if provider_code is None and isinstance(body_json, dict):
-                        provider_code = body_json.get("code")
-                    if body is None:
-                        body = body_json
-                except Exception:
-                    body = body_text
+            provider_error = ErrorSanitizer.extract_provider_error(e.response)
 
         return {
             "status": status_code,
             "endpoint": endpoint,
             "request_id": request_id,
-            "provider_message": provider_msg,
-            "provider_error_type": provider_type,
-            "provider_error_code": provider_code,
-            "body": body,
+            "provider_message": provider_error.get("message"),
+            "provider_error_type": provider_error.get("error_type"),
+            "provider_error_code": provider_error.get("error_code"),
+            "body": provider_error.get("raw_body"),
             "model": model,
         }
 
@@ -590,11 +645,35 @@ class UnifiedLLMClient:
         model: str,
         details: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Translate HTTP errors into domain errors with rich logging."""
+        """Translate HTTP errors into domain errors with rich logging and guidance.
+
+        Uses ErrorSanitizer to provide environment-aware error messages.
+        Suggestions are stored in the details dict for optional display by
+        endpoints that want to show them (e.g., /test endpoint), but are NOT
+        included in the exception message to keep chat errors user-friendly.
+
+        Args:
+            e: The HTTP status error from httpx.
+            model: The model name being used.
+            details: Pre-extracted error details (optional).
+
+        Raises:
+            LLMAuthenticationError: For 401 authentication errors.
+            LLMRateLimitError: For 429 rate limit errors.
+            LLMConfigurationError: For 400 bad request errors.
+            LLMProviderError: For other HTTP errors.
+        """
         details = details or self._extract_http_error_details(e, model)
         status_code = details.get("status")
         body_str = self._stringify_error_body(details.get("body"))
 
+        # Get environment for error sanitization
+        environment = getattr(self.settings, "environment", "production")
+
+        # Use ErrorSanitizer to get sanitized error with guidance
+        sanitized = ErrorSanitizer.sanitize_error(details)
+
+        # Always log full error details server-side (Requirement 4.5)
         if status_code and 500 <= status_code < 600:
             logger.error(
                 "LLM upstream error for provider %s: HTTP %s (request_id=%s, endpoint=%s, body=%s)",
@@ -606,35 +685,112 @@ class UnifiedLLMClient:
             )
         elif status_code == 401:
             logger.error(
-                "LLM authentication error for provider %s (request_id=%s)",
+                "LLM authentication error for provider %s (request_id=%s, provider_message=%s)",
                 self.provider.name,
-                details.get("request_id")
+                details.get("request_id"),
+                details.get("provider_message")
             )
-            raise LLMAuthenticationError("Invalid API key or authentication failed", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMAuthenticationError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
         elif status_code == 429:
             logger.error(
-                "LLM rate limit exceeded for provider %s (request_id=%s)",
+                "LLM rate limit exceeded for provider %s (request_id=%s, provider_message=%s)",
                 self.provider.name,
-                details.get("request_id")
+                details.get("request_id"),
+                details.get("provider_message")
             )
-            raise LLMRateLimitError("Rate limit exceeded", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMRateLimitError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
         elif status_code == 400:
             logger.error(
-                "LLM configuration error (400) for provider %s: %s",
+                "LLM configuration error (400) for provider %s: %s (request_id=%s)",
                 self.provider.name,
-                details.get("provider_message") or str(e)
+                details.get("provider_message") or str(e),
+                details.get("request_id")
             )
-            raise LLMConfigurationError("Provider rejected request (HTTP 400)", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMConfigurationError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
+
+        # Log other errors
+        logger.error(
+            "LLM HTTP error for provider %s: HTTP %s (request_id=%s, endpoint=%s, body=%s)",
+            self.provider.name,
+            status_code,
+            details.get("request_id"),
+            details.get("endpoint"),
+            body_str
+        )
 
         if status_code is not None:
-            raise LLMProviderError(f"HTTP error {status_code}", details=details) from e
-        raise LLMProviderError("HTTP error", details=details) from e
+            # Use simple sanitized message - suggestions are in details for /test endpoint
+            raise LLMProviderError(
+                sanitized.message,
+                details=self._build_error_details(details, sanitized, environment)
+            ) from e
+        raise LLMProviderError(
+            "HTTP error",
+            details=self._build_error_details(details, sanitized, environment)
+        ) from e
+
+    def _build_error_details(
+        self,
+        raw_details: Dict[str, Any],
+        sanitized: SanitizedError,
+        environment: str
+    ) -> Dict[str, Any]:
+        """Build error details dict based on environment.
+
+        In development mode, includes full details for debugging.
+        In production mode, includes only safe information.
+
+        Args:
+            raw_details: Raw error details from provider.
+            sanitized: Sanitized error from ErrorSanitizer.
+            environment: Current environment ('development' or 'production').
+
+        Returns:
+            Dictionary with error details appropriate for the environment.
+        """
+        is_development = environment.lower() in ("development", "dev", "local")
+
+        result: Dict[str, Any] = {
+            "status_code": raw_details.get("status"),
+            "error_type": sanitized.error_type,
+            "error_code": sanitized.error_code,
+            "suggestions": sanitized.suggestions,
+        }
+
+        if is_development:
+            # Include full details in development (Requirement 4.3)
+            result["endpoint"] = raw_details.get("endpoint")
+            result["request_id"] = raw_details.get("request_id")
+            result["provider_message"] = raw_details.get("provider_message")
+            result["model"] = raw_details.get("model")
+            result["body"] = raw_details.get("body")
+        else:
+            # Sanitize details in production (Requirement 4.4)
+            if raw_details.get("provider_message"):
+                result["provider_message"] = ErrorSanitizer.sanitize_string(
+                    raw_details.get("provider_message")
+                )
+            result["model"] = raw_details.get("model")
+
+        return result
 
     async def _retry_or_raise_http_error(
         self,
         error: httpx.HTTPStatusError,
         model: str,
-        attempt: int,
+        retry_state: RetryState,
         has_progress: bool
     ) -> None:
         """
@@ -643,16 +799,82 @@ class UnifiedLLMClient:
         Args:
             error: The original httpx HTTPStatusError.
             model: Model identifier for logging details.
-            attempt: Zero-based attempt index.
+            retry_state: RetryState tracking retry attempts and error history.
             has_progress: True if any data has already been yielded to the caller.
         """
         details = self._extract_http_error_details(error, model)
-        if has_progress or not self._should_retry_http_error(details["status"], attempt):
+
+        # Check for capability mismatch errors (vision, tools, etc.)
+        if self._is_capability_mismatch_error(details):
+            logger.warning(
+                "Capability mismatch detected for provider %s: %s (not retrying)",
+                self.provider.name,
+                details.get("provider_message", "")
+            )
             self._handle_http_status_error(error, model, details)
 
-        delay = self._get_retry_delay(attempt)
-        self._log_retry(details, attempt, delay)
+        # Check if we should retry using RetryState
+        if has_progress or not retry_state.should_retry(error):
+            # Log infinite loop detection
+            if retry_state.is_infinite_loop():
+                logger.warning(
+                    "Infinite loop detected for provider %s: same error repeated %d times (breaking retry loop)",
+                    self.provider.name,
+                    retry_state.identical_error_count
+                )
+            self._handle_http_status_error(error, model, details)
+
+        delay = self._get_retry_delay(retry_state.attempts)
+        self._log_retry(details, retry_state.attempts, delay)
         await asyncio.sleep(delay)
+
+    def _is_capability_mismatch_error(self, details: Dict[str, Any]) -> bool:
+        """
+        Detect if an error is due to a capability mismatch (vision, tools, etc.).
+
+        TODO: This should be moved to provider adapters. Each adapter should implement
+        a method like `is_capability_mismatch_error(error_details)` since providers
+        know their own error formats and capabilities better than generic pattern matching.
+        This would be more reliable and maintainable than guessing from error messages.
+
+        Args:
+            details: Error details extracted from HTTP response.
+
+        Returns:
+            True if error is a capability mismatch, False otherwise.
+        """
+        provider_message = (details.get("provider_message") or "").lower()
+        provider_error_type = (details.get("provider_error_type") or "").lower()
+        provider_error_code = (details.get("provider_error_code") or "").lower()
+
+        # Common patterns for vision capability mismatches
+        vision_patterns = [
+            "vision",
+            "image",
+            "multimodal",
+            "does not support images",
+            "cannot process images",
+            "image_url not supported",
+        ]
+
+        # Common patterns for tool calling mismatches
+        tool_patterns = [
+            "tool",
+            "function",
+            "function_call",
+            "tools not supported",
+            "function calling not supported",
+        ]
+
+        # Check message, type, and code for capability mismatch patterns
+        all_patterns = vision_patterns + tool_patterns
+        for pattern in all_patterns:
+            if (pattern in provider_message or
+                pattern in provider_error_type or
+                pattern in provider_error_code):
+                return True
+
+        return False
 
     async def discover_available_models(self) -> List[Dict[str, Any]]:
         """
@@ -698,7 +920,13 @@ class UnifiedLLMClient:
                 models = await self.discover_available_models()
                 if models:
                     return True
-            except:
+            except Exception as e:
+                logger.debug(
+                    "Model discovery failed for provider %s, falling back to chat completion test: %s",
+                    self.provider.name,
+                    e,
+                    exc_info=True
+                )
                 pass  # Fall back to chat completion test
 
             # Fallback: Try a simple completion to test the connection

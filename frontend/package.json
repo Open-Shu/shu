@@ -64,8 +64,11 @@
   },
   "jest": {
     "transformIgnorePatterns": [
-      "node_modules/(?!(axios|date-fns|date-fns-tz|cron-parser|cronstrue)/)"
-    ]
+      "node_modules/(?!(axios|date-fns|date-fns-tz|cron-parser|cronstrue|fast-check)/)"
+    ],
+    "moduleNameMapper": {
+      "\\.(css|less|scss|sass)$": "<rootDir>/src/__mocks__/styleMock.js"
+    }
   },
   "browserslist": {
     "production": [

@@ -720,6 +720,21 @@ class AnthropicAdapter(BaseProviderAdapter):
         return events
 
     async def post_process_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Inject default values for required Anthropic parameters.
+        
+        Anthropic requires max_tokens to be specified. If not provided,
+        inject a reasonable default of 4096 tokens.
+        
+        Args:
+            payload: The request payload to be sent to Anthropic
+            
+        Returns:
+            The payload with defaults injected
+        """
+        # Inject default max_tokens if not provided
+        if "max_tokens" not in payload:
+            payload["max_tokens"] = 4096
+            
         return payload
 
 

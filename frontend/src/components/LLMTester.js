@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from 'react-query';
 import {
   Box,
@@ -25,6 +25,7 @@ import {
   AccordionDetails,
   Switch,
   FormControlLabel,
+  LinearProgress,
 } from '@mui/material';
 import {
   PlayArrow as TestIcon,
@@ -33,9 +34,11 @@ import {
   SmartToy as ModelIcon,
   Psychology as PromptIcon,
   Storage as KnowledgeBaseIcon,
+  Settings as SettingsIcon,
+  Timer as TimerIcon,
+  Error as ErrorIcon,
 } from '@mui/icons-material';
-import { llmAPI, knowledgeBaseAPI, queryAPI, modelConfigAPI, chatAPI, authAPI, formatError, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
-import { promptAPI, ENTITY_TYPES } from '../api/prompts';
+import { llmAPI, knowledgeBaseAPI, queryAPI, modelConfigAPI, formatError, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
 import QueryConfiguration from './QueryConfiguration';
 import SourcePreview from './SourcePreview';
 import PageHelpHeader from './PageHelpHeader';
@@ -43,17 +46,17 @@ import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
 import log from '../utils/log';
-function LLMTester() {
+function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   // Component state
-  const [selectedProvider, setSelectedProvider] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
-  const [selectedModelPrompt, setSelectedModelPrompt] = useState('');
-  const [selectedKB, setSelectedKB] = useState('');
-  const [selectedKBPrompt, setSelectedKBPrompt] = useState('');
+  const [selectedConfigId, setSelectedConfigId] = useState(prePopulatedConfigId || '');
   const [userMessage, setUserMessage] = useState('');
   const [enablePostProcessing, setEnablePostProcessing] = useState(true);
   const [streamState, setStreamState] = useState({ isLoading: false, error: null, data: null });
   const [activeTab, setActiveTab] = useState(0);
+  
+  // Timing state for test duration tracking
+  const [testStartTime, setTestStartTime] = useState(null);
+  const [testDuration, setTestDuration] = useState(null);
 
   // Query configuration state (for knowledge base search)
   const [searchType, setSearchType] = useState('hybrid');
@@ -62,44 +65,49 @@ function LLMTester() {
   const [titleWeightingEnabled, setTitleWeightingEnabled] = useState(true);
   const [titleWeightMultiplier, setTitleWeightMultiplier] = useState(3.0);
 
-  // Sources state (fetched separately from LLM completion)
-  // (removed unused state: retrievedSources, sourcesLoading)
+  // Fetch model configurations (including inactive for verification workflow)
+  const { data: configurationsResponse, isLoading: configurationsLoading, refetch: refetchConfigurations } = useQuery(
+    ['model-configurations', { includeInactive: true }],
+    () => modelConfigAPI.list({ include_relationships: true, active_only: false })
+  );
+  const configurations = extractItemsFromResponse(configurationsResponse);
 
-  // Fetch LLM providers
-  const { data: providersResponse, isLoading: providersLoading } = useQuery(
+  // Get selected configuration details
+  const selectedConfig = configurations.find(c => c.id === selectedConfigId);
+
+  // Pre-populate configuration if provided - also handle prop changes
+  useEffect(() => {
+    if (prePopulatedConfigId) {
+      // Refetch configurations to ensure we have the latest data (including inactive)
+      refetchConfigurations();
+    }
+  }, [prePopulatedConfigId, refetchConfigurations]);
+
+  // Set selectedConfigId when configurations are loaded and we have a prePopulatedConfigId
+  // This ensures we wait for the configurations to be available before selecting
+  useEffect(() => {
+    if (prePopulatedConfigId && configurations.length > 0) {
+      // Check if the config exists in the loaded configurations
+      const configExists = configurations.some(c => c.id === prePopulatedConfigId);
+      if (configExists) {
+        setSelectedConfigId(prePopulatedConfigId);
+      }
+    }
+  }, [prePopulatedConfigId, configurations]);
+
+  // Fetch LLM providers (for display purposes only)
+  const { data: providersResponse } = useQuery(
     'llm-providers',
     llmAPI.getProviders
   );
   const providers = extractItemsFromResponse(providersResponse);
 
-  // Fetch models for selected provider
-  const { data: modelsResponse, isLoading: modelsLoading } = useQuery(
-    ['llm-models', selectedProvider],
-    () => selectedProvider ? llmAPI.getModels(selectedProvider) : null,
-    { enabled: !!selectedProvider }
-  );
-  const models = extractItemsFromResponse(modelsResponse);
-
-  // Fetch model prompts
-  const { data: modelPromptsResponse, isLoading: modelPromptsLoading } = useQuery(
-    'model-prompts',
-    () => promptAPI.list({ entity_type: ENTITY_TYPES.LLM_MODEL })
-  );
-  const modelPrompts = extractItemsFromResponse(modelPromptsResponse);
-
-  // Fetch knowledge bases
+  // Fetch knowledge bases (for display purposes only)
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery(
     'knowledge-bases',
     knowledgeBaseAPI.list
   );
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
-
-  // Fetch ALL KB prompts (for testing purposes - not just assigned ones)
-  const { data: kbPromptsResponse, isLoading: kbPromptsLoading } = useQuery(
-    ['all-kb-prompts'],
-    () => promptAPI.list({ entity_type: ENTITY_TYPES.KNOWLEDGE_BASE })
-  );
-  const kbPrompts = extractItemsFromResponse(kbPromptsResponse);
 
   // Query mutation for fetching sources (separate from LLM completion)
   const sourcesMutation = useMutation(
@@ -143,54 +151,21 @@ function LLMTester() {
     }
   );
 
-  // Handle LLM test
+  /**
+   * Handle LLM test using the dedicated test endpoint.
+   * This uses non-streaming mode for better error messages from providers.
+   */
   const handleTest = async () => {
-    if (!selectedProvider || !selectedModel || !userMessage.trim()) {
+    if (!selectedConfigId || !userMessage.trim()) {
       return;
     }
 
-    // Build messages array
-    const messages = [];
-
-    // Add model prompt as system message if selected
-    if (selectedModelPrompt) {
-      const modelPrompt = modelPrompts.find(p => p.id === selectedModelPrompt);
-      if (modelPrompt) {
-        messages.push({
-          role: 'system',
-          content: modelPrompt.content
-        });
-      }
-    }
-
-    // Add KB context if KB and KB prompt are selected
-    let contextContent = '';
-    if (selectedKB && selectedKBPrompt) {
-      // For demo purposes, we'll simulate getting some context
-      // In a real implementation, this would query the KB
-      contextContent = `[Knowledge Base Context from ${knowledgeBases.find(kb => kb.id === selectedKB)?.name || 'Selected KB'}]
-
-This is where retrieved context from the knowledge base would appear. In the actual implementation, this would be populated by querying the selected knowledge base with the user's message.`;
-
-      const kbPrompt = kbPrompts.find(p => p.id === selectedKBPrompt);
-      if (kbPrompt) {
-        messages.push({
-          role: 'system',
-          content: `${kbPrompt.content}\n\nContext:\n${contextContent}`
-        });
-      }
-    }
-
-    // Add user message
-    messages.push({
-      role: 'user',
-      content: userMessage
-    });
-
     // Fetch sources if KB is selected (regardless of post-processing)
-    if (selectedKB) {
+    const hasKnowledgeBases = selectedConfig?.knowledge_bases?.length > 0;
+    if (hasKnowledgeBases) {
+      const firstKbId = selectedConfig.knowledge_bases[0].id;
       sourcesMutation.mutate({
-        kbId: selectedKB,
+        kbId: firstKbId,
         query: userMessage,
         searchType,
         limit: parseInt(searchLimit),
@@ -200,135 +175,103 @@ This is where retrieved context from the knowledge base would appear. In the act
       });
     }
 
-    // Streaming flow with SSE
+    // Use the dedicated test endpoint (non-streaming for better error messages)
+    // Capture start time in local variable to avoid stale state
+    const localStartTime = Date.now();
     setStreamState({ isLoading: true, error: null, data: null });
-    let modelConfigId = null;
-    let conversationId = null;
+    setTestStartTime(localStartTime);
+    setTestDuration(null);
+    
     try {
-      // Recreate the minimal steps from mutation for config + conversation
-      let userId = 'llm-tester';
-      try {
-        const me = await authAPI.getCurrentUser();
-        userId = extractDataFromResponse(me)?.id || userId;
-      } catch {}
-      const name = `LLM Tester - ${new Date().toISOString()}`;
-      const cfgResp = await modelConfigAPI.create({
-        name,
-        description: 'Temporary model configuration generated by LLM Tester',
-        llm_provider_id: selectedProvider,
-        model_name: selectedModel,
-        prompt_id: selectedModelPrompt || null,
-        knowledge_base_ids: selectedKB ? [selectedKB] : [],
-        kb_prompt_assignments: (selectedKB && selectedKBPrompt) ? [{ knowledge_base_id: selectedKB, prompt_id: selectedKBPrompt }] : [],
-        is_active: true,
-        created_by: userId,
+      const response = await modelConfigAPI.test(selectedConfigId, {
+        test_message: userMessage,
+        include_knowledge_bases: hasKnowledgeBases,
       });
-      modelConfigId = extractDataFromResponse(cfgResp)?.id;
-      const convResp = await chatAPI.createConversation({ title: name, model_configuration_id: modelConfigId });
-      conversationId = extractDataFromResponse(convResp)?.id;
-
-      // Start stream
-      const controller = new AbortController();
-      const timeoutMs = Number.parseInt(process.env.REACT_APP_API_TIMEOUT_MS || '90000', 10);
-      const timeoutId = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 90000);
-
-      const resp = await chatAPI.streamMessage(
-        conversationId,
-        { message: userMessage, rag_rewrite_mode: selectedKB ? 'raw_query' : 'no_rag' },
-        { signal: controller.signal }
-      );
-      if (!resp.ok || !resp.body) {
-        throw new Error(`Streaming failed with status ${resp.status}`);
-      }
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let content = '';
-
-      const updateStreamProgress = (contentValue) => {
-        setStreamState((prev) => ({
-          ...prev,
-          data: {
-            ...(prev.data || {}),
-            content: contentValue,
-            model: selectedModel,
-            provider: providers.find((p) => p.id === selectedProvider)?.name,
-          },
-        }));
-      };
-
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const payload = trimmed.slice(5).trim();
-          if (payload === '[DONE]') {
-            continue;
-          }
-          try {
-            const obj = JSON.parse(payload);
-            const contentStr =
-              typeof obj.content === 'string'
-                ? obj.content
-                : (obj && typeof obj.content === 'object' && typeof obj.content.content === 'string')
-                ? obj.content.content
-                : '';
-            if (contentStr) {
-              content += contentStr;
-              updateStreamProgress(content);
-            }
-          } catch {}
-        }
-        if (done) break;
-      }
-
-      clearTimeout(timeoutId);
-
-      // After stream completes, fetch latest assistant message to enrich metadata
-      try {
-        const msgsResp = await chatAPI.getMessages(conversationId, { page: 1, size: 50 });
-        const msgs = extractDataFromResponse(msgsResp) || [];
-        const assistantMessages = Array.isArray(msgs) ? msgs.filter(m => m.role === 'assistant') : [];
-        const last = assistantMessages[assistantMessages.length - 1];
-        const meta = last?.message_metadata || {};
+      
+      const endTime = Date.now();
+      const duration = endTime - localStartTime;
+      setTestDuration(duration);
+      
+      const result = extractDataFromResponse(response);
+      
+      if (result.success) {
         setStreamState({
           isLoading: false,
           error: null,
           data: {
-            content: last?.content || content,
-            model: last?.model_id || selectedModel,
-            provider: providers.find(p => p.id === selectedProvider)?.name,
-            usage: meta?.usage,
-            post_processing_applied: !!meta?.has_citations,
-            source_metadata: meta?.sources || [],
-            raw_content: meta?.raw_content || null,
+            content: result.response,
+            model: result.model_used,
+            provider: providers.find(p => p.id === selectedConfig?.llm_provider_id)?.name,
+            usage: result.token_usage,
+            post_processing_applied: result.prompt_applied,
+            source_metadata: [],
+            raw_content: null,
+            response_time_ms: result.response_time_ms || duration,
           }
         });
-      } catch {
-        setStreamState(prev => ({ ...prev, isLoading: false }));
+
+        // Notify parent that test succeeded
+        if (onTestStatusChange) {
+          onTestStatusChange(true);
+        }
+      } else {
+        // Test returned an error from the provider
+        const errorMessage = result.error || 'Test failed';
+        const isTimeout = errorMessage.toLowerCase().includes('timeout') || 
+                          errorMessage.toLowerCase().includes('timed out');
+        
+        setStreamState({
+          isLoading: false,
+          error: {
+            message: errorMessage,
+            isTimeout: isTimeout,
+            duration: duration,
+          },
+          data: null
+        });
       }
-      return;
     } catch (err) {
-      setStreamState({ isLoading: false, error: err, data: null });
-      return;
-    } finally {
-      // Cleanup temporary resources
-      try {
-        if (conversationId) await chatAPI.deleteConversation(conversationId);
-      } catch {}
-      try {
-        if (modelConfigId) await modelConfigAPI.delete(modelConfigId);
-      } catch {}
+      const endTime = Date.now();
+      const duration = endTime - localStartTime;
+      setTestDuration(duration);
+      
+      // Check if this is a timeout error
+      const errorMessage = err?.message || 'Unknown error';
+      const isTimeout = errorMessage.toLowerCase().includes('timeout') || 
+                        errorMessage.toLowerCase().includes('timed out') ||
+                        err?.code === 'ECONNABORTED';
+      
+      // Display error without crashing component
+      // Preserve the original error structure for formatError compatibility
+      log.error('LLM test error:', err);
+      
+      // Create an enhanced error object that preserves original error properties
+      const enhancedError = Object.assign({}, err, {
+        message: errorMessage,
+        isTimeout: isTimeout,
+        duration: duration,
+      });
+      
+      setStreamState({ 
+        isLoading: false, 
+        error: enhancedError, 
+        data: null 
+      });
     }
+  };
 
-    // Non-streaming
-    // Add search configuration overrides when KB is selected (for testing)
-
+  /**
+   * Format duration in milliseconds to a human-readable string.
+   * @param {number} ms - Duration in milliseconds
+   * @returns {string} Formatted duration string
+   */
+  const formatDuration = (ms) => {
+    if (ms === null || ms === undefined) return 'N/A';
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    const minutes = Math.floor(ms / 60000);
+    const seconds = ((ms % 60000) / 1000).toFixed(1);
+    return `${minutes}m ${seconds}s`;
   };
 
   const copyToClipboard = (text) => {
@@ -336,28 +279,36 @@ This is where retrieved context from the knowledge base would appear. In the act
   };
 
   const formatLLMRequest = () => {
-    const messages = [];
-
-    if (selectedModelPrompt) {
-      const modelPrompt = modelPrompts.find(p => p.id === selectedModelPrompt);
-      if (modelPrompt) {
-        messages.push({
-          role: 'system',
-          content: modelPrompt.content,
-          source: 'Model Prompt'
-        });
-      }
+    if (!selectedConfig) {
+      return {
+        provider: 'N/A',
+        model: 'N/A',
+        messages: [],
+      };
     }
 
-    if (selectedKB && selectedKBPrompt) {
-      const kbPrompt = kbPrompts.find(p => p.id === selectedKBPrompt);
-      if (kbPrompt) {
-        messages.push({
-          role: 'system',
-          content: `${kbPrompt.content}\n\n[KB Context would be inserted here]`,
-          source: 'KB Prompt + Context'
-        });
-      }
+    const messages = [];
+
+    // Add model prompt if configured
+    if (selectedConfig.prompt) {
+      messages.push({
+        role: 'system',
+        content: selectedConfig.prompt.content,
+        source: 'Model Prompt'
+      });
+    }
+
+    // Add KB prompts if configured
+    if (selectedConfig.kb_prompt_assignments?.length > 0) {
+      selectedConfig.kb_prompt_assignments.forEach(assignment => {
+        if (assignment.prompt) {
+          messages.push({
+            role: 'system',
+            content: `${assignment.prompt.content}\n\n[KB Context would be inserted here]`,
+            source: `KB Prompt (${assignment.knowledge_base?.name || 'KB'})`
+          });
+        }
+      });
     }
 
     messages.push({
@@ -367,8 +318,8 @@ This is where retrieved context from the knowledge base would appear. In the act
     });
 
     return {
-      provider: providers.find(p => p.id === selectedProvider)?.name,
-      model: selectedModel,
+      provider: providers.find(p => p.id === selectedConfig.llm_provider_id)?.name || 'Unknown',
+      model: selectedConfig.model_name,
       messages: messages,
     };
   };
@@ -379,14 +330,14 @@ This is where retrieved context from the knowledge base would appear. In the act
     <Box sx={{ p: 3 }}>
       <PageHelpHeader
         title="LLM Tester"
-        description="Test LLM calls directly by composing providers, models, prompts, and knowledge bases. Use this to verify model behavior, debug prompts, and experiment with configurations before saving them."
+        description="Test LLM calls directly using existing model configurations. Use this to verify model behavior, debug prompts, and experiment with configurations before using them in production."
         icon={<PromptIcon />}
         tips={[
-          'Select a provider and model, then type a message to test basic completion',
-          'Add a system prompt to test how prompts affect the model\'s behavior',
-          'Add a Knowledge Base to test RAG—the system will retrieve context and include it',
+          'Select a model configuration from the dropdown to test',
+          'Type a message to test the configuration with your prompt',
+          'View configuration details to see provider, model, prompts, and knowledge bases',
           'View the Request Preview tab to see exactly what will be sent to the LLM',
-          'This creates a temporary Model Configuration—results are for testing only',
+          'This creates a temporary conversation for testing—results are cleaned up automatically',
         ]}
       />
 
@@ -396,165 +347,147 @@ This is where retrieved context from the knowledge base would appear. In the act
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                <ModelIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                LLM Configuration
+                <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                Model Configuration
               </Typography>
 
-              {/* Provider Selection */}
+              {/* Model Configuration Selection */}
               <FormControl fullWidth margin="normal" variant="outlined">
-                <InputLabel id="provider-select-label">LLM Provider</InputLabel>
+                <InputLabel id="config-select-label">Model Configuration</InputLabel>
                 <Select
-                  labelId="provider-select-label"
-                  value={selectedProvider}
-                  onChange={(e) => {
-                    setSelectedProvider(e.target.value);
-                    setSelectedModel(''); // Reset model when provider changes
-                  }}
-                  disabled={providersLoading}
+                  labelId="config-select-label"
+                  value={selectedConfigId}
+                  onChange={(e) => setSelectedConfigId(e.target.value)}
+                  disabled={configurationsLoading || !!prePopulatedConfigId}
                 >
-                  {providers.map((provider) => (
-                    <MenuItem key={provider.id} value={provider.id}>
-                      {provider.name} ({provider.provider_type})
+                  {configurations.map((config) => (
+                    <MenuItem key={config.id} value={config.id}>
+                      {config.name}
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
 
-              {/* Model Selection */}
-              <FormControl fullWidth margin="normal" variant="outlined">
-                <InputLabel id="model-select-label">Model</InputLabel>
-                <Select
-                  labelId="model-select-label"
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  disabled={!selectedProvider || modelsLoading}
-                >
-                  {models.map((model) => (
-                    <MenuItem key={model.id} value={model.model_name}>
-                      {model.display_name || model.model_name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              <Divider sx={{ my: 2 }} />
-
-              <Typography variant="h6" gutterBottom>
-                <PromptIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                Prompt Configuration
-              </Typography>
-
-              {/* Model Prompt Selection */}
-              <FormControl fullWidth margin="normal" variant="outlined">
-                <InputLabel id="model-prompt-select-label">Model Prompt (Optional)</InputLabel>
-                <Select
-                  labelId="model-prompt-select-label"
-                  value={selectedModelPrompt}
-                  onChange={(e) => setSelectedModelPrompt(e.target.value)}
-                  disabled={modelPromptsLoading}
-                >
-                  <MenuItem value="">
-                    <span style={{ color: '#999', fontStyle: 'italic' }}>None</span>
-                  </MenuItem>
-                  {modelPrompts.map((prompt) => (
-                    <MenuItem key={prompt.id} value={prompt.id}>
-                      {prompt.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              <Divider sx={{ my: 2 }} />
-
-              <Typography variant="h6" gutterBottom>
-                <KnowledgeBaseIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                Knowledge Base Configuration
-              </Typography>
-
-              {/* Knowledge Base Selection */}
-              <FormControl fullWidth margin="normal" variant="outlined">
-                <InputLabel id="kb-select-label">Knowledge Base (Optional)</InputLabel>
-                <Select
-                  labelId="kb-select-label"
-                  value={selectedKB}
-                  onChange={(e) => {
-                    setSelectedKB(e.target.value);
-                    setSelectedKBPrompt(''); // Reset KB prompt when KB changes
-                  }}
-                  disabled={kbLoading}
-                >
-                  <MenuItem value="">
-                    <span style={{ color: '#999', fontStyle: 'italic' }}>None</span>
-                  </MenuItem>
-                  {knowledgeBases.map((kb) => (
-                    <MenuItem key={kb.id} value={kb.id}>
-                      {kb.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              {/* KB Prompt Selection */}
-              <FormControl fullWidth margin="normal" variant="outlined">
-                <InputLabel id="kb-prompt-select-label">KB Prompt (Optional)</InputLabel>
-                <Select
-                  labelId="kb-prompt-select-label"
-                  value={selectedKBPrompt}
-                  onChange={(e) => setSelectedKBPrompt(e.target.value)}
-                  disabled={kbPromptsLoading}
-                >
-                  <MenuItem value="">
-                    <span style={{ color: '#999', fontStyle: 'italic' }}>None</span>
-                  </MenuItem>
-                  {kbPrompts.length === 0 && !kbPromptsLoading && (
-                    <MenuItem disabled>
-                      <span style={{ color: '#999', fontStyle: 'italic' }}>No KB prompts available</span>
-                    </MenuItem>
-                  )}
-                  {kbPrompts.map((prompt) => (
-                    <MenuItem key={prompt.id} value={prompt.id}>
-                      {prompt.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              {/* Query Configuration - only show when KB is selected */}
-              {selectedKB && (
+              {/* Configuration Details */}
+              {selectedConfig && (
                 <Box sx={{ mt: 2 }}>
-                  <Divider sx={{ mb: 2 }}>
+                  <Divider sx={{ my: 2 }}>
                     <Typography variant="caption" color="text.secondary">
-                      Search Configuration
+                      Configuration Details
                     </Typography>
                   </Divider>
 
-                  <QueryConfiguration
-                    selectedKB={selectedKB}
-                    onKBChange={setSelectedKB}
-                    queryText={userMessage}
-                    onQueryTextChange={setUserMessage}
-                    searchType={searchType}
-                    onSearchTypeChange={setSearchType}
-                    limit={searchLimit}
-                    onLimitChange={setSearchLimit}
-                    threshold={searchThreshold}
-                    onThresholdChange={setSearchThreshold}
-                    titleWeightingEnabled={titleWeightingEnabled}
-                    onTitleWeightingEnabledChange={setTitleWeightingEnabled}
-                    titleWeightMultiplier={titleWeightMultiplier}
-                    onTitleWeightMultiplierChange={setTitleWeightMultiplier}
+                  {/* Provider and Model */}
+                  <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      <ModelIcon sx={{ mr: 1, verticalAlign: 'middle', fontSize: '1rem' }} />
+                      Provider & Model
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+                      <Chip
+                        label={`Provider: ${providers.find(p => p.id === selectedConfig.llm_provider_id)?.name || 'Unknown'}`}
+                        size="small"
+                        color="primary"
+                      />
+                      <Chip
+                        label={`Model: ${selectedConfig.model_name}`}
+                        size="small"
+                        color="primary"
+                      />
+                    </Box>
+                  </Paper>
 
-                    // UI customization - hide what we don't need in LLM Tester
-                    showKBSelector={false}  // Already have KB selector above
-                    showQueryText={false}   // Will use the main user message field
-                    queryTextLabel="Search Query"
-                    queryTextPlaceholder="This will use the user message above for search..."
-                    queryTextRows={2}
+                  {/* Model Prompt */}
+                  {selectedConfig.prompt && (
+                    <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        <PromptIcon sx={{ mr: 1, verticalAlign: 'middle', fontSize: '1rem' }} />
+                        Model Prompt
+                      </Typography>
+                      <Chip
+                        label={selectedConfig.prompt.name}
+                        size="small"
+                        color="secondary"
+                      />
+                    </Paper>
+                  )}
 
-                    // Pass through data
-                    kbLoading={kbLoading}
-                    knowledgeBases={knowledgeBases}
-                  />
+                  {/* Knowledge Bases */}
+                  {selectedConfig.knowledge_bases?.length > 0 && (
+                    <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        <KnowledgeBaseIcon sx={{ mr: 1, verticalAlign: 'middle', fontSize: '1rem' }} />
+                        Knowledge Bases
+                      </Typography>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+                        {selectedConfig.knowledge_bases?.map((kb) => (
+                          <Chip
+                            key={kb.id}
+                            label={kb.name}
+                            size="small"
+                            color="info"
+                          />
+                        ))}
+                      </Box>
+                      {selectedConfig.kb_prompt_assignments?.length > 0 && (
+                        <Box sx={{ mt: 1 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            KB Prompts:
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5 }}>
+                            {selectedConfig.kb_prompt_assignments.map((assignment) => (
+                              <Chip
+                                key={assignment.id}
+                                label={assignment.prompt?.name || 'Unknown'}
+                                size="small"
+                                variant="outlined"
+                                color="info"
+                              />
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
+                    </Paper>
+                  )}
+
+                  {/* Query Configuration - only show when KB is selected */}
+                  {selectedConfig.knowledge_bases?.length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Divider sx={{ mb: 2 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Search Configuration
+                        </Typography>
+                      </Divider>
+
+                      <QueryConfiguration
+                        selectedKB={selectedConfig.knowledge_bases[0].id}
+                        onKBChange={() => {}} // Read-only
+                        queryText={userMessage}
+                        onQueryTextChange={setUserMessage}
+                        searchType={searchType}
+                        onSearchTypeChange={setSearchType}
+                        limit={searchLimit}
+                        onLimitChange={setSearchLimit}
+                        threshold={searchThreshold}
+                        onThresholdChange={setSearchThreshold}
+                        titleWeightingEnabled={titleWeightingEnabled}
+                        onTitleWeightingEnabledChange={setTitleWeightingEnabled}
+                        titleWeightMultiplier={titleWeightMultiplier}
+                        onTitleWeightMultiplierChange={setTitleWeightMultiplier}
+
+                        // UI customization - hide what we don't need in LLM Tester
+                        showKBSelector={false}  // Already have KB in config
+                        showQueryText={false}   // Will use the main user message field
+                        queryTextLabel="Search Query"
+                        queryTextPlaceholder="This will use the user message above for search..."
+                        queryTextRows={2}
+
+                        // Pass through data
+                        kbLoading={kbLoading}
+                        knowledgeBases={knowledgeBases}
+                      />
+                    </Box>
+                  )}
                 </Box>
               )}
             </CardContent>
@@ -588,7 +521,7 @@ This is where retrieved context from the knowledge base would appear. In the act
                     checked={enablePostProcessing}
                     onChange={(e) => setEnablePostProcessing(e.target.checked)}
                     color="primary"
-                    disabled={!selectedKB}
+                    disabled={!selectedConfig?.knowledge_bases?.length}
                   />
                 }
                 label="Enable Post-processing (requires Knowledge Base)"
@@ -598,58 +531,55 @@ This is where retrieved context from the knowledge base would appear. In the act
               {/* Test Button */}
               <Button
                 variant="contained"
-                startIcon={<TestIcon />}
+                startIcon={streamState.isLoading ? <CircularProgress size={20} color="inherit" /> : <TestIcon />}
                 onClick={handleTest}
-                disabled={!selectedProvider || !selectedModel || !userMessage.trim() || streamState.isLoading}
+                disabled={!selectedConfigId || !userMessage.trim() || streamState.isLoading}
                 fullWidth
                 sx={{ mt: 2 }}
               >
-                {'Test LLM Call'}
+                {streamState.isLoading ? 'Testing...' : 'Test LLM Call'}
               </Button>
+              
+              {/* Progress indicator while testing */}
+              {streamState.isLoading && (
+                <Box sx={{ mt: 2 }}>
+                  <LinearProgress />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', textAlign: 'center' }}>
+                    Waiting for LLM response...
+                  </Typography>
+                </Box>
+              )}
 
               {/* Configuration Summary */}
-              <Box sx={{ mt: 2 }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Configuration Summary:
-                </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  {selectedProvider && (
+              {selectedConfig && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Configuration Summary:
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                     <Chip
-                      label={`Provider: ${providers.find(p => p.id === selectedProvider)?.name}`}
+                      label={`Config: ${selectedConfig.name}`}
                       size="small"
                       color="primary"
+                      variant="outlined"
                     />
-                  )}
-                  {selectedModel && (
-                    <Chip
-                      label={`Model: ${selectedModel}`}
-                      size="small"
-                      color="primary"
-                    />
-                  )}
-                  {selectedModelPrompt && (
-                    <Chip
-                      label={`Model Prompt: ${modelPrompts.find(p => p.id === selectedModelPrompt)?.name}`}
-                      size="small"
-                      color="secondary"
-                    />
-                  )}
-                  {selectedKB && (
-                    <Chip
-                      label={`KB: ${knowledgeBases.find(kb => kb.id === selectedKB)?.name}`}
-                      size="small"
-                      color="info"
-                    />
-                  )}
-                  {selectedKBPrompt && (
-                    <Chip
-                      label={`KB Prompt: ${kbPrompts.find(p => p.id === selectedKBPrompt)?.name}`}
-                      size="small"
-                      color="info"
-                    />
-                  )}
+                    {selectedConfig.prompt && (
+                      <Chip
+                        label={`Model Prompt: ${selectedConfig.prompt.name}`}
+                        size="small"
+                        color="secondary"
+                      />
+                    )}
+                    {selectedConfig.knowledge_bases?.length > 0 && (
+                      <Chip
+                        label={`${selectedConfig.knowledge_bases.length} KB(s)`}
+                        size="small"
+                        color="info"
+                      />
+                    )}
+                  </Box>
                 </Box>
-              </Box>
+              )}
             </CardContent>
           </Card>
         </Grid>
@@ -669,13 +599,51 @@ This is where retrieved context from the knowledge base would appear. In the act
               )}
 
               {streamState.error && (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  Error: {formatError(streamState.error)}
+                <Alert 
+                  severity="error" 
+                  sx={{ mb: 2 }}
+                  icon={streamState.error.isTimeout ? <TimerIcon /> : <ErrorIcon />}
+                >
+                  {streamState.error.isTimeout ? (
+                    <Box>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Request Timed Out
+                      </Typography>
+                      <Typography variant="body2">
+                        The LLM request timed out after {formatDuration(streamState.error.duration || testDuration)}.
+                        This may indicate the model is slow to respond or the server is under heavy load.
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        Suggestions: Try a simpler prompt, check your provider connection, or increase the timeout in your configuration.
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <Box>
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {formatError(streamState.error)}
+                      </Typography>
+                      {streamState.error.duration != null && streamState.error.duration > 0 && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                          Failed after {formatDuration(streamState.error.duration)}
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
                 </Alert>
               )}
 
               {llmResult && (
                 <Box>
+                  {/* Test Duration Summary */}
+                  {llmResult.response_time_ms && (
+                    <Paper sx={{ p: 2, mb: 2, backgroundColor: 'success.light', display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <TimerIcon color="success" />
+                      <Typography variant="body2" color="success.dark">
+                        Test completed successfully in <strong>{formatDuration(llmResult.response_time_ms)}</strong>
+                      </Typography>
+                    </Paper>
+                  )}
+                  
                   <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
                     <Tab label="Final Output" />
                     <Tab label="Request Details" />
@@ -724,7 +692,7 @@ This is where retrieved context from the knowledge base would appear. In the act
                           {llmResult.content}
                         </Typography>
 
-                        <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                        <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                           <Chip
                             label={`Model: ${llmResult.model}`}
                             size="small"
@@ -740,6 +708,15 @@ This is where retrieved context from the knowledge base would appear. In the act
                               label={`Tokens: ${llmResult.usage.total_tokens || 'N/A'}`}
                               size="small"
                               variant="outlined"
+                            />
+                          )}
+                          {llmResult.response_time_ms && (
+                            <Chip
+                              icon={<TimerIcon sx={{ fontSize: '1rem' }} />}
+                              label={`Duration: ${formatDuration(llmResult.response_time_ms)}`}
+                              size="small"
+                              variant="outlined"
+                              color="success"
                             />
                           )}
                         </Box>
@@ -782,7 +759,7 @@ This is where retrieved context from the knowledge base would appear. In the act
                       </Accordion>
 
                       {/* Knowledge Base Sources */}
-                      {selectedKB && (
+                      {selectedConfig?.knowledge_bases?.length > 0 && (
                         <Box sx={{ mt: 2 }}>
                           {sourcesMutation.isLoading ? (
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

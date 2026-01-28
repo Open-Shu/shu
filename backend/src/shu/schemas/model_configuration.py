@@ -66,7 +66,6 @@ class ModelConfigurationCreate(ModelConfigurationBase):
         default_factory=list,
         description="KB-specific prompt assignments"
     )
-    created_by: str = Field(..., description="User ID who created this configuration")
 
 
 class ModelConfigurationUpdate(BaseModel):
