@@ -32,7 +32,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,7 +136,7 @@ class UserService:
         return is_first_user or user_role == UserRole.ADMIN
 
     async def get_user_auth_method(self, db: AsyncSession, email: str) -> Optional[str]:
-        auth_method_result = await db.execute(select(User.auth_method).where(User.email == email))
+        auth_method_result = await db.execute(select(User.auth_method).where(func.lower(User.email) == email.lower()))
         return auth_method_result.scalar_one_or_none()
 
     async def authenticate_or_create_sso_user(
@@ -195,7 +195,8 @@ class UserService:
             return user
         
         # Check if user exists by email (link identity to existing user)
-        email_stmt = select(User).where(User.email == email)
+        # Use case-insensitive comparison since providers may return email in different case
+        email_stmt = select(User).where(func.lower(User.email) == email.lower())
         email_result = await db.execute(email_stmt)
         existing_user = email_result.scalar_one_or_none()
         

@@ -101,11 +101,11 @@ async def test_google_login_endpoint_returns_redirect(client, _db, _auth_headers
 async def test_google_exchange_login_new_user(client, _db, _auth_headers):
     """Test Google SSO creates a new user when none exists."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"google_new_user_{unique_id}@example.com"
+    unique_email = f"test_google_new_user_{unique_id}@example.com"
     mock_user = {
-        "google_id": f"google_new_{unique_id}",
+        "google_id": f"test_google_new_{unique_id}",
         "email": unique_email,
-        "name": "New Google User",
+        "name": "Test New Google User",
         "picture": "https://example.com/photo.jpg",
     }
 
@@ -130,14 +130,14 @@ async def test_google_exchange_login_new_user(client, _db, _auth_headers):
 async def test_google_exchange_login_existing_user_via_provider_identity(client, db, _auth_headers):
     """Test Google SSO logs in an existing Google user via ProviderIdentity table."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"google_existing_{unique_id}@example.com"
-    google_id = f"google_existing_id_{unique_id}"
+    unique_email = f"test_google_existing_{unique_id}@example.com"
+    google_id = f"test_google_existing_id_{unique_id}"
     
     # Create user using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Existing Google User",
+        name="Test Existing Google User",
         auth_method="google",
         is_active=True,
     )
@@ -149,13 +149,13 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
         provider_key="google",
         account_id=google_id,
         primary_email=unique_email,
-        display_name="Existing Google User",
+        display_name="Test Existing Google User",
     )
     
     mock_user = {
         "google_id": google_id,
         "email": unique_email,
-        "name": "Existing Google User",
+        "name": "Test Existing Google User",
         "picture": None,
     }
 
@@ -175,14 +175,14 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
 async def test_google_exchange_login_links_to_existing_microsoft_user(client, db, _auth_headers):
     """Test Google SSO links to existing user with same email (e.g., Microsoft user)."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"google_link_{unique_id}@example.com"
-    google_id = f"google_link_id_{unique_id}"
+    unique_email = f"test_google_link_{unique_id}@example.com"
+    google_id = f"test_google_link_id_{unique_id}"
     
     # Create existing Microsoft user using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Microsoft User",
+        name="Test Microsoft User",
         auth_method="microsoft",
         is_active=True,
     )
@@ -192,15 +192,15 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
         db,
         user_id=user.id,
         provider_key="microsoft",
-        account_id=f"microsoft_id_{unique_id}",
+        account_id=f"test_microsoft_id_{unique_id}",
         primary_email=unique_email,
-        display_name="Microsoft User",
+        display_name="Test Microsoft User",
     )
     
     mock_user = {
         "google_id": google_id,
         "email": unique_email,
-        "name": "Microsoft User",
+        "name": "Test Microsoft User",
         "picture": None,
     }
 
@@ -234,22 +234,22 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
 async def test_google_exchange_login_password_conflict(client, db, _auth_headers):
     """Test Google SSO returns 409 when user exists with password auth."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"google_pwd_conflict_{unique_id}@example.com"
+    unique_email = f"test_google_pwd_conflict_{unique_id}@example.com"
     
     # Create existing password user using ORM
     await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Password User",
+        name="Test Password User",
         auth_method="password",
         is_active=True,
         password_hash="fake_hash",
     )
     
     mock_user = {
-        "google_id": f"google_pwd_{unique_id}",
+        "google_id": f"test_google_pwd_{unique_id}",
         "email": unique_email,
-        "name": "Password User",
+        "name": "Test Password User",
         "picture": None,
     }
 
@@ -269,14 +269,14 @@ async def test_google_exchange_login_password_conflict(client, db, _auth_headers
 async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
     """Test Google SSO returns 400 when user account is inactive."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"google_inactive_{unique_id}@example.com"
-    google_id = f"google_inactive_id_{unique_id}"
+    unique_email = f"test_google_inactive_{unique_id}@example.com"
+    google_id = f"test_google_inactive_id_{unique_id}"
     
     # Create inactive user with Google identity using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Inactive Google User",
+        name="Test Inactive Google User",
         auth_method="google",
         is_active=False,  # Inactive user
     )
@@ -288,13 +288,13 @@ async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
         provider_key="google",
         account_id=google_id,
         primary_email=unique_email,
-        display_name="Inactive Google User",
+        display_name="Test Inactive Google User",
     )
     
     mock_user = {
         "google_id": google_id,
         "email": unique_email,
-        "name": "Inactive Google User",
+        "name": "Test Inactive Google User",
         "picture": None,
     }
 

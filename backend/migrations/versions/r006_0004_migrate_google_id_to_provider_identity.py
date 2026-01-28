@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 import uuid
 
-from helpers import (
+from migrations.helpers import (
     column_exists,
     index_exists,
 )

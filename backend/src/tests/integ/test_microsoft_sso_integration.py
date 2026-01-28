@@ -100,11 +100,11 @@ async def test_microsoft_login_endpoint_returns_redirect(client, db, auth_header
 async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
     """Test Microsoft SSO creates a new user when none exists."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_new_user_{unique_id}@example.com"
+    unique_email = f"test_ms_new_user_{unique_id}@example.com"
     mock_user = {
-        "microsoft_id": f"ms_new_{unique_id}",
+        "microsoft_id": f"test_ms_new_{unique_id}",
         "email": unique_email,
-        "name": "New Microsoft User",
+        "name": "Test New Microsoft User",
         "picture": None,
     }
 
@@ -129,14 +129,14 @@ async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
 async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
     """Test Microsoft SSO logs in an existing Microsoft user."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_existing_{unique_id}@example.com"
-    microsoft_id = f"ms_existing_id_{unique_id}"
+    unique_email = f"test_ms_existing_{unique_id}@example.com"
+    microsoft_id = f"test_ms_existing_id_{unique_id}"
     
     # Create user using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Existing MS User",
+        name="Test Existing MS User",
         auth_method="microsoft",
         is_active=True,
     )
@@ -148,13 +148,13 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
         provider_key="microsoft",
         account_id=microsoft_id,
         primary_email=unique_email,
-        display_name="Existing MS User",
+        display_name="Test Existing MS User",
     )
     
     mock_user = {
         "microsoft_id": microsoft_id,
         "email": unique_email,
-        "name": "Existing MS User",
+        "name": "Test Existing MS User",
         "picture": None,
     }
 
@@ -174,14 +174,14 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
 async def test_microsoft_exchange_login_links_to_existing_google_user(client, db, auth_headers):
     """Test Microsoft SSO links to existing user with same email (e.g., Google user)."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_link_{unique_id}@example.com"
-    microsoft_id = f"ms_link_id_{unique_id}"
+    unique_email = f"test_ms_link_{unique_id}@example.com"
+    microsoft_id = f"test_ms_link_id_{unique_id}"
     
     # Create existing Google user using ORM (now uses ProviderIdentity instead of google_id)
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Google User",
+        name="Test Google User",
         auth_method="google",
         is_active=True,
     )
@@ -191,15 +191,15 @@ async def test_microsoft_exchange_login_links_to_existing_google_user(client, db
         db,
         user_id=user.id,
         provider_key="google",
-        account_id=f"google_id_{unique_id}",
+        account_id=f"test_google_id_{unique_id}",
         primary_email=unique_email,
-        display_name="Google User",
+        display_name="Test Google User",
     )
     
     mock_user = {
         "microsoft_id": microsoft_id,
         "email": unique_email,
-        "name": "Google User",
+        "name": "Test Google User",
         "picture": None,
     }
 
@@ -219,22 +219,22 @@ async def test_microsoft_exchange_login_links_to_existing_google_user(client, db
 async def test_microsoft_exchange_login_password_conflict(client, db, auth_headers):
     """Test Microsoft SSO returns 409 when user exists with password auth."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_pwd_conflict_{unique_id}@example.com"
+    unique_email = f"test_ms_pwd_conflict_{unique_id}@example.com"
     
     # Create existing password user using ORM
     await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Password User",
+        name="Test Password User",
         auth_method="password",
         is_active=True,
         password_hash="fake_hash",
     )
     
     mock_user = {
-        "microsoft_id": f"ms_pwd_{unique_id}",
+        "microsoft_id": f"test_ms_pwd_{unique_id}",
         "email": unique_email,
-        "name": "Password User",
+        "name": "Test Password User",
         "picture": None,
     }
 
@@ -254,14 +254,14 @@ async def test_microsoft_exchange_login_password_conflict(client, db, auth_heade
 async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
     """Test Microsoft SSO returns 400 when user account is inactive."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_inactive_{unique_id}@example.com"
-    microsoft_id = f"ms_inactive_id_{unique_id}"
+    unique_email = f"test_ms_inactive_{unique_id}@example.com"
+    microsoft_id = f"test_ms_inactive_id_{unique_id}"
     
     # Create inactive user with Microsoft identity using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Inactive MS User",
+        name="Test Inactive MS User",
         auth_method="microsoft",
         is_active=False,  # Inactive user
     )
@@ -273,13 +273,13 @@ async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
         provider_key="microsoft",
         account_id=microsoft_id,
         primary_email=unique_email,
-        display_name="Inactive MS User",
+        display_name="Test Inactive MS User",
     )
     
     mock_user = {
         "microsoft_id": microsoft_id,
         "email": unique_email,
-        "name": "Inactive MS User",
+        "name": "Test Inactive MS User",
         "picture": None,
     }
 

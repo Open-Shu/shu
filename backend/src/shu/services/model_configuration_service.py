@@ -198,7 +198,14 @@ class ModelConfigurationService:
             elif current_user:
                 # Even when relationships are excluded from the API payload,
                 # we still need knowledge_bases preloaded for RBAC checks.
-                relationship_options.append(selectinload(ModelConfiguration.knowledge_bases))
+                # Also load kb_prompt_assignments to prevent lazy-loading issues
+                # if the caller serializes the result.
+                relationship_options.extend([
+                    selectinload(ModelConfiguration.knowledge_bases),
+                    selectinload(ModelConfiguration.kb_prompt_assignments).selectinload(
+                        ModelConfigurationKBPrompt.prompt
+                    ),
+                ])
 
             if relationship_options:
                 query = query.options(*relationship_options)
@@ -278,7 +285,13 @@ class ModelConfigurationService:
                 # configuration. Eager-load knowledge_bases even when the caller
                 # has requested relationships to be excluded from the response,
                 # to avoid async lazy-loading (MissingGreenlet) with AsyncSession.
-                relationship_options.append(selectinload(ModelConfiguration.knowledge_bases))
+                # Also load kb_prompt_assignments since _to_response() accesses it.
+                relationship_options.extend([
+                    selectinload(ModelConfiguration.knowledge_bases),
+                    selectinload(ModelConfiguration.kb_prompt_assignments).selectinload(
+                        ModelConfigurationKBPrompt.prompt
+                    ),
+                ])
 
             if relationship_options:
                 query = query.options(*relationship_options)
