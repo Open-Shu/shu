@@ -165,12 +165,20 @@ class LLMResponse:
 class UnifiedLLMClient:
     """Universal LLM client supporting OpenAI-compatible APIs."""
 
-    def __init__(self, db_session: AsyncSession, provider: LLMProvider, conversation_owner_id: Optional[str] = None):
-
+    def __init__(
+        self,
+        db_session: AsyncSession,
+        provider: LLMProvider,
+        conversation_owner_id: Optional[str] = None,
+        settings: Optional[Any] = None
+    ):
         self.provider = provider
         self.conversation_owner_id = conversation_owner_id
         self.db_session = db_session
         self.provider_adapter = get_adapter_from_provider(db_session, provider, self.conversation_owner_id)
+
+        # Inject settings instance for testability
+        self.settings = settings if settings is not None else get_settings_instance()
 
         headers = self._build_client_headers()
 
@@ -179,10 +187,8 @@ class UnifiedLLMClient:
 
         # Use globally configured LLM timeouts
         try:
-            from ..core.config import get_settings_instance
-            _settings = get_settings_instance()
-            self._llm_timeout = float(getattr(_settings, "llm_global_timeout", 30))
-            self._llm_stream_read_timeout = float(getattr(_settings, "llm_streaming_read_timeout", 120))
+            self._llm_timeout = float(getattr(self.settings, "llm_global_timeout", 30))
+            self._llm_stream_read_timeout = float(getattr(self.settings, "llm_streaming_read_timeout", 120))
         except Exception:
             self._llm_timeout = 30.0
             self._llm_stream_read_timeout = 120.0
@@ -553,8 +559,7 @@ class UnifiedLLMClient:
             # Unknown error - preserve original for debugging
             logger.error("Encountered streaming error: %s (type: %s)", e, type(e).__name__, exc_info=True)
             # Show details only in development environment
-            settings = get_settings_instance()
-            if settings.environment == "development":
+            if self.settings.environment == "development":
                 user_message = f"Unexpected error from AI provider: {type(e).__name__}: {e}"
             else:
                 user_message = "An unexpected error occurred with the AI provider. Please try again."
@@ -663,8 +668,7 @@ class UnifiedLLMClient:
         body_str = self._stringify_error_body(details.get("body"))
 
         # Get environment for error sanitization
-        settings = get_settings_instance()
-        environment = getattr(settings, "environment", "production")
+        environment = getattr(self.settings, "environment", "production")
 
         # Use ErrorSanitizer to get sanitized error with guidance
         sanitized = ErrorSanitizer.sanitize_error(details)
@@ -839,9 +843,9 @@ class UnifiedLLMClient:
         Returns:
             True if error is a capability mismatch, False otherwise.
         """
-        provider_message = details.get("provider_message", "").lower()
-        provider_error_type = details.get("provider_error_type", "").lower()
-        provider_error_code = details.get("provider_error_code", "").lower()
+        provider_message = (details.get("provider_message") or "").lower()
+        provider_error_type = (details.get("provider_error_type") or "").lower()
+        provider_error_code = (details.get("provider_error_code") or "").lower()
 
         # Common patterns for vision capability mismatches
         vision_patterns = [

@@ -567,3 +567,35 @@ class TestCapabilityMismatchDetection:
 
         result = UnifiedLLMClient._is_capability_mismatch_error(None, details)
         assert result
+
+    def test_handles_none_values_in_details(self) -> None:
+        """Test that capability mismatch detection handles None values gracefully.
+        
+        This tests the fix for a bug where details dict contained None values
+        instead of empty strings, causing AttributeError when calling .lower().
+        """
+        from shu.llm.client import UnifiedLLMClient
+
+        details = {
+            "provider_message": None,
+            "provider_error_type": None,
+            "provider_error_code": None,
+        }
+
+        # Should not raise AttributeError
+        result = UnifiedLLMClient._is_capability_mismatch_error(None, details)
+        assert not result
+
+    def test_handles_mixed_none_and_string_values(self) -> None:
+        """Test capability mismatch detection with mixed None and string values."""
+        from shu.llm.client import UnifiedLLMClient
+
+        details = {
+            "provider_message": "This model does not support vision",
+            "provider_error_type": None,
+            "provider_error_code": None,
+        }
+
+        # Should detect mismatch from message even with None in other fields
+        result = UnifiedLLMClient._is_capability_mismatch_error(None, details)
+        assert result
