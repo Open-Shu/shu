@@ -149,20 +149,6 @@ class ModelConfigurationList(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ModelConfigurationTest(BaseModel):
-    """Schema for testing model configurations."""
-
-    test_message: str = Field(..., min_length=1, description="Test message to send")
-    include_knowledge_bases: bool = Field(True, description="Whether to include KB context")
-
-    @validator('test_message')
-    def validate_test_message(cls, v):
-        """Validate test message."""
-        if not v.strip():
-            raise ValueError("Test message cannot be empty")
-        return v.strip()
-
-
 class ModelConfigurationTestResponse(BaseModel):
     """Schema for model configuration test responses."""
 

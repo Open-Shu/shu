@@ -8,7 +8,7 @@ knowledge bases into user-facing configurations.
 
 import logging
 from typing import Optional, Dict, Any, Iterable, Union
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
@@ -17,6 +17,7 @@ from ..auth.models import User, UserRole
 from ..core.config import get_config_manager_dependency, ConfigurationManager
 from ..core.exceptions import ShuException, LLMConfigurationError, LLMError
 from ..core.response import ShuResponse
+from ..services.attachment_service import AttachmentService
 from ..services.chat_service import ChatService
 from ..schemas.query import RagRewriteMode
 from ..services.model_configuration_service import ModelConfigurationService
@@ -27,7 +28,6 @@ from ..schemas.model_configuration import (
     ModelConfigurationUpdate,
     ModelConfigurationResponse,
     ModelConfigurationList,
-    ModelConfigurationTest,
     ModelConfigurationTestResponse,
     ModelConfigKBPromptAssignment,
     ModelConfigKBPromptResponse,
@@ -406,16 +406,20 @@ async def delete_model_configuration(
 )
 async def test_model_configuration(
     config_id: str,
-    test_data: ModelConfigurationTest,
+    test_message: str = Form(..., description="Test message to send"),
+    include_knowledge_bases: bool = Form(True, description="Whether to include KB context"),
+    file: Optional[UploadFile] = File(None, description="Optional image file for vision testing"),
     current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
     """
-    Test a model configuration with a sample message.
+    Test a model configuration with a sample message and optional image attachment.
     
     Uses non-streaming mode to ensure providers return detailed error messages.
     Some providers only return useful configuration errors in non-streaming requests.
+    
+    Supports multipart/form-data for image uploads to test vision capabilities.
     """
     try:
         service = ModelConfigurationService(db)
@@ -430,6 +434,28 @@ async def test_model_configuration(
         chat_service = ChatService(db, config_manager)
         conversation = await chat_service.create_conversation(current_user.id, config.id)
 
+        # Handle file upload if provided
+        attachment_ids = []
+        if file:
+            try:
+                file_content = await file.read()
+                attachment_service = AttachmentService(db)
+                attachment, _ = await attachment_service.save_upload(
+                    conversation_id=conversation.id,
+                    user_id=current_user.id,
+                    filename=file.filename,
+                    file_bytes=file_content
+                )
+                attachment_ids.append(attachment.id)
+            except Exception as e:
+                logger.error(f"Failed to create attachment for test: {e}")
+                # Clean up conversation
+                await chat_service.delete_conversation(conversation.id)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to process image attachment: {str(e)}"
+                )
+
         response = ""
         error = None
         message_metadata: Dict[str, Any] = {}
@@ -437,10 +463,11 @@ async def test_model_configuration(
         try:
             async for event in await chat_service.send_message(
                 conversation_id=conversation.id,
-                user_message=test_data.test_message,
+                user_message=test_message,
                 current_user=current_user,
                 rag_rewrite_mode=RagRewriteMode.NO_RAG,
                 force_no_streaming=True,
+                attachment_ids=attachment_ids,
             ):
                 if event.type == "final_message":
                     response = event.content.get("content")
@@ -475,7 +502,7 @@ async def test_model_configuration(
                 error=enhanced_error,
                 model_used=f"{config.llm_provider.name}/{config.model_name}",
                 prompt_applied=config.prompt is not None,
-                knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
+                knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if include_knowledge_bases else [],
                 response_time_ms=response_time_ms,
                 token_usage=token_usage,
                 metadata={"streaming": False}
@@ -491,7 +518,7 @@ async def test_model_configuration(
             error=None,
             model_used=f"{config.llm_provider.name}/{config.model_name}",
             prompt_applied=config.prompt is not None,
-            knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
+            knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if include_knowledge_bases else [],
             response_time_ms=response_time_ms,
             token_usage=token_usage,
             metadata={"streaming": False}
