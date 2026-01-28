@@ -6,7 +6,7 @@ which is the foundational abstraction that combines base models + prompts +
 optional knowledge bases into user-facing configurations.
 """
 
-from pydantic import BaseModel, Field, validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -32,26 +32,32 @@ class ModelConfigurationBase(BaseModel):
     prompt_id: Optional[str] = Field(None, description="Associated prompt ID")
     is_active: bool = Field(True, description="Whether configuration is active")
 
-    @validator('name')
-    def validate_name(cls, v):
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
         """Validate configuration name."""
         if not v.strip():
             raise ValueError("Configuration name cannot be empty")
         return v.strip()
 
-    @validator('model_name')
-    def validate_model_name(cls, v):
+    @field_validator('model_name')
+    @classmethod
+    def validate_model_name(cls, v: str) -> str:
         """Validate model name."""
         if not v.strip():
             raise ValueError("Model name cannot be empty")
         return v.strip()
 
-    @validator('prompt_id')
-    def validate_prompt_id(cls, v):
-        """Validate prompt ID - convert empty string to None."""
-        if v == '':
+    @field_validator('prompt_id')
+    @classmethod
+    def validate_prompt_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate prompt ID - convert empty or whitespace-only string to None."""
+        if v is None:
             return None
-        return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped
 
 
 class ModelConfigurationCreate(ModelConfigurationBase):
@@ -89,26 +95,32 @@ class ModelConfigurationUpdate(BaseModel):
     functionalities: Optional[Dict[str, Any]] = Field(None, description="Enabled functionalities for the given model")
     is_side_call_model: Optional[bool] = Field(None, description="Whether this model is designated for side-calls")
 
-    @validator('name')
-    def validate_name(cls, v):
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate configuration name."""
         if v is not None and not v.strip():
             raise ValueError("Configuration name cannot be empty")
         return v.strip() if v else v
 
-    @validator('model_name')
-    def validate_model_name(cls, v):
+    @field_validator('model_name')
+    @classmethod
+    def validate_model_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate model name."""
         if v is not None and not v.strip():
             raise ValueError("Model name cannot be empty")
         return v.strip() if v else v
 
-    @validator('prompt_id')
-    def validate_prompt_id(cls, v):
-        """Validate prompt ID - convert empty string to None."""
-        if v == '':
+    @field_validator('prompt_id')
+    @classmethod
+    def validate_prompt_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate prompt ID - convert empty or whitespace-only string to None."""
+        if v is None:
             return None
-        return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped
 
 
 class ModelConfigurationResponse(ModelConfigurationBase):
@@ -155,8 +167,9 @@ class ModelConfigurationTest(BaseModel):
     test_message: str = Field(..., min_length=1, description="Test message to send")
     include_knowledge_bases: bool = Field(True, description="Whether to include KB context")
 
-    @validator('test_message')
-    def validate_test_message(cls, v):
+    @field_validator('test_message')
+    @classmethod
+    def validate_test_message(cls, v: str) -> str:
         """Validate test message."""
         if not v.strip():
             raise ValueError("Test message cannot be empty")

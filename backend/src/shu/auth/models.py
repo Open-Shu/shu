@@ -16,13 +16,13 @@ class UserRole(Enum):
     REGULAR_USER = "regular_user" # Access to personal KB and assigned team KBs
 
 class User(BaseModel):
-    """User model with Google SSO integration"""
+    """User model with SSO integration via ProviderIdentity"""
     __tablename__ = "users"
 
     email = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
     role = Column(String, default=UserRole.REGULAR_USER.value)  # Store as string
-    google_id = Column(String, unique=True, nullable=True, index=True)  # Nullable for non-Google auth users
+    # google_id column removed - use ProviderIdentity table instead
     picture_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=False)  # Users require admin activation by default
     last_login = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -83,7 +83,6 @@ class User(BaseModel):
             'picture_url': self.picture_url,
             'is_active': self.is_active,
             'auth_method': self.auth_method,
-            'google_id': self.google_id,
             'created_at': self.created_at.isoformat() if self.created_at is not None else None,
             'last_login': self.last_login.isoformat() if self.last_login is not None else None
         }

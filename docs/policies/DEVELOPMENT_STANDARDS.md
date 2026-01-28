@@ -194,8 +194,8 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 - Follow SOLID principles - single responsibility and separation of concerns, open/closed, LSP, dependency inversion.
 - Follow DRY principles - don't duplicate code or data - consolidate and re-use.
 - Keep layers explicit and small:
-  - Routers: HTTP wiring only (params, RBAC deps, envelope responses). No business logic.
-  - Schemas: Pydantic request/response models under `src/shu/schemas/*`. Do not define models in routers.
+  - Routers: HTTP wiring only (params, RBAC deps, envelope responses). No business logic. Simple endpoint-specific request/response models (e.g., `CodeRequest(code: str)`) may be defined inline.
+  - Schemas: Shared Pydantic models under `src/shu/schemas/*`. Use for: models reused across multiple endpoints, domain schemas with complex validation, and infrastructure schemas (e.g., `SuccessResponse`). Move models to schemas when they grow beyond simple request wrappers.
   - Services/Orchestrators: Implement use-cases by coordinating repositories/strategies. No env reads; fetch via `ConfigurationManager`.
   - Repositories: Encapsulate SQLAlchemy queries per entity; always eager-load relationships (selectinload) to avoid greenlet errors.
   - Strategies: Algorithm variants (e.g., search types, file extractors) live in separate modules.
@@ -210,7 +210,7 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
   - Split oversized components (> ~500 LOC) into focused subcomponents/dialogs.
   - Split `frontend/src/services/api.js` into domain modules with a shared axios client+interceptors.
 - Enforcement checklist:
-  - [ ] Routers define zero Pydantic models
+  - [ ] Routers define zero shared Pydantic models (inline simple request wrappers are allowed)
   - [ ] Files > ~500 LOC reviewed for decomposition
   - [ ] No env reads outside config.py (backend) / shared axios client (frontend)
   - [ ] Services do not perform direct SQL when a repository exists
