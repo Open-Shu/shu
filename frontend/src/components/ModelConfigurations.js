@@ -269,7 +269,12 @@ const ModelConfigurations = () => {
 
   // Test mutation
   const testMutation = useMutation(
-    ({ id, message }) => modelConfigAPI.test(id, { test_message: message, include_knowledge_bases: true }),
+    ({ id, message }) => {
+      const formData = new FormData();
+      formData.append('test_message', message);
+      formData.append('include_knowledge_bases', 'true');
+      return modelConfigAPI.testWithFile(id, formData);
+    },
     {
       onSuccess: (response, { id }) => {
         const result = extractDataFromResponse(response);

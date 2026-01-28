@@ -8,7 +8,7 @@ knowledge bases into user-facing configurations.
 
 import logging
 from typing import Optional, Dict, Any, Iterable, Union
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
@@ -17,6 +17,7 @@ from ..auth.models import User, UserRole
 from ..core.config import get_config_manager_dependency, ConfigurationManager
 from ..core.exceptions import ShuException, LLMConfigurationError, LLMError
 from ..core.response import ShuResponse
+from ..services.attachment_service import AttachmentService
 from ..services.chat_service import ChatService
 from ..schemas.query import RagRewriteMode
 from ..services.model_configuration_service import ModelConfigurationService
@@ -27,7 +28,6 @@ from ..schemas.model_configuration import (
     ModelConfigurationUpdate,
     ModelConfigurationResponse,
     ModelConfigurationList,
-    ModelConfigurationTest,
     ModelConfigurationTestResponse,
     ModelConfigKBPromptAssignment,
     ModelConfigKBPromptResponse,
@@ -37,6 +37,78 @@ from ..schemas.envelope import SuccessResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
+
+# Constants
+MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024  # 1MB chunks for streaming reads
+ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/gif",
+    "image/webp", "image/bmp", "image/tiff"
+}
+
+
+async def _validate_and_read_upload(
+    file: UploadFile,
+    allowed_mime_types: set[str] = ALLOWED_IMAGE_MIME_TYPES,
+    max_size_bytes: int = MAX_UPLOAD_SIZE_BYTES,
+    chunk_size: int = UPLOAD_CHUNK_SIZE_BYTES
+) -> bytes:
+    """
+    Validate and read an uploaded file with MIME type and size limits.
+    
+    This function implements comprehensive file validation:
+    1. MIME type validation: Checks file.content_type against allowed types
+    2. Pre-read size validation: Checks file.size metadata if available (most efficient)
+    3. During-read size validation: Validates size while streaming in chunks (fallback)
+    
+    The two-stage size validation is necessary because file.size may not always be
+    available (depends on client sending Content-Length header). Streaming reads
+    prevent memory exhaustion even for permitted large files.
+    
+    Args:
+        file: The FastAPI UploadFile to validate and read
+        allowed_mime_types: Set of allowed MIME types (default: image types)
+        max_size_bytes: Maximum allowed file size in bytes (default: 10MB)
+        chunk_size: Size of chunks for streaming reads (default: 1MB)
+        
+    Returns:
+        bytes: The complete file content
+        
+    Raises:
+        HTTPException: If file type is invalid or exceeds size limit at any validation stage
+    """
+    # Validate MIME type before reading
+    if file.content_type not in allowed_mime_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type: {file.content_type}. Allowed types: {', '.join(sorted(allowed_mime_types))}."
+        )
+    
+    # Stage 1: Pre-read size validation using metadata (if available)
+    # This is the most efficient check - prevents reading oversized files entirely
+    if file.size is not None and file.size > max_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File too large: {file.size} bytes. Maximum size is {max_size_bytes} bytes ({max_size_bytes // (1024 * 1024)}MB)."
+        )
+    
+    # Stage 2: Stream file in chunks with size validation during read
+    # This catches oversized files even if metadata was unavailable
+    file_content = bytearray()
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        file_content.extend(chunk)
+        
+        # Validate accumulated size doesn't exceed limit
+        if len(file_content) > max_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File too large: exceeds {max_size_bytes} bytes ({max_size_bytes // (1024 * 1024)}MB)."
+            )
+    
+    return bytes(file_content)
 
 
 def _format_test_error_with_suggestions(error_message: Any) -> str:
@@ -406,16 +478,20 @@ async def delete_model_configuration(
 )
 async def test_model_configuration(
     config_id: str,
-    test_data: ModelConfigurationTest,
+    test_message: str = Form(..., description="Test message to send"),
+    include_knowledge_bases: bool = Form(True, description="Whether to include KB context"),
+    file: Optional[UploadFile] = File(None, description="Optional image file for vision testing"),
     current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
     """
-    Test a model configuration with a sample message.
+    Test a model configuration with a sample message and optional image attachment.
     
     Uses non-streaming mode to ensure providers return detailed error messages.
     Some providers only return useful configuration errors in non-streaming requests.
+    
+    Supports multipart/form-data for image uploads to test vision capabilities.
     """
     try:
         service = ModelConfigurationService(db)
@@ -430,6 +506,38 @@ async def test_model_configuration(
         chat_service = ChatService(db, config_manager)
         conversation = await chat_service.create_conversation(current_user.id, config.id)
 
+        # Handle file upload if provided
+        attachment_ids = []
+        if file:
+            try:
+                # Validate and read file (MIME type, size limits, streaming)
+                file_content = await _validate_and_read_upload(file)
+                
+                attachment_service = AttachmentService(db)
+                attachment, _ = await attachment_service.save_upload(
+                    conversation_id=conversation.id,
+                    user_id=current_user.id,
+                    filename=file.filename,
+                    file_bytes=file_content
+                )
+                attachment_ids.append(attachment.id)
+            except HTTPException:
+                # Re-raise HTTP exceptions (including validation errors)
+                await file.close()
+                await chat_service.delete_conversation(conversation.id)
+                raise
+            except Exception as e:
+                logger.error(f"Failed to create attachment for test: {e}")
+                # Clean up conversation
+                await file.close()
+                await chat_service.delete_conversation(conversation.id)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to process image attachment: {str(e)}"
+                )
+            finally:
+                await file.close()
+
         response = ""
         error = None
         message_metadata: Dict[str, Any] = {}
@@ -437,10 +545,11 @@ async def test_model_configuration(
         try:
             async for event in await chat_service.send_message(
                 conversation_id=conversation.id,
-                user_message=test_data.test_message,
+                user_message=test_message,
                 current_user=current_user,
                 rag_rewrite_mode=RagRewriteMode.NO_RAG,
                 force_no_streaming=True,
+                attachment_ids=attachment_ids,
             ):
                 if event.type == "final_message":
                     response = event.content.get("content")
@@ -475,7 +584,7 @@ async def test_model_configuration(
                 error=enhanced_error,
                 model_used=f"{config.llm_provider.name}/{config.model_name}",
                 prompt_applied=config.prompt is not None,
-                knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
+                knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if include_knowledge_bases else [],
                 response_time_ms=response_time_ms,
                 token_usage=token_usage,
                 metadata={"streaming": False}
@@ -491,7 +600,7 @@ async def test_model_configuration(
             error=None,
             model_used=f"{config.llm_provider.name}/{config.model_name}",
             prompt_applied=config.prompt is not None,
-            knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if test_data.include_knowledge_bases else [],
+            knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if include_knowledge_bases else [],
             response_time_ms=response_time_ms,
             token_usage=token_usage,
             metadata={"streaming": False}
