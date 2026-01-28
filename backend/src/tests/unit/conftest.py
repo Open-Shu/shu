@@ -19,6 +19,18 @@ PROJECT_SRC = Path(__file__).resolve().parents[2]
 if str(PROJECT_SRC) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC))
 
+# Add backend/ to sys.path so migrations.* imports work for migration tests.
+# The migration files use `from migrations.helpers import ...` which requires backend/ on path.
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+# Add backend/migrations to sys.path so versions.* imports work for migration tests.
+# The test files import `versions.r006_0004...` directly.
+MIGRATIONS_ROOT = BACKEND_ROOT / "migrations"
+if str(MIGRATIONS_ROOT) not in sys.path:
+    sys.path.insert(0, str(MIGRATIONS_ROOT))
+
 import pytest
 
 @pytest.fixture

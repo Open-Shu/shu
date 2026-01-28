@@ -2,26 +2,14 @@
 Property-based tests for google_id to ProviderIdentity migration.
 
 These tests use Hypothesis to verify universal properties across all valid inputs.
-
-**Property 4: Migration is idempotent**
-**Validates: Requirements 2.4, 4.6**
 """
 
 import pytest
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 from collections import namedtuple
+import sys
 
 from hypothesis import given, strategies as st, settings, HealthCheck
-
-# Add migrations to path for importing the migration module
-# Path from test file: backend/src/tests/unit/migrations/test_*.py
-# Target: backend/migrations
-# parents[4] = backend/, so backend/migrations is the target
-MIGRATIONS_PATH = Path(__file__).resolve().parents[4] / "migrations"
-if str(MIGRATIONS_PATH) not in sys.path:
-    sys.path.insert(0, str(MIGRATIONS_PATH))
 
 
 # Mock user row returned from database
@@ -29,14 +17,28 @@ UserRow = namedtuple('UserRow', ['id', 'google_id', 'email', 'name', 'picture_ur
 IdentityRow = namedtuple('IdentityRow', ['id'])
 
 
-@pytest.fixture
-def mock_alembic_op():
-    """Mock alembic op module."""
-    with patch.dict('sys.modules', {'alembic': MagicMock(), 'alembic.op': MagicMock()}):
+# Create mock helpers module before any migration imports
+_mock_helpers = MagicMock()
+_mock_helpers.column_exists = MagicMock(return_value=True)
+_mock_helpers.index_exists = MagicMock(return_value=True)
+
+
+@pytest.fixture(autouse=True)
+def mock_migration_dependencies():
+    """Mock alembic and migrations.helpers modules before importing migration."""
+    with patch.dict('sys.modules', {
+        'alembic': MagicMock(),
+        'alembic.op': MagicMock(),
+        'migrations': MagicMock(),
+        'migrations.helpers': _mock_helpers,
+    }):
+        # Clear any cached import of the migration module
+        if 'versions.r006_0004_migrate_google_id_to_provider_identity' in sys.modules:
+            del sys.modules['versions.r006_0004_migrate_google_id_to_provider_identity']
         yield
 
 
-@pytest.mark.usefixtures("mock_alembic_op")
+@pytest.mark.usefixtures("mock_migration_dependencies")
 class TestMigrationIdempotenceProperty:
     """
     Property 4: Migration is idempotent.

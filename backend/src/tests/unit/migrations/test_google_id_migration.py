@@ -9,18 +9,9 @@ These tests verify:
 """
 
 import pytest
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from collections import namedtuple
-
-# Add migrations to path for importing the migration module
-# Path from test file: backend/src/tests/unit/migrations/test_*.py
-# Target: backend/migrations
-# parents[4] = backend/, so backend/migrations is the target
-MIGRATIONS_PATH = Path(__file__).resolve().parents[4] / "migrations"
-if str(MIGRATIONS_PATH) not in sys.path:
-    sys.path.insert(0, str(MIGRATIONS_PATH))
+import sys
 
 
 # Mock user row returned from database
@@ -29,14 +20,28 @@ IdentityRow = namedtuple('IdentityRow', ['id'])
 IdentityRestoreRow = namedtuple('IdentityRestoreRow', ['identity_id', 'user_id', 'account_id'])
 
 
-@pytest.fixture
-def mock_alembic_op():
-    """Mock alembic op module."""
-    with patch.dict('sys.modules', {'alembic': MagicMock(), 'alembic.op': MagicMock()}):
+# Create mock helpers module before any migration imports
+_mock_helpers = MagicMock()
+_mock_helpers.column_exists = MagicMock(return_value=True)
+_mock_helpers.index_exists = MagicMock(return_value=True)
+
+
+@pytest.fixture(autouse=True)
+def mock_migration_dependencies():
+    """Mock alembic and migrations.helpers modules before importing migration."""
+    with patch.dict('sys.modules', {
+        'alembic': MagicMock(),
+        'alembic.op': MagicMock(),
+        'migrations': MagicMock(),
+        'migrations.helpers': _mock_helpers,
+    }):
+        # Clear any cached import of the migration module
+        if 'versions.r006_0004_migrate_google_id_to_provider_identity' in sys.modules:
+            del sys.modules['versions.r006_0004_migrate_google_id_to_provider_identity']
         yield
 
 
-@pytest.mark.usefixtures("mock_alembic_op")
+@pytest.mark.usefixtures("mock_migration_dependencies")
 class TestGoogleIdMigrationUpgrade:
     """Tests for the upgrade path of the google_id migration."""
 
@@ -69,27 +74,23 @@ class TestGoogleIdMigrationUpgrade:
         
         mock_conn.execute.side_effect = [select_result, check_result, MagicMock(), check_result, MagicMock()]
         
-        with patch('helpers.column_exists', return_value=True), \
-             patch('helpers.index_exists', return_value=True):
+        # Import the module fresh (after mocks are set up by fixture)
+        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        
+        # Patch the op and sa modules
+        with patch.object(migration_module, 'op') as mock_op, \
+             patch.object(migration_module, 'sa') as mock_sa, \
+             patch.object(migration_module, 'column_exists', return_value=True), \
+             patch.object(migration_module, 'index_exists', return_value=True):
             
-            # Import the module fresh
-            import importlib
-            import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+            mock_op.get_bind.return_value = mock_conn
+            mock_sa.inspect.return_value = mock_inspector
             
-            # Patch the op and sa modules
-            with patch.object(migration_module, 'op') as mock_op, \
-                 patch.object(migration_module, 'sa') as mock_sa, \
-                 patch.object(migration_module, 'column_exists', return_value=True), \
-                 patch.object(migration_module, 'index_exists', return_value=True):
-                
-                mock_op.get_bind.return_value = mock_conn
-                mock_sa.inspect.return_value = mock_inspector
-                
-                migration_module.upgrade()
-                
-                # Verify drop operations were called
-                mock_op.drop_index.assert_called_once_with("ix_users_google_id", "users")
-                mock_op.drop_column.assert_called_once_with("users", "google_id")
+            migration_module.upgrade()
+            
+            # Verify drop operations were called
+            mock_op.drop_index.assert_called_once_with("ix_users_google_id", "users")
+            mock_op.drop_column.assert_called_once_with("users", "google_id")
 
     def test_migration_is_idempotent_skips_existing_identities(self):
         """Test migration skips users who already have ProviderIdentity rows."""
@@ -154,7 +155,7 @@ class TestGoogleIdMigrationUpgrade:
             mock_op.drop_column.assert_not_called()
 
 
-@pytest.mark.usefixtures("mock_alembic_op")
+@pytest.mark.usefixtures("mock_migration_dependencies")
 class TestGoogleIdMigrationDowngrade:
     """Tests for the downgrade path of the google_id migration."""
 
@@ -221,7 +222,7 @@ class TestGoogleIdMigrationDowngrade:
             mock_op.create_index.assert_not_called()
 
 
-@pytest.mark.usefixtures("mock_alembic_op")
+@pytest.mark.usefixtures("mock_migration_dependencies")
 class TestMigrationIdempotence:
     """Tests verifying migration idempotence property."""
 
@@ -324,7 +325,7 @@ class TestMigrationIdempotence:
             assert delete_calls[0]['id'] == 'identity-1'
 
 
-@pytest.mark.usefixtures("mock_alembic_op")
+@pytest.mark.usefixtures("mock_migration_dependencies")
 class TestDowngradeIdempotence:
     """Tests verifying downgrade idempotence."""
 
