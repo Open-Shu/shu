@@ -69,8 +69,8 @@ export default function IdentityStatus({ requiredIdentities = [], onStatusChange
       const desired = useServerUnionForAuthorize ? (consentScopesByProvider[p] || []) : (scopesByProvider[p] || []);
       if (desired.length === 0) return true;
       const missing = desired.filter((sc) => !granted.includes(sc));
-      const extra = granted.filter((sc) => !desired.includes(sc));
-      return connected && missing.length === 0 && extra.length === 0;
+      // Only missing scopes matter - extra granted scopes are fine
+      return connected && missing.length === 0;
     });
   }, [statusQ.data, providers, scopesByProvider, consentScopesByProvider, useServerUnionForAuthorize]);
 
@@ -103,13 +103,15 @@ export default function IdentityStatus({ requiredIdentities = [], onStatusChange
           const desired = useServerUnionForAuthorize ? (consentScopesByProvider[p] || []) : (scopesByProvider[p] || []);
           const missing = desired.filter((sc) => !granted.includes(sc));
           const extra = granted.filter((sc) => !desired.includes(sc));
-          const needReauth = desired.length > 0 && (missing.length > 0 || extra.length > 0 || !connected);
+          // Only missing scopes require reauthorization - extra granted scopes are fine
+          const needReauth = desired.length > 0 && (missing.length > 0 || !connected);
           const label = `${p.charAt(0).toUpperCase()}${p.slice(1)}: ${connected ? 'Connected' : 'Not Connected'}`;
           const chipColor = connected ? (needReauth ? 'warning' : 'success') : 'default';
           const chipTooltip = [
             `Granted: ${(status[p]?.granted_scopes || []).join(', ')}`,
             desired.length ? `Desired: ${desired.join(', ')}` : null,
-            needReauth ? `Reauthorization required: missing ${missing.length}, extra ${extra.length}` : null,
+            missing.length > 0 ? `Missing scopes: ${missing.join(', ')}` : null,
+            extra.length > 0 ? `Extra scopes (OK): ${extra.length}` : null,
           ].filter(Boolean).join('\n');
           return (
             <Stack key={p} direction="row" spacing={1} alignItems="center">

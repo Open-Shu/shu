@@ -181,8 +181,12 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         for c in creds:
             try:
                 for s in (c.scopes or []):
-                    if s not in scopes_union:
-                        scopes_union.append(s)
+                    # Normalize scope format for consistency
+                    normalized = s
+                    if s and not s.startswith("https://"):
+                        normalized = f"https://graph.microsoft.com/{s}"
+                    if normalized not in scopes_union:
+                        scopes_union.append(normalized)
             except Exception:
                 pass
         return {"user_connected": len(creds) > 0, "granted_scopes": scopes_union}
