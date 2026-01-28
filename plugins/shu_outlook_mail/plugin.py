@@ -569,8 +569,14 @@ class OutlookMailPlugin:
                     endpoint=next_url
                 )
             
-            # Extract items from response
-            items = response.get("value", [])
+            # Extract items from response body
+            # host.http.fetch returns {"status_code": ..., "headers": ..., "body": ...}
+            # The actual Graph API response is in the "body" field
+            body = response.get("body", {})
+            if isinstance(body, dict):
+                items = body.get("value", [])
+            else:
+                items = []
             all_items.extend(items)
             
             # Check if we've reached max_results
@@ -578,8 +584,11 @@ class OutlookMailPlugin:
                 all_items = all_items[:max_results]
                 break
             
-            # Get next page URL
-            next_url = response.get("@odata.nextLink")
+            # Get next page URL from response body
+            if isinstance(body, dict):
+                next_url = body.get("@odata.nextLink")
+            else:
+                next_url = None
         
         return all_items
     
@@ -995,9 +1004,14 @@ class OutlookMailPlugin:
                             # Other error - fall back to full sync
                             use_delta_sync = False
                         else:
-                            # Success - extract messages and delta link
-                            messages = response.get("value", [])
-                            delta_link = response.get("@odata.deltaLink")
+                            # Success - extract messages and delta link from response body
+                            body = response.get("body", {})
+                            if isinstance(body, dict):
+                                messages = body.get("value", [])
+                                delta_link = body.get("@odata.deltaLink")
+                            else:
+                                messages = []
+                                delta_link = None
                     else:
                         # No valid delta URL - fall back to full sync
                         use_delta_sync = False
@@ -1069,8 +1083,12 @@ class OutlookMailPlugin:
                         endpoint=delta_full_endpoint
                     )
                     
-                    # Extract delta link for next sync
-                    delta_link = delta_response.get("@odata.deltaLink")
+                    # Extract delta link for next sync from response body
+                    delta_body = delta_response.get("body", {})
+                    if isinstance(delta_body, dict):
+                        delta_link = delta_body.get("@odata.deltaLink")
+                    else:
+                        delta_link = None
                     
                 except Exception:
                     # If we can't get delta link, that's okay - we'll do full sync next time

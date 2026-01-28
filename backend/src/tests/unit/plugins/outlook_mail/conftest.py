@@ -14,6 +14,27 @@ class MockHttpRequestFailed(Exception):
         super().__init__(f"HTTP {status_code} calling {url}")
 
 
+def wrap_graph_response(body_data: dict, status_code: int = 200) -> dict:
+    """
+    Wrap Graph API response data in the format returned by http_capability.py.
+    
+    The http_capability.py returns responses in the format:
+    {"status_code": ..., "headers": {...}, "body": <actual_api_response>}
+    
+    Args:
+        body_data: The actual Graph API response (with "value", "@odata.nextLink", etc.)
+        status_code: HTTP status code (default 200)
+        
+    Returns:
+        Response dict in the format expected by the plugin
+    """
+    return {
+        "status_code": status_code,
+        "headers": {},
+        "body": body_data
+    }
+
+
 @pytest.fixture
 def plugin():
     """Create plugin instance for testing."""
@@ -81,10 +102,15 @@ def create_mock_host_with_messages(messages=None, track_requests=False):
                     "headers": headers,
                     "params": params
                 })
+            # Return response in the same format as http_capability.py
+            # The actual Graph API response is in the "body" field
             return {
                 "status_code": 200,
-                "value": messages,
-                "@odata.nextLink": None
+                "headers": {},
+                "body": {
+                    "value": messages,
+                    "@odata.nextLink": None
+                }
             }
     
     class MockKb:

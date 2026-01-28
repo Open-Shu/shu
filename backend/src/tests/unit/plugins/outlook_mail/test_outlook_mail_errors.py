@@ -3,7 +3,7 @@
 Tests HTTP errors, network errors, diagnostics, and skips array.
 """
 import pytest
-from conftest import MockHttpRequestFailed
+from conftest import MockHttpRequestFailed, wrap_graph_response
 
 
 class TestHttpErrors:
@@ -28,10 +28,11 @@ class TestHttpErrors:
     @pytest.mark.asyncio
     async def test_403_returns_permission_error(self, plugin, mock_host):
         """Test HTTP 403 returns insufficient_permissions error."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 403,
-            "error": {"message": "Insufficient permissions to access mailbox"}
-        }
+        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+            status_code=403,
+            url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
+            body={"error": {"message": "Insufficient permissions to access mailbox"}}
+        )
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -43,10 +44,11 @@ class TestHttpErrors:
     @pytest.mark.asyncio
     async def test_429_returns_rate_limit_error(self, plugin, mock_host):
         """Test HTTP 429 returns rate_limit_exceeded error."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 429,
-            "error": {"message": "Too many requests"}
-        }
+        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+            status_code=429,
+            url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
+            body={"error": {"message": "Too many requests"}}
+        )
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -58,10 +60,11 @@ class TestHttpErrors:
     @pytest.mark.asyncio 
     async def test_500_returns_server_error(self, plugin, mock_host):
         """Test HTTP 500 returns server_error."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 500,
-            "error": {"message": "Internal server error"}
-        }
+        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+            status_code=500,
+            url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
+            body={"error": {"message": "Internal server error"}}
+        )
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -72,10 +75,11 @@ class TestHttpErrors:
     @pytest.mark.asyncio
     async def test_503_returns_server_error(self, plugin, mock_host):
         """Test HTTP 503 returns server_error."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 503,
-            "error": {"message": "Service temporarily unavailable"}
-        }
+        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+            status_code=503,
+            url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
+            body={"error": {"message": "Service temporarily unavailable"}}
+        )
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -122,8 +126,7 @@ class TestDiagnostics:
     @pytest.mark.asyncio
     async def test_diagnostics_included_with_debug_flag(self, plugin, mock_host):
         """Test diagnostics included when debug=True."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {
                     "id": "msg1",
@@ -135,7 +138,7 @@ class TestDiagnostics:
                 }
             ],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "list", "debug": True}, None, mock_host)
         
@@ -147,11 +150,10 @@ class TestDiagnostics:
     @pytest.mark.asyncio
     async def test_diagnostics_not_included_without_debug_flag(self, plugin, mock_host):
         """Test diagnostics not included when debug=False (default)."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -161,8 +163,7 @@ class TestDiagnostics:
     @pytest.mark.asyncio
     async def test_diagnostics_for_digest_operation(self, plugin, mock_host):
         """Test diagnostics included for digest operation."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {
                     "id": "msg1",
@@ -174,7 +175,7 @@ class TestDiagnostics:
                 }
             ],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest", "debug": True}, None, mock_host)
         
@@ -185,8 +186,8 @@ class TestDiagnostics:
     async def test_diagnostics_for_ingest_operation(self, plugin, mock_host):
         """Test diagnostics included for ingest operation."""
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}
+            wrap_graph_response({"value": [], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"})
         ]
         
         result = await plugin.execute(
@@ -207,12 +208,11 @@ class TestSkipsArray:
         """Test skips array includes failed ingestion items."""
         mock_host.http.fetch.side_effect = [
             # List messages
-            {"status_code": 200, "value": [{"id": "msg1"}, {"id": "msg2"}], "@odata.nextLink": None},
+            wrap_graph_response({"value": [{"id": "msg1"}, {"id": "msg2"}], "@odata.nextLink": None}),
             # Get delta token
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"},
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}),
             # Fetch full message 1
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "id": "msg1",
                 "subject": "Test 1",
                 "from": {"emailAddress": {"name": "J", "address": "j@e.com"}},
@@ -221,10 +221,9 @@ class TestSkipsArray:
                 "bccRecipients": [],
                 "receivedDateTime": "2024-01-15T10:00:00Z",
                 "body": {"contentType": "text", "content": "Body 1"}
-            },
+            }),
             # Fetch full message 2
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "id": "msg2",
                 "subject": "Test 2",
                 "from": {"emailAddress": {"name": "J", "address": "j@e.com"}},
@@ -233,7 +232,7 @@ class TestSkipsArray:
                 "bccRecipients": [],
                 "receivedDateTime": "2024-01-15T11:00:00Z",
                 "body": {"contentType": "text", "content": "Body 2"}
-            }
+            })
         ]
         
         # Make first ingest fail
@@ -259,9 +258,13 @@ class TestSkipsArray:
     async def test_skips_has_structured_format(self, plugin, mock_host):
         """Test skips entries have item_id, reason, and code fields."""
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [{"id": "msg1"}], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"},
-            {"status_code": 404, "error": {"message": "Message not found"}}
+            wrap_graph_response({"value": [{"id": "msg1"}], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}),
+            MockHttpRequestFailed(
+                status_code=404,
+                url="https://graph.microsoft.com/v1.0/me/messages/msg1",
+                body={"error": {"message": "Message not found"}}
+            )
         ]
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
@@ -279,10 +282,9 @@ class TestSkipsArray:
     async def test_no_skips_when_all_succeed(self, plugin, mock_host):
         """Test skips not included when all items succeed."""
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [{"id": "msg1"}], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"},
-            {
-                "status_code": 200,
+            wrap_graph_response({"value": [{"id": "msg1"}], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}),
+            wrap_graph_response({
                 "id": "msg1",
                 "subject": "Test",
                 "from": {"emailAddress": {"name": "J", "address": "j@e.com"}},
@@ -291,7 +293,7 @@ class TestSkipsArray:
                 "bccRecipients": [],
                 "receivedDateTime": "2024-01-15T10:00:00Z",
                 "body": {"contentType": "text", "content": "Body"}
-            }
+            })
         ]
         mock_host.kb.ingest_email.return_value = {"id": "ko_id"}
         
@@ -311,8 +313,7 @@ class TestCursorErrors:
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=old"
         mock_host.cursor.set.side_effect = Exception("Cursor storage failed")
         mock_host.http.fetch.side_effect = [
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "value": [
                     {
                         "id": "msg1",
@@ -322,9 +323,8 @@ class TestCursorErrors:
                     }
                 ],
                 "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"
-            },
-            {
-                "status_code": 200,
+            }),
+            wrap_graph_response({
                 "id": "msg1",
                 "subject": "New",
                 "from": {"emailAddress": {"name": "J", "address": "j@e.com"}},
@@ -333,7 +333,7 @@ class TestCursorErrors:
                 "bccRecipients": [],
                 "receivedDateTime": "2024-01-15T10:00:00Z",
                 "body": {"contentType": "text", "content": "Body"}
-            }
+            })
         ]
         mock_host.kb.ingest_email.return_value = {"id": "ko_id"}
         

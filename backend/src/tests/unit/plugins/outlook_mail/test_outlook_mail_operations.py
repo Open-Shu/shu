@@ -4,6 +4,7 @@ Tests list, digest, ingest, and delta sync operation behavior.
 """
 import pytest
 from urllib.parse import unquote
+from conftest import wrap_graph_response
 
 
 class TestListOperation:
@@ -12,11 +13,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_fetches_from_inbox_endpoint(self, plugin, mock_host):
         """Test list fetches from /me/mailFolders/inbox/messages endpoint."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -28,11 +28,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_includes_authorization_header(self, plugin, mock_host):
         """Test Authorization header contains Bearer token."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -44,11 +43,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_requests_metadata_fields(self, plugin, mock_host):
         """Test $select parameter includes required message fields."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -64,11 +62,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_applies_since_hours_filter(self, plugin, mock_host):
         """Test since_hours applies receivedDateTime filter."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         await plugin.execute({"op": "list", "since_hours": 24}, None, mock_host)
         
@@ -80,11 +77,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_applies_query_filter(self, plugin, mock_host):
         """Test query_filter is passed through to $filter."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         await plugin.execute(
             {"op": "list", "query_filter": "from/emailAddress/address eq 'test@example.com'"},
@@ -99,11 +95,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_applies_max_results(self, plugin, mock_host):
         """Test max_results sets $top parameter."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         await plugin.execute({"op": "list", "max_results": 10}, None, mock_host)
         
@@ -114,14 +109,13 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_returns_messages_with_count(self, plugin, mock_host):
         """Test list returns messages array and count."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {"id": "msg1", "subject": "Test 1"},
                 {"id": "msg2", "subject": "Test 2"}
             ],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -134,16 +128,14 @@ class TestListOperation:
     async def test_handles_pagination(self, plugin, mock_host):
         """Test list follows @odata.nextLink for pagination."""
         mock_host.http.fetch.side_effect = [
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "value": [{"id": "msg1"}, {"id": "msg2"}],
                 "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skip=2"
-            },
-            {
-                "status_code": 200,
+            }),
+            wrap_graph_response({
                 "value": [{"id": "msg3"}],
                 "@odata.nextLink": None
-            }
+            })
         ]
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
@@ -155,11 +147,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_respects_max_results_across_pages(self, plugin, mock_host):
         """Test pagination stops when max_results is reached."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [{"id": f"msg{i}"} for i in range(10)],
             "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skip=10"
-        }
+        })
         
         result = await plugin.execute({"op": "list", "max_results": 5}, None, mock_host)
         
@@ -170,11 +161,10 @@ class TestListOperation:
     @pytest.mark.asyncio
     async def test_orders_by_received_date_desc(self, plugin, mock_host):
         """Test messages are ordered by receivedDateTime descending."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -190,8 +180,7 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_creates_email_digest_ko(self, plugin, mock_host):
         """Test digest creates KO with type email_digest."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {
                     "id": "msg1",
@@ -203,7 +192,7 @@ class TestDigestOperation:
                 }
             ],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -216,15 +205,14 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_analyzes_top_senders(self, plugin, mock_host):
         """Test digest identifies top senders with message counts."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {"id": "1", "subject": "S1", "from": {"emailAddress": {"name": "John", "address": "john@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T10:00:00Z", "bodyPreview": ""},
                 {"id": "2", "subject": "S2", "from": {"emailAddress": {"name": "John", "address": "john@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T11:00:00Z", "bodyPreview": ""},
                 {"id": "3", "subject": "S3", "from": {"emailAddress": {"name": "Jane", "address": "jane@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T12:00:00Z", "bodyPreview": ""}
             ],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -237,14 +225,13 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_extracts_recent_subjects(self, plugin, mock_host):
         """Test digest extracts recent message subjects."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {"id": "1", "subject": "Subject A", "from": {"emailAddress": {"name": "Test", "address": "test@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T10:00:00Z", "bodyPreview": ""},
                 {"id": "2", "subject": "Subject B", "from": {"emailAddress": {"name": "Test", "address": "test@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T11:00:00Z", "bodyPreview": ""}
             ],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -255,11 +242,10 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_includes_window_metadata(self, plugin, mock_host):
         """Test digest includes time window metadata."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest", "since_hours": 48}, None, mock_host)
         
@@ -271,11 +257,10 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_writes_to_kb_when_kb_id_provided(self, plugin, mock_host):
         """Test digest writes KO to KB when kb_id is provided."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest", "kb_id": "test-kb"}, None, mock_host)
         
@@ -287,11 +272,10 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_no_kb_write_without_kb_id(self, plugin, mock_host):
         """Test digest does NOT write to KB when kb_id is not provided."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -301,11 +285,10 @@ class TestDigestOperation:
     @pytest.mark.asyncio
     async def test_handles_zero_messages(self, plugin, mock_host):
         """Test digest handles zero messages gracefully."""
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -321,11 +304,10 @@ class TestDigestOperation:
             {"id": f"msg{i}", "subject": f"Subject {i}", "from": {"emailAddress": {"name": f"User {i}", "address": f"user{i}@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T10:00:00Z", "bodyPreview": ""}
             for i in range(15)
         ]
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": messages,
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -338,11 +320,10 @@ class TestDigestOperation:
             {"id": f"msg{i}", "subject": f"Subject {i}", "from": {"emailAddress": {"name": "User", "address": "user@example.com"}}, "to": [], "receivedDateTime": "2024-01-15T10:00:00Z", "bodyPreview": ""}
             for i in range(25)
         ]
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": messages,
             "@odata.nextLink": None
-        }
+        })
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
@@ -357,20 +338,17 @@ class TestIngestOperation:
         """Test ingest fetches full messages and ingests them."""
         mock_host.http.fetch.side_effect = [
             # List messages
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "value": [{"id": "msg1"}],
                 "@odata.nextLink": None
-            },
+            }),
             # Get delta token
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "value": [],
                 "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"
-            },
+            }),
             # Fetch full message
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "id": "msg1",
                 "subject": "Test",
                 "from": {"emailAddress": {"name": "John", "address": "john@example.com"}},
@@ -379,7 +357,7 @@ class TestIngestOperation:
                 "bccRecipients": [],
                 "receivedDateTime": "2024-01-15T10:00:00Z",
                 "body": {"contentType": "text", "content": "Body"}
-            }
+            })
         ]
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
@@ -392,8 +370,8 @@ class TestIngestOperation:
     async def test_returns_ingestion_and_deletion_counts(self, plugin, mock_host):
         """Test ingest returns both count and deleted fields."""
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}
+            wrap_graph_response({"value": [], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"})
         ]
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
@@ -411,8 +389,8 @@ class TestDeltaSyncBehavior:
         """Test plugin retrieves cursor via host.cursor.get(kb_id)."""
         mock_host.cursor.get.return_value = None
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"}
+            wrap_graph_response({"value": [], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"})
         ]
         
         await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
@@ -424,11 +402,10 @@ class TestDeltaSyncBehavior:
         """Test plugin uses delta endpoint when cursor exists."""
         delta_url = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=abc123"
         mock_host.cursor.get.return_value = delta_url
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"
-        }
+        })
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
         
@@ -442,13 +419,12 @@ class TestDeltaSyncBehavior:
     async def test_processes_deleted_messages(self, plugin, mock_host):
         """Test delta sync processes @removed messages by calling delete_ko."""
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=abc"
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [
                 {"id": "msg_deleted_001", "@removed": {"reason": "deleted"}}
             ],
             "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"
-        }
+        })
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
         
@@ -461,11 +437,10 @@ class TestDeltaSyncBehavior:
         """Test plugin stores delta token via host.cursor.set."""
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=old"
         new_token = "https://graph.microsoft.com/delta?token=new"
-        mock_host.http.fetch.return_value = {
-            "status_code": 200,
+        mock_host.http.fetch.return_value = wrap_graph_response({
             "value": [],
             "@odata.deltaLink": new_token
-        }
+        })
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
         
@@ -478,9 +453,9 @@ class TestDeltaSyncBehavior:
         """Test 410 Gone triggers fallback to full sync."""
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=expired"
         mock_host.http.fetch.side_effect = [
-            {"status_code": 410, "error": {"message": "Delta token expired"}},
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"}
+            wrap_graph_response({"error": {"message": "Delta token expired"}}, status_code=410),
+            wrap_graph_response({"value": [], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"})
         ]
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
@@ -493,8 +468,8 @@ class TestDeltaSyncBehavior:
         """Test reset_cursor=True bypasses existing cursor."""
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=abc"
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"}
+            wrap_graph_response({"value": [], "@odata.nextLink": None}),
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"})
         ]
         
         result = await plugin.execute(
@@ -513,17 +488,15 @@ class TestDeltaSyncBehavior:
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=abc"
         mock_host.http.fetch.side_effect = [
             # Delta response with 1 new and 1 deleted
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "value": [
                     {"id": "msg_new", "subject": "New", "from": {"emailAddress": {"name": "J", "address": "j@e.com"}}, "receivedDateTime": "2024-01-15T10:00:00Z"},
                     {"id": "msg_deleted", "@removed": {"reason": "deleted"}}
                 ],
                 "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"
-            },
+            }),
             # Full message fetch
-            {
-                "status_code": 200,
+            wrap_graph_response({
                 "id": "msg_new",
                 "subject": "New",
                 "from": {"emailAddress": {"name": "J", "address": "j@e.com"}},
@@ -532,7 +505,7 @@ class TestDeltaSyncBehavior:
                 "bccRecipients": [],
                 "receivedDateTime": "2024-01-15T10:00:00Z",
                 "body": {"contentType": "text", "content": "Body"}
-            }
+            })
         ]
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
