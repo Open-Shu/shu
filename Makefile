@@ -79,3 +79,97 @@ logs:
 
 ps:
 	docker compose -f $(COMPOSE_FILE) ps
+
+# Linting and formatting targets
+.PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix lint-docker
+
+# Run all linters
+lint: lint-python lint-frontend
+
+# Python linting
+lint-python:
+	@echo "Running Ruff linter..."
+	ruff check backend/
+	@echo "Running mypy type checker..."
+	mypy backend/src/shu
+	@echo "Running Bandit security checker..."
+	bandit -c pyproject.toml -r backend/src/shu
+
+# Frontend linting
+lint-frontend:
+	@echo "Running ESLint..."
+	cd frontend && npm run lint
+
+# Docker linting (manual - not in pre-commit)
+lint-docker:
+	@echo "Running hadolint..."
+	find . -name "Dockerfile*" -not -path "*/node_modules/*" | xargs hadolint
+
+# Format all code
+format: format-python format-frontend
+
+# Python formatting
+format-python:
+	@echo "Running Ruff formatter..."
+	ruff format backend/
+
+# Frontend formatting
+format-frontend:
+	@echo "Running Prettier..."
+	cd frontend && npm run format
+
+# Auto-fix linting issues
+lint-fix:
+	@echo "Auto-fixing Python issues..."
+	ruff check --fix backend/
+	ruff format backend/
+	@echo "Auto-fixing frontend issues..."
+	cd frontend && npm run lint:fix
+	cd frontend && npm run format
+
+# Pre-commit setup
+.PHONY: setup-hooks install-hooks
+
+setup-hooks:
+	@echo "Installing pre-commit..."
+	pip install pre-commit
+	@echo "Installing pre-commit hooks..."
+	pre-commit install
+	@echo "Running pre-commit on all files..."
+	pre-commit run --all-files
+
+install-hooks: setup-hooks
+
+# Testing and coverage
+.PHONY: test test-unit test-cov coverage coverage-report coverage-html coverage-open
+
+# Run unit tests
+test-unit:
+	@echo "Running unit tests..."
+	python -m pytest backend/src/tests/unit
+
+# Run tests with coverage
+test-cov:
+	@echo "Running tests with coverage..."
+	python -m pytest backend/src/tests/unit --cov=backend/src/shu --cov-report=term-missing --cov-report=html --cov-report=xml
+
+# Alias for test-cov
+coverage: test-cov
+
+# Generate coverage report (after running tests)
+coverage-report:
+	@echo "Generating coverage report..."
+	coverage report --show-missing
+
+# Generate HTML coverage report
+coverage-html:
+	@echo "Generating HTML coverage report..."
+	coverage html
+	@echo "Report generated in htmlcov/index.html"
+
+# Open HTML coverage report in browser
+coverage-open: coverage-html
+	@echo "Opening coverage report..."
+	@command -v open >/dev/null 2>&1 && open htmlcov/index.html || \
+	command -v xdg-open >/dev/null 2>&1 && xdg-open htmlcov/index.html || \
+	echo "Please open htmlcov/index.html in your browser"
