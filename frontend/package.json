@@ -82,14 +82,6 @@
       "!src/**/*.test.{js,jsx}",
       "!src/**/__tests__/**"
     ],
-    "coverageThresholds": {
-      "global": {
-        "statements": 0,
-        "branches": 0,
-        "functions": 0,
-        "lines": 0
-      }
-    },
     "coverageReporters": [
       "text",
       "text-summary",
