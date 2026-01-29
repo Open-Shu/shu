@@ -22,17 +22,11 @@ logger = logging.getLogger(__name__)
 TEST_USER_DATA = {
     "email": "test-auth@example.com",
     "name": "Test Auth User",
-    "google_id": "test_google_auth_123",
     "role": "regular_user",
     "is_active": True,
 }
 
-ADMIN_USER_DATA = {
-    "email": "test-admin-auth@example.com",
-    "name": "Test Admin User",
-    "google_id": "test_google_admin_123",
-    "role": "admin",
-}
+ADMIN_USER_DATA = {"email": "test-admin-auth@example.com", "name": "Test Admin User", "role": "admin"}
 
 
 async def test_health_endpoint_no_auth(client, db, auth_headers):

@@ -33,21 +33,25 @@ def _mock_microsoft_adapter():
     return mock
 
 
-def _mock_microsoft_user_info(user_data: dict):
-    """Create a mock for _get_microsoft_user_info."""
+def _mock_adapter_get_user_info(user_data: dict):
+    """Create a mock for MicrosoftAuthAdapter.get_user_info.
+
+    Converts legacy test data format to normalized provider info format.
+    """
     mock = AsyncMock()
-    mock.return_value = user_data
+    # Convert legacy format (microsoft_id, email, name, picture) to normalized format
+    mock.return_value = {
+        "provider_id": user_data.get("microsoft_id"),
+        "provider_key": "microsoft",
+        "email": user_data.get("email"),
+        "name": user_data.get("name"),
+        "picture": user_data.get("picture"),
+    }
     return mock
 
 
 async def _create_user_with_orm(
-    db,
-    email: str,
-    name: str,
-    google_id: str = None,
-    auth_method: str = "google",
-    is_active: bool = True,
-    password_hash: str = None,
+    db, email: str, name: str, auth_method: str = "google", is_active: bool = True, password_hash: str = None
 ):
     """Create a user using the ORM pattern (consistent with integration_test_runner.py)."""
     from shu.auth.models import User
@@ -55,7 +59,6 @@ async def _create_user_with_orm(
     user = User(
         email=email,
         name=name,
-        google_id=google_id,
         auth_method=auth_method,
         is_active=is_active,
         password_hash=password_hash,
@@ -99,18 +102,20 @@ async def test_microsoft_login_endpoint_returns_redirect(client, db, auth_header
 async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
     """Test Microsoft SSO creates a new user when none exists."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_new_user_{unique_id}@example.com"
+    unique_email = f"test_ms_new_user_{unique_id}@example.com"
     mock_user = {
-        "microsoft_id": f"ms_new_{unique_id}",
+        "microsoft_id": f"test_ms_new_{unique_id}",
         "email": unique_email,
-        "name": "New Microsoft User",
+        "name": "Test New Microsoft User",
         "picture": None,
     }
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch(
+        "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info",
+        _mock_adapter_get_user_info(mock_user),
+    ):
         with patch(
-            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code",
-            _mock_microsoft_adapter(),
+            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()
         ):
             response = await client.post("/api/v1/auth/microsoft/exchange-login", json={"code": "mock_auth_code"})
 
@@ -131,15 +136,14 @@ async def test_microsoft_exchange_login_new_user(client, db, auth_headers):
 async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
     """Test Microsoft SSO logs in an existing Microsoft user."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_existing_{unique_id}@example.com"
-    microsoft_id = f"ms_existing_id_{unique_id}"
+    unique_email = f"test_ms_existing_{unique_id}@example.com"
+    microsoft_id = f"test_ms_existing_id_{unique_id}"
 
     # Create user using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Existing MS User",
-        google_id=None,  # Microsoft users don't have google_id
+        name="Test Existing MS User",
         auth_method="microsoft",
         is_active=True,
     )
@@ -151,20 +155,22 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
         provider_key="microsoft",
         account_id=microsoft_id,
         primary_email=unique_email,
-        display_name="Existing MS User",
+        display_name="Test Existing MS User",
     )
 
     mock_user = {
         "microsoft_id": microsoft_id,
         "email": unique_email,
-        "name": "Existing MS User",
+        "name": "Test Existing MS User",
         "picture": None,
     }
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch(
+        "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info",
+        _mock_adapter_get_user_info(mock_user),
+    ):
         with patch(
-            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code",
-            _mock_microsoft_adapter(),
+            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()
         ):
             response = await client.post("/api/v1/auth/microsoft/exchange-login", json={"code": "mock_auth_code"})
 
@@ -177,31 +183,41 @@ async def test_microsoft_exchange_login_existing_user(client, db, auth_headers):
 async def test_microsoft_exchange_login_links_to_existing_google_user(client, db, auth_headers):
     """Test Microsoft SSO links to existing user with same email (e.g., Google user)."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_link_{unique_id}@example.com"
-    google_id = f"google_id_{unique_id}"
-    microsoft_id = f"ms_link_id_{unique_id}"
+    unique_email = f"test_ms_link_{unique_id}@example.com"
+    microsoft_id = f"test_ms_link_id_{unique_id}"
 
-    # Create existing Google user using ORM
-    await _create_user_with_orm(
+    # Create existing Google user using ORM (now uses ProviderIdentity instead of google_id)
+    user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Google User",
-        google_id=google_id,
+        name="Test Google User",
         auth_method="google",
         is_active=True,
+    )
+
+    # Create Google provider identity for the user
+    await _create_provider_identity(
+        db,
+        user_id=user.id,
+        provider_key="google",
+        account_id=f"test_google_id_{unique_id}",
+        primary_email=unique_email,
+        display_name="Test Google User",
     )
 
     mock_user = {
         "microsoft_id": microsoft_id,
         "email": unique_email,
-        "name": "Google User",
+        "name": "Test Google User",
         "picture": None,
     }
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch(
+        "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info",
+        _mock_adapter_get_user_info(mock_user),
+    ):
         with patch(
-            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code",
-            _mock_microsoft_adapter(),
+            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()
         ):
             response = await client.post("/api/v1/auth/microsoft/exchange-login", json={"code": "mock_auth_code"})
 
@@ -214,32 +230,33 @@ async def test_microsoft_exchange_login_links_to_existing_google_user(client, db
 async def test_microsoft_exchange_login_password_conflict(client, db, auth_headers):
     """Test Microsoft SSO returns 409 when user exists with password auth."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_pwd_conflict_{unique_id}@example.com"
+    unique_email = f"test_ms_pwd_conflict_{unique_id}@example.com"
 
     # Create existing password user using ORM
     await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Password User",
-        google_id=None,
+        name="Test Password User",
         auth_method="password",
         is_active=True,
         password_hash="fake_hash",
     )
 
     mock_user = {
-        "microsoft_id": f"ms_pwd_{unique_id}",
+        "microsoft_id": f"test_ms_pwd_{unique_id}",
         "email": unique_email,
-        "name": "Password User",
+        "name": "Test Password User",
         "picture": None,
     }
 
     logger.info("=== EXPECTED TEST OUTPUT: 409 conflict error for password auth user is expected ===")
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch(
+        "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info",
+        _mock_adapter_get_user_info(mock_user),
+    ):
         with patch(
-            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code",
-            _mock_microsoft_adapter(),
+            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()
         ):
             response = await client.post("/api/v1/auth/microsoft/exchange-login", json={"code": "mock_auth_code"})
 
@@ -250,15 +267,14 @@ async def test_microsoft_exchange_login_password_conflict(client, db, auth_heade
 async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
     """Test Microsoft SSO returns 400 when user account is inactive."""
     unique_id = uuid.uuid4().hex
-    unique_email = f"ms_inactive_{unique_id}@example.com"
-    microsoft_id = f"ms_inactive_id_{unique_id}"
+    unique_email = f"test_ms_inactive_{unique_id}@example.com"
+    microsoft_id = f"test_ms_inactive_id_{unique_id}"
 
     # Create inactive user with Microsoft identity using ORM
     user = await _create_user_with_orm(
         db,
         email=unique_email,
-        name="Inactive MS User",
-        google_id=None,
+        name="Test Inactive MS User",
         auth_method="microsoft",
         is_active=False,  # Inactive user
     )
@@ -270,22 +286,24 @@ async def test_microsoft_exchange_login_inactive_user(client, db, auth_headers):
         provider_key="microsoft",
         account_id=microsoft_id,
         primary_email=unique_email,
-        display_name="Inactive MS User",
+        display_name="Test Inactive MS User",
     )
 
     mock_user = {
         "microsoft_id": microsoft_id,
         "email": unique_email,
-        "name": "Inactive MS User",
+        "name": "Test Inactive MS User",
         "picture": None,
     }
 
     logger.info("=== EXPECTED TEST OUTPUT: 400 error for inactive user is expected ===")
 
-    with patch("shu.api.auth._get_microsoft_user_info", _mock_microsoft_user_info(mock_user)):
+    with patch(
+        "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.get_user_info",
+        _mock_adapter_get_user_info(mock_user),
+    ):
         with patch(
-            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code",
-            _mock_microsoft_adapter(),
+            "shu.providers.microsoft.auth_adapter.MicrosoftAuthAdapter.exchange_code", _mock_microsoft_adapter()
         ):
             response = await client.post("/api/v1/auth/microsoft/exchange-login", json={"code": "mock_auth_code"})
 

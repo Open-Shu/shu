@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-from datetime import UTC
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import certifi
+import httpx
 
 from ...core.logging import get_logger
 from ..base_auth_adapter import BaseAuthAdapter
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 
 logger = get_logger(__name__)
 
@@ -274,3 +280,69 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                 ProviderCredential.provider_key == "google",
             )
         )
+
+    async def get_user_info(
+        self,
+        *,
+        access_token: str | None = None,  # Unused - Google uses id_token
+        id_token: str | None = None,
+        db: AsyncSession | None = None,  # Unused, kept for interface compatibility
+    ) -> dict[str, Any]:
+        """Verify Google ID token and return normalized user info.
+
+        Args:
+            _access_token: Not used for Google (Google uses id_token)
+            id_token: The Google ID token to verify
+            db: Unused, kept for interface compatibility
+
+        Returns:
+            Normalized user info dict with keys:
+            - provider_id: Google's unique user identifier (sub claim)
+            - provider_key: "google"
+            - email: User's email address
+            - name: User's display name
+            - picture: Avatar URL (optional)
+
+        Raises:
+            ValueError: If id_token is missing, invalid, or verification fails
+
+        """
+        if not id_token:
+            raise ValueError("Missing Google ID token")
+
+        url = "https://oauth2.googleapis.com/tokeninfo"
+        settings = self._auth._settings
+
+        try:
+            async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
+                resp = await client.get(url, params={"id_token": id_token}, headers={"Accept": "application/json"})
+
+            if resp.status_code != 200:
+                text = resp.text[:300]
+                raise ValueError(f"Google token verification failed: HTTP {resp.status_code}: {text}")
+
+            data = resp.json()
+        except httpx.HTTPError as e:
+            logger.error("Google token verification network error", extra={"error": str(e)}, exc_info=True)
+            raise ValueError(f"Network error during Google token verification: {e}") from e
+
+        # Verify audience claim matches our client ID
+        aud = data.get("aud")
+        expected_client_id = settings.google_client_id
+        if not aud or aud != expected_client_id:
+            logger.error("Google ID token audience mismatch", extra={"aud": aud, "expected": expected_client_id})
+            raise ValueError("Invalid Google ID token: audience mismatch")
+
+        sub = data.get("sub")
+        email = data.get("email")
+
+        if not sub or not email:
+            raise ValueError("Invalid Google ID token payload: missing sub or email")
+
+        return {
+            "provider_id": sub,
+            "provider_key": "google",
+            "email": email,
+            "name": data.get("name") or email.split("@")[0],
+            "picture": data.get("picture"),
+        }

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class BaseAuthAdapter:
@@ -41,4 +44,34 @@ class BaseAuthAdapter:
 
     async def disconnect(self, *, user_id: str, db) -> None:
         """Remove provider-specific credentials/state for the given user."""
+        raise NotImplementedError
+
+    async def get_user_info(
+        self, *, access_token: str | None = None, id_token: str | None = None, db: AsyncSession | None = None
+    ) -> dict[str, Any]:
+        """Get normalized user info from the provider.
+
+        This method retrieves user identity information from the OAuth provider
+        and returns it in a normalized format that can be used by the unified
+        SSO authentication flow.
+
+        Args:
+            access_token: OAuth access token (used by Microsoft)
+            id_token: OIDC ID token (used by Google)
+            db: Optional database session for provider-specific lookups
+                (e.g., Google backward compatibility with legacy google_id column)
+
+        Returns:
+            Normalized user info dict with keys:
+            - provider_id: str - Provider's unique user identifier
+            - provider_key: str - Provider name ("google" or "microsoft")
+            - email: str - User's email address
+            - name: str - User's display name
+            - picture: str | None - Avatar URL (optional)
+            - existing_user: User | None - Pre-looked-up user (optional, for backward compat)
+
+        Raises:
+            ValueError: If token is invalid or user info cannot be retrieved
+
+        """
         raise NotImplementedError

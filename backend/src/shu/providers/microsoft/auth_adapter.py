@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import UTC
 from typing import Any
 
+import certifi
+import httpx
+
+from ...core.logging import get_logger
 from ..base_auth_adapter import BaseAuthAdapter
+
+logger = get_logger(__name__)
 
 
 class MicrosoftAuthAdapter(BaseAuthAdapter):
@@ -211,3 +217,60 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
                 ProviderCredential.provider_key == "microsoft",
             )
         )
+
+    async def get_user_info(
+        self, *, access_token: Optional[str] = None, id_token: Optional[str] = None, db=None
+    ) -> Dict[str, Any]:
+        """Get Microsoft user info via Graph API and return normalized user info.
+
+        Args:
+            access_token: The Microsoft access token to use for Graph API call
+            id_token: Not used for Microsoft (Microsoft uses access_token)
+            db: Not used for Microsoft (no legacy lookup needed)
+
+        Returns:
+            Normalized user info dict with keys:
+            - provider_id: Microsoft's unique user identifier
+            - provider_key: "microsoft"
+            - email: User's email address
+            - name: User's display name
+            - picture: None (MS Graph /me doesn't return photo URL directly)
+
+        Raises:
+            ValueError: If access_token is missing, invalid, or request fails
+
+        """
+        del id_token, db  # intentionally unused - Microsoft uses access_token only
+        if not access_token:
+            raise ValueError("Missing Microsoft access token")
+
+        url = "https://graph.microsoft.com/v1.0/me"
+
+        try:
+            async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
+                resp = await client.get(
+                    url, headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+                )
+
+            if resp.status_code != 200:
+                text = resp.text[:300]
+                raise ValueError(f"Microsoft user info request failed: HTTP {resp.status_code}: {text}")
+
+            data = resp.json()
+        except httpx.HTTPError as e:
+            logger.error("Microsoft user info network error", extra={"error": str(e)}, exc_info=True)
+            raise ValueError(f"Network error during Microsoft user info request: {e}") from e
+
+        user_id = data.get("id")
+        email = data.get("mail") or data.get("userPrincipalName")
+
+        if not user_id or not email:
+            raise ValueError("Invalid Microsoft user info: missing id or email")
+
+        return {
+            "provider_id": user_id,
+            "provider_key": "microsoft",
+            "email": email,
+            "name": data.get("displayName") or email.split("@")[0],
+            "picture": None,  # MS Graph /me doesn't return photo URL directly
+        }

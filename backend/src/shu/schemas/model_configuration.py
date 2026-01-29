@@ -8,7 +8,7 @@ optional knowledge bases into user-facing configurations.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Note: Related entity responses are defined inline to avoid circular imports
 
@@ -33,26 +33,32 @@ class ModelConfigurationBase(BaseModel):
     prompt_id: str | None = Field(None, description="Associated prompt ID")
     is_active: bool = Field(True, description="Whether configuration is active")
 
-    @validator("name")
-    def validate_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
         """Validate configuration name."""
         if not v.strip():
             raise ValueError("Configuration name cannot be empty")
         return v.strip()
 
-    @validator("model_name")
-    def validate_model_name(cls, v):
+    @field_validator("model_name")
+    @classmethod
+    def validate_model_name(cls, v: str) -> str:
         """Validate model name."""
         if not v.strip():
             raise ValueError("Model name cannot be empty")
         return v.strip()
 
-    @validator("prompt_id")
-    def validate_prompt_id(cls, v):
-        """Validate prompt ID - convert empty string to None."""
-        if v == "":
+    @field_validator("prompt_id")
+    @classmethod
+    def validate_prompt_id(cls, v: str | None) -> str | None:
+        """Validate prompt ID - convert empty or whitespace-only string to None."""
+        if v is None:
             return None
-        return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped
 
 
 class ModelConfigurationCreate(ModelConfigurationBase):
@@ -85,34 +91,32 @@ class ModelConfigurationUpdate(BaseModel):
         None, description="Replace per-model LLM parameter overrides JSON (entire object)"
     )
 
-    is_active: bool | None = None
-    knowledge_base_ids: list[str] | None = None
-    kb_prompt_assignments: list[ModelConfigKBPromptAssignment] | None = Field(
-        None, description="KB-specific prompt assignments to update"
-    )
-    functionalities: dict[str, Any] | None = Field(None, description="Enabled functionalities for the given model")
-    is_side_call_model: bool | None = Field(None, description="Whether this model is designated for side-calls")
-
-    @validator("name")
-    def validate_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
         """Validate configuration name."""
         if v is not None and not v.strip():
             raise ValueError("Configuration name cannot be empty")
         return v.strip() if v else v
 
-    @validator("model_name")
-    def validate_model_name(cls, v):
+    @field_validator("model_name")
+    @classmethod
+    def validate_model_name(cls, v: str | None) -> str | None:
         """Validate model name."""
         if v is not None and not v.strip():
             raise ValueError("Model name cannot be empty")
         return v.strip() if v else v
 
-    @validator("prompt_id")
-    def validate_prompt_id(cls, v):
-        """Validate prompt ID - convert empty string to None."""
-        if v == "":
+    @field_validator("prompt_id")
+    @classmethod
+    def validate_prompt_id(cls, v: str | None) -> str | None:
+        """Validate prompt ID - convert empty or whitespace-only string to None."""
+        if v is None:
             return None
-        return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped
 
 
 class ModelConfigurationResponse(ModelConfigurationBase):
@@ -159,8 +163,9 @@ class ModelConfigurationTest(BaseModel):
     test_message: str = Field(..., min_length=1, description="Test message to send")
     include_knowledge_bases: bool = Field(True, description="Whether to include KB context")
 
-    @validator("test_message")
-    def validate_test_message(cls, v):
+    @field_validator("test_message")
+    @classmethod
+    def validate_test_message(cls, v: str) -> str:
         """Validate test message."""
         if not v.strip():
             raise ValueError("Test message cannot be empty")

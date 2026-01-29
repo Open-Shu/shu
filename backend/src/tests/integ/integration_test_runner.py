@@ -182,7 +182,6 @@ class IntegrationTestRunner:
             email=f"test-admin-{test_id}@example.com",
             name=f"Test Admin {test_id}",
             role=UserRole.ADMIN.value,
-            google_id=f"test_admin_{test_id}",
             is_active=True,
         )
         self.db.add(self.admin_user)
@@ -424,7 +423,9 @@ class IntegrationTestRunner:
         total_duration = sum(r.duration for r in self.test_results)
 
         print("\n" + "-" * 80)
-        print(f"📊 SUMMARY: {passed}/{len(self.test_results)} tests passed ({passed/len(self.test_results)*100:.1f}%)")
+        print(
+            f"📊 SUMMARY: {passed}/{len(self.test_results)} tests passed ({passed / len(self.test_results) * 100:.1f}%)"
+        )
         print(f"⏱️  Total time: {total_duration:.3f}s")
 
         if failed > 0:
