@@ -1,49 +1,105 @@
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, List
 
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 
 # Local minimal result shim to avoid importing host internals
 class _Result:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status = status
         self.data = data
         self.error = error
 
     @classmethod
-    def ok(cls, data: Optional[Dict[str, Any]] = None):
+    def ok(cls, data: dict[str, Any] | None = None):
         return cls("success", data or {})
 
     @classmethod
-    def err(cls, message: str, code: str = "tool_error", details: Optional[Dict[str, Any]] = None):
+    def err(cls, message: str, code: str = "tool_error", details: dict[str, Any] | None = None):
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
-class GmailDigestPlugin:
 
+class GmailDigestPlugin:
     name = "gmail_digest"
     version = "1"
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "since_hours": {"type": "integer", "minimum": 1, "maximum": 3360, "default": 48, "x-ui": {"help": "Look-back window in hours; used to build newer_than:Xd when query_filter is empty."}},
-                "query_filter": {"type": ["string", "null"], "x-ui": {"help": "Gmail search query (e.g., from:me is:unread). Requires appropriate Gmail read access. Leave blank to use newer_than derived from since_hours."}},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50, "x-ui": {"help": "Max messages to inspect (capped at 500)."}},
+                "since_hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3360,
+                    "default": 48,
+                    "x-ui": {
+                        "help": "Look-back window in hours; used to build newer_than:Xd when query_filter is empty."
+                    },
+                },
+                "query_filter": {
+                    "type": ["string", "null"],
+                    "x-ui": {
+                        "help": "Gmail search query (e.g., from:me is:unread). Requires appropriate Gmail read access. Leave blank to use newer_than derived from since_hours."
+                    },
+                },
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "default": 50,
+                    "x-ui": {"help": "Max messages to inspect (capped at 500)."},
+                },
                 # Action/digest params
-                "op": {"type": ["string", "null"], "enum": ["list", "mark_read", "archive", "digest", "ingest"], "default": "ingest", "x-ui": {"help": "Choose an operation.", "enum_labels": {"list": "List emails", "mark_read": "Mark read", "archive": "Archive", "digest": "Digest summary", "ingest": "Ingest to KB"}, "enum_help": {"list": "List recent messages (no changes)", "mark_read": "Mark selected messages as read (approval required)", "archive": "Remove Inbox label for selected messages (approval required)", "digest": "Create a short inbox summary", "ingest": "Ingest full email contents into KB as individual KOs"}}},
-                "message_ids": {"type": ["array", "null"], "items": {"type": "string"}, "x-ui": {"help": "For actions, provide Gmail message ids to modify."}},
-                "preview": {"type": ["boolean", "null"], "default": None, "x-ui": {"help": "When true with approve=false, returns a plan without side effects."}},
-                "approve": {"type": ["boolean", "null"], "default": None, "x-ui": {"help": "Set to true (with or without preview) to perform the action."}},
-                "kb_id": {"type": ["string", "null"], "description": "Knowledge base ID to upsert digest KO into (required for op=digest)", "x-ui": {"hidden": True, "help": "Target Knowledge Base for digest output."}},
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": ["list", "mark_read", "archive", "digest", "ingest"],
+                    "default": "ingest",
+                    "x-ui": {
+                        "help": "Choose an operation.",
+                        "enum_labels": {
+                            "list": "List emails",
+                            "mark_read": "Mark read",
+                            "archive": "Archive",
+                            "digest": "Digest summary",
+                            "ingest": "Ingest to KB",
+                        },
+                        "enum_help": {
+                            "list": "List recent messages (no changes)",
+                            "mark_read": "Mark selected messages as read (approval required)",
+                            "archive": "Remove Inbox label for selected messages (approval required)",
+                            "digest": "Create a short inbox summary",
+                            "ingest": "Ingest full email contents into KB as individual KOs",
+                        },
+                    },
+                },
+                "message_ids": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
+                },
+                "preview": {
+                    "type": ["boolean", "null"],
+                    "default": None,
+                    "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
+                },
+                "approve": {
+                    "type": ["boolean", "null"],
+                    "default": None,
+                    "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
+                },
+                "kb_id": {
+                    "type": ["string", "null"],
+                    "description": "Knowledge base ID to upsert digest KO into (required for op=digest)",
+                    "x-ui": {"hidden": True, "help": "Target Knowledge Base for digest output."},
+                },
             },
             "required": [],
             "additionalProperties": True,
         }
 
-    def get_output_schema(self) -> Optional[Dict[str, Any]]:
+    def get_output_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -57,13 +113,15 @@ class GmailDigestPlugin:
             "additionalProperties": True,
         }
 
-    async def _resolve_token_and_target(self, host: Any, params: Dict[str, Any], *, op: str) -> tuple[Optional[str], Optional[str]]:
+    async def _resolve_token_and_target(
+        self, host: Any, params: dict[str, Any], *, op: str
+    ) -> tuple[str | None, str | None]:
         auth = getattr(host, "auth", None)
         if not auth:
             return None, None
         try:
             # Prefer manifest-declared scopes for the op when resolving tokens
-            scopes: Optional[List[str]] = None
+            scopes: list[str] | None = None
             try:
                 oa = getattr(self, "_op_auth", None) or {}
                 spec = oa.get(op) if isinstance(oa, dict) else None
@@ -77,8 +135,16 @@ class GmailDigestPlugin:
         except Exception:
             return None, None
 
-    async def _http_json(self, host: Any, method: str, url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None, json_body: Optional[Dict[str, Any]] = None) -> Any:
-        kwargs: Dict[str, Any] = {"headers": headers}
+    async def _http_json(
+        self,
+        host: Any,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {"headers": headers}
         if params:
             kwargs["params"] = params
         if json_body is not None:
@@ -90,11 +156,20 @@ class GmailDigestPlugin:
             return body
         try:
             import json
+
             return json.loads(body or "{}")
         except Exception:
             return {}
 
-    async def _list(self, host: Any, params: Dict[str, Any], user_email: Optional[str], query_filter: str, max_results: int, since_dt: datetime) -> _Result:
+    async def _list(
+        self,
+        host: Any,
+        params: dict[str, Any],
+        user_email: str | None,
+        query_filter: str,
+        max_results: int,
+        since_dt: datetime,
+    ) -> _Result:
         token, target_user = await self._resolve_token_and_target(host, params or {}, op="list")
         if not token or not target_user:
             return _Result.err(
@@ -132,15 +207,21 @@ class GmailDigestPlugin:
                     code="auth_missing_or_insufficient_scopes",
                 )
             raise
-        ids: List[str] = [m.get("id") for m in lst.get("messages", []) if m.get("id")]
+        ids: list[str] = [m.get("id") for m in lst.get("messages", []) if m.get("id")]
         if not ids:
             return _Result.ok({"messages": [], "note": "No messages matched the query"})
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         for mid in ids[: min(len(ids), 50)]:
-            m = await self._http_json(host, "GET", f"{base}/messages/{mid}", headers, params={
-                "format": "metadata",
-                "metadataHeaders": ["Subject", "From", "To", "Cc", "Date"],
-            })
+            m = await self._http_json(
+                host,
+                "GET",
+                f"{base}/messages/{mid}",
+                headers,
+                params={
+                    "format": "metadata",
+                    "metadataHeaders": ["Subject", "From", "To", "Cc", "Date"],
+                },
+            )
             payload = {
                 "id": m.get("id"),
                 "thread_id": m.get("threadId"),
@@ -150,16 +231,18 @@ class GmailDigestPlugin:
                 "internalDate": m.get("internalDate"),
             }
             messages.append(payload)
-        def _to_dt(ms: Optional[str]) -> Optional[datetime]:
+
+        def _to_dt(ms: str | None) -> datetime | None:
             try:
-                return datetime.fromtimestamp(int(ms) / 1000.0, tz=timezone.utc) if ms else None
+                return datetime.fromtimestamp(int(ms) / 1000.0, tz=UTC) if ms else None
             except Exception:
                 return None
+
         filtered = [m for m in messages if (dt := _to_dt(m.get("internalDate"))) is None or dt >= since_dt]
-        filtered.sort(key=lambda m: _to_dt(m.get("internalDate")) or datetime.now(timezone.utc), reverse=True)
+        filtered.sort(key=lambda m: _to_dt(m.get("internalDate")) or datetime.now(UTC), reverse=True)
         return _Result.ok({"messages": filtered})
 
-    async def _build_action_plan(self, *, op: str, message_ids: List[str]) -> Dict[str, Any]:
+    async def _build_action_plan(self, *, op: str, message_ids: list[str]) -> dict[str, Any]:
         action_desc = "mark_read" if op == "mark_read" else "archive"
         return {
             "action": action_desc,
@@ -168,13 +251,20 @@ class GmailDigestPlugin:
             "requires_approval": True,
         }
 
-    async def _perform_action(self, host: Any, params: Dict[str, Any], user_email: Optional[str], op: str, message_ids: List[str]) -> Dict[str, Any]:
+    async def _perform_action(
+        self,
+        host: Any,
+        params: dict[str, Any],
+        user_email: str | None,
+        op: str,
+        message_ids: list[str],
+    ) -> dict[str, Any]:
         token, target_user = await self._resolve_token_and_target(host, params or {}, op=op)
         if not token or not target_user:
             raise RuntimeError("No Google access token available. Configure host.auth before performing actions.")
         base = f"https://gmail.googleapis.com/gmail/v1/users/{target_user}"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for mid in message_ids:
             if op == "mark_read":
                 body = {"removeLabelIds": ["UNREAD"]}
@@ -189,52 +279,68 @@ class GmailDigestPlugin:
                 results.append({"id": mid, "status": "error", "error": str(e)})
         return {"results": results}
 
-    async def _digest(self, host: Any, params: Dict[str, Any], user_email: Optional[str], kb_id: Optional[str], query_filter: str, max_results: int, since_dt: datetime, since_hours: int) -> _Result:
+    async def _digest(
+        self,
+        host: Any,
+        params: dict[str, Any],
+        user_email: str | None,
+        kb_id: str | None,
+        query_filter: str,
+        max_results: int,
+        since_dt: datetime,
+        since_hours: int,
+    ) -> _Result:
         # Fetch messages using the list path
         lst = await self._list(host, params, user_email, query_filter, max_results, since_dt)
         if lst.status != "success":
             return lst
-        messages: List[Dict[str, Any]] = (lst.data or {}).get("messages", [])
+        messages: list[dict[str, Any]] = (lst.data or {}).get("messages", [])
         # Optional incremental cursor via storage
         try:
-            cursor_ms: Optional[str] = None
+            cursor_ms: str | None = None
             if hasattr(host, "storage"):
                 cursor_ms = await host.storage.get("cursor_internalDate")
             if cursor_ms:
                 try:
-                    messages = [m for m in messages if m.get("internalDate") and int(m["internalDate"]) > int(cursor_ms)]
+                    messages = [
+                        m for m in messages if m.get("internalDate") and int(m["internalDate"]) > int(cursor_ms)
+                    ]
                 except Exception:
                     pass
         except Exception:
             pass
+
         # Utilities
-        def _header(msg: Dict[str, Any], name: str) -> Optional[str]:
+        def _header(msg: dict[str, Any], name: str) -> str | None:
             for h in msg.get("headers", []) or []:
                 if (h.get("name") or "").lower() == name.lower():
                     return h.get("value")
             return None
+
         # Summarize senders and top subjects
         from collections import Counter
+
         senders = [(_header(m, "From") or "Unknown") for m in messages]
         top_senders = Counter(senders).most_common(10)
         top_lines = [f"{cnt} - {sender}" for sender, cnt in top_senders]
         items = []
         for m in messages[: min(len(messages), 50)]:
-            items.append({
-                "id": m.get("id"),
-                "date": m.get("internalDate"),
-                "from": _header(m, "From"),
-                "subject": _header(m, "Subject"),
-                "snippet": m.get("snippet"),
-            })
+            items.append(
+                {
+                    "id": m.get("id"),
+                    "date": m.get("internalDate"),
+                    "from": _header(m, "From"),
+                    "subject": _header(m, "Subject"),
+                    "snippet": m.get("snippet"),
+                }
+            )
         # Build KO
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Determine account email for display/source attribution
         try:
             id_cap = getattr(host, "identity", None)
-            account_email = (
-                (getattr(id_cap, "user_email", None) if id_cap else None)
-                or (id_cap.get_primary_email("google") if id_cap and hasattr(id_cap, "get_primary_email") else None)
+            account_email = (getattr(id_cap, "user_email", None) if id_cap else None) or (
+                id_cap.get_primary_email("google") if id_cap and hasattr(id_cap, "get_primary_email") else None
             )
         except Exception:
             account_email = None
@@ -248,7 +354,10 @@ class GmailDigestPlugin:
             *expanded_top_lines,
             "",
             "Recent items:",
-            *[f"  - {_header(m, 'Subject') or '(no subject)'} | {_header(m, 'From') or 'Unknown'}" for m in messages[: min(len(messages), 10)]],
+            *[
+                f"  - {_header(m, 'Subject') or '(no subject)'} | {_header(m, 'From') or 'Unknown'}"
+                for m in messages[: min(len(messages), 10)]
+            ],
         ]
         content = "\n".join(content_lines)
         ko = {
@@ -258,15 +367,34 @@ class GmailDigestPlugin:
             "title": title,
             "content": content,
             "attributes": {
-                "window": {"since": since_dt.isoformat(), "until": now.isoformat(), "hours": since_hours},
+                "window": {
+                    "since": since_dt.isoformat(),
+                    "until": now.isoformat(),
+                    "hours": since_hours,
+                },
                 "message_count": len(messages),
                 "top_senders": top_senders,
                 "items": items,
             },
         }
-        return _Result.ok({"ko": ko, "count": len(messages), "window": {"since": since_dt.isoformat(), "until": now.isoformat()}})
+        return _Result.ok(
+            {
+                "ko": ko,
+                "count": len(messages),
+                "window": {"since": since_dt.isoformat(), "until": now.isoformat()},
+            }
+        )
 
-    async def _ingest(self, host: Any, params: Dict[str, Any], user_email: Optional[str], kb_id: Optional[str], query_filter: str, max_results: int, since_dt: datetime) -> _Result:
+    async def _ingest(
+        self,
+        host: Any,
+        params: dict[str, Any],
+        user_email: str | None,
+        kb_id: str | None,
+        query_filter: str,
+        max_results: int,
+        since_dt: datetime,
+    ) -> _Result:
         if not kb_id:
             return _Result.err("kb_id is required for op=ingest (target Knowledge Base to write KOs)")
         if not hasattr(host, "kb"):
@@ -283,22 +411,26 @@ class GmailDigestPlugin:
         headers = {"Authorization": f"Bearer {token}"}
 
         # Helpers
-        import base64, re
-        def _b64url_to_bytes(s: Optional[str]) -> bytes:
+        import base64
+        import re
+
+        def _b64url_to_bytes(s: str | None) -> bytes:
             if not s:
                 return b""
-            s = s.replace('-', '+').replace('_', '/')
-            pad = '=' * (-len(s) % 4)
+            s = s.replace("-", "+").replace("_", "/")
+            pad = "=" * (-len(s) % 4)
             return base64.b64decode(s + pad)
-        def _extract_text(payload: Dict[str, Any]) -> str:
+
+        def _extract_text(payload: dict[str, Any]) -> str:
             # Prefer text/plain; fallback to stripped text/html; else aggregate parts
-            def walk(p) -> List[Dict[str, Any]]:
+            def walk(p) -> list[dict[str, Any]]:
                 parts = p.get("parts") or []
                 out = []
                 for part in parts:
                     out.append(part)
                     out.extend(walk(part))
                 return out
+
             parts = [payload] + walk(payload)
             text_plain = []
             text_html = []
@@ -324,7 +456,7 @@ class GmailDigestPlugin:
                 return s.strip()
             return ""
 
-        async def _ingest_message_by_id(mid: str) -> Optional[int]:
+        async def _ingest_message_by_id(mid: str) -> int | None:
             try:
                 full = await self._http_json(host, "GET", f"{base}/messages/{mid}", headers, params={"format": "full"})
             except Exception:
@@ -332,15 +464,18 @@ class GmailDigestPlugin:
             payload = full.get("payload") or {}
             content = _extract_text(payload)
             headers_list = full.get("payload", {}).get("headers", [])
-            def _header(name: str) -> Optional[str]:
+
+            def _header(name: str) -> str | None:
                 for h in headers_list or []:
                     if (h.get("name") or "").lower() == name.lower():
                         return h.get("value")
                 return None
-            def _split(addrs: Optional[str]) -> List[str]:
+
+            def _split(addrs: str | None) -> list[str]:
                 if not addrs:
                     return []
                 return [a.strip() for a in str(addrs).split(",") if a and a.strip()]
+
             await host.kb.ingest_email(
                 kb_id,
                 subject=_header("Subject") or "(no subject)",
@@ -371,33 +506,36 @@ class GmailDigestPlugin:
 
         # Try delta via Gmail History API using a cursor stored in host.cursor (scoped per feed+kb)
         reset_cursor = bool(params.get("reset_cursor"))
-        existing_history: Optional[str] = None
+        existing_history: str | None = None
         if hasattr(host, "cursor") and not reset_cursor:
             try:
                 existing_history = await host.cursor.get(kb_id)
             except Exception:
                 existing_history = None
 
-        new_history: Optional[str] = None
+        new_history: str | None = None
         ingested = 0
         deleted = 0
         if existing_history:
             # Delta path: fetch changes since last historyId
             try:
-                added_ids: List[str] = []
-                deleted_ids: List[str] = []
-                params_q: Dict[str, Any] = {"startHistoryId": existing_history, "historyTypes": ["messageAdded", "messageDeleted"]}
-                next_page: Optional[str] = None
+                added_ids: list[str] = []
+                deleted_ids: list[str] = []
+                params_q: dict[str, Any] = {
+                    "startHistoryId": existing_history,
+                    "historyTypes": ["messageAdded", "messageDeleted"],
+                }
+                next_page: str | None = None
                 while True:
                     if next_page:
                         params_q["pageToken"] = next_page
                     hist = await self._http_json(host, "GET", f"{base}/history", headers, params=params_q)
-                    for h in (hist.get("history") or []):
-                        for a in (h.get("messagesAdded") or []):
+                    for h in hist.get("history") or []:
+                        for a in h.get("messagesAdded") or []:
                             mid = (a.get("message") or {}).get("id")
                             if mid:
                                 added_ids.append(mid)
-                        for d in (h.get("messagesDeleted") or []):
+                        for d in h.get("messagesDeleted") or []:
                             mid = (d.get("message") or {}).get("id")
                             if mid:
                                 deleted_ids.append(mid)
@@ -413,7 +551,7 @@ class GmailDigestPlugin:
                     except Exception:
                         pass
                 # Process additions
-                for mid in added_ids[: max_results]:
+                for mid in added_ids[:max_results]:
                     lm = await _ingest_message_by_id(mid)
                     ingested += 1 if lm is not None else 0
             except Exception:
@@ -425,7 +563,7 @@ class GmailDigestPlugin:
             lst = await self._list(host, params, user_email, query_filter, max_results, since_dt)
             if lst.status != "success":
                 return lst
-            messages: List[Dict[str, Any]] = (lst.data or {}).get("messages", [])
+            messages: list[dict[str, Any]] = (lst.data or {}).get("messages", [])
             if not messages:
                 # Still advance history cursor to current mailbox state
                 try:
@@ -459,17 +597,16 @@ class GmailDigestPlugin:
             pass
         return _Result.ok({"count": ingested, "deleted": deleted, "history_id": new_history})
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> _Result:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> _Result:
         # Identity and params
         id_cap = getattr(host, "identity", None)
-        user_email = (
-            (getattr(id_cap, "user_email", None) if id_cap else None)
-            or (id_cap.get_primary_email("google") if id_cap and hasattr(id_cap, "get_primary_email") else None)
+        user_email = (getattr(id_cap, "user_email", None) if id_cap else None) or (
+            id_cap.get_primary_email("google") if id_cap and hasattr(id_cap, "get_primary_email") else None
         )
 
         op = (params.get("op") or "list").lower()
         since_hours = int(params.get("since_hours", 48))
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        since_dt = datetime.now(UTC) - timedelta(hours=since_hours)
         newer_than_days = max(1, since_hours // 24)
         query_filter = params.get("query_filter") or f"newer_than:{newer_than_days}d"
         max_results = int(params.get("max_results", 50))
@@ -477,9 +614,20 @@ class GmailDigestPlugin:
         if op == "list":
             return await self._list(host, params, user_email, query_filter, max_results, since_dt)
         if op == "digest":
-            return await self._digest(host, params, user_email, params.get("kb_id"), query_filter, max_results, since_dt, since_hours)
+            return await self._digest(
+                host,
+                params,
+                user_email,
+                params.get("kb_id"),
+                query_filter,
+                max_results,
+                since_dt,
+                since_hours,
+            )
         if op == "ingest":
-            return await self._ingest(host, params, user_email, params.get("kb_id"), query_filter, max_results, since_dt)
+            return await self._ingest(
+                host, params, user_email, params.get("kb_id"), query_filter, max_results, since_dt
+            )
 
         # Action ops: require message_ids
         if op in ("mark_read", "archive"):
@@ -499,7 +647,11 @@ class GmailDigestPlugin:
 
             # Enforce approval gate
             if approve is not True:
-                return _Result.err("approval_required: set approve=true to perform this action", code="approval_required", details={"plan": plan})
+                return _Result.err(
+                    "approval_required: set approve=true to perform this action",
+                    code="approval_required",
+                    details={"plan": plan},
+                )
 
             # Perform the action
             try:
@@ -509,4 +661,3 @@ class GmailDigestPlugin:
             return _Result.ok({"plan": plan, "result": result})
 
         return _Result.err(f"Unsupported op: {op}")
-

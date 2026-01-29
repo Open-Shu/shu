@@ -6,4 +6,3 @@ PLUGIN_MANIFEST = {
     "module": "plugins.test_capdeny.plugin:TestCapDenyPlugin",
     "capabilities": ["identity"],  # deliberately omit 'secrets'
 }
-

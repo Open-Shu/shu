@@ -1,20 +1,21 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional
+
+from typing import Any
 
 
 # Local minimal result shim to avoid importing host internals
 class _Result:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status = status
         self.data = data
         self.error = error
 
     @classmethod
-    def ok(cls, data: Optional[Dict[str, Any]] = None):
+    def ok(cls, data: dict[str, Any] | None = None):
         return cls("success", data or {})
 
     @classmethod
-    def err(cls, message: str, code: str = "tool_error", details: Optional[Dict[str, Any]] = None):
+    def err(cls, message: str, code: str = "tool_error", details: dict[str, Any] | None = None):
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
 
@@ -22,13 +23,25 @@ class TestKoWritePlugin:
     name = "test_kowrite"
     version = "1"
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "op": {"type": ["string", "null"], "enum": ["run"], "default": "run", "x-ui": {"help": "Run the test KO write operation.", "enum_labels": {"run": "Run"}, "enum_help": {"run": "Write a single KO into the selected KB"}}},
-                "kb_id": {"type": "string", "x-ui": {"hidden": True, "help": "Target Knowledge Base"}},
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": ["run"],
+                    "default": "run",
+                    "x-ui": {
+                        "help": "Run the test KO write operation.",
+                        "enum_labels": {"run": "Run"},
+                        "enum_help": {"run": "Write a single KO into the selected KB"},
+                    },
+                },
+                "kb_id": {
+                    "type": "string",
+                    "x-ui": {"hidden": True, "help": "Target Knowledge Base"},
+                },
                 "type": {"type": "string"},
                 "external_id": {"type": "string"},
                 "title": {"type": ["string", "null"]},
@@ -39,7 +52,7 @@ class TestKoWritePlugin:
             "additionalProperties": True,
         }
 
-    def get_output_schema(self) -> Optional[Dict[str, Any]]:
+    def get_output_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -50,7 +63,7 @@ class TestKoWritePlugin:
             "additionalProperties": True,
         }
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> _Result:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> _Result:
         kb = getattr(host, "kb", None)
         if not kb:
             return _Result.err("kb capability not available")
@@ -90,4 +103,3 @@ class TestKoWritePlugin:
             return _Result.ok({"ko_id": ko_id})
         except Exception as e:
             return _Result.err(f"KO upsert failed: {e}")
-

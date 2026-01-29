@@ -1,6 +1,6 @@
 PLUGIN_MANIFEST = {
     "name": "gmail_digest",
-    "display_name": "Gmail Digest",    
+    "display_name": "Gmail Digest",
     "version": "1",
     "module": "plugins.shu_gmail_digest.plugin:GmailDigestPlugin",
     # Capability whitelist: enforce host-mediated access only
@@ -21,58 +21,45 @@ PLUGIN_MANIFEST = {
         {
             "provider": "google",
             "mode": "user",
-            "scopes": [
-                "https://www.googleapis.com/auth/gmail.readonly"
-            ]
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
         }
     ],
-
     # Per-op auth (capability-driven)
     "op_auth": {
         "list": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/gmail.readonly"
-            ],
-            "subject_hint": "identity:google_email"
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            "subject_hint": "identity:google_email",
         },
         "digest": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/gmail.readonly"
-            ],
-            "subject_hint": "identity:google_email"
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            "subject_hint": "identity:google_email",
         },
         "ingest": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/gmail.readonly"
-            ],
-            "subject_hint": "identity:google_email"
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            "subject_hint": "identity:google_email",
         },
         "mark_read": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/gmail.modify"
-            ],
-            "subject_hint": "identity:google_email"
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+            "subject_hint": "identity:google_email",
         },
         "archive": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/gmail.modify"
-            ],
-            "subject_hint": "identity:google_email"
-        }
-    }
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+            "subject_hint": "identity:google_email",
+        },
+    },
 }

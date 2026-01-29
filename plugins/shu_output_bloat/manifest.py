@@ -4,4 +4,3 @@ PLUGIN_MANIFEST = {
     "module": "plugins.shu_output_bloat.plugin:OutputBloatPlugin",
     "capabilities": [],
 }
-
