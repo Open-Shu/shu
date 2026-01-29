@@ -1,16 +1,22 @@
-import { useCallback } from 'react';
-import log from '../../../../utils/log';
-import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
-import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
+import { useCallback } from "react";
+import log from "../../../../utils/log";
+import { getMessagesFromCache, rebuildCache } from "../utils/chatCache";
+import { PLACEHOLDER_THINKING } from "../utils/chatConfig";
 
 const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
   const assignModelInfoToPlaceholder = useCallback(
-    (conversationId, variantIndex, placeholderId, snapshot, placeholderMetaOption) => {
-      if (!placeholderId || !snapshot || typeof snapshot !== 'object') {
+    (
+      conversationId,
+      variantIndex,
+      placeholderId,
+      snapshot,
+      placeholderMetaOption,
+    ) => {
+      if (!placeholderId || !snapshot || typeof snapshot !== "object") {
         return;
       }
 
-      const key = String(typeof variantIndex === 'number' ? variantIndex : 0);
+      const key = String(typeof variantIndex === "number" ? variantIndex : 0);
       const meta = placeholderMetaOption[key] || {};
       if (meta.modelInfoAssigned) {
         return;
@@ -27,22 +33,25 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
         model_configuration: normalizedSnapshot,
       };
 
-      queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-        const existing = getMessagesFromCache(oldData);
-        const updated = existing.map((msg) =>
-          msg.id === placeholderId
-            ? {
-                ...msg,
-                model_configuration: normalizedSnapshot,
-                message_metadata: {
-                  ...(msg.message_metadata || {}),
+      queryClient.setQueryData(
+        ["conversation-messages", conversationId],
+        (oldData) => {
+          const existing = getMessagesFromCache(oldData);
+          const updated = existing.map((msg) =>
+            msg.id === placeholderId
+              ? {
+                  ...msg,
                   model_configuration: normalizedSnapshot,
-                },
-              }
-            : msg,
-        );
-        return rebuildCache(oldData, updated);
-      });
+                  message_metadata: {
+                    ...(msg.message_metadata || {}),
+                    model_configuration: normalizedSnapshot,
+                  },
+                }
+              : msg,
+          );
+          return rebuildCache(oldData, updated);
+        },
+      );
     },
     [queryClient],
   );
@@ -50,14 +59,19 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
   const seedMetaFromCache = useCallback(
     (conversationId, placeholderLookup, placeholderMetaOption) => {
       try {
-        const cacheData = queryClient.getQueryData(['conversation-messages', conversationId]);
+        const cacheData = queryClient.getQueryData([
+          "conversation-messages",
+          conversationId,
+        ]);
         const cacheMessages = getMessagesFromCache(cacheData);
         if (!Array.isArray(cacheMessages)) {
           return;
         }
 
         Object.entries(placeholderLookup).forEach(([key, id]) => {
-          if (!id) return;
+          if (!id) {
+            return;
+          }
           if (placeholderMetaOption[key]?.created_at) {
             return;
           }
@@ -68,7 +82,7 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
           }
         });
       } catch (error) {
-        log.warn('Failed to seed placeholder metadata from cache', error);
+        log.warn("Failed to seed placeholder metadata from cache", error);
       }
     },
     [queryClient],
@@ -85,7 +99,7 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
       resolvedParentId,
       placeholderRootOption,
     }) => {
-      const key = String(typeof variantIndex === 'number' ? variantIndex : 0);
+      const key = String(typeof variantIndex === "number" ? variantIndex : 0);
       let placeholderId = placeholderLookup[key];
 
       if (!placeholderId) {
@@ -96,21 +110,26 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
         const nowIso = new Date().toISOString();
         placeholderMetaOption[key] = { id: placeholderId, created_at: nowIso };
 
-        queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-          const existing = getMessagesFromCache(oldData);
-          const placeholder = {
-            id: placeholderId,
-            role: 'assistant',
-            content: PLACEHOLDER_THINKING,
-            created_at: nowIso,
-            conversation_id: conversationId,
-            isStreaming: true,
-            isPlaceholder: true,
-            parent_message_id: resolvedParentId || placeholderRootOption || placeholderId,
-            variant_index: typeof variantIndex === 'number' ? variantIndex : undefined,
-          };
-          return rebuildCache(oldData, [...existing, placeholder]);
-        });
+        queryClient.setQueryData(
+          ["conversation-messages", conversationId],
+          (oldData) => {
+            const existing = getMessagesFromCache(oldData);
+            const placeholder = {
+              id: placeholderId,
+              role: "assistant",
+              content: PLACEHOLDER_THINKING,
+              created_at: nowIso,
+              conversation_id: conversationId,
+              isStreaming: true,
+              isPlaceholder: true,
+              parent_message_id:
+                resolvedParentId || placeholderRootOption || placeholderId,
+              variant_index:
+                typeof variantIndex === "number" ? variantIndex : undefined,
+            };
+            return rebuildCache(oldData, [...existing, placeholder]);
+          },
+        );
       } else if (!placeholderMetaOption[key]) {
         const nowIso = new Date().toISOString();
         placeholderMetaOption[key] = {
@@ -120,7 +139,7 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
       }
 
       if (!streamedContentRefs[placeholderId]) {
-        streamedContentRefs[placeholderId] = { current: '' };
+        streamedContentRefs[placeholderId] = { current: "" };
       }
 
       return placeholderId;
@@ -142,13 +161,18 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
         return newParentId;
       }
 
-      queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-        const existing = getMessagesFromCache(oldData);
-        const updated = existing.map((msg) =>
-          placeholderIdSet.has(msg.id) ? { ...msg, parent_message_id: newParentId } : msg,
-        );
-        return rebuildCache(oldData, updated);
-      });
+      queryClient.setQueryData(
+        ["conversation-messages", conversationId],
+        (oldData) => {
+          const existing = getMessagesFromCache(oldData);
+          const updated = existing.map((msg) =>
+            placeholderIdSet.has(msg.id)
+              ? { ...msg, parent_message_id: newParentId }
+              : msg,
+          );
+          return rebuildCache(oldData, updated);
+        },
+      );
 
       return newParentId;
     },
@@ -164,4 +188,3 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
 };
 
 export default useStreamingPlaceholders;
-

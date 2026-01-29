@@ -17,9 +17,17 @@
  * Used when the initial fetch response indicates an error (non-2xx status).
  */
 export class StreamingError extends Error {
-  constructor(message, { status = null, retryable = false, retryAfter = null, userMessage = null } = {}) {
+  constructor(
+    message,
+    {
+      status = null,
+      retryable = false,
+      retryAfter = null,
+      userMessage = null,
+    } = {},
+  ) {
     super(message);
-    this.name = 'StreamingError';
+    this.name = "StreamingError";
     this.status = status;
     this.retryable = retryable;
     this.retryAfter = retryAfter;
@@ -35,7 +43,7 @@ export class StreamingError extends Error {
 export class ServerStreamingError extends Error {
   constructor(message) {
     super(message);
-    this.name = 'ServerStreamingError';
+    this.name = "ServerStreamingError";
     this.userMessage = message;
   }
 }
@@ -46,39 +54,39 @@ export class ServerStreamingError extends Error {
 const ERROR_MESSAGES = {
   401: {
     // User only sees this if auto-refresh failed - they need to re-authenticate
-    userMessage: 'Your session has expired. Please sign in again.',
+    userMessage: "Your session has expired. Please sign in again.",
     retryable: false,
   },
   403: {
-    userMessage: 'You do not have permission to perform this action.',
+    userMessage: "You do not have permission to perform this action.",
     retryable: false,
   },
   404: {
-    userMessage: 'The conversation could not be found.',
+    userMessage: "The conversation could not be found.",
     retryable: false,
   },
   408: {
-    userMessage: 'The request timed out. Please try again.',
+    userMessage: "The request timed out. Please try again.",
     retryable: true,
   },
   429: {
-    userMessage: 'Too many requests. Please wait before trying again.',
+    userMessage: "Too many requests. Please wait before trying again.",
     retryable: true,
   },
   500: {
-    userMessage: 'An unexpected server error occurred. Please try again later.',
+    userMessage: "An unexpected server error occurred. Please try again later.",
     retryable: true,
   },
   502: {
-    userMessage: 'The service is temporarily unavailable. Please try again.',
+    userMessage: "The service is temporarily unavailable. Please try again.",
     retryable: true,
   },
   503: {
-    userMessage: 'The service is temporarily unavailable. Please try again.',
+    userMessage: "The service is temporarily unavailable. Please try again.",
     retryable: true,
   },
   504: {
-    userMessage: 'The request timed out. Please try again.',
+    userMessage: "The request timed out. Please try again.",
     retryable: true,
   },
 };
@@ -88,24 +96,26 @@ const ERROR_MESSAGES = {
  * Attempts to extract structured error info from the response body.
  */
 async function parseResponseError(response) {
-  const retryAfterHeader = response.headers.get('Retry-After');
+  const retryAfterHeader = response.headers.get("Retry-After");
   const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : null;
-  
+
   let bodyError = null;
   try {
-    const contentType = response.headers.get('Content-Type') || '';
-    if (contentType.includes('application/json')) {
+    const contentType = response.headers.get("Content-Type") || "";
+    if (contentType.includes("application/json")) {
       const json = await response.json();
       // Handle envelope format: { error: { message: "...", code: "..." } }
       if (json?.error?.message) {
-        bodyError = typeof json.error.message === 'string' 
-          ? json.error.message 
-          : JSON.stringify(json.error.message);
+        bodyError =
+          typeof json.error.message === "string"
+            ? json.error.message
+            : JSON.stringify(json.error.message);
       } else if (json?.detail) {
         // FastAPI HTTPException format
-        bodyError = typeof json.detail === 'string' 
-          ? json.detail 
-          : JSON.stringify(json.detail);
+        bodyError =
+          typeof json.detail === "string"
+            ? json.detail
+            : JSON.stringify(json.detail);
       } else if (json?.message) {
         bodyError = json.message;
       }
@@ -113,7 +123,7 @@ async function parseResponseError(response) {
   } catch {
     // Body parsing failed, continue with status-based message
   }
-  
+
   return { bodyError, retryAfter };
 }
 
@@ -127,28 +137,25 @@ export async function createStreamingErrorFromResponse(response) {
     userMessage: `Request failed (${status})`,
     retryable: status >= 500,
   };
-  
+
   let userMessage = statusInfo.userMessage;
-  
+
   // For 429, include retry-after info if available
   if (status === 429 && retryAfter) {
     userMessage = `Too many requests. Please try again in ${retryAfter} seconds.`;
   }
-  
+
   // If we got a specific error message from the body, use it
   if (bodyError) {
     userMessage = bodyError;
   }
-  
-  return new StreamingError(
-    `HTTP ${status}: ${response.statusText}`,
-    {
-      status,
-      retryable: statusInfo.retryable,
-      retryAfter,
-      userMessage,
-    }
-  );
+
+  return new StreamingError(`HTTP ${status}: ${response.statusText}`, {
+    status,
+    retryable: statusInfo.retryable,
+    retryAfter,
+    userMessage,
+  });
 }
 
 /**
@@ -184,12 +191,16 @@ export function formatStreamingError(error) {
   }
 
   // Network/fetch errors - catch various network failure patterns
-  if (error?.name === 'TypeError') {
-    const msg = error?.message?.toLowerCase() || '';
+  if (error?.name === "TypeError") {
+    const msg = error?.message?.toLowerCase() || "";
     // Common network error messages: "Failed to fetch", "NetworkError", "Network request failed", etc.
-    if (msg.includes('fetch') || msg.includes('network') || msg.includes('connection')) {
+    if (
+      msg.includes("fetch") ||
+      msg.includes("network") ||
+      msg.includes("connection")
+    ) {
       return {
-        message: 'Network error. Please check your connection and try again.',
+        message: "Network error. Please check your connection and try again.",
         retryable: true,
         retryAfter: null,
         status: null,
@@ -200,9 +211,9 @@ export function formatStreamingError(error) {
   }
 
   // AbortError (user cancelled or timeout)
-  if (error?.name === 'AbortError') {
+  if (error?.name === "AbortError") {
     return {
-      message: 'Request was cancelled.',
+      message: "Request was cancelled.",
       retryable: true,
       retryAfter: null,
       status: null,
@@ -214,7 +225,7 @@ export function formatStreamingError(error) {
   // Standard Error object
   if (error instanceof Error) {
     return {
-      message: error.message || 'An unexpected error occurred.',
+      message: error.message || "An unexpected error occurred.",
       retryable: false,
       retryAfter: null,
       status: null,
@@ -225,7 +236,7 @@ export function formatStreamingError(error) {
 
   // Unknown error type
   return {
-    message: String(error) || 'An unexpected error occurred.',
+    message: String(error) || "An unexpected error occurred.",
     retryable: false,
     retryAfter: null,
     status: null,

@@ -1,17 +1,18 @@
-import { useState, useMemo, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useState, useMemo, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "react-query";
 
 import {
   chatAPI,
   extractDataFromResponse,
   formatError,
   modelConfigAPI,
-} from '../../../../services/api';
-import { CONVERSATION_LIST_LIMIT } from '../utils/chatConfig';
+} from "../../../../services/api";
+import { CONVERSATION_LIST_LIMIT } from "../utils/chatConfig";
 
-const buildConversationListParams = (summaryQuery) => (
-  summaryQuery ? { limit: CONVERSATION_LIST_LIMIT, summary_query: summaryQuery } : { limit: CONVERSATION_LIST_LIMIT }
-);
+const buildConversationListParams = (summaryQuery) =>
+  summaryQuery
+    ? { limit: CONVERSATION_LIST_LIMIT, summary_query: summaryQuery }
+    : { limit: CONVERSATION_LIST_LIMIT };
 
 const normalizeModelConfigs = (raw) => {
   if (!raw) {
@@ -26,7 +27,8 @@ const normalizeModelConfigs = (raw) => {
   return [];
 };
 
-const filterAvailableModelConfigs = (configs) => configs.filter((config) => !config.is_side_call);
+const filterAvailableModelConfigs = (configs) =>
+  configs.filter((config) => !config.is_side_call);
 
 const useConversationData = ({
   summaryQuery,
@@ -39,36 +41,34 @@ const useConversationData = ({
 
   const conversationListParams = useMemo(
     () => buildConversationListParams(summaryQuery),
-    [summaryQuery]
+    [summaryQuery],
   );
 
   const conversationQueryKey = useMemo(
-    () => ['conversations', summaryQuery || ''],
-    [summaryQuery]
+    () => ["conversations", summaryQuery || ""],
+    [summaryQuery],
   );
 
-  const { data: conversationsResponse, isLoading: loadingConversations } = useQuery(
-    conversationQueryKey,
-    () => chatAPI.listConversations(conversationListParams),
-    {
-      onError: (err) => {
-        if (onQueryError) {
-          onQueryError(formatError(err).message);
-        }
+  const { data: conversationsResponse, isLoading: loadingConversations } =
+    useQuery(
+      conversationQueryKey,
+      () => chatAPI.listConversations(conversationListParams),
+      {
+        onError: (err) => {
+          if (onQueryError) {
+            onQueryError(formatError(err).message);
+          }
+        },
       },
-    }
-  );
+    );
 
   const conversations = useMemo(() => {
     const arr = extractDataFromResponse(conversationsResponse) || [];
     return Array.isArray(arr) ? arr.filter((c) => c?.is_active !== false) : [];
   }, [conversationsResponse]);
 
-  const {
-    data: modelConfigsResponse,
-    isLoading: loadingConfigs,
-  } = useQuery(
-    'model-configurations',
+  const { data: modelConfigsResponse, isLoading: loadingConfigs } = useQuery(
+    "model-configurations",
     () => modelConfigAPI.list({ is_active: true }),
     {
       onError: (err) => {
@@ -76,17 +76,17 @@ const useConversationData = ({
           onQueryError(formatError(err).message);
         }
       },
-    }
+    },
   );
 
   const modelConfigs = useMemo(
     () => normalizeModelConfigs(extractDataFromResponse(modelConfigsResponse)),
-    [modelConfigsResponse]
+    [modelConfigsResponse],
   );
 
   const availableModelConfigs = useMemo(
     () => filterAvailableModelConfigs(modelConfigs),
-    [modelConfigs]
+    [modelConfigs],
   );
 
   const createConversationMutation = useMutation(
@@ -98,14 +98,14 @@ const useConversationData = ({
           markFreshConversation?.(newConversation.id);
         }
         setLastCreatedConversation(newConversation);
-        queryClient.invalidateQueries('conversations');
+        queryClient.invalidateQueries("conversations");
       },
       onError: (err) => {
         if (onMutationError) {
           onMutationError(formatError(err).message);
         }
       },
-    }
+    },
   );
 
   const resetLastCreatedConversation = useCallback(() => {

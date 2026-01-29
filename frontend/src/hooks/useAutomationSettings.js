@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from "react";
 
-const STORAGE_KEY = 'shu.automation.settings';
+const STORAGE_KEY = "shu.automation.settings";
 
 const DEFAULT_SETTINGS = {
   firstUserRename: true,
@@ -18,7 +18,7 @@ const useAutomationSettings = () => {
         return;
       }
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
+      if (parsed && typeof parsed === "object") {
         setSettings((prev) => ({ ...prev, ...parsed }));
       }
     } catch (_) {

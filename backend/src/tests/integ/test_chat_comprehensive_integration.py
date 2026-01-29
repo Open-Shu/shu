@@ -385,9 +385,9 @@ async def test_llm_integration_with_error_handling(client, db, auth_headers):
     assert response.status_code == 200, f"Unexpected status code: {response.status_code} {response.text}"
 
     content = await process_streaming_result(response)
-    assert "The request failed. You may want to try another model." in content, (
-        f"Expected error message, got: {content}"
-    )
+    assert (
+        "The request failed. You may want to try another model." in content
+    ), f"Expected error message, got: {content}"
 
     # 6. Verify conversation and message were still created in database
     db_result = await db.execute(text("SELECT id, title FROM conversations WHERE id = :id"), {"id": conversation_id})
@@ -737,9 +737,9 @@ async def test_edge_cases_and_validation(client, db, auth_headers):
         # Verify the error message indicates validation issue
         error_data = response.json()
         error_message = error_data.get("error", {}).get("message", "").lower()
-        assert any(keyword in error_message for keyword in ["empty", "required", "invalid"]), (
-            f"Expected validation error, got: {error_message}"
-        )
+        assert any(
+            keyword in error_message for keyword in ["empty", "required", "invalid"]
+        ), f"Expected validation error, got: {error_message}"
 
     # Test 2: Very long message (simplified - no complex mocking)
     long_message_data = {
@@ -770,9 +770,9 @@ async def test_edge_cases_and_validation(client, db, auth_headers):
         headers=auth_headers,
     )
     assert request.status_code == 422, "Should reject additional conversation parameters"
-    assert request.json()["detail"][0]["msg"] == "Extra inputs are not permitted", (
-        "Should reject additional conversation parameters"
-    )
+    assert (
+        request.json()["detail"][0]["msg"] == "Extra inputs are not permitted"
+    ), "Should reject additional conversation parameters"
 
     return {
         "conversation_id": conversation_id,

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef } from "react";
 
 const useConversationAutomation = ({
   selectedConversation,
@@ -20,12 +20,20 @@ const useConversationAutomation = ({
   // after second and then every N thereafter -> summary then rename (if enabled)
   useEffect(() => {
     const convoId = selectedConversation?.id;
-    if (!convoId) return;
-    if (!assistantReplyCount) return;
+    if (!convoId) {
+      return;
+    }
+    if (!assistantReplyCount) {
+      return;
+    }
 
     const prev = lastProcessedAssistantCountRef.current.get(convoId) || 0;
-    if (assistantReplyCount <= prev) return;
-    if (!messagesMatchSelectedConversation) return;
+    if (assistantReplyCount <= prev) {
+      return;
+    }
+    if (!messagesMatchSelectedConversation) {
+      return;
+    }
 
     const isFreshConversation = isConversationFresh(convoId);
     const isTitleLocked = Boolean(selectedConversation?.meta?.title_locked);
@@ -75,7 +83,10 @@ const useConversationAutomation = ({
       } finally {
         // Mark this assistant reply count as processed even when side-calls
         // fail, so we don't spam retries for the same message.
-        lastProcessedAssistantCountRef.current.set(convoId, assistantReplyCount);
+        lastProcessedAssistantCountRef.current.set(
+          convoId,
+          assistantReplyCount,
+        );
       }
     };
 
@@ -97,4 +108,3 @@ const useConversationAutomation = ({
 };
 
 export default useConversationAutomation;
-

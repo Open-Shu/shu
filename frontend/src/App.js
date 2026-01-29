@@ -1,46 +1,54 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from 'react-query';
-import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
-import { Box } from '@mui/material';
+import React from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "react-query";
+import { ThemeProvider as MuiThemeProvider } from "@mui/material/styles";
+import CssBaseline from "@mui/material/CssBaseline";
+import { Box } from "@mui/material";
 
 // Admin Components
-import QuickStart from './components/QuickStart';
-import KnowledgeBases from './components/KnowledgeBases';
-import Documents from './components/Documents';
+import QuickStart from "./components/QuickStart";
+import KnowledgeBases from "./components/KnowledgeBases";
+import Documents from "./components/Documents";
 
-import QueryTester from './components/QueryTester';
-import LLMTester from './components/LLMTester';
-import HealthMonitor from './components/HealthMonitor';
-import UserManagement from './components/UserManagement';
-import UserGroups from './components/UserGroups';
-import KBPermissions from './components/KBPermissions';
-import LLMProviders from './components/LLMProviders';
-import ModelConfigurations from './components/ModelConfigurations';
-import Prompts from './pages/Prompts';
-import PluginsAdmin from './components/PluginsAdmin';
-import PluginsAdminFeeds from './components/PluginsAdminFeeds';
-import ExperiencesAdmin from './components/ExperiencesAdmin';
-import ExperienceEditor from './components/ExperienceEditor';
-import BrandingSettings from './components/admin/BrandingSettings';
-import DashboardPage from './pages/DashboardPage';
-import ExperienceDetailPage from './pages/ExperienceDetailPage';
+import QueryTester from "./components/QueryTester";
+import LLMTester from "./components/LLMTester";
+import HealthMonitor from "./components/HealthMonitor";
+import UserManagement from "./components/UserManagement";
+import UserGroups from "./components/UserGroups";
+import KBPermissions from "./components/KBPermissions";
+import LLMProviders from "./components/LLMProviders";
+import ModelConfigurations from "./components/ModelConfigurations";
+import Prompts from "./pages/Prompts";
+import PluginsAdmin from "./components/PluginsAdmin";
+import PluginsAdminFeeds from "./components/PluginsAdminFeeds";
+import ExperiencesAdmin from "./components/ExperiencesAdmin";
+import ExperienceEditor from "./components/ExperienceEditor";
+import BrandingSettings from "./components/admin/BrandingSettings";
+import DashboardPage from "./pages/DashboardPage";
+import ExperienceDetailPage from "./pages/ExperienceDetailPage";
 
 // User Components
-import ModernChat from './components/ModernChat';
-import UserPermissionsDashboard from './components/UserPermissionsDashboard';
-import ConnectedAccountsPage from './components/ConnectedAccountsPage';
-import UserPreferencesPage from './components/UserPreferencesPage';
+import ModernChat from "./components/ModernChat";
+import UserPermissionsDashboard from "./components/UserPermissionsDashboard";
+import ConnectedAccountsPage from "./components/ConnectedAccountsPage";
+import UserPreferencesPage from "./components/UserPreferencesPage";
 
 // Auth Components
-import AuthPage from './components/AuthPage';
-import ProtectedRoute from './components/ProtectedRoute';
-import RoleBasedRoute from './components/RoleBasedRoute';
-import { AuthProvider, useAuth } from './hooks/useAuth';
+import AuthPage from "./components/AuthPage";
+import ProtectedRoute from "./components/ProtectedRoute";
+import RoleBasedRoute from "./components/RoleBasedRoute";
+import { AuthProvider, useAuth } from "./hooks/useAuth";
 
 // Theme Context
-import { ThemeProvider as CustomThemeProvider, useTheme } from './contexts/ThemeContext';
+import {
+  ThemeProvider as CustomThemeProvider,
+  useTheme,
+} from "./contexts/ThemeContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,7 +67,12 @@ const queryClient = new QueryClient({
 });
 
 const pageLoadingView = (
-  <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+  <Box
+    display="flex"
+    justifyContent="center"
+    alignItems="center"
+    minHeight="100vh"
+  >
     Loading...
   </Box>
 );
@@ -216,7 +229,6 @@ const AuthenticatedApp = () => {
           }
         />
 
-
         <Route
           path="/admin/query-tester"
           element={
@@ -347,7 +359,6 @@ const AuthenticatedApp = () => {
             </RoleBasedRoute>
           }
         />
-
 
         {/* Catch all - redirect to main chat interface */}
         <Route path="*" element={<MainAppRedirect />} />

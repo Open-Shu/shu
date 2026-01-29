@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import GoogleLogin from './GoogleLogin';
-import PasswordLogin from './PasswordLogin';
-import PasswordRegistration from './PasswordRegistration';
-import configService from '../services/config';
+import React, { useState, useEffect } from "react";
+import GoogleLogin from "./GoogleLogin";
+import PasswordLogin from "./PasswordLogin";
+import PasswordRegistration from "./PasswordRegistration";
+import configService from "../services/config";
 
 const AuthPage = () => {
-  const [authMode, setAuthMode] = useState('password'); // 'google', 'password', 'register'
+  const [authMode, setAuthMode] = useState("password"); // 'google', 'password', 'register'
   const [googleSsoEnabled, setGoogleSsoEnabled] = useState(false);
   const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false);
 
@@ -15,11 +15,15 @@ const AuthPage = () => {
     const loadConfig = async () => {
       try {
         await configService.fetchConfig();
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
         setGoogleSsoEnabled(configService.isGoogleSsoEnabled());
         setMicrosoftSsoEnabled(configService.isMicrosoftSsoEnabled());
       } catch (error) {
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
         setGoogleSsoEnabled(false);
         setMicrosoftSsoEnabled(false);
       }
@@ -33,40 +37,42 @@ const AuthPage = () => {
   }, []);
 
   const handleSwitchToGoogle = () => {
-    if (!googleSsoEnabled) return;
-    setAuthMode('google');
+    if (!googleSsoEnabled) {
+      return;
+    }
+    setAuthMode("google");
   };
 
   const handleSwitchToPassword = () => {
-    setAuthMode('password');
+    setAuthMode("password");
   };
 
   const handleSwitchToRegister = () => {
-    setAuthMode('register');
+    setAuthMode("register");
   };
 
   const handleSwitchToLogin = () => {
-    setAuthMode('password');
+    setAuthMode("password");
   };
 
   switch (authMode) {
-    case 'google':
-      return googleSsoEnabled
-        ? <GoogleLogin onSwitchToPassword={handleSwitchToPassword} />
-        : (
-          <PasswordLogin
-            onSwitchToRegister={handleSwitchToRegister}
-            onSwitchToGoogle={handleSwitchToGoogle}
-            isGoogleSsoEnabled={googleSsoEnabled}
-            isMicrosoftSsoEnabled={microsoftSsoEnabled}
-          />
-        );
-    case 'register':
+    case "google":
+      return googleSsoEnabled ? (
+        <GoogleLogin onSwitchToPassword={handleSwitchToPassword} />
+      ) : (
+        <PasswordLogin
+          onSwitchToRegister={handleSwitchToRegister}
+          onSwitchToGoogle={handleSwitchToGoogle}
+          isGoogleSsoEnabled={googleSsoEnabled}
+          isMicrosoftSsoEnabled={microsoftSsoEnabled}
+        />
+      );
+    case "register":
       return <PasswordRegistration onSwitchToLogin={handleSwitchToLogin} />;
-    case 'password':
+    case "password":
     default:
       return (
-        <PasswordLogin 
+        <PasswordLogin
           onSwitchToRegister={handleSwitchToRegister}
           onSwitchToGoogle={handleSwitchToGoogle}
           isGoogleSsoEnabled={googleSsoEnabled}

@@ -1,14 +1,6 @@
-import React, { useState } from 'react';
-import {
-  TextField,
-  InputAdornment,
-  IconButton,
-  Tooltip
-} from '@mui/material';
-import {
-  Visibility,
-  VisibilityOff
-} from '@mui/icons-material';
+import React, { useState } from "react";
+import { TextField, InputAdornment, IconButton, Tooltip } from "@mui/material";
+import { Visibility, VisibilityOff } from "@mui/icons-material";
 
 /**
  * SecureTextField - A text field component for handling sensitive data like API keys
@@ -43,7 +35,9 @@ const SecureTextField = ({
 
   // Determine what value to show and field behavior
   const shouldShowMasked = hasExistingValue && !value && !showValue;
-  const fieldValue = shouldShowMasked ? "••••••••••••••••••••••••••••••••" : (value || '');
+  const fieldValue = shouldShowMasked
+    ? "••••••••••••••••••••••••••••••••"
+    : value || "";
 
   // Always show a single field with show/hide toggle
   return (

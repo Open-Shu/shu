@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   Box,
   Button,
@@ -16,10 +16,10 @@ import {
   Switch,
   TextField,
   Typography,
-} from '@mui/material';
-import { RAG_REWRITE_OPTIONS } from '../../../utils/constants';
-import NotImplemented from '../../NotImplemented';
-import ModelConfigSelector from './ModelConfigSelector';
+} from "@mui/material";
+import { RAG_REWRITE_OPTIONS } from "../../../utils/constants";
+import NotImplemented from "../../NotImplemented";
+import ModelConfigSelector from "./ModelConfigSelector";
 
 const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
   open,
@@ -38,31 +38,31 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
   onModelChange,
   disableModelSelect,
 }) {
-
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Chat Settings</DialogTitle>
       <DialogContent>
         <Box sx={{ mt: 2 }}>
           {/* Model Configuration - visible for mobile users */}
-          {Array.isArray(availableModelConfigs) && availableModelConfigs.length > 0 && (
-            <>
-              <Typography variant="h6" gutterBottom>
-                Model Configuration
-              </Typography>
-              <Grid container spacing={3} sx={{ mb: 3 }}>
-                <Grid item xs={12}>
-                  <ModelConfigSelector
-                    availableModelConfigs={availableModelConfigs}
-                    selectedModelConfig={selectedModelConfig}
-                    onModelChange={onModelChange}
-                    disabled={disableModelSelect}
-                    fullWidth
-                  />
+          {Array.isArray(availableModelConfigs) &&
+            availableModelConfigs.length > 0 && (
+              <>
+                <Typography variant="h6" gutterBottom>
+                  Model Configuration
+                </Typography>
+                <Grid container spacing={3} sx={{ mb: 3 }}>
+                  <Grid item xs={12}>
+                    <ModelConfigSelector
+                      availableModelConfigs={availableModelConfigs}
+                      selectedModelConfig={selectedModelConfig}
+                      onModelChange={onModelChange}
+                      disabled={disableModelSelect}
+                      fullWidth
+                    />
+                  </Grid>
                 </Grid>
-              </Grid>
-            </>
-          )}
+              </>
+            )}
 
           <Typography variant="h6" gutterBottom>
             Memory Settings
@@ -83,12 +83,14 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                 helperText="Number of previous conversations to consider"
               />
               <Typography variant="caption" color="text.secondary">
-                Shu trims context to roughly this many prior messages before each response.
+                Shu trims context to roughly this many prior messages before
+                each response.
               </Typography>
             </Grid>
             <Grid item xs={12} sm={6}>
               <Typography gutterBottom>
-                Memory Similarity Threshold: {userPreferences.memory_similarity_threshold}
+                Memory Similarity Threshold:{" "}
+                {userPreferences.memory_similarity_threshold}
               </Typography>
               <Slider
                 value={userPreferences.memory_similarity_threshold}
@@ -101,9 +103,9 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                 max={1}
                 step={0.1}
                 marks={[
-                  { value: 0, label: '0' },
-                  { value: 0.5, label: '0.5' },
-                  { value: 1, label: '1' },
+                  { value: 0, label: "0" },
+                  { value: 0.5, label: "0.5" },
+                  { value: 1, label: "1" },
                 ]}
               />
               <Box sx={{ mt: 0.5 }}>
@@ -112,18 +114,20 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
             </Grid>
           </Grid>
 
-          <Typography variant="h6" gutterBottom>Retrieval Strategy</Typography>
+          <Typography variant="h6" gutterBottom>
+            Retrieval Strategy
+          </Typography>
           <Grid container spacing={3} sx={{ mb: 3 }}>
             <Grid item xs={12}>
               <FormControl fullWidth>
                 <InputLabel
                   id="chat-rag-mode-label"
                   sx={{
-                    backgroundColor: 'background.paper',
+                    backgroundColor: "background.paper",
                     px: 0.5,
-                    '&.Mui-focused': {
-                      backgroundColor: 'background.paper',
-                    }
+                    "&.Mui-focused": {
+                      backgroundColor: "background.paper",
+                    },
                   }}
                 >
                   RAG Query Mode
@@ -135,7 +139,7 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                   label="RAG Query Mode"
                   onChange={(e) => setRagRewriteMode(e.target.value)}
                 >
-                  {RAG_REWRITE_OPTIONS.map(option => (
+                  {RAG_REWRITE_OPTIONS.map((option) => (
                     <MenuItem key={option.value} value={option.value}>
                       {option.label}
                     </MenuItem>
@@ -143,8 +147,9 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                 </Select>
               </FormControl>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Choose how Shu prepares knowledge base queries: disable RAG entirely, pass the raw message,
-                distill it to critical terms, or let the side-call rewrite it for retrieval.
+                Choose how Shu prepares knowledge base queries: disable RAG
+                entirely, pass the raw message, distill it to critical terms, or
+                let the side-call rewrite it for retrieval.
               </Typography>
             </Grid>
           </Grid>
@@ -168,7 +173,8 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                 label="Auto-rename on first user message"
               />
               <Typography variant="body2" color="text.secondary">
-                Renames immediately after you send the very first message (if unlocked).
+                Renames immediately after you send the very first message (if
+                unlocked).
               </Typography>
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -196,7 +202,7 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                   onAutomationSettingsChange({
                     cadenceInterval: Math.max(
                       0,
-                      parseInt(e.target.value || '0', 10)
+                      parseInt(e.target.value || "0", 10),
                     ),
                   })
                 }
@@ -210,7 +216,7 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button onClick={onSave} variant="contained" disabled={isSaving}>
-          {isSaving ? 'Saving...' : 'Save Settings'}
+          {isSaving ? "Saving..." : "Save Settings"}
         </Button>
       </DialogActions>
     </Dialog>

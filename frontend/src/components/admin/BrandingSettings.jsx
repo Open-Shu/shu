@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -9,28 +9,32 @@ import {
   Stack,
   TextField,
   Typography,
-} from '@mui/material';
+} from "@mui/material";
 
-import PaletteIcon from '@mui/icons-material/Palette';
-import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
-import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
-import { getThemeConfig } from '../../utils/constants';
-import log from '../../utils/log';
-import PageHelpHeader from '../PageHelpHeader';
+import PaletteIcon from "@mui/icons-material/Palette";
+import {
+  brandingAPI,
+  extractDataFromResponse,
+  formatError,
+} from "../../services/api";
+import { useTheme as useAppTheme } from "../../contexts/ThemeContext";
+import { getThemeConfig } from "../../utils/constants";
+import log from "../../utils/log";
+import PageHelpHeader from "../PageHelpHeader";
 
 const emptyForm = {
-  appName: '',
-  logoUrl: '',
-  faviconUrl: '',
+  appName: "",
+  logoUrl: "",
+  faviconUrl: "",
   light: {
-    primaryMain: '',
-    secondaryMain: '',
-    backgroundDefault: '',
+    primaryMain: "",
+    secondaryMain: "",
+    backgroundDefault: "",
   },
   dark: {
-    primaryMain: '',
-    secondaryMain: '',
-    backgroundDefault: '',
+    primaryMain: "",
+    secondaryMain: "",
+    backgroundDefault: "",
   },
 };
 
@@ -69,8 +73,14 @@ const BrandingSettings = () => {
   const logoInputRef = useRef(null);
   const faviconInputRef = useRef(null);
 
-  const resolvedLightTheme = useMemo(() => getThemeConfig('light', branding), [branding]);
-  const resolvedDarkTheme = useMemo(() => getThemeConfig('dark', branding), [branding]);
+  const resolvedLightTheme = useMemo(
+    () => getThemeConfig("light", branding),
+    [branding],
+  );
+  const resolvedDarkTheme = useMemo(
+    () => getThemeConfig("dark", branding),
+    [branding],
+  );
 
   useEffect(() => {
     if (!brandingLoaded) {
@@ -78,18 +88,30 @@ const BrandingSettings = () => {
     }
 
     setFormState({
-      appName: branding.appName || '',
-      logoUrl: branding.logoUrl || '',
-      faviconUrl: branding.faviconUrl || '',
+      appName: branding.appName || "",
+      logoUrl: branding.logoUrl || "",
+      faviconUrl: branding.faviconUrl || "",
       light: {
-        primaryMain: branding.lightThemeOverrides?.palette?.primary?.main || resolvedLightTheme.palette.primary.main,
-        secondaryMain: branding.lightThemeOverrides?.palette?.secondary?.main || resolvedLightTheme.palette.secondary.main,
-        backgroundDefault: branding.lightThemeOverrides?.palette?.background?.default || resolvedLightTheme.palette.background.default,
+        primaryMain:
+          branding.lightThemeOverrides?.palette?.primary?.main ||
+          resolvedLightTheme.palette.primary.main,
+        secondaryMain:
+          branding.lightThemeOverrides?.palette?.secondary?.main ||
+          resolvedLightTheme.palette.secondary.main,
+        backgroundDefault:
+          branding.lightThemeOverrides?.palette?.background?.default ||
+          resolvedLightTheme.palette.background.default,
       },
       dark: {
-        primaryMain: branding.darkThemeOverrides?.palette?.primary?.main || resolvedDarkTheme.palette.primary.main,
-        secondaryMain: branding.darkThemeOverrides?.palette?.secondary?.main || resolvedDarkTheme.palette.secondary.main,
-        backgroundDefault: branding.darkThemeOverrides?.palette?.background?.default || resolvedDarkTheme.palette.background.default,
+        primaryMain:
+          branding.darkThemeOverrides?.palette?.primary?.main ||
+          resolvedDarkTheme.palette.primary.main,
+        secondaryMain:
+          branding.darkThemeOverrides?.palette?.secondary?.main ||
+          resolvedDarkTheme.palette.secondary.main,
+        backgroundDefault:
+          branding.darkThemeOverrides?.palette?.background?.default ||
+          resolvedDarkTheme.palette.background.default,
       },
     });
   }, [branding, brandingLoaded, resolvedDarkTheme, resolvedLightTheme]);
@@ -130,11 +152,11 @@ const BrandingSettings = () => {
       const response = await brandingAPI.updateBranding(payload);
       const data = extractDataFromResponse(response);
       setBranding(data);
-      setStatus({ type: 'success', message: 'Branding updated successfully.' });
+      setStatus({ type: "success", message: "Branding updated successfully." });
     } catch (error) {
       const message = formatError(error);
-      log.error('Branding update failed', error);
-      setStatus({ type: 'error', message });
+      log.error("Branding update failed", error);
+      setStatus({ type: "error", message });
     } finally {
       setSaving(false);
     }
@@ -153,11 +175,11 @@ const BrandingSettings = () => {
       });
       const data = extractDataFromResponse(response);
       setBranding(data);
-      setStatus({ type: 'success', message: 'Branding reset to defaults.' });
+      setStatus({ type: "success", message: "Branding reset to defaults." });
     } catch (error) {
       const message = formatError(error);
-      log.error('Branding reset failed', error);
-      setStatus({ type: 'error', message });
+      log.error("Branding reset failed", error);
+      setStatus({ type: "error", message });
     } finally {
       setSaving(false);
     }
@@ -169,7 +191,7 @@ const BrandingSettings = () => {
     }
 
     setStatus(null);
-    if (type === 'logo') {
+    if (type === "logo") {
       setUploadingLogo(true);
     } else {
       setUploadingFavicon(true);
@@ -177,22 +199,25 @@ const BrandingSettings = () => {
 
     try {
       const response =
-        type === 'logo'
+        type === "logo"
           ? await brandingAPI.uploadLogo(file)
           : await brandingAPI.uploadFavicon(file);
       const data = extractDataFromResponse(response);
       setBranding(data);
-      setStatus({ type: 'success', message: `${type === 'logo' ? 'Logo' : 'Favicon'} updated.` });
+      setStatus({
+        type: "success",
+        message: `${type === "logo" ? "Logo" : "Favicon"} updated.`,
+      });
     } catch (error) {
       const message = formatError(error);
-      log.error('Asset upload failed', error);
-      setStatus({ type: 'error', message });
+      log.error("Asset upload failed", error);
+      setStatus({ type: "error", message });
     } finally {
-      if (type === 'logo' && logoInputRef.current) {
-        logoInputRef.current.value = '';
+      if (type === "logo" && logoInputRef.current) {
+        logoInputRef.current.value = "";
       }
-      if (type === 'favicon' && faviconInputRef.current) {
-        faviconInputRef.current.value = '';
+      if (type === "favicon" && faviconInputRef.current) {
+        faviconInputRef.current.value = "";
       }
       setUploadingLogo(false);
       setUploadingFavicon(false);
@@ -201,25 +226,34 @@ const BrandingSettings = () => {
 
   if (!brandingLoaded) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="60vh"
+      >
         <CircularProgress />
       </Box>
     );
   }
 
   return (
-    <Box component="form" onSubmit={handleSubmit} sx={{ maxWidth: 1000, mx: 'auto' }}>
+    <Box
+      component="form"
+      onSubmit={handleSubmit}
+      sx={{ maxWidth: 1000, mx: "auto" }}
+    >
       <Stack spacing={3}>
         <PageHelpHeader
           title="Branding Settings"
           description="Customize the look and feel of your application. Upload your logo, set a favicon, and configure color themes for both light and dark modes."
           icon={<PaletteIcon />}
           tips={[
-            'Upload a logo image to replace the default branding throughout the app',
-            'The favicon appears in browser tabs—upload a small square image',
-            'Set primary colors to match your brand identity',
-            'Configure both light and dark mode themes for users who prefer either',
-            'Changes take effect immediately after saving',
+            "Upload a logo image to replace the default branding throughout the app",
+            "The favicon appears in browser tabs—upload a small square image",
+            "Set primary colors to match your brand identity",
+            "Configure both light and dark mode themes for users who prefer either",
+            "Changes take effect immediately after saving",
           ]}
         />
 
@@ -237,13 +271,17 @@ const BrandingSettings = () => {
             <TextField
               label="Application Name"
               value={formState.appName}
-              onChange={handleTextChange('appName')}
+              onChange={handleTextChange("appName")}
               fullWidth
             />
           </Stack>
         </Paper>
 
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ width: '100%' }}>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={2}
+          sx={{ width: "100%" }}
+        >
           <Paper sx={{ p: 3, flex: 1 }}>
             <Stack spacing={2}>
               <Stack spacing={1.5}>
@@ -253,7 +291,7 @@ const BrandingSettings = () => {
                 <img
                   src={branding.logoUrl}
                   alt="Logo preview"
-                  style={{ height: 80, objectFit: 'contain', maxWidth: '100%' }}
+                  style={{ height: 80, objectFit: "contain", maxWidth: "100%" }}
                 />
                 <Stack spacing={1}>
                   <Button
@@ -262,11 +300,11 @@ const BrandingSettings = () => {
                     disabled={uploadingLogo}
                     fullWidth
                   >
-                    {uploadingLogo ? 'Uploading…' : 'Upload Logo'}
+                    {uploadingLogo ? "Uploading…" : "Upload Logo"}
                   </Button>
                   <input
                     value={formState.logoUrl}
-                    onChange={handleTextChange('logoUrl')}
+                    onChange={handleTextChange("logoUrl")}
                     placeholder="https://example.com/logo.png"
                     type="hidden"
                   />
@@ -275,8 +313,10 @@ const BrandingSettings = () => {
                   ref={logoInputRef}
                   type="file"
                   accept=".png,.jpg,.jpeg,.svg,.webp"
-                  style={{ display: 'none' }}
-                  onChange={(event) => uploadAsset('logo', event.target.files?.[0])}
+                  style={{ display: "none" }}
+                  onChange={(event) =>
+                    uploadAsset("logo", event.target.files?.[0])
+                  }
                 />
               </Stack>
             </Stack>
@@ -290,7 +330,7 @@ const BrandingSettings = () => {
                 <img
                   src={branding.faviconUrl}
                   alt="Favicon preview"
-                  style={{ height: 80, objectFit: 'contain' }}
+                  style={{ height: 80, objectFit: "contain" }}
                 />
                 <Stack spacing={1}>
                   <Button
@@ -299,11 +339,11 @@ const BrandingSettings = () => {
                     disabled={uploadingFavicon}
                     fullWidth
                   >
-                    {uploadingFavicon ? 'Uploading…' : 'Upload Favicon'}
+                    {uploadingFavicon ? "Uploading…" : "Upload Favicon"}
                   </Button>
                   <input
                     value={formState.faviconUrl}
-                    onChange={handleTextChange('faviconUrl')}
+                    onChange={handleTextChange("faviconUrl")}
                     placeholder="https://example.com/favicon.png"
                     type="hidden"
                   />
@@ -312,8 +352,10 @@ const BrandingSettings = () => {
                   ref={faviconInputRef}
                   type="file"
                   accept=".svg,.png,.ico,.webp"
-                  style={{ display: 'none' }}
-                  onChange={(event) => uploadAsset('favicon', event.target.files?.[0])}
+                  style={{ display: "none" }}
+                  onChange={(event) =>
+                    uploadAsset("favicon", event.target.files?.[0])
+                  }
                 />
               </Stack>
             </Stack>
@@ -331,7 +373,7 @@ const BrandingSettings = () => {
                   label="Primary Main"
                   type="color"
                   value={formState.light.primaryMain}
-                  onChange={handleColorChange('light', 'primaryMain')}
+                  onChange={handleColorChange("light", "primaryMain")}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                 />
@@ -341,7 +383,7 @@ const BrandingSettings = () => {
                   label="Secondary Main"
                   type="color"
                   value={formState.light.secondaryMain}
-                  onChange={handleColorChange('light', 'secondaryMain')}
+                  onChange={handleColorChange("light", "secondaryMain")}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                 />
@@ -351,7 +393,7 @@ const BrandingSettings = () => {
                   label="Background Default"
                   type="color"
                   value={formState.light.backgroundDefault}
-                  onChange={handleColorChange('light', 'backgroundDefault')}
+                  onChange={handleColorChange("light", "backgroundDefault")}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                 />
@@ -371,7 +413,7 @@ const BrandingSettings = () => {
                   label="Primary Main"
                   type="color"
                   value={formState.dark.primaryMain}
-                  onChange={handleColorChange('dark', 'primaryMain')}
+                  onChange={handleColorChange("dark", "primaryMain")}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                 />
@@ -381,7 +423,7 @@ const BrandingSettings = () => {
                   label="Secondary Main"
                   type="color"
                   value={formState.dark.secondaryMain}
-                  onChange={handleColorChange('dark', 'secondaryMain')}
+                  onChange={handleColorChange("dark", "secondaryMain")}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                 />
@@ -391,7 +433,7 @@ const BrandingSettings = () => {
                   label="Background Default"
                   type="color"
                   value={formState.dark.backgroundDefault}
-                  onChange={handleColorChange('dark', 'backgroundDefault')}
+                  onChange={handleColorChange("dark", "backgroundDefault")}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                 />
@@ -400,12 +442,21 @@ const BrandingSettings = () => {
           </Stack>
         </Paper>
 
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="flex-end">
-          <Button variant="outlined" color="inherit" onClick={handleResetBranding} disabled={saving}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          justifyContent="flex-end"
+        >
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={handleResetBranding}
+            disabled={saving}
+          >
             Reset to Defaults
           </Button>
           <Button type="submit" variant="contained" disabled={saving}>
-            {saving ? 'Saving…' : 'Save Changes'}
+            {saving ? "Saving…" : "Save Changes"}
           </Button>
         </Stack>
       </Stack>

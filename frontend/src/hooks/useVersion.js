@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { systemAPI, extractDataFromResponse } from '../services/api';
+import { useEffect, useState } from "react";
+import { systemAPI, extractDataFromResponse } from "../services/api";
 
 export default function useVersion() {
   const [version, setVersion] = useState(null);
@@ -7,7 +7,8 @@ export default function useVersion() {
 
   useEffect(() => {
     let cancelled = false;
-    systemAPI.getVersion()
+    systemAPI
+      .getVersion()
       .then((res) => {
         const data = extractDataFromResponse(res);
         if (!cancelled) {
@@ -16,10 +17,13 @@ export default function useVersion() {
         }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const displayVersion = version ? `v${version}${gitSha ? ' • ' + gitSha.slice(0, 7) : ''}` : '';
+  const displayVersion = version
+    ? `v${version}${gitSha ? " • " + gitSha.slice(0, 7) : ""}`
+    : "";
   return { version, gitSha, displayVersion };
 }
-

@@ -1,8 +1,15 @@
-import { useCallback, useMemo, useState } from 'react';
-import { chatAPI, extractDataFromResponse, formatError } from '../../../../services/api';
-import { buildRenamePayloadBase, getLatestUserMessageContent } from '../utils/renamePayload';
-import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
-import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
+import { useCallback, useMemo, useState } from "react";
+import {
+  chatAPI,
+  extractDataFromResponse,
+  formatError,
+} from "../../../../services/api";
+import {
+  buildRenamePayloadBase,
+  getLatestUserMessageContent,
+} from "../utils/renamePayload";
+import { getMessagesFromCache, rebuildCache } from "../utils/chatCache";
+import { PLACEHOLDER_THINKING } from "../utils/chatConfig";
 
 const useChatComposer = ({
   selectedConversation,
@@ -27,18 +34,19 @@ const useChatComposer = ({
   onEnsembleRunComplete,
 }) => {
   const [pendingAttachments, setPendingAttachments] = useState([]);
-  const [inputMessage, setInputMessage] = useState('');
+  const [inputMessage, setInputMessage] = useState("");
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [plusAnchorEl, setPlusAnchorEl] = useState(null);
 
   const latestUserMessageContent = useMemo(
     () => getLatestUserMessageContent(messages),
-    [messages]
+    [messages],
   );
 
   const buildRenamePayload = useCallback(
-    (explicitFallback) => buildRenamePayloadBase(latestUserMessageContent, explicitFallback),
-    [latestUserMessageContent]
+    (explicitFallback) =>
+      buildRenamePayloadBase(latestUserMessageContent, explicitFallback),
+    [latestUserMessageContent],
   );
 
   const handleUploadClick = useCallback(() => {
@@ -48,7 +56,7 @@ const useChatComposer = ({
   const handleFileSelected = useCallback(
     async (event) => {
       if (!selectedConversation?.id) {
-        setError('Select or create a conversation before uploading');
+        setError("Select or create a conversation before uploading");
         return;
       }
 
@@ -59,35 +67,43 @@ const useChatComposer = ({
 
       setIsUploadingAttachment(true);
       try {
-        const response = await chatAPI.uploadAttachment(selectedConversation.id, file);
+        const response = await chatAPI.uploadAttachment(
+          selectedConversation.id,
+          file,
+        );
         const data = extractDataFromResponse(response);
 
         if (data?.attachment_id) {
-          setPendingAttachments((prev) => [...prev, { id: data.attachment_id, name: file.name }]);
+          setPendingAttachments((prev) => [
+            ...prev,
+            { id: data.attachment_id, name: file.name },
+          ]);
         }
-        event.target.value = '';
+        event.target.value = "";
       } catch (error) {
         setError(`Attachment upload failed: ${formatError(error).message}`);
       } finally {
         setIsUploadingAttachment(false);
       }
     },
-    [selectedConversation, setError]
+    [selectedConversation, setError],
   );
 
   const removePendingAttachment = useCallback((id) => {
-    setPendingAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
+    setPendingAttachments((prev) =>
+      prev.filter((attachment) => attachment.id !== id),
+    );
   }, []);
 
   const handleInputChange = useCallback(
     (event) => {
       const value = event.target.value;
       setInputMessage(value);
-      if (pluginsEnabled && value.startsWith('/')) {
+      if (pluginsEnabled && value.startsWith("/")) {
         onSlashCommand?.();
       }
     },
-    [pluginsEnabled, onSlashCommand]
+    [pluginsEnabled, onSlashCommand],
   );
 
   const handleSendMessage = useCallback(() => {
@@ -101,7 +117,7 @@ const useChatComposer = ({
       clearFreshConversation?.(conversationId);
     }
     const existingUserMessages = Array.isArray(messages)
-      ? messages.filter((message) => message.role === 'user').length
+      ? messages.filter((message) => message.role === "user").length
       : 0;
     const isTitleLocked = Boolean(selectedConversation?.meta?.title_locked);
 
@@ -113,7 +129,10 @@ const useChatComposer = ({
       !initialRenameTriggeredRef.current.has(conversationId)
     ) {
       initialRenameTriggeredRef.current.add(conversationId);
-      runAutoRename({ conversationId, payload: buildRenamePayload(userMessage) });
+      runAutoRename({
+        conversationId,
+        payload: buildRenamePayload(userMessage),
+      });
     }
 
     const optimisticAttachments = pendingAttachments.map((attachment) => ({
@@ -123,7 +142,7 @@ const useChatComposer = ({
     }));
 
     setPendingAttachments([]);
-    setInputMessage('');
+    setInputMessage("");
     setStreamingConversationId(conversationId);
     setStreamingStarted(false);
     setError(null);
@@ -131,22 +150,25 @@ const useChatComposer = ({
     // Create a stable client-side temp id for the user message so the server can echo it
     // back in SSE as client_temp_id for deterministic replacement.
     const userTempId = `temp-${Date.now()}`;
-    queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-      const existing = getMessagesFromCache(oldData);
+    queryClient.setQueryData(
+      ["conversation-messages", conversationId],
+      (oldData) => {
+        const existing = getMessagesFromCache(oldData);
 
-      const newUserMessage = {
-        id: userTempId,
-        role: 'user',
-        content: userMessage,
-        created_at: new Date().toISOString(),
-        conversation_id: conversationId,
-        attachments: optimisticAttachments,
-        // Mark as placeholder so it gets replaced by the persisted record on refresh/merge
-        isPlaceholder: true,
-      };
+        const newUserMessage = {
+          id: userTempId,
+          role: "user",
+          content: userMessage,
+          created_at: new Date().toISOString(),
+          conversation_id: conversationId,
+          attachments: optimisticAttachments,
+          // Mark as placeholder so it gets replaced by the persisted record on refresh/merge
+          isPlaceholder: true,
+        };
 
-      return rebuildCache(oldData, [...existing, newUserMessage]);
-    });
+        return rebuildCache(oldData, [...existing, newUserMessage]);
+      },
+    );
 
     const ensembleIds = Array.isArray(ensembleModelConfigIds)
       ? Array.from(new Set(ensembleModelConfigIds.filter(Boolean)))
@@ -158,30 +180,33 @@ const useChatComposer = ({
     const placeholderIds = {};
     const placeholderMeta = {};
 
-    queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-      const existing = getMessagesFromCache(oldData);
-      const placeholders = [];
-      for (let idx = 0; idx < totalVariants; idx += 1) {
-        const placeholderId = `${placeholderRootId}-variant-${idx}`;
-        placeholderIds[idx] = placeholderId;
-        placeholderMeta[idx] = { id: placeholderId, created_at: nowIso };
-        placeholders.push({
-          id: placeholderId,
-          role: 'assistant',
-          content: PLACEHOLDER_THINKING,
-          created_at: nowIso,
-          conversation_id: conversationId,
-          isStreaming: true,
-          isPlaceholder: true,
-          parent_message_id: placeholderRootId,
-          variant_index: idx,
-        });
-      }
-      return rebuildCache(oldData, [...existing, ...placeholders]);
-    });
+    queryClient.setQueryData(
+      ["conversation-messages", conversationId],
+      (oldData) => {
+        const existing = getMessagesFromCache(oldData);
+        const placeholders = [];
+        for (let idx = 0; idx < totalVariants; idx += 1) {
+          const placeholderId = `${placeholderRootId}-variant-${idx}`;
+          placeholderIds[idx] = placeholderId;
+          placeholderMeta[idx] = { id: placeholderId, created_at: nowIso };
+          placeholders.push({
+            id: placeholderId,
+            role: "assistant",
+            content: PLACEHOLDER_THINKING,
+            created_at: nowIso,
+            conversation_id: conversationId,
+            isStreaming: true,
+            isPlaceholder: true,
+            parent_message_id: placeholderRootId,
+            variant_index: idx,
+          });
+        }
+        return rebuildCache(oldData, [...existing, ...placeholders]);
+      },
+    );
 
     // Request scroll to bottom after placeholder is added
-    scheduleScrollToBottom?.('smooth');
+    scheduleScrollToBottom?.("smooth");
 
     const payload = {
       message: userMessage,
@@ -237,12 +262,12 @@ const useChatComposer = ({
 
   const handleKeyPress = useCallback(
     (event) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
+      if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         handleSendMessage();
       }
     },
-    [handleSendMessage]
+    [handleSendMessage],
   );
 
   return {

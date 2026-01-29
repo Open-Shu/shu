@@ -3,7 +3,7 @@ export const buildMessageVariants = (messages, variantSelection) => {
   const variantGroupsMap = new Map();
 
   for (const message of allMessages) {
-    if (message.role !== 'assistant') {
+    if (message.role !== "assistant") {
       continue;
     }
     const parentId = message.parent_message_id || message.id;
@@ -15,8 +15,10 @@ export const buildMessageVariants = (messages, variantSelection) => {
 
   for (const variants of variantGroupsMap.values()) {
     variants.sort((a, b) => {
-      const aIndex = typeof a.variant_index === 'number' ? a.variant_index : null;
-      const bIndex = typeof b.variant_index === 'number' ? b.variant_index : null;
+      const aIndex =
+        typeof a.variant_index === "number" ? a.variant_index : null;
+      const bIndex =
+        typeof b.variant_index === "number" ? b.variant_index : null;
       if (aIndex !== null && bIndex !== null) {
         return aIndex - bIndex;
       }
@@ -28,7 +30,7 @@ export const buildMessageVariants = (messages, variantSelection) => {
   const visibleMessages = [];
 
   for (const message of allMessages) {
-    if (message.role !== 'assistant') {
+    if (message.role !== "assistant") {
       visibleMessages.push(message);
       continue;
     }
@@ -44,7 +46,10 @@ export const buildMessageVariants = (messages, variantSelection) => {
       variantSelection && variantSelection[parentId] !== undefined
         ? variantSelection[parentId]
         : variants.length - 1;
-    const clampedIndex = Math.max(0, Math.min(variants.length - 1, selectedIndex));
+    const clampedIndex = Math.max(
+      0,
+      Math.min(variants.length - 1, selectedIndex),
+    );
     visibleMessages.push(variants[clampedIndex]);
   }
 
@@ -60,16 +65,16 @@ export const buildStreamingParentIds = (messages) => {
   const ids = new Set();
   const allMessages = Array.isArray(messages) ? messages : [];
   for (const message of allMessages) {
-    if (message.role === 'assistant' && message.isStreaming) {
+    if (message.role === "assistant" && message.isStreaming) {
       const parentId = message.parent_message_id || message.id;
       const suppressed = Boolean(message.suppressSideBySide);
       if (!suppressed) {
         ids.add(parentId);
       }
       try {
-        if (localStorage.getItem('chat_debug') === 'sidebyside') {
+        if (localStorage.getItem("chat_debug") === "sidebyside") {
           // eslint-disable-next-line no-console
-          console.debug('[SideBySide] streaming_parent_scan', {
+          console.debug("[SideBySide] streaming_parent_scan", {
             messageId: message.id,
             parentId,
             suppressed,
@@ -81,4 +86,5 @@ export const buildStreamingParentIds = (messages) => {
   return ids;
 };
 
-export const formatMessageTimestamp = (timestamp) => new Date(timestamp).toLocaleTimeString();
+export const formatMessageTimestamp = (timestamp) =>
+  new Date(timestamp).toLocaleTimeString();
