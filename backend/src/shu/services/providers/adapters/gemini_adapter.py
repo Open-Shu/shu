@@ -1,55 +1,66 @@
-import json
 import copy
-from typing import Any, Dict, List, Optional
+import json
+from typing import Any
 
 import jmespath
 
-from shu.services.providers.parameter_definitions import ArrayParameter, EnumParameter, IntegerParameter, NumberParameter, ObjectParameter, Option, StringParameter
 from shu.core.logging import get_logger
+from shu.models.plugin_execution import CallableTool
+from shu.services.providers.parameter_definitions import (
+    ArrayParameter,
+    EnumParameter,
+    IntegerParameter,
+    NumberParameter,
+    ObjectParameter,
+    Option,
+    StringParameter,
+)
 
 from ..adapter_base import (
     BaseProviderAdapter,
+    ChatContext,
+    ChatMessage,
     ProviderAdapterContext,
     ProviderCapabilities,
-    ProviderInformation,
-    register_adapter,
     ProviderContentDeltaEventResult,
     ProviderEventResult,
     ProviderFinalEventResult,
+    ProviderInformation,
     ProviderToolCallEventResult,
     ToolCallInstructions,
-    ChatContext,
-    ChatMessage,
+    register_adapter,
 )
-from shu.models.plugin_execution import CallableTool
 
 logger = get_logger(__name__)
 
 
 class GeminiAdapter(BaseProviderAdapter):
-
     def __init__(self, context: ProviderAdapterContext):
         super().__init__(context)
-        self._latest_usage_event: Optional[Dict[str, Any]] = None
-        self._stream_content: List[str] = []
-        self._stream_tool_calls: Dict[int, Dict[str, Any]] = {}
+        self._latest_usage_event: dict[str, Any] | None = None
+        self._stream_content: list[str] = []
+        self._stream_tool_calls: dict[int, dict[str, Any]] = {}
 
-    async def _build_assistant_and_result_messages(self, sorted_tool_calls: List[Dict[str, Any]], tool_calls: list[ToolCallInstructions]) -> tuple[Optional[ChatMessage], List[ChatMessage]]:
-        assistant_message = ChatMessage.build(role="assistant", content=sorted_tool_calls) if sorted_tool_calls else None
+    async def _build_assistant_and_result_messages(
+        self, sorted_tool_calls: list[dict[str, Any]], tool_calls: list[ToolCallInstructions]
+    ) -> tuple[ChatMessage | None, list[ChatMessage]]:
+        assistant_message = (
+            ChatMessage.build(role="assistant", content=sorted_tool_calls) if sorted_tool_calls else None
+        )
         result_messages = [
             ChatMessage.build(
                 role="tool",
                 metadata={
                     "tool_call_id": raw.get("id", ""),
-                    "name": (raw.get("function") or {}).get("name", "")
+                    "name": (raw.get("function") or {}).get("name", ""),
                 },
                 content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
             )
-            for raw, tool_call in zip(sorted_tool_calls, tool_calls)
+            for raw, tool_call in zip(sorted_tool_calls, tool_calls, strict=False)
         ]
         return assistant_message, result_messages
 
-    def _extract_usage(self, payload: Dict[str, Any]) -> None:
+    def _extract_usage(self, payload: dict[str, Any]) -> None:
         usage = payload.get("usageMetadata") if isinstance(payload, dict) else None
         if not usage:
             return
@@ -81,10 +92,10 @@ class GeminiAdapter(BaseProviderAdapter):
     def get_models_endpoint(self) -> str:
         return "/models"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         return {"scheme": "bearer", "headers": {"x-goog-api-key": f"{self.api_key}"}}
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             # generationConfig-style knobs
             "temperature": NumberParameter(
@@ -110,16 +121,12 @@ class GeminiAdapter(BaseProviderAdapter):
                 max=100,
                 default=40,
                 label="Top K",
-                description=(
-                    "Top-k sampling. The model only considers the top_k most likely tokens at each step."
-                ),
+                description=("Top-k sampling. The model only considers the top_k most likely tokens at each step."),
             ),
             "max_output_tokens": IntegerParameter(
                 min=1,
                 label="Max Output Tokens",
-                description=(
-                    "Maximum number of tokens the model is allowed to generate for this response."
-                ),
+                description=("Maximum number of tokens the model is allowed to generate for this response."),
             ),
             # TODO: We don't support multiple candidates at the moment.
             # "candidate_count": IntegerParameter(
@@ -136,11 +143,8 @@ class GeminiAdapter(BaseProviderAdapter):
                 description=(
                     "One or more strings where generation should stop. If any is generated, the model will stop there."
                 ),
-                items=StringParameter(
-                    placeholder="e.g. </END>", label="Stop sequence"
-                ),
+                items=StringParameter(placeholder="e.g. </END>", label="Stop sequence"),
             ),
-
             # Tools (Gemini-side equivalents to web/code tools)
             "tools": ArrayParameter(
                 label="Tools",
@@ -149,9 +153,7 @@ class GeminiAdapter(BaseProviderAdapter):
                     Option(
                         value={"code_execution": {}},
                         label="Code Execution",
-                        help=(
-                            "Allow the model to write and run code using Gemini's code execution tool."
-                        ),
+                        help=("Allow the model to write and run code using Gemini's code execution tool."),
                     ),
                     Option(
                         value={"google_search": {}},
@@ -171,27 +173,20 @@ class GeminiAdapter(BaseProviderAdapter):
                     Option(
                         value={"function_calling_config": {"mode": "AUTO"}},
                         label="Auto",
-                        help=(
-                            "Model decides whether to call tools or answer directly."
-                        ),
+                        help=("Model decides whether to call tools or answer directly."),
                     ),
                     Option(
                         value={"function_calling_config": {"mode": "ANY"}},
                         label="Any tool (force function call)",
-                        help=(
-                            "Force the model to respond with a tool call when possible."
-                        ),
+                        help=("Force the model to respond with a tool call when possible."),
                     ),
                     Option(
                         value={"function_calling_config": {"mode": "NONE"}},
                         label="None (no tool calls)",
-                        help=(
-                            "Disable function calling and return natural language only."
-                        ),
+                        help=("Disable function calling and return natural language only."),
                     ),
                 ],
             ),
-
             # Safety
             "safety_settings": ArrayParameter(
                 label="Safety Settings",
@@ -229,9 +224,7 @@ class GeminiAdapter(BaseProviderAdapter):
                         ),
                         "threshold": EnumParameter(
                             label="Block Threshold",
-                            description=(
-                                "How aggressively to block content in this category."
-                            ),
+                            description=("How aggressively to block content in this category."),
                             options=[
                                 Option(value="BLOCK_NONE", label="Block none"),
                                 Option(
@@ -252,7 +245,6 @@ class GeminiAdapter(BaseProviderAdapter):
                     },
                 ),
             ),
-
             # Labels / metadata
             "labels": ObjectParameter(
                 label="Labels",
@@ -261,12 +253,12 @@ class GeminiAdapter(BaseProviderAdapter):
                 ),
             ),
         }
-    
+
     def _build_tool_result_part(self, msg: ChatMessage):
         """Build Gemini functionResponse part from a ChatMessage with role='tool'."""
         raw_content = getattr(msg, "content", "")
         metadata = getattr(msg, "metadata", {}) or {}
-        response_obj: Dict[str, Any]
+        response_obj: dict[str, Any]
         if isinstance(raw_content, dict):
             response_obj = raw_content
         else:
@@ -284,7 +276,7 @@ class GeminiAdapter(BaseProviderAdapter):
         ]
         role = "user"
         return role, parts
-    
+
     def _build_tool_request_part(self, tc):
         fn = tc.get("function") or {}
         args_raw = fn.get("arguments", "")
@@ -292,7 +284,7 @@ class GeminiAdapter(BaseProviderAdapter):
             args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
         except Exception:
             args = {}
-        function_call: Dict[str, Any] = {
+        function_call: dict[str, Any] = {
             "name": fn.get("name", ""),
             "args": args if isinstance(args, dict) else {},
         }
@@ -307,42 +299,37 @@ class GeminiAdapter(BaseProviderAdapter):
             part["thoughtSignature"] = thought_signature
         return part
 
-    def _format_attachments_for_parts(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+    def _format_attachments_for_parts(self, attachments: list[Any]) -> list[dict[str, Any]]:
         """Format attachments into Gemini API parts.
-        
+
         Gemini uses inlineData format for both images and documents.
         The format is the same regardless of file type.
         """
-        parts: List[Dict[str, Any]] = []
-        
+        parts: list[dict[str, Any]] = []
+
         for att in attachments:
             # Gemini uses inlineData format for all file types
             b64_data = self._read_attachment_base64(att)
             if b64_data:
-                parts.append({
-                    "inlineData": {
-                        "mimeType": att.mime_type,
-                        "data": b64_data
-                    }
-                })
+                parts.append({"inlineData": {"mimeType": att.mime_type, "data": b64_data}})
             else:
                 # Fallback if file read fails - use base class text format
                 fallback = self._attachment_to_text_fallback(att)
                 if fallback:
                     # Convert from OpenAI format to Gemini format
                     parts.append({"text": fallback.get("text", "")})
-        
+
         return parts
 
-    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
-        system_parts: List[Dict[str, Any]] = []
-        contents: List[Dict[str, Any]] = []
+    async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:
+        system_parts: list[dict[str, Any]] = []
+        contents: list[dict[str, Any]] = []
 
         for msg in messages.messages:
             role = getattr(msg, "role", "")
             content = getattr(msg, "content", "")
             attachments = getattr(msg, "attachments", []) or []
-            parts: List[Dict[str, Any]] = []
+            parts: list[dict[str, Any]] = []
 
             # Handle tool result messages - these need special Gemini formatting
             if role == "tool":
@@ -369,7 +356,12 @@ class GeminiAdapter(BaseProviderAdapter):
             if not parts:
                 continue
 
-            contents.append({"role": "user" if role == "user" else "model" if role in ("assistant", "model") else role, "parts": parts})
+            contents.append(
+                {
+                    "role": "user" if role == "user" else "model" if role in ("assistant", "model") else role,
+                    "parts": parts,
+                }
+            )
 
         if messages.system_prompt:
             system_parts.append({"text": messages.system_prompt})
@@ -380,11 +372,11 @@ class GeminiAdapter(BaseProviderAdapter):
         payload["contents"] = contents
         return payload
 
-    async def inject_streaming_parameter(self, should_stream: bool, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_streaming_parameter(self, should_stream: bool, payload: dict[str, Any]) -> dict[str, Any]:
         # There is no streaming parameter, we use the operation in the request parameter for this.
         return payload
 
-    async def post_process_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def post_process_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         # Move generation knobs under generationConfig as Gemini expects
         gen_keys = ["temperature", "top_p", "top_k", "max_output_tokens", "stop_sequences"]
         generation_config = dict(payload.get("generationConfig") or {})
@@ -396,19 +388,26 @@ class GeminiAdapter(BaseProviderAdapter):
 
         return payload
 
-    def _sanitize_schema_for_gemini(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_schema_for_gemini(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Strip unsupported keys and coerce schema to Gemini's limited Schema shape."""
 
-        def _clean(obj: Any) -> Dict[str, Any]:
+        def _clean(obj: Any) -> dict[str, Any]:
             if not isinstance(obj, dict):
                 return {}
 
-            result: Dict[str, Any] = {}
+            result: dict[str, Any] = {}
 
             t = obj.get("type")
             if isinstance(t, list):
                 t = next((x for x in t if isinstance(x, str)), None)
-            if isinstance(t, str) and t in {"object", "string", "number", "integer", "boolean", "array"}:
+            if isinstance(t, str) and t in {
+                "object",
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "array",
+            }:
                 result["type"] = t
 
             desc = obj.get("description")
@@ -431,7 +430,7 @@ class GeminiAdapter(BaseProviderAdapter):
             if result.get("type") == "object":
                 props = obj.get("properties")
                 if isinstance(props, dict):
-                    cleaned_props: Dict[str, Any] = {}
+                    cleaned_props: dict[str, Any] = {}
                     for pk, pv in props.items():
                         if not isinstance(pk, str) or not isinstance(pv, dict):
                             continue
@@ -451,8 +450,8 @@ class GeminiAdapter(BaseProviderAdapter):
 
         return _clean(schema or {})
 
-    async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:
-        res: List[Dict[str, Any]] = []
+    async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
+        res: list[dict[str, Any]] = []
         for tool in tools:
             title = None
             if isinstance(tool.enum_labels, dict):
@@ -474,7 +473,10 @@ class GeminiAdapter(BaseProviderAdapter):
 
             sanitized = self._sanitize_schema_for_gemini(op_schema)
             if not sanitized:
-                sanitized = {"type": "object", "properties": {"op": {"type": "string", "enum": [tool.op]}}}
+                sanitized = {
+                    "type": "object",
+                    "properties": {"op": {"type": "string", "enum": [tool.op]}},
+                }
 
             description = title or f"Run {tool.name}:{tool.op}"
             tool_entry = {
@@ -489,15 +491,15 @@ class GeminiAdapter(BaseProviderAdapter):
             # payload["tools"] = payload.get("tools", []) + [{"function_declarations": res}]
             payload["tools"] = [{"function_declarations": res}]
         return payload
-    
-    def inject_override_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+
+    def inject_override_parameters(self, params: dict[str, Any]) -> dict[str, Any]:
         params = dict(params or {})
         params["operation"] = "generateContent"
         if params.get("stream"):
             params["operation"] = "streamGenerateContent?alt=sse"
         return params
 
-    def _extract_function_call(self, fc: Dict[str, Any], thought_signature: str | None = None) -> Dict[str, Any]:
+    def _extract_function_call(self, fc: dict[str, Any], thought_signature: str | None = None) -> dict[str, Any]:
         """Normalize Gemini function call data for reuse in follow-up requests."""
         args = fc.get("args")
         if args is None:
@@ -523,7 +525,7 @@ class GeminiAdapter(BaseProviderAdapter):
 
         return tool_call
 
-    def _tool_call_from_raw(self, tool_call: Dict[str, Any]) -> ToolCallInstructions:
+    def _tool_call_from_raw(self, tool_call: dict[str, Any]) -> ToolCallInstructions:
         function_data = tool_call.get("function") or {}
         tool_name = function_data.get("name", "")
         try:
@@ -542,8 +544,7 @@ class GeminiAdapter(BaseProviderAdapter):
     def get_model_information_path(self) -> str:
         return "models[?contains(supportedGenerationMethods, 'generateContent')].{id: name, name: displayName}"
 
-    async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:
-
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
         parts = jmespath.search("candidates[0].content.parts", chunk) or []
         if not parts:
             return None
@@ -564,8 +565,7 @@ class GeminiAdapter(BaseProviderAdapter):
                     thought_signature=part.get("thoughtSignature"),
                 )
 
-    async def finalize_provider_events(self) -> List[ProviderEventResult]:
-
+    async def finalize_provider_events(self) -> list[ProviderEventResult]:
         self._extract_usage(self._latest_usage_event)
         self._latest_usage_event = None
 
@@ -590,7 +590,7 @@ class GeminiAdapter(BaseProviderAdapter):
             )
         ] + final_event
 
-    async def handle_provider_completion(self, data: Dict[str, Any]) -> List[ProviderEventResult]:
+    async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
         candidates = data.get("candidates") or []
         if not candidates:
             return [ProviderFinalEventResult(content="")]
@@ -600,8 +600,8 @@ class GeminiAdapter(BaseProviderAdapter):
         cand = candidates[0]
         parts = (cand.get("content") or {}).get("parts") or []
 
-        text_parts: List[str] = []
-        raw_tool_calls: List[Dict[str, Any]] = []
+        text_parts: list[str] = []
+        raw_tool_calls: list[dict[str, Any]] = []
         for part in parts:
             if "text" in part:
                 text_parts.append(part.get("text", ""))
@@ -618,7 +618,7 @@ class GeminiAdapter(BaseProviderAdapter):
 
         assistant_message, result_messages = await self._build_assistant_and_result_messages(raw_tool_calls, tool_calls)
 
-        events: List[ProviderEventResult] = []
+        events: list[ProviderEventResult] = []
         if tool_calls:
             additional_messages = [m for m in [assistant_message] + result_messages if m]
             events.append(

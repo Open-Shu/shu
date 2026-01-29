@@ -3,16 +3,14 @@ Integration tests for Tools HostCapabilities: http allowlist, auth (JWT bearer h
 
 Implementation aligns with docs/policies/TESTING.md and uses the custom integration runner.
 """
-import asyncio
+
 import json
 import logging
 import uuid
-from unittest.mock import patch, AsyncMock
-
-from typing import Any, Dict
+from typing import Any
+from unittest.mock import patch
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
-
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +21,8 @@ async def test_http_egress_allowlist_blocks_disallowed_domain(client, db, auth_h
     logger.info("=== EXPECTED TEST OUTPUT: An EgressDenied warning is expected below for disallowed domain ===")
 
     from shu.core.config import get_settings_instance
-    from shu.plugins.host.http_capability import HttpCapability
     from shu.plugins.host.exceptions import EgressDenied
+    from shu.plugins.host.http_capability import HttpCapability
 
     # Restrict allowlist to OAuth endpoint only
     settings = get_settings_instance()
@@ -78,13 +76,15 @@ async def test_auth_google_service_account_token_with_stub_exchange(client, db, 
     auth = AuthCapability(plugin_name="unit_test", user_id="test-user")
 
     # Stub the network exchange to avoid external calls
-    async def _stub_post_form(self, url: str, data: Dict[str, str]) -> Dict[str, Any]:
+    async def _stub_post_form(self, url: str, data: dict[str, str]) -> dict[str, Any]:
         assert "assertion" in data
         return {"access_token": "stub-token", "expires_in": 3600}
 
     # Patch at class level to avoid immutable instance attribute error
     with patch.object(AuthCapability, "_post_form", _stub_post_form):
-        token = await auth.google_service_account_token(scopes=["https://www.googleapis.com/auth/gmail.readonly"], subject="user@example.com")
+        token = await auth.google_service_account_token(
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"], subject="user@example.com"
+        )
     assert token == "stub-token"
 
 
@@ -155,5 +155,3 @@ class ToolsCapabilitiesTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(ToolsCapabilitiesTestSuite, globals())
-
-

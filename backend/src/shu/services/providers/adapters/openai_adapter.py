@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from shu.core.logging import get_logger
 
@@ -7,7 +7,6 @@ from ..adapter_base import (
     ProviderInformation,
     register_adapter,
 )
-from .responses_adapter import ResponsesAdapter
 from ..parameter_definitions import (
     ArrayParameter,
     BooleanParameter,
@@ -19,26 +18,26 @@ from ..parameter_definitions import (
     Option,
     StringParameter,
 )
+from .responses_adapter import ResponsesAdapter
 
 logger = get_logger(__name__)
 
 
 class OpenAIAdapter(ResponsesAdapter):
-
     # General provider information
     def get_provider_information(self) -> ProviderInformation:
         return ProviderInformation(
             key="openai",
             display_name="OpenAI",
         )
-    
+
     def get_capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(streaming=True, tools=True, vision=True)
 
     def get_api_base_url(self) -> str:
         return "https://api.openai.com/v1"
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             "temperature": NumberParameter(
                 min=0,
@@ -61,9 +60,7 @@ class OpenAIAdapter(ResponsesAdapter):
             "max_output_tokens": IntegerParameter(
                 min=1,
                 label="Max Output Tokens",
-                description=(
-                    "Hard cap on the number of tokens the model can generate in this response."
-                ),
+                description=("Hard cap on the number of tokens the model can generate in this response."),
             ),
             "top_logprobs": IntegerParameter(
                 min=0,
@@ -142,9 +139,7 @@ class OpenAIAdapter(ResponsesAdapter):
                                 ),
                                 "search_context_size": EnumParameter(
                                     label="Search Context Size",
-                                    description=(
-                                        "How much retrieved web content is fed back to the model."
-                                    ),
+                                    description=("How much retrieved web content is fed back to the model."),
                                     options=[
                                         Option(value="low", label="Low"),
                                         Option(value="medium", label="Medium"),
@@ -176,9 +171,7 @@ class OpenAIAdapter(ResponsesAdapter):
             "parallel_tool_calls": BooleanParameter(
                 label="Parallel Tool Calls",
                 default=True,
-                description=(
-                    "If enabled, the model may request multiple tool calls in parallel during a single step."
-                ),
+                description=("If enabled, the model may request multiple tool calls in parallel during a single step."),
             ),
             "tool_choice": EnumParameter(
                 label="Tool Choice",

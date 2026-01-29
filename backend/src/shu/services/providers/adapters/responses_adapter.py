@@ -1,6 +1,6 @@
 import copy
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import jmespath
 
@@ -8,18 +8,18 @@ from shu.models.plugin_execution import CallableTool
 
 from ..adapter_base import (
     BaseProviderAdapter,
+    ChatContext,
+    ChatMessage,
     ProviderAdapterContext,
     ProviderCapabilities,
     ProviderContentDeltaEventResult,
     ProviderErrorEventResult,
     ProviderEventResult,
     ProviderFinalEventResult,
-    ProviderReasoningDeltaEventResult,
     ProviderInformation,
+    ProviderReasoningDeltaEventResult,
     ProviderToolCallEventResult,
     ToolCallInstructions,
-    ChatContext,
-    ChatMessage,
 )
 
 
@@ -28,8 +28,8 @@ class ResponsesAdapter(BaseProviderAdapter):
 
     def __init__(self, context: ProviderAdapterContext):
         super().__init__(context)
-        self.function_call_messages: List[Dict[str, Any]] = []
-        self.function_call_reasoning_messages: List[Dict[str, Any]] = []
+        self.function_call_messages: list[dict[str, Any]] = []
+        self.function_call_reasoning_messages: list[dict[str, Any]] = []
 
     # General provider information
     def get_provider_information(self) -> ProviderInformation:
@@ -54,13 +54,8 @@ class ResponsesAdapter(BaseProviderAdapter):
     def get_model_information_path(self) -> str:
         return "data[*].{id: id, name: id}"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
-        return {
-            "scheme": "bearer",
-            "headers": {
-                "Authorization": f"Bearer {self.api_key}"
-            }
-        }
+    def get_authorization_header(self) -> dict[str, Any]:
+        return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
 
     def _get_function_call_arguments_from_response(self, stream_event: dict) -> ToolCallInstructions:
         if isinstance(stream_event, list):
@@ -81,7 +76,7 @@ class ResponsesAdapter(BaseProviderAdapter):
             args_dict = {}
 
         return ToolCallInstructions(plugin_name=plugin_name, operation=op, args_dict=args_dict)
-    
+
     def _extract_usage(self, path: str, chunk):
         usage = jmespath.search(path, chunk) or {}
         if not usage:
@@ -94,29 +89,28 @@ class ResponsesAdapter(BaseProviderAdapter):
             usage.get("total_tokens", 0),
         )
 
-    def _format_responses_attachments(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+    def _format_responses_attachments(self, attachments: list[Any]) -> list[dict[str, Any]]:
         """Format attachments for OpenAI Responses API.
-        
+
         Uses type: input_text, type: input_image, and type: input_file formats.
         """
-        parts: List[Dict[str, Any]] = []
-        
+        parts: list[dict[str, Any]] = []
+
         for att in attachments:
             if self._is_image_attachment(att):
                 data_uri = self._attachment_to_data_uri(att)
                 if data_uri:
-                    parts.append({
-                        "type": "input_image",
-                        "image_url": data_uri
-                    })
+                    parts.append({"type": "input_image", "image_url": data_uri})
             elif self.supports_native_documents():
                 b64_data = self._read_attachment_base64(att)
                 if b64_data:
-                    parts.append({
-                        "type": "input_file",
-                        "filename": att.original_filename,
-                        "file_data": f"data:{att.mime_type};base64,{b64_data}",
-                    })
+                    parts.append(
+                        {
+                            "type": "input_file",
+                            "filename": att.original_filename,
+                            "file_data": f"data:{att.mime_type};base64,{b64_data}",
+                        }
+                    )
                 else:
                     fallback = self._attachment_to_input_text_fallback(att)
                     if fallback:
@@ -125,11 +119,13 @@ class ResponsesAdapter(BaseProviderAdapter):
                 fallback = self._attachment_to_input_text_fallback(att)
                 if fallback:
                     parts.append(fallback)
-        
+
         return parts
 
-    async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:
-        incomplete_response = jmespath.search("type=='response.incomplete' && response.incomplete_details.reason", chunk)
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
+        incomplete_response = jmespath.search(
+            "type=='response.incomplete' && response.incomplete_details.reason", chunk
+        )
         if incomplete_response:
             return ProviderErrorEventResult(
                 content=f"Got incomplete response from provider because '{incomplete_response}'"
@@ -156,7 +152,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         reasoning_delta = jmespath.search("type=='response.reasoning_summary_text.delta' && delta", chunk)
         if reasoning_delta:
             return ProviderReasoningDeltaEventResult(content=reasoning_delta)
-        
+
         # Extract usage for this cycle and add to previous cycles
         completion_message = jmespath.search("type=='response.completed'", chunk)
         if completion_message:
@@ -166,7 +162,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         if final_message:
             return ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})
 
-    async def finalize_provider_events(self) -> List[ProviderEventResult]:
+    async def finalize_provider_events(self) -> list[ProviderEventResult]:
         if not self.function_call_messages:
             return []
 
@@ -182,7 +178,7 @@ class ResponsesAdapter(BaseProviderAdapter):
                     "call_id": function_call_message.get("call_id", ""),
                 },
             )
-            for function_call_message, tool_call in zip(self.function_call_messages, tool_calls)
+            for function_call_message, tool_call in zip(self.function_call_messages, tool_calls, strict=False)
         ]
         self.function_call_reasoning_messages = []
         self.function_call_messages = []
@@ -205,7 +201,7 @@ class ResponsesAdapter(BaseProviderAdapter):
             )
         ]
 
-    async def handle_provider_completion(self, data: Dict[str, Any]) -> List[ProviderEventResult]:
+    async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
         incomplete_response = jmespath.search("status=='incomplete' && incomplete_details.reason", data)
         if incomplete_response:
             return [
@@ -218,9 +214,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         self._extract_usage("usage", data)
 
         final_message = jmespath.search("output[?type=='message'] && output[-1].content[-1].text", data)
-        final_messages = [
-            ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})
-        ]
+        final_messages = [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})]
 
         function_call_messages = jmespath.search("output[?type=='function_call']", data) or []
         if not function_call_messages:
@@ -237,7 +231,7 @@ class ResponsesAdapter(BaseProviderAdapter):
                     "call_id": function_call_message.get("call_id", ""),
                 },
             )
-            for function_call_message, tool_call in zip(function_call_messages, tool_calls)
+            for function_call_message, tool_call in zip(function_call_messages, tool_calls, strict=False)
         ]
 
         additional_messages = [
@@ -259,18 +253,22 @@ class ResponsesAdapter(BaseProviderAdapter):
             )
         ] + final_messages
 
-    async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:
-        res: List[Dict[str, Any]] = []
+    async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
+        res: list[dict[str, Any]] = []
         for tool in tools:
             title = None
             if isinstance(tool.enum_labels, dict):
                 title = tool.enum_labels.get(str(tool.op))
             fname = f"{tool.name}__{tool.op}"
-            op_schema = copy.deepcopy(tool.schema) if tool.schema else {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            }
+            op_schema = (
+                copy.deepcopy(tool.schema)
+                if tool.schema
+                else {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True,
+                }
+            )
             props = op_schema.setdefault("properties", {})
             props["op"] = {
                 "type": "string",
@@ -298,13 +296,13 @@ class ResponsesAdapter(BaseProviderAdapter):
         payload["tools"] = payload.get("tools", []) + res
         return payload
 
-    def _process_message_for_responses_api(self, message: ChatMessage) -> Dict[str, Any]:
+    def _process_message_for_responses_api(self, message: ChatMessage) -> dict[str, Any]:
         """Convert ChatMessage to Responses API format, handling special message types."""
         metadata = getattr(message, "metadata", {}) or {}
         content = getattr(message, "content", "")
         role = getattr(message, "role", "")
         attachments = getattr(message, "attachments", []) or []
-        
+
         # Handle function_call_output messages - these are special API objects
         if metadata.get("type") == "function_call_output":
             return {
@@ -312,14 +310,14 @@ class ResponsesAdapter(BaseProviderAdapter):
                 "call_id": metadata.get("call_id", ""),
                 "output": content if isinstance(content, str) else str(content),
             }
-        
+
         # Handle reasoning and function_call messages - pass through as-is
         if metadata.get("type") in ("reasoning", "function_call") and isinstance(content, dict):
             return content
-        
+
         # Handle user messages with attachments (multimodal)
         if role == "user" and attachments:
-            content_parts: List[Dict[str, Any]] = []
+            content_parts: list[dict[str, Any]] = []
             # Add text content first
             if isinstance(content, str) and content:
                 content_parts.append({"type": "input_text", "text": content})
@@ -328,14 +326,14 @@ class ResponsesAdapter(BaseProviderAdapter):
 
             # Add formatted attachments
             content_parts.extend(self._format_responses_attachments(attachments))
-            
+
             return {"role": role, "content": content_parts if content_parts else content}
 
         # Standard role/content message
         return {"role": role, "content": content}
 
-    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
-        result: List[Dict[str, Any]] = []
+    async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:
+        result: list[dict[str, Any]] = []
         if messages.system_prompt:
             result.append({"role": "system", "content": messages.system_prompt})
         for m in messages.messages:
@@ -343,10 +341,10 @@ class ResponsesAdapter(BaseProviderAdapter):
         payload["input"] = result
         return payload
 
-    async def inject_model_parameter(self, model_value: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_model_parameter(self, model_value: str, payload: dict[str, Any]) -> dict[str, Any]:
         payload["model"] = model_value
         return payload
 
-    async def inject_streaming_parameter(self, should_stream: bool, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_streaming_parameter(self, should_stream: bool, payload: dict[str, Any]) -> dict[str, Any]:
         payload["stream"] = should_stream
         return payload

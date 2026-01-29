@@ -1,5 +1,4 @@
-"""
-High-level ingestion helpers used by host.kb capability.
+"""High-level ingestion helpers used by host.kb capability.
 
 Implementation Status: Partial
 - Currently implements ingest_document, ingest_email, ingest_text, ingest_thread
@@ -13,20 +12,22 @@ Limitations/Known Issues:
 Security Vulnerabilities:
 - Callers must ensure redaction/PII policies before passing content to ingestion.
 """
+
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging import get_logger
-from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
-from ..services.document_service import DocumentService
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
+from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
+from ..services.document_service import DocumentService
 
 logger = get_logger(__name__)
 
@@ -34,18 +35,19 @@ logger = get_logger(__name__)
 @dataclass
 class UpsertResult:
     """Result of document upsert operation."""
+
     document: Document
-    extraction: Dict[str, Any]
+    extraction: dict[str, Any]
     skipped: bool
-    skip_reason: Optional[str] = None
+    skip_reason: str | None = None
 
 
 def _build_skipped_result(
     document: Document,
-    extraction: Dict[str, Any],
+    extraction: dict[str, Any],
     ko_id: str,
-    skip_reason: Optional[str] = None,
-) -> Dict[str, Any]:
+    skip_reason: str | None = None,
+) -> dict[str, Any]:
     """Build a result dict for a skipped (unchanged) document.
 
     Centralizes the skip-result pattern to avoid duplication across ingestion functions.
@@ -65,7 +67,7 @@ def _build_skipped_result(
 # Module-level semaphore for limiting concurrent profiling tasks.
 # Prevents LLM rate-limit storms during bulk imports. Tasks beyond this limit
 # queue in memory until a slot opens. See SHU-211 for persistent queue migration.
-_profiling_semaphore: Optional[asyncio.Semaphore] = None
+_profiling_semaphore: asyncio.Semaphore | None = None
 
 
 def _get_profiling_semaphore() -> asyncio.Semaphore:
@@ -73,14 +75,14 @@ def _get_profiling_semaphore() -> asyncio.Semaphore:
     global _profiling_semaphore
     if _profiling_semaphore is None:
         from ..core.config import get_settings_instance
+
         settings = get_settings_instance()
         _profiling_semaphore = asyncio.Semaphore(settings.profiling_max_concurrent_tasks)
     return _profiling_semaphore
 
 
 async def _trigger_profiling_if_enabled(document_id: str) -> None:
-    """
-    Trigger async document profiling if enabled (SHU-344).
+    """Trigger async document profiling if enabled (SHU-344).
 
     This spawns a fire-and-forget background task that:
     1. Acquires a slot from the profiling semaphore (waits if at capacity)
@@ -105,10 +107,10 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
     async def _run_profiling():
         async with semaphore:
             try:
-                from ..core.database import get_async_session_local
                 from ..core.config import get_config_manager
-                from .side_call_service import SideCallService
+                from ..core.database import get_async_session_local
                 from .profiling_orchestrator import ProfilingOrchestrator
+                from .side_call_service import SideCallService
 
                 session_local = get_async_session_local()
                 async with session_local() as bg_session:
@@ -145,7 +147,21 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
     name = (filename or "").lower()
     if name.endswith(".pdf") or mime_type == "application/pdf":
         return "pdf"
-    for ext in (".md", ".txt", ".docx", ".doc", ".rtf", ".html", ".htm", ".eml", ".csv", ".py", ".js", ".xlsx", ".pptx"):
+    for ext in (
+        ".md",
+        ".txt",
+        ".docx",
+        ".doc",
+        ".rtf",
+        ".html",
+        ".htm",
+        ".eml",
+        ".csv",
+        ".py",
+        ".js",
+        ".xlsx",
+        ".pptx",
+    ):
         if name.endswith(ext):
             return ext.lstrip(".")
     if mime_type in (
@@ -172,7 +188,13 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
             return "html"
         if mime_type == "text/csv":
             return "csv"
-        if mime_type in ("text/javascript", "application/javascript", "application/x-javascript", "text/ecmascript", "application/ecmascript"):
+        if mime_type in (
+            "text/javascript",
+            "application/javascript",
+            "application/x-javascript",
+            "text/ecmascript",
+            "application/ecmascript",
+        ):
             return "js"
         if mime_type in ("text/x-python", "application/x-python", "application/x-python-code"):
             return "py"
@@ -180,7 +202,7 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
     return "txt"
 
 
-def _safe_dt(value: Optional[str]) -> Optional[datetime]:
+def _safe_dt(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -188,20 +210,19 @@ def _safe_dt(value: Optional[str]) -> Optional[datetime]:
         if s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except Exception:
         return None
 
 
-def _hashes_match(incoming_source_hash: Optional[str], incoming_content_hash: str,
-                  existing: Document) -> Tuple[bool, str]:
-    """
-    Compare incoming hashes with existing document hashes.
+def _hashes_match(incoming_source_hash: str | None, incoming_content_hash: str, existing: Document) -> tuple[bool, str]:
+    """Compare incoming hashes with existing document hashes.
 
     Priority: source_hash (provider-supplied, e.g., md5Checksum) > content_hash (computed SHA256).
 
     Returns:
         Tuple of (match: bool, matched_hash: str for logging, empty if no comparison possible)
+
     """
     # Prefer source_hash comparison if both sides have it
     if incoming_source_hash and existing.source_hash:
@@ -224,12 +245,11 @@ async def _upsert_document_record(
     title: str,
     file_type: str,
     content: str,
-    extraction: Dict[str, Any],
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
+    extraction: dict[str, Any],
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
 ) -> UpsertResult:
-    """
-    Create or update a document record.
+    """Create or update a document record.
 
     If the document already exists and hashes match (unchanged content),
     returns skipped=True to signal callers to skip chunk recomputation.
@@ -256,6 +276,7 @@ async def _upsert_document_record(
     if existing is None:
         # New document - create it
         from ..schemas.document import DocumentCreate
+
         doc_create = DocumentCreate(
             knowledge_base_id=knowledge_base_id,
             title=normalized_title,
@@ -293,7 +314,7 @@ async def _upsert_document_record(
                     "source_id": source_id,
                     "hash": matched_hash,
                     "document_id": existing.id,
-                }
+                },
             )
             return UpsertResult(
                 document=existing,
@@ -339,14 +360,14 @@ async def ingest_document(
     filename: str,
     mime_type: str,
     source_id: str,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-    ocr_mode: Optional[str] = None,
-) -> Dict[str, Any]:
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+    ocr_mode: str | None = None,
+) -> dict[str, Any]:
     # OCR/text extraction
     mt = (mime_type or "").lower()
     # Prefer filename extension when available; allow caller hint via attributes; fall back to MIME type
-    fname = (filename or "")
+    fname = filename or ""
     ext_from_name = None
     if isinstance(fname, str) and "." in fname:
         ext_from_name = "." + fname.rsplit(".", 1)[-1].lower()
@@ -389,12 +410,7 @@ async def ingest_document(
         preferred_ext = None
 
     # Choose suffix: caller hint > filename extension > MIME mapping > generic text/* -> .txt > .bin
-    suffix = (
-        preferred_ext
-        or ext_from_name
-        or ext_map.get(mt)
-        or (".txt" if mt.startswith("text/") else ".bin")
-    )
+    suffix = preferred_ext or ext_from_name or ext_map.get(mt) or (".txt" if mt.startswith("text/") else ".bin")
     file_path = f"/virtual/input{suffix}"
     extractor = TextExtractor()
     eff = (ocr_mode or "auto").strip().lower()
@@ -402,44 +418,92 @@ async def ingest_document(
         eff = "auto"
     try:
         if eff == "fallback":
-            res_no = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=False, kb_config=None, progress_context=None)
+            res_no = await extractor.extract_text(
+                file_path,
+                file_content=file_bytes,
+                use_ocr=False,
+                kb_config=None,
+                progress_context=None,
+            )
             text = ""
-            meta: Dict[str, Any] = {}
+            meta: dict[str, Any] = {}
             if isinstance(res_no, dict):
                 text = str(res_no.get("text") or "")
-                meta = (res_no.get("metadata") or {})
+                meta = res_no.get("metadata") or {}
                 if text.strip():
-                    extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
+                    extraction = {
+                        "method": meta.get("method"),
+                        "engine": meta.get("engine"),
+                        "confidence": meta.get("confidence"),
+                        "duration": meta.get("duration"),
+                        "details": meta,
+                    }
                 else:
-                    res_ocr = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=True, kb_config=None, progress_context=None)
+                    res_ocr = await extractor.extract_text(
+                        file_path,
+                        file_content=file_bytes,
+                        use_ocr=True,
+                        kb_config=None,
+                        progress_context=None,
+                    )
                     if isinstance(res_ocr, dict):
                         text = str(res_ocr.get("text") or "")
-                        meta = (res_ocr.get("metadata") or {})
+                        meta = res_ocr.get("metadata") or {}
                     else:
                         text = str(res_ocr or "")
                         meta = {}
-                    extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
+                    extraction = {
+                        "method": meta.get("method"),
+                        "engine": meta.get("engine"),
+                        "confidence": meta.get("confidence"),
+                        "duration": meta.get("duration"),
+                        "details": meta,
+                    }
             else:
                 text = str(res_no or "")
                 if not text.strip():
-                    res_ocr = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=True, kb_config=None, progress_context=None)
+                    res_ocr = await extractor.extract_text(
+                        file_path,
+                        file_content=file_bytes,
+                        use_ocr=True,
+                        kb_config=None,
+                        progress_context=None,
+                    )
                     if isinstance(res_ocr, dict):
                         text = str(res_ocr.get("text") or "")
-                        meta = (res_ocr.get("metadata") or {})
+                        meta = res_ocr.get("metadata") or {}
                     else:
                         text = str(res_ocr or "")
                         meta = {}
-                extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
+                extraction = {
+                    "method": meta.get("method"),
+                    "engine": meta.get("engine"),
+                    "confidence": meta.get("confidence"),
+                    "duration": meta.get("duration"),
+                    "details": meta,
+                }
         else:
             use_ocr = True if eff == "always" else False if eff == "never" else (mt == "application/pdf")
-            res = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=use_ocr, kb_config=None, progress_context=None)
+            res = await extractor.extract_text(
+                file_path,
+                file_content=file_bytes,
+                use_ocr=use_ocr,
+                kb_config=None,
+                progress_context=None,
+            )
             if isinstance(res, dict):
                 text = str(res.get("text") or "")
-                meta = (res.get("metadata") or {})
+                meta = res.get("metadata") or {}
             else:
                 text = str(res or "")
                 meta = {}
-            extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
+            extraction = {
+                "method": meta.get("method"),
+                "engine": meta.get("engine"),
+                "confidence": meta.get("confidence"),
+                "duration": meta.get("duration"),
+                "details": meta,
+            }
     except UnsupportedFileFormatError:
         # Preserve a useful reason in extraction details for upstream callers
         text = ""
@@ -452,7 +516,13 @@ async def ingest_document(
         }
     except Exception:
         text = ""
-        extraction = {"method": None, "engine": None, "confidence": None, "duration": None, "details": {}}
+        extraction = {
+            "method": None,
+            "engine": None,
+            "confidence": None,
+            "duration": None,
+            "details": {},
+        }
 
     # Persist Document (create or update by kb_id/source_id)
     svc = DocumentService(db)
@@ -520,19 +590,19 @@ async def ingest_email(
     plugin_name: str,
     user_id: str,
     subject: str,
-    sender: Optional[str],
-    recipients: Dict[str, List[str]],
-    date: Optional[str],
+    sender: str | None,
+    recipients: dict[str, list[str]],
+    date: str | None,
     message_id: str,
-    thread_id: Optional[str],
-    body_text: Optional[str],
-    body_html: Optional[str] = None,
-    labels: Optional[List[str]] = None,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    thread_id: str | None,
+    body_text: str | None,
+    body_html: str | None = None,
+    labels: list[str] | None = None,
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     # Build an indexable text body
-    header_lines: List[str] = []
+    header_lines: list[str] = []
     header_lines.append(f"Subject: {subject or '(no subject)'}")
     if sender:
         header_lines.append(f"From: {sender}")
@@ -552,6 +622,7 @@ async def ingest_email(
     if not body and body_html:
         # very naive strip; caller should prefer body_text
         import re as _re
+
         s = _re.sub(r"<script[\s\S]*?</script>", " ", body_html, flags=_re.IGNORECASE)
         s = _re.sub(r"<style[\s\S]*?</style>", " ", s, flags=_re.IGNORECASE)
         s = _re.sub(r"<[^>]+>", " ", s)
@@ -566,7 +637,7 @@ async def ingest_email(
     file_type = "email"
     title = subject or "(no subject)"
 
-    extraction_details: Dict[str, Any] = {
+    extraction_details: dict[str, Any] = {
         "external_id": external_id,
         "message_id": message_id,
         "thread_id": thread_id,
@@ -637,9 +708,9 @@ async def ingest_text(
     title: str,
     content: str,
     source_id: str,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     svc = DocumentService(db)
     source_type = f"plugin:{plugin_name}"
     file_type = "txt"
@@ -707,9 +778,9 @@ async def ingest_thread(
     title: str,
     content: str,
     thread_id: str,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     # Treat as a text document with file_type 'thread'
     svc = DocumentService(db)
     source_type = f"plugin:{plugin_name}"

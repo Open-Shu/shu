@@ -1,12 +1,12 @@
 """Authentication API endpoints for Shu"""
 
-from datetime import datetime, timezone
 import logging
-from typing import Dict, Any, List
+from datetime import UTC, datetime
+from typing import Any
 
 import certifi
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from ..api.dependencies import get_db
-from ..auth import User, UserRole, JWTManager
-from ..auth.rbac import get_current_user, require_admin
+from ..auth import JWTManager, User, UserRole
 from ..auth.password_auth import password_auth_service
+from ..auth.rbac import get_current_user, require_admin
 from ..core.config import get_settings_instance
 from ..core.rate_limiting import get_rate_limit_service
 from ..models.provider_identity import ProviderIdentity
@@ -28,16 +28,18 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 async def _check_auth_rate_limit(request: Request) -> None:
-    """
-    Enforces authentication-specific rate limits and raises HTTP 429 when exceeded.
-    
+    """Enforces authentication-specific rate limits and raises HTTP 429 when exceeded.
+
     If the configured rate limit service is disabled this function returns immediately. Otherwise it determines the client's IP from the provided Request and checks the authentication rate limit; when the limit is exceeded an HTTPException with status 429 and rate-limit headers is raised.
-    
-    Parameters:
+
+    Parameters
+    ----------
         request (Request): FastAPI request used to determine client IP and headers.
-    
-    Raises:
+
+    Raises
+    ------
         HTTPException: with status 429 and a payload containing `retry_after` when the auth rate limit is exceeded.
+
     """
     from ..core.rate_limiting import get_client_ip
 
@@ -63,23 +65,27 @@ async def _check_auth_rate_limit(request: Request) -> None:
             headers=result.to_headers(),
         )
 
-async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
-    """
-    Validate a Google ID token and return normalized user identity information.
-    
-    Parameters:
+
+async def _verify_google_id_token(id_token: str) -> dict[str, Any]:
+    """Validate a Google ID token and return normalized user identity information.
+
+    Parameters
+    ----------
         id_token (str): The Google ID token to verify.
-    
-    Returns:
+
+    Returns
+    -------
         dict: A mapping with keys:
             - `google_id` (str): The Google account identifier (`sub` claim).
             - `email` (str): The user's email address.
             - `name` (str): The user's display name or the local-part of the email if name is absent.
             - `picture` (Optional[str]): URL of the user's avatar, if provided.
-    
-    Raises:
+
+    Raises
+    ------
         ValueError: If `id_token` is missing, the token payload is invalid or incomplete,
                     verification fails, or a network error occurs during verification.
+
     """
     if not id_token:
         raise ValueError("Missing Google ID token")
@@ -110,22 +116,25 @@ async def _verify_google_id_token(id_token: str) -> Dict[str, Any]:
     }
 
 
-async def _get_microsoft_user_info(access_token: str) -> Dict[str, Any]:
-    """
-    Get Microsoft user information using an access token via Microsoft Graph API.
+async def _get_microsoft_user_info(access_token: str) -> dict[str, Any]:
+    """Get Microsoft user information using an access token via Microsoft Graph API.
 
-    Parameters:
+    Parameters
+    ----------
         access_token (str): The Microsoft access token.
 
-    Returns:
+    Returns
+    -------
         dict: A mapping with keys:
             - `microsoft_id` (str): The Microsoft account identifier.
             - `email` (str): The user's email address.
             - `name` (str): The user's display name.
             - `picture` (Optional[str]): URL of the user's avatar, if available.
 
-    Raises:
+    Raises
+    ------
         ValueError: If token is missing, verification fails, or network error occurs.
+
     """
     if not access_token:
         raise ValueError("Missing Microsoft access token")
@@ -136,10 +145,7 @@ async def _get_microsoft_user_info(access_token: str) -> Dict[str, Any]:
         async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
             resp = await client.get(
                 url,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json"
-                }
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             )
         if resp.status_code != 200:
             text = resp.text[:300]
@@ -165,47 +171,63 @@ async def _get_microsoft_user_info(access_token: str) -> Dict[str, Any]:
 
 class LoginRequest(BaseModel):
     """Request model for Google OAuth login endpoint"""
+
     google_token: str
+
 
 class PasswordLoginRequest(BaseModel):
     """Request model for password login endpoint"""
+
     email: str
     password: str
 
+
 class RegisterRequest(BaseModel):
     """Request model for user registration endpoint"""
+
     email: str
     password: str
     name: str
 
+
 class ChangePasswordRequest(BaseModel):
     """Request model for password change endpoint"""
+
     old_password: str
     new_password: str
 
+
 class RefreshTokenRequest(BaseModel):
     """Request model for token refresh endpoint"""
+
     refresh_token: str
+
 
 class TokenResponse(BaseModel):
     """Response model for token endpoints"""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    user: Dict[str, Any]
+    user: dict[str, Any]
+
 
 class UserUpdateRequest(BaseModel):
     """Request model for updating user"""
+
     role: str
     is_active: bool = True
 
+
 class CreateUserRequest(BaseModel):
     """Request model for admin to create new users"""
+
     email: str
     name: str
     role: str = "regular_user"
     password: str = None  # Optional - if not provided, user must use Google OAuth
     auth_method: str = "password"  # 'password' or 'google'
+
 
 class UserService:
     """Service for user management operations"""
@@ -225,18 +247,17 @@ class UserService:
             if auth_method == "password":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses password authentication. Please use the username & password login flow."
+                    detail="This account uses password authentication. Please use the username & password login flow.",
                 )
-            elif auth_method == "microsoft":
+            if auth_method == "microsoft":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow."
+                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow.",
                 )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow."
-                )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow.",
+            )
 
         # Check if user exists in database
         stmt = select(User).where(User.google_id == google_user["google_id"])
@@ -248,11 +269,11 @@ class UserService:
             if not existing_user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User account is inactive. Please contact an administrator for activation."
+                    detail="User account is inactive. Please contact an administrator for activation.",
                 )
 
             # Update last login and refresh avatar if provided
-            existing_user.last_login = datetime.now(timezone.utc)
+            existing_user.last_login = datetime.now(UTC)
             try:
                 new_picture = google_user.get("picture")
                 if new_picture and new_picture != existing_user.picture_url:
@@ -273,7 +294,7 @@ class UserService:
             picture_url=google_user.get("picture"),
             role=user_role.value,
             is_active=is_active,
-            last_login=datetime.now(timezone.utc) if is_active else None
+            last_login=datetime.now(UTC) if is_active else None,
         )
 
         if user_role == UserRole.ADMIN:
@@ -290,23 +311,27 @@ class UserService:
         if not is_active:
             raise HTTPException(
                 status_code=status.HTTP_201_CREATED,
-                detail="Account was created, but will need to be activated. Please contact an administrator for activation."
+                detail="Account was created, but will need to be activated. Please contact an administrator for activation.",
             )
 
         return user
 
-    async def authenticate_or_create_microsoft_user(self, microsoft_user: Dict[str, Any], db: AsyncSession) -> User:
+    async def authenticate_or_create_microsoft_user(self, microsoft_user: dict[str, Any], db: AsyncSession) -> User:
         """Authenticate user with Microsoft identity or create new user.
 
-        Parameters:
+        Parameters
+        ----------
             microsoft_user: Dict containing 'microsoft_id', 'email', 'name', 'picture' from Microsoft Graph.
             db: AsyncSession for database operations.
 
-        Returns:
+        Returns
+        -------
             User: The authenticated or newly created user.
 
-        Raises:
+        Raises
+        ------
             HTTPException: If user exists with password auth or account is inactive.
+
         """
         email = microsoft_user["email"]
         microsoft_id = microsoft_user["microsoft_id"]
@@ -316,14 +341,14 @@ class UserService:
         if auth_method == "password":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="This account uses password authentication. Please use the username & password login flow."
+                detail="This account uses password authentication. Please use the username & password login flow.",
             )
         # Note: Other SSO providers (google) are allowed - the linking flow below will add Microsoft identity
 
         # Check if user exists via ProviderIdentity
         stmt = select(ProviderIdentity).where(
             ProviderIdentity.provider_key == "microsoft",
-            ProviderIdentity.account_id == microsoft_id
+            ProviderIdentity.account_id == microsoft_id,
         )
         result = await db.execute(stmt)
         existing_identity = result.scalar_one_or_none()
@@ -339,17 +364,17 @@ class UserService:
                 logger.warning("Orphaned ProviderIdentity found", microsoft_id=microsoft_id)
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="User account data inconsistency. Please contact support."
+                    detail="User account data inconsistency. Please contact support.",
                 )
 
             if not existing_user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User account is inactive. Please contact an administrator for activation."
+                    detail="User account is inactive. Please contact an administrator for activation.",
                 )
 
             # Update last login
-            existing_user.last_login = datetime.now(timezone.utc)
+            existing_user.last_login = datetime.now(UTC)
             await db.commit()
             return existing_user
 
@@ -363,7 +388,7 @@ class UserService:
             if not existing_user_by_email.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User account is inactive. Please contact an administrator for activation."
+                    detail="User account is inactive. Please contact an administrator for activation.",
                 )
 
             # Create ProviderIdentity link
@@ -376,7 +401,7 @@ class UserService:
                 avatar_url=microsoft_user.get("picture"),
             )
             db.add(provider_identity)
-            existing_user_by_email.last_login = datetime.now(timezone.utc)
+            existing_user_by_email.last_login = datetime.now(UTC)
             await db.commit()
             logger.info("Linked Microsoft identity to existing user", email=email)
             return existing_user_by_email
@@ -394,7 +419,7 @@ class UserService:
             role=user_role.value,
             auth_method="microsoft",
             is_active=is_active,
-            last_login=datetime.now(timezone.utc) if is_active else None
+            last_login=datetime.now(UTC) if is_active else None,
         )
 
         if user_role == UserRole.ADMIN:
@@ -422,7 +447,7 @@ class UserService:
         if not is_active:
             raise HTTPException(
                 status_code=status.HTTP_201_CREATED,
-                detail="Account was created, but will need to be activated. Please contact an administrator for activation."
+                detail="Account was created, but will need to be activated. Please contact an administrator for activation.",
             )
 
         return user
@@ -430,13 +455,15 @@ class UserService:
     async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User:
         """Get user by ID"""
         from sqlalchemy import select
+
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_all_users(self, db: AsyncSession) -> List[User]:
+    async def get_all_users(self, db: AsyncSession) -> list[User]:
         """Get all users (admin only)"""
         from sqlalchemy import select
+
         stmt = select(User).order_by(User.is_active.desc(), User.name.asc())
         result = await db.execute(stmt)
         return result.scalars().all()
@@ -444,6 +471,7 @@ class UserService:
     async def update_user_role(self, user_id: str, new_role: str, db: AsyncSession) -> User:
         """Update user role (admin only)"""
         from sqlalchemy import select
+
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -486,15 +514,11 @@ class UserService:
 
     async def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
         # Determine user role
-        is_admin_email = email.lower() in [
-            email.lower()
-            for email in self.settings.admin_emails
-        ]
+        is_admin_email = email.lower() in [email.lower() for email in self.settings.admin_emails]
 
         if is_first_user or is_admin_email:
             return UserRole.ADMIN
-        else:
-            return UserRole.REGULAR_USER
+        return UserRole.REGULAR_USER
 
     async def is_first_user(self, db: AsyncSession) -> bool:
         count_stmt = select(User)
@@ -519,21 +543,24 @@ async def login(
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(_check_auth_rate_limit),
 ):
-    """
-    Authenticate or create a user using a Google ID token and return JWT access and refresh tokens.
-    
+    """Authenticate or create a user using a Google ID token and return JWT access and refresh tokens.
+
     Authenticates the incoming Google ID token, creates the user if needed, and issues an access token and refresh token packaged with the user's public data.
-    
-    Parameters:
+
+    Parameters
+    ----------
         request (LoginRequest): Payload containing the Google ID token.
         db (AsyncSession): Database session injected via dependency.
         _rate_limit: Rate limiting dependency (enforces auth rate limits).
-    
-    Returns:
+
+    Returns
+    -------
         SuccessResponse: Contains a TokenResponse with `access_token`, `refresh_token`, `token_type`, and `user` dictionary.
-    
-    Raises:
+
+    Raises
+    ------
         HTTPException: Raised with 401 when authentication/verification fails; propagated as-is for other HTTP errors; raised with 500 for unexpected internal errors.
+
     """
     try:
         # Authenticate or create user
@@ -543,46 +570,40 @@ async def login(
         access_token = user_service.jwt_manager.create_access_token(user.to_dict())
         refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
 
-        response_data = TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=user.to_dict()
-        )
+        response_data = TokenResponse(access_token=access_token, refresh_token=refresh_token, user=user.to_dict())
 
         return SuccessResponse(data=response_data)
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
     except HTTPException as e:
         raise e
     except Exception as e:
         logger.error(f"Login error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication failed")
 
-@router.post("/register", response_model=SuccessResponse[Dict[str, str]], dependencies=[Depends(_check_auth_rate_limit)])
+
+@router.post(
+    "/register",
+    response_model=SuccessResponse[dict[str, str]],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
 async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Register a new user account using email and password.
-    
+    """Register a new user account using email and password.
+
     If the new account is assigned an admin role it is activated immediately; otherwise it remains inactive and requires administrator activation. The endpoint does not issue authentication tokens for newly registered (non-admin) users.
-    
+
     Returns:
         SuccessResponse: Contains a data object with keys:
             - message: Confirmation text (notes if admin activation is required).
             - email: The created user's email.
             - status: "activated" for admin-created accounts or "pending_activation" for accounts awaiting admin activation.
-    
+
     Raises:
         HTTPException: with status 400 when input validation or business rules fail, or 500 for unexpected server errors.
+
     """
     try:
-
         is_first_user = await user_service.is_first_user(db)
         user_role = await user_service.determine_user_role(request.email, is_first_user)
         is_admin = user_role == UserRole.ADMIN
@@ -598,44 +619,49 @@ async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get
         )
 
         # Return success message without tokens (user is inactive)
-        return SuccessResponse(data={
-            "message": "Registration successful!" + (
-                " Your account has been created but requires administrator activation before you can log in."
-                if not is_admin else
-                ""
-            ),
-            "email": user.email,
-            "status": "pending_activation" if not is_admin else "activated"
-        })
+        return SuccessResponse(
+            data={
+                "message": "Registration successful!"
+                + (
+                    " Your account has been created but requires administrator activation before you can log in."
+                    if not is_admin
+                    else ""
+                ),
+                "email": user.email,
+                "status": "pending_activation" if not is_admin else "activated",
+            }
+        )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Registration error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Registration failed")
 
-@router.post("/login/password", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
+
+@router.post(
+    "/login/password",
+    response_model=SuccessResponse[TokenResponse],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
 async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Authenticate a user using email and password and return JWT tokens and user info.
-    
-    Parameters:
+    """Authenticate a user using email and password and return JWT tokens and user info.
+
+    Parameters
+    ----------
         request (PasswordLoginRequest): Contains the user's `email` and `password`.
         db (AsyncSession): Database session (typically injected via dependency).
-    
-    Returns:
+
+    Returns
+    -------
         SuccessResponse: Contains a TokenResponse with `access_token`, `refresh_token`, `token_type`, and `user` (user data dictionary).
-    
-    Raises:
+
+    Raises
+    ------
         HTTPException: 409 if the account was created with Google and password login is not allowed.
         HTTPException: 401 if authentication fails due to invalid credentials or other validation errors.
         HTTPException: 500 for unexpected server-side errors.
+
     """
     try:
         auth_method = await user_service.get_user_auth_method(db, request.email)
@@ -643,18 +669,17 @@ async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = 
             if auth_method == "google":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Google authentication. Please use the Google login flow."
+                    detail="This account uses Google authentication. Please use the Google login flow.",
                 )
-            elif auth_method == "microsoft":
+            if auth_method == "microsoft":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow."
+                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow.",
                 )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow."
-                )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow.",
+            )
 
         user = await password_auth_service.authenticate_user(request.email, request.password, db)
 
@@ -662,33 +687,24 @@ async def login_with_password(request: PasswordLoginRequest, db: AsyncSession = 
         access_token = user_service.jwt_manager.create_access_token(user.to_dict())
         refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
 
-        response_data = TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=user.to_dict()
-        )
+        response_data = TokenResponse(access_token=access_token, refresh_token=refresh_token, user=user.to_dict())
 
         return SuccessResponse(data=response_data)
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
     except HTTPException as e:
         raise e
     except Exception as e:
         logger.error(f"Password login error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication failed")
 
-@router.put("/change-password", response_model=SuccessResponse[Dict[str, str]])
+
+@router.put("/change-password", response_model=SuccessResponse[dict[str, str]])
 async def change_password(
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Change current user's password"""
     try:
@@ -696,22 +712,16 @@ async def change_password(
             user_id=current_user.id,
             old_password=request.old_password,
             new_password=request.new_password,
-            db=db
+            db=db,
         )
 
         return SuccessResponse(data={"message": "Password changed successfully"})
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Password change error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Password change failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change failed")
 
 
 @router.post("/refresh", response_model=SuccessResponse[TokenResponse])
@@ -722,33 +732,24 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         user_id = user_service.jwt_manager.refresh_access_token(request.refresh_token)
 
         if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token"
-            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
         # Get current user data from database
         from sqlalchemy import select
+
         from ..auth.models import User
 
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
 
         if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive"
-            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
         # Create new tokens
         access_token = user_service.jwt_manager.create_access_token(user.to_dict())
         refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
 
-        response_data = TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=user.to_dict()
-        )
+        response_data = TokenResponse(access_token=access_token, refresh_token=refresh_token, user=user.to_dict())
 
         return SuccessResponse(data=response_data)
 
@@ -756,15 +757,14 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         raise
     except Exception as e:
         logger.error(f"Token refresh error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Token refresh failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Token refresh failed")
 
-@router.get("/me", response_model=SuccessResponse[Dict[str, Any]])
+
+@router.get("/me", response_model=SuccessResponse[dict[str, Any]])
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current user information"""
     return SuccessResponse(data=current_user.to_dict())
+
 
 @router.get("/google/login")
 async def google_login(current_user: User | None = Depends(lambda: None)):
@@ -772,6 +772,7 @@ async def google_login(current_user: User | None = Depends(lambda: None)):
     try:
         from ..plugins.host.auth_capability import AuthCapability
         from ..providers.registry import get_auth_adapter
+
         auth = AuthCapability(plugin_name="admin", user_id=str(current_user.id) if current_user else "anonymous")
         adapter = get_auth_adapter("google", auth)
         res = await adapter.build_authorization_url(scopes=["openid", "email", "profile"])  # minimal SSO scopes
@@ -782,11 +783,16 @@ async def google_login(current_user: User | None = Depends(lambda: None)):
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"SSO redirect unavailable: {e}")
 
+
 class CodeRequest(BaseModel):
     code: str
 
 
-@router.post("/google/exchange-login", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
+@router.post(
+    "/google/exchange-login",
+    response_model=SuccessResponse[TokenResponse],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
 async def google_exchange_login(request: CodeRequest, db: AsyncSession = Depends(get_db)):
     """Exchange an OAuth authorization code for Google ID token and issue Shu JWTs.
 
@@ -815,11 +821,7 @@ async def google_exchange_login(request: CodeRequest, db: AsyncSession = Depends
         access_token = user_service.jwt_manager.create_access_token(user.to_dict())
         refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
 
-        response_data = TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=user.to_dict()
-        )
+        response_data = TokenResponse(access_token=access_token, refresh_token=refresh_token, user=user.to_dict())
         return SuccessResponse(data=response_data)
 
     except HTTPException:
@@ -835,6 +837,7 @@ async def microsoft_login(current_user: User | None = Depends(lambda: None)):
     try:
         from ..plugins.host.auth_capability import AuthCapability
         from ..providers.registry import get_auth_adapter
+
         auth = AuthCapability(plugin_name="admin", user_id=str(current_user.id) if current_user else "anonymous")
         adapter = get_auth_adapter("microsoft", auth)
         # SSO scopes: identity + basic profile
@@ -845,10 +848,17 @@ async def microsoft_login(current_user: User | None = Depends(lambda: None)):
         return RedirectResponse(url=url)
     except Exception as e:
         logger.error("microsoft_login error", error=str(e), exc_info=True)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Microsoft SSO redirect unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Microsoft SSO redirect unavailable: {e}",
+        )
 
 
-@router.post("/microsoft/exchange-login", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)])
+@router.post(
+    "/microsoft/exchange-login",
+    response_model=SuccessResponse[TokenResponse],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
 async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depends(get_db)):
     """Exchange an OAuth authorization code for Microsoft access token and issue Shu JWTs.
 
@@ -868,7 +878,10 @@ async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depe
         tok = await adapter.exchange_code(code=request.code, scopes=scopes)
         access_token = tok.get("access_token")
         if not access_token:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Microsoft did not return access_token")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Microsoft did not return access_token",
+            )
 
         # Get user info using access token
         microsoft_user = await _get_microsoft_user_info(access_token)
@@ -881,9 +894,7 @@ async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depe
         jwt_refresh_token = user_service.jwt_manager.create_refresh_token(user.id)
 
         response_data = TokenResponse(
-            access_token=jwt_access_token,
-            refresh_token=jwt_refresh_token,
-            user=user.to_dict()
+            access_token=jwt_access_token, refresh_token=jwt_refresh_token, user=user.to_dict()
         )
         return SuccessResponse(data=response_data)
 
@@ -891,21 +902,25 @@ async def microsoft_exchange_login(request: CodeRequest, db: AsyncSession = Depe
         raise
     except Exception as e:
         logger.error("microsoft_exchange_login error", error=str(e), exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Microsoft login exchange failed",
+        )
 
 
-@router.get("/users", response_model=SuccessResponse[List[Dict[str, Any]]])
+@router.get("/users", response_model=SuccessResponse[list[dict[str, Any]]])
 async def get_all_users(current_user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Get all users (admin only)"""
     users = await user_service.get_all_users(db)
     return SuccessResponse(data=[user.to_dict() for user in users])
 
-@router.put("/users/{user_id}", response_model=SuccessResponse[Dict[str, Any]])
+
+@router.put("/users/{user_id}", response_model=SuccessResponse[dict[str, Any]])
 async def update_user(
     user_id: str,
     request: UserUpdateRequest,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update user role and status (admin only)"""
     try:
@@ -915,16 +930,14 @@ async def update_user(
         await db.refresh(user)
         return SuccessResponse(data=user.to_dict())
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-@router.post("/users", response_model=SuccessResponse[Dict[str, Any]])
+
+@router.post("/users", response_model=SuccessResponse[dict[str, Any]])
 async def create_user(
     request: CreateUserRequest,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new user (admin only)"""
     try:
@@ -939,7 +952,7 @@ async def create_user(
                 name=request.name,
                 role=request.role,
                 db=db,
-                admin_created=True  # Admin-created users are active by default
+                admin_created=True,  # Admin-created users are active by default
             )
         else:
             # Create user for Google OAuth (password will be None)
@@ -949,7 +962,7 @@ async def create_user(
                 name=request.name,
                 auth_method="google",
                 role=request.role,
-                is_active=True  # Admin-created users are active
+                is_active=True,  # Admin-created users are active
             )
             db.add(user)
             await db.commit()
@@ -958,32 +971,20 @@ async def create_user(
         return SuccessResponse(data=user.to_dict())
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"User creation error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="User creation failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User creation failed")
 
-@router.patch("/users/{user_id}/activate", response_model=SuccessResponse[Dict[str, Any]])
-async def activate_user(
-    user_id: str,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
+
+@router.patch("/users/{user_id}/activate", response_model=SuccessResponse[dict[str, Any]])
+async def activate_user(user_id: str, current_user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Activate a user account (admin only)"""
     try:
         # Get user by ID
         user = await user_service.get_user_by_id(user_id, db)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         # Activate user
         user.is_active = True
@@ -997,33 +998,23 @@ async def activate_user(
         raise
     except Exception as e:
         logger.error(f"User activation error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="User activation failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User activation failed")
 
-@router.patch("/users/{user_id}/deactivate", response_model=SuccessResponse[Dict[str, Any]])
+
+@router.patch("/users/{user_id}/deactivate", response_model=SuccessResponse[dict[str, Any]])
 async def deactivate_user(
-    user_id: str,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    user_id: str, current_user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """Deactivate a user account (admin only)"""
     try:
         # Get user by ID
         user = await user_service.get_user_by_id(user_id, db)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         # Prevent self-deactivation
         if user.id == current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot deactivate your own account"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
 
         # Deactivate user
         user.is_active = False
@@ -1037,29 +1028,17 @@ async def deactivate_user(
         raise
     except Exception as e:
         logger.error(f"User deactivation error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="User deactivation failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User deactivation failed")
 
-@router.delete("/users/{user_id}", response_model=SuccessResponse[Dict[str, str]])
-async def delete_user(
-    user_id: str,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
+
+@router.delete("/users/{user_id}", response_model=SuccessResponse[dict[str, str]])
+async def delete_user(user_id: str, current_user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Delete user (admin only)"""
     try:
         await user_service.delete_user(user_id, current_user.id, db)
         return SuccessResponse(data={"message": "User deleted successfully"})
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"User deletion error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="User deletion failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User deletion failed")

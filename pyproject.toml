@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 
 [tool.ruff]
 # Ruff configuration
-line-length = 100
+line-length = 120  # Increased from 100 to reduce awkward line breaks
 target-version = "py311"
 
 # Exclude directories
@@ -27,6 +27,22 @@ exclude = [
     "frontend",
     "migrations/versions",  # Don't lint auto-generated migrations
 ]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+
+# Indent width
+indent-style = "space"
+
+# Line ending
+line-ending = "lf"
+
+# Skip magic trailing comma (allows better method chaining formatting)
+skip-magic-trailing-comma = false
+
+# Prefer splitting after opening bracket for better readability
+docstring-code-format = true
 
 [tool.ruff.lint]
 # Enable specific rule sets
@@ -51,6 +67,7 @@ select = [
     "ANN",    # flake8-annotations (type hints)
     "S",      # flake8-bandit (security)
     "ERA",    # eradicate (commented-out code)
+    "C90",    # mccabe (complexity)
 ]
 
 # Ignore specific rules
@@ -66,6 +83,16 @@ ignore = [
     "ANN401",   # Dynamically typed expressions (Any)
     "S101",     # Use of assert (allowed in tests)
 ]
+
+[tool.ruff.lint.mccabe]
+# Maximum complexity for a function
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+# Maximum number of statements in a function
+max-statements = 50
+# Maximum number of branches in a function
+max-branches = 12
 
 [tool.ruff.lint.per-file-ignores]
 # Allow unused imports in __init__.py files

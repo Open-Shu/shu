@@ -8,18 +8,23 @@ Tests cover:
 - Visibility checks
 """
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from shu.services.experience_service import ExperienceService
-from shu.schemas.experience import (
-    ExperienceVisibility, TriggerType, StepType,
-    ExperienceCreate, ExperienceUpdate, ExperienceStepCreate,
-    ExperienceList, ExperienceResponse
-)
+import pytest
+
 from shu.core.exceptions import ValidationError
-from shu.models.experience import Experience, ExperienceStep
+from shu.schemas.experience import (
+    ExperienceCreate,
+    ExperienceList,
+    ExperienceResponse,
+    ExperienceStepCreate,
+    ExperienceUpdate,
+    ExperienceVisibility,
+    StepType,
+    TriggerType,
+)
+from shu.services.experience_service import ExperienceService
 
 
 @pytest.fixture
@@ -49,7 +54,7 @@ def sample_step_create():
         order=0,
         plugin_name="gmail",
         plugin_op="digest",
-        params_template={"max_results": 50}
+        params_template={"max_results": 50},
     )
 
 
@@ -62,7 +67,7 @@ def sample_experience_create(sample_step_create):
         created_by="user-123",
         visibility=ExperienceVisibility.DRAFT,
         trigger_type=TriggerType.MANUAL,
-        steps=[sample_step_create]
+        steps=[sample_step_create],
     )
 
 
@@ -161,9 +166,7 @@ class TestPaginationHelpers:
     def test_build_paginated_response_basic(self, service, mock_experience_response):
         """Basic pagination response calculation."""
         items = [mock_experience_response, mock_experience_response, mock_experience_response]
-        response = service._build_paginated_response(
-            ExperienceList, items, total=10, offset=0, limit=3
-        )
+        response = service._build_paginated_response(ExperienceList, items, total=10, offset=0, limit=3)
         assert len(response.items) == 3
         assert response.total == 10
         assert response.page == 1
@@ -173,27 +176,21 @@ class TestPaginationHelpers:
     def test_build_paginated_response_second_page(self, service, mock_experience_response):
         """Pagination response for second page."""
         items = [mock_experience_response, mock_experience_response, mock_experience_response]
-        response = service._build_paginated_response(
-            ExperienceList, items, total=10, offset=3, limit=3
-        )
+        response = service._build_paginated_response(ExperienceList, items, total=10, offset=3, limit=3)
         assert response.page == 2
         assert response.pages == 4
 
     def test_build_paginated_response_zero_limit(self, service):
         """Handle zero limit gracefully."""
         items = []
-        response = service._build_paginated_response(
-            ExperienceList, items, total=0, offset=0, limit=0
-        )
+        response = service._build_paginated_response(ExperienceList, items, total=0, offset=0, limit=0)
         assert response.page == 1
         assert response.pages == 1
 
     def test_build_paginated_response_exact_pages(self, service, mock_experience_response):
         """Total divides evenly by limit."""
         items = [mock_experience_response, mock_experience_response]
-        response = service._build_paginated_response(
-            ExperienceList, items, total=10, offset=0, limit=5
-        )
+        response = service._build_paginated_response(ExperienceList, items, total=10, offset=0, limit=5)
         assert response.pages == 2
 
 
@@ -206,10 +203,10 @@ class TestPluginLoader:
 
     def test_get_plugin_loader_creates_instance(self, service):
         """_get_plugin_loader creates loader on first call and caches it."""
-        with patch('shu.plugins.loader.PluginLoader') as mock_loader_class:
+        with patch("shu.plugins.loader.PluginLoader") as mock_loader_class:
             mock_loader_instance = MagicMock()
             mock_loader_class.return_value = mock_loader_instance
-            
+
             # First call creates instance
             loader1 = service._get_plugin_loader()
             assert loader1 is not None
@@ -238,9 +235,9 @@ class TestRequiredScopesComputation:
         mock_record = MagicMock()
         mock_record.op_auth = {
             "digest": {"scopes": ["gmail.readonly", "gmail.labels"]},
-            "send": {"scopes": ["gmail.send"]}
+            "send": {"scopes": ["gmail.send"]},
         }
-        
+
         mock_loader = MagicMock()
         mock_loader.discover.return_value = {"gmail": mock_record}
         service._plugin_loader = mock_loader
@@ -255,7 +252,7 @@ class TestRequiredScopesComputation:
         """No op specified returns empty scopes even with op_auth."""
         mock_record = MagicMock()
         mock_record.op_auth = {"digest": {"scopes": ["gmail.readonly"]}}
-        
+
         mock_loader = MagicMock()
         mock_loader.discover.return_value = {"gmail": mock_record}
         service._plugin_loader = mock_loader
@@ -268,24 +265,28 @@ class TestRequiredScopesComputation:
         """Exceptions during scope computation are handled gracefully."""
         # Clear any existing loader
         service._plugin_loader = None
-        
-        with patch('shu.plugins.loader.PluginLoader') as mock_loader_class:
+
+        with patch("shu.plugins.loader.PluginLoader") as mock_loader_class:
             mock_loader_class.side_effect = Exception("Plugin load failed")
-            
+
             scopes = await service.compute_required_scopes_for_step("gmail", "digest")
             assert scopes == []
 
 
 class TestVisibilityChecks:
     """Tests for experience visibility logic.
-    
+
     Note: Only admins can create experiences, so draft and admin_only
     experiences are only visible to admins.
     """
 
     def test_visibility_admin_sees_all(self, service):
         """Admin can see any visibility level."""
-        for visibility in [ExperienceVisibility.DRAFT, ExperienceVisibility.ADMIN_ONLY, ExperienceVisibility.PUBLISHED]:
+        for visibility in [
+            ExperienceVisibility.DRAFT,
+            ExperienceVisibility.ADMIN_ONLY,
+            ExperienceVisibility.PUBLISHED,
+        ]:
             experience = MagicMock()
             experience.visibility = visibility.value
             assert service._check_visibility(experience, "any-user", is_admin=True) is True
@@ -320,10 +321,20 @@ class TestStepValidation:
     async def test_validate_steps_duplicate_keys(self, service):
         """Duplicate step keys should raise ValidationError."""
         steps = [
-            ExperienceStepCreate(step_key="emails", step_type=StepType.PLUGIN, order=0, 
-                                plugin_name="gmail", plugin_op="digest"),
-            ExperienceStepCreate(step_key="emails", step_type=StepType.PLUGIN, order=1,
-                                plugin_name="gmail", plugin_op="search"),
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="gmail",
+                plugin_op="digest",
+            ),
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=1,
+                plugin_name="gmail",
+                plugin_op="search",
+            ),
         ]
         with pytest.raises(ValidationError) as exc_info:
             await service._validate_steps(steps)
@@ -333,8 +344,13 @@ class TestStepValidation:
     async def test_validate_steps_plugin_missing_name(self, service):
         """Plugin step without plugin_name should raise."""
         steps = [
-            ExperienceStepCreate(step_key="step1", step_type=StepType.PLUGIN, order=0,
-                                plugin_name=None, plugin_op="digest"),
+            ExperienceStepCreate(
+                step_key="step1",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name=None,
+                plugin_op="digest",
+            ),
         ]
         with pytest.raises(ValidationError) as exc_info:
             await service._validate_steps(steps)
@@ -344,8 +360,13 @@ class TestStepValidation:
     async def test_validate_steps_plugin_missing_op(self, service):
         """Plugin step without plugin_op should raise."""
         steps = [
-            ExperienceStepCreate(step_key="step1", step_type=StepType.PLUGIN, order=0,
-                                plugin_name="gmail", plugin_op=None),
+            ExperienceStepCreate(
+                step_key="step1",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="gmail",
+                plugin_op=None,
+            ),
         ]
         with pytest.raises(ValidationError) as exc_info:
             await service._validate_steps(steps)
@@ -355,8 +376,12 @@ class TestStepValidation:
     async def test_validate_steps_kb_missing_id(self, service):
         """KB step without knowledge_base_id should raise."""
         steps = [
-            ExperienceStepCreate(step_key="kb_step", step_type=StepType.KNOWLEDGE_BASE, order=0,
-                                knowledge_base_id=None),
+            ExperienceStepCreate(
+                step_key="kb_step",
+                step_type=StepType.KNOWLEDGE_BASE,
+                order=0,
+                knowledge_base_id=None,
+            ),
         ]
         with pytest.raises(ValidationError) as exc_info:
             await service._validate_steps(steps)
@@ -367,12 +392,12 @@ class TestStepValidation:
         """Invalid Jinja2 template in params_template should raise."""
         steps = [
             ExperienceStepCreate(
-                step_key="step1", 
-                step_type=StepType.PLUGIN, 
+                step_key="step1",
+                step_type=StepType.PLUGIN,
                 order=0,
-                plugin_name="gmail", 
+                plugin_name="gmail",
                 plugin_op="digest",
-                params_template={"query": "{{ broken.syntax"}
+                params_template={"query": "{{ broken.syntax"},
             ),
         ]
         with pytest.raises(ValidationError) as exc_info:
@@ -380,14 +405,24 @@ class TestStepValidation:
         assert "param" in str(exc_info.value.message).lower()
 
     @pytest.mark.asyncio
-    @patch.object(ExperienceService, 'compute_required_scopes_for_step', return_value=[])
+    @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
     async def test_validate_steps_valid(self, mock_scopes, service):
         """Valid steps should pass validation."""
         steps = [
-            ExperienceStepCreate(step_key="emails", step_type=StepType.PLUGIN, order=0,
-                                plugin_name="gmail", plugin_op="digest"),
-            ExperienceStepCreate(step_key="calendar", step_type=StepType.PLUGIN, order=1,
-                                plugin_name="calendar", plugin_op="events"),
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="gmail",
+                plugin_op="digest",
+            ),
+            ExperienceStepCreate(
+                step_key="calendar",
+                step_type=StepType.PLUGIN,
+                order=1,
+                plugin_name="calendar",
+                plugin_op="events",
+            ),
         ]
         # Should not raise
         await service._validate_steps(steps)
@@ -397,18 +432,22 @@ class TestCreateExperience:
     """Happy path tests for create_experience."""
 
     @pytest.mark.asyncio
-    @patch.object(ExperienceService, 'compute_required_scopes_for_step', return_value=[])
-    @patch.object(ExperienceService, '_get_experience_by_name', return_value=None)
-    async def test_create_experience_success(self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response):
+    @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
+    @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
+    async def test_create_experience_success(
+        self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
+    ):
         """Successfully create an experience with steps."""
         service = ExperienceService(mock_db_session)
-        
+
         experience_data = ExperienceCreate(
             name="Daily Digest",
             description="Get your daily email digest",
             visibility=ExperienceVisibility.DRAFT,
             trigger_type=TriggerType.CRON,
-            trigger_config={"cron": "0 9 * * *", },
+            trigger_config={
+                "cron": "0 9 * * *",
+            },
             steps=[
                 ExperienceStepCreate(
                     step_key="emails",
@@ -416,20 +455,20 @@ class TestCreateExperience:
                     order=0,
                     plugin_name="gmail",
                     plugin_op="digest",
-                    params_template={"max_results": 100}
+                    params_template={"max_results": 100},
                 )
-            ]
+            ],
         )
-        
+
         # Mock the response conversion to avoid datetime serialization issues
-        with patch.object(service, '_experience_to_response', return_value=mock_experience_response):
+        with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
             result = await service.create_experience(experience_data, created_by="admin-user")
-        
+
         # Verify db operations
         assert mock_db_session.add.called
         mock_db_session.commit.assert_called_once()
         mock_db_session.refresh.assert_called_once()
-        
+
         # Verify response structure
         assert isinstance(result, ExperienceResponse)
 
@@ -464,24 +503,24 @@ class TestUpdateExperience:
         existing_exp.steps = []
         existing_exp.runs = []
         existing_exp.prompt = None
-        
+
         service = ExperienceService(mock_db_session)
-        
+
         update_data = ExperienceUpdate(
             name="New Name",
             description="Updated description",
-            visibility=ExperienceVisibility.PUBLISHED
+            visibility=ExperienceVisibility.PUBLISHED,
         )
-        
+
         # Patch internal methods
-        with patch.object(service, '_get_experience_by_id', return_value=existing_exp):
-            with patch.object(service, '_get_experience_by_name', return_value=None):
+        with patch.object(service, "_get_experience_by_id", return_value=existing_exp):
+            with patch.object(service, "_get_experience_by_name", return_value=None):
                 result = await service.update_experience("exp-123", update_data)
-        
+
         # Verify db operations
         mock_db_session.commit.assert_called_once()
         mock_db_session.refresh.assert_called_once()
-        
+
         # Verify response
         assert isinstance(result, ExperienceResponse)
 
@@ -492,7 +531,7 @@ class TestExperienceExport:
     def test_export_experience_to_yaml_basic(self, service):
         """Test basic YAML export functionality."""
         from shu.schemas.experience import ExperienceResponse, ExperienceStepResponse
-        
+
         # Create a sample experience
         experience = ExperienceResponse(
             id="test-experience-id",
@@ -501,10 +540,7 @@ class TestExperienceExport:
             created_by="user-123",
             visibility=ExperienceVisibility.PUBLISHED,
             trigger_type=TriggerType.CRON,
-            trigger_config={
-                "cron": "0 7 * * *",
-                "timezone": "America/Chicago"
-            },
+            trigger_config={"cron": "0 7 * * *", "timezone": "America/Chicago"},
             include_previous_run=True,
             model_configuration_id="test-model-config-id",
             prompt_id=None,
@@ -529,7 +565,7 @@ class TestExperienceExport:
                     condition_template=None,
                     required_scopes=["gmail.readonly"],
                     created_at=datetime.now(),
-                    updated_at=datetime.now()
+                    updated_at=datetime.now(),
                 ),
                 ExperienceStepResponse(
                     id="step-2",
@@ -545,22 +581,22 @@ class TestExperienceExport:
                     condition_template=None,
                     required_scopes=["calendar.readonly"],
                     created_at=datetime.now(),
-                    updated_at=datetime.now()
-                )
+                    updated_at=datetime.now(),
+                ),
             ],
             model_configuration=None,
             prompt=None,
             step_count=2,
             last_run_at=None,
             created_at=datetime.now(),
-            updated_at=datetime.now()
+            updated_at=datetime.now(),
         )
-        
+
         # Test the export
         yaml_content, file_name = service.export_experience_to_yaml(experience)
 
         assert file_name == "morning-briefing-experience.yaml"
-        
+
         # Verify it's valid YAML
         assert yaml_content is not None
         assert isinstance(yaml_content, str)
@@ -573,13 +609,13 @@ class TestExperienceExport:
         assert "description: Daily summary of emails and calendar" in yaml_content
         assert "version: 1" in yaml_content
         assert "visibility: draft" in yaml_content
-        
+
         # Verify placeholders are unquoted (this was the fix)
         assert "trigger_type: '{{ trigger_type }}'" in yaml_content
         assert "trigger_config: {{ trigger_config }}" in yaml_content
         assert "model_configuration_id: '{{ model_configuration_id }}'" in yaml_content
         assert "max_run_seconds: {{ max_run_seconds }}" in yaml_content
-        
+
         # Verify steps are exported correctly
         assert "step_key: emails" in yaml_content
         assert "step_key: calendar" in yaml_content
@@ -596,20 +632,13 @@ class TestExperienceExport:
             "config": {
                 "enabled": True,
                 "timeout": None,
-                "nested": {
-                    "value": "test",
-                    "empty": None
-                }
+                "nested": {"value": "test", "empty": None},
             },
-            "items": [
-                {"id": 1, "name": "item1"},
-                {"id": 2, "name": None},
-                None
-            ]
+            "items": [{"id": 1, "name": "item1"}, {"id": 2, "name": None}, None],
         }
-        
+
         cleaned = service._remove_none_values(data)
-        
+
         # Verify None values are removed
         assert "description" not in cleaned
         assert "timeout" not in cleaned["config"]

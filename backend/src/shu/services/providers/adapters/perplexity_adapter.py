@@ -1,26 +1,39 @@
-from typing import Any, Dict
+from typing import Any
 
 import jmespath
 
 from shu.core.logging import get_logger
 
-from ..adapter_base import ProviderCapabilities, ProviderContentDeltaEventResult, ProviderInformation, register_adapter
+from ..adapter_base import (
+    ProviderCapabilities,
+    ProviderContentDeltaEventResult,
+    ProviderInformation,
+    register_adapter,
+)
+from ..parameter_definitions import (
+    ArrayParameter,
+    BooleanParameter,
+    EnumParameter,
+    IntegerParameter,
+    NumberParameter,
+    Option,
+    StringParameter,
+)
 from .completions_adapter import CompletionsAdapter
-from ..parameter_definitions import ArrayParameter, BooleanParameter, EnumParameter, IntegerParameter, NumberParameter, Option, StringParameter
 
 logger = get_logger(__name__)
 
 
 class PerplexityAdapter(CompletionsAdapter):
     """Adapter for Perplexity chat completions (OpenAI-compatible)."""
-    
+
     citations = []
 
     def _get_citations_markdown(self) -> str:
         citations = ""
         if not self.citations:
             return ""
-        
+
         for index, citation in enumerate(self.citations, start=1):
             citations += f"\n\n[{index}] {citation}"
 
@@ -40,34 +53,30 @@ class PerplexityAdapter(CompletionsAdapter):
     def get_api_base_url(self) -> str:
         return "https://api.perplexity.ai"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
 
     def get_finish_reason_path(self):
         return "object == 'chat.completion.done' && choices[*].finish_reason | [0]"
-    
+
     async def handle_provider_event(self, chunk):
         self.citations = jmespath.search("object == 'chat.completion.done' && citations", chunk)
         return await super().handle_provider_event(chunk)
-    
-    async def finalize_provider_events(self):
 
+    async def finalize_provider_events(self):
         res = []
         citations = self._get_citations_markdown()
         self._stream_content.append(citations)
         if self.citations:
-            res.append(
-                ProviderContentDeltaEventResult(content=citations)
-            )
+            res.append(ProviderContentDeltaEventResult(content=citations))
 
         remaining_events = await super().finalize_provider_events()
 
         return res + remaining_events
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             # --- Sampling / generation controls ---
-
             "temperature": NumberParameter(
                 min=0,
                 max=2,
@@ -92,9 +101,7 @@ class PerplexityAdapter(CompletionsAdapter):
                 label="Max Tokens",
                 description="Maximum number of tokens the model can generate in this response (output tokens only).",
             ),
-
             # --- Search / grounding controls (Perplexity-specific) ---
-
             "search_mode": EnumParameter(
                 label="Search Mode",
                 description="Controls which search backend to use. 'web' = general web search (default). 'academic' = academic / scholarly-leaning sources.",

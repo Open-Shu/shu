@@ -1,10 +1,8 @@
-
 import json
 import types
 from unittest.mock import AsyncMock
 
 import pytest
-
 from tests.unit.services.providers.adapters.shared import (
     COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD,
     COMPLETIONS_ACTIONABLE_OUTPUT_DELTA1,
@@ -15,6 +13,8 @@ from tests.unit.services.providers.adapters.shared import (
     COMPLETIONS_IGNORED_FUNCTION_CALL_COMPLETION_PAYLOAD,
     TOOLS,
 )
+
+from shu.services.chat_types import ChatContext
 from shu.services.providers import adapter_base
 from shu.services.providers.adapter_base import (
     ProviderAdapterContext,
@@ -23,9 +23,7 @@ from shu.services.providers.adapter_base import (
     ProviderToolCallEventResult,
     ToolCallInstructions,
 )
-from shu.services.chat_types import ChatContext
 from shu.services.providers.adapters.completions_adapter import CompletionsAdapter
-
 
 FAKE_PLUGIN_RESULT = {"ok": True}
 
@@ -81,17 +79,27 @@ def _evaluate_tool_call_events(tool_event):
     }
     assert len(tool_event.additional_messages) == 2
     assert tool_event.additional_messages[0].role == "assistant"
-    assert tool_event.additional_messages[0].metadata["tool_calls"] == [{
-            "id": COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0].get("choices", [])[0].get("delta", {}).get("tool_calls", [])[0].get("id"),
+    assert tool_event.additional_messages[0].metadata["tool_calls"] == [
+        {
+            "id": COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0]
+            .get("choices", [])[0]
+            .get("delta", {})
+            .get("tool_calls", [])[0]
+            .get("id"),
             "type": "function",
             "function": {
                 "name": "gmail_digest__list",
                 "arguments": '{"op":"list","since_hours":3360,"query_filter":"in:inbox is:unread","max_results":50,"preview":true}',
             },
-    }]
+        }
+    ]
 
     assert tool_event.additional_messages[1].role == "tool"
-    assert tool_event.additional_messages[1].metadata["tool_call_id"] == COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0].get("choices", [])[0].get("delta", {}).get("tool_calls", [])[0].get("id")
+    assert tool_event.additional_messages[1].metadata[
+        "tool_call_id"
+    ] == COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD[0].get("choices", [])[0].get("delta", {}).get(
+        "tool_calls", []
+    )[0].get("id")
     assert tool_event.additional_messages[1].content == json.dumps(FAKE_PLUGIN_RESULT)
 
 
@@ -108,7 +116,6 @@ def test_provider_defaults(completions_adapter):
 
 @pytest.mark.asyncio
 async def test_event_handling(completions_adapter, patch_plugin_calls):
-
     for payload in COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD:
         await completions_adapter.handle_provider_event(payload)
 
@@ -148,7 +155,6 @@ async def test_event_handling(completions_adapter, patch_plugin_calls):
 
 @pytest.mark.asyncio
 async def test_completion_flow(completions_adapter, patch_plugin_calls):
-
     events = await completions_adapter.handle_provider_completion(COMPLETIONS_COMPLETE_FUNCTION_CALL_PAYLOAD)
 
     # We get two events here, the first one is the tool call, the second is an empty final message.
@@ -194,7 +200,7 @@ async def test_inject_functions(completions_adapter):
         "stream_options": {"include_usage": True},
         "messages": [
             {"role": "system", "content": "system prompt"},
-            {"role": "user", "content": "content"}
+            {"role": "user", "content": "content"},
         ],
         "tools": [
             {
@@ -228,9 +234,7 @@ async def test_inject_functions(completions_adapter):
                                 "minimum": 1,
                                 "maximum": 500,
                                 "default": 50,
-                                "x-ui": {
-                                    "help": "Max messages to inspect (capped at 500)."
-                                },
+                                "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                             },
                             "op": {
                                 "type": "string",
@@ -241,23 +245,17 @@ async def test_inject_functions(completions_adapter):
                             "message_ids": {
                                 "type": ["array", "null"],
                                 "items": {"type": "string"},
-                                "x-ui": {
-                                    "help": "For actions, provide Gmail message ids to modify."
-                                },
+                                "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                             },
                             "preview": {
                                 "type": ["boolean", "null"],
                                 "default": None,
-                                "x-ui": {
-                                    "help": "When true with approve=false, returns a plan without side effects."
-                                },
+                                "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                             },
                             "approve": {
                                 "type": ["boolean", "null"],
                                 "default": None,
-                                "x-ui": {
-                                    "help": "Set to true (with or without preview) to perform the action."
-                                },
+                                "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                             },
                             "kb_id": {
                                 "type": ["string", "null"],
@@ -300,9 +298,7 @@ async def test_inject_functions(completions_adapter):
                                 "minimum": 1,
                                 "maximum": 336,
                                 "default": 48,
-                                "x-ui": {
-                                    "help": "Look-back window in hours when no syncToken is present."
-                                },
+                                "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                             },
                             "time_min": {
                                 "type": ["string", "null"],

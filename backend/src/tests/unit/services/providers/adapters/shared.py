@@ -1,6 +1,6 @@
 from unittest.mock import Mock
-from shu.models.plugin_execution import CallableTool
 
+from shu.models.plugin_execution import CallableTool
 
 ## STREAMING EVENTS
 
@@ -77,9 +77,7 @@ OPENAI_IGNORED_RESPONSE_COMPLETE = {
                             "minimum": 1,
                             "maximum": 336,
                             "default": 48,
-                            "x-ui": {
-                                "help": "Look-back window in hours when no syncToken is present."
-                            },
+                            "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                         },
                         "time_min": {
                             "type": ["string", "null"],
@@ -129,9 +127,7 @@ OPENAI_IGNORED_RESPONSE_COMPLETE = {
                             "minimum": 1,
                             "maximum": 500,
                             "default": 50,
-                            "x-ui": {
-                                "help": "Max messages to inspect (capped at 500)."
-                            },
+                            "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                         },
                         "op": {
                             "type": "string",
@@ -142,23 +138,17 @@ OPENAI_IGNORED_RESPONSE_COMPLETE = {
                         "message_ids": {
                             "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "x-ui": {
-                                "help": "For actions, provide Gmail message ids to modify."
-                            },
+                            "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                         },
                         "preview": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "When true with approve=false, returns a plan without side effects."
-                            },
+                            "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                         },
                         "approve": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "Set to true (with or without preview) to perform the action."
-                            },
+                            "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                         },
                         "kb_id": {
                             "type": ["string", "null"],
@@ -201,9 +191,7 @@ OPENAI_IGNORED_RESPONSE_COMPLETE = {
                             "minimum": 1,
                             "maximum": 500,
                             "default": 50,
-                            "x-ui": {
-                                "help": "Max messages to inspect (capped at 500)."
-                            },
+                            "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                         },
                         "op": {
                             "type": "string",
@@ -214,23 +202,17 @@ OPENAI_IGNORED_RESPONSE_COMPLETE = {
                         "message_ids": {
                             "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "x-ui": {
-                                "help": "For actions, provide Gmail message ids to modify."
-                            },
+                            "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                         },
                         "preview": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "When true with approve=false, returns a plan without side effects."
-                            },
+                            "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                         },
                         "approve": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "Set to true (with or without preview) to perform the action."
-                            },
+                            "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                         },
                         "kb_id": {
                             "type": ["string", "null"],
@@ -387,9 +369,7 @@ OPENAI_ACTIONABLE_RESPONSE_COMPLETE = {
                             "minimum": 1,
                             "maximum": 336,
                             "default": 48,
-                            "x-ui": {
-                                "help": "Look-back window in hours when no syncToken is present."
-                            },
+                            "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                         },
                         "time_min": {
                             "type": ["string", "null"],
@@ -439,9 +419,7 @@ OPENAI_ACTIONABLE_RESPONSE_COMPLETE = {
                             "minimum": 1,
                             "maximum": 500,
                             "default": 50,
-                            "x-ui": {
-                                "help": "Max messages to inspect (capped at 500)."
-                            },
+                            "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                         },
                         "op": {
                             "type": "string",
@@ -452,23 +430,17 @@ OPENAI_ACTIONABLE_RESPONSE_COMPLETE = {
                         "message_ids": {
                             "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "x-ui": {
-                                "help": "For actions, provide Gmail message ids to modify."
-                            },
+                            "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                         },
                         "preview": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "When true with approve=false, returns a plan without side effects."
-                            },
+                            "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                         },
                         "approve": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "Set to true (with or without preview) to perform the action."
-                            },
+                            "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                         },
                         "kb_id": {
                             "type": ["string", "null"],
@@ -511,9 +483,7 @@ OPENAI_ACTIONABLE_RESPONSE_COMPLETE = {
                             "minimum": 1,
                             "maximum": 500,
                             "default": 50,
-                            "x-ui": {
-                                "help": "Max messages to inspect (capped at 500)."
-                            },
+                            "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                         },
                         "op": {
                             "type": "string",
@@ -524,23 +494,17 @@ OPENAI_ACTIONABLE_RESPONSE_COMPLETE = {
                         "message_ids": {
                             "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "x-ui": {
-                                "help": "For actions, provide Gmail message ids to modify."
-                            },
+                            "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                         },
                         "preview": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "When true with approve=false, returns a plan without side effects."
-                            },
+                            "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                         },
                         "approve": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "Set to true (with or without preview) to perform the action."
-                            },
+                            "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                         },
                         "kb_id": {
                             "type": ["string", "null"],
@@ -584,65 +548,796 @@ OPENAI_ACTIONABLE_RESPONSE_COMPLETE = {
     },
 }
 
-GEMINI_IGNORED_RESPONSE_COMPLETE = {"candidates": [{"content": {"parts": [{"text": ""}], "role": "model"}, "finishReason": "STOP", "index": 0}], "usageMetadata": {"promptTokenCount": 438, "candidatesTokenCount": 24, "totalTokenCount": 643, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 438}], "thoughtsTokenCount": 181}, "modelVersion": "gemini-3-pro-preview", "responseId": "3qkwaajMJ9eez7IPsvrYqQw"}
-GEMINI_ACTIONABLE_FUNCTION_CALL = {"candidates": [{"content": {"parts": [{"functionCall": {"name": "gmail_digest__list", "args": {"op": "list", "max_results": 5}}, "thoughtSignature": "signature1"}], "role": "model"}, "index": 0}], "usageMetadata": {"promptTokenCount": 438, "candidatesTokenCount": 24, "totalTokenCount": 643, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 438}], "thoughtsTokenCount": 181}, "modelVersion": "gemini-3-pro-preview", "responseId": "3qkwaajMJ9eez7IPsvrYqQw"}
-GEMINI_ACTIONABLE_OUTPUT_DELTA1 = {"candidates": [{"content": {"parts": [{"text": "This is the first part.\n"}], "role": "model"}, "index": 0}], "usageMetadata": {"promptTokenCount": 3160, "candidatesTokenCount": 39, "totalTokenCount": 3505, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 3160}], "thoughtsTokenCount": 306},"modelVersion": "gemini-3-pro-preview", "responseId": "5qkwae-BELesz7IP8eWloAw"}
-GEMINI_ACTIONABLE_OUTPUT_DELTA2 = {"candidates": [{"content": {"parts": [{"text": "This is the second part."}], "role": "model"}, "index": 0}], "usageMetadata": {"promptTokenCount": 3160, "candidatesTokenCount": 64, "totalTokenCount": 3530, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 3160}], "thoughtsTokenCount": 306}, "modelVersion": "gemini-3-pro-preview", "responseId": "5qkwae-BELesz7IP8eWloAw"}
-GEMINI_ACTIONABLE_RESPONSE_COMPLETE = {"candidates": [{"content": {"parts": [{"text": "", "thoughtSignature": "signature2"}], "role": "model"}, "finishReason": "STOP", "index": 0}], "usageMetadata": {"promptTokenCount": 3160, "candidatesTokenCount": 101, "totalTokenCount": 3567, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 3160}], "thoughtsTokenCount": 306}, "modelVersion": "gemini-3-pro-preview", "responseId": "5qkwae-BELesz7IP8eWloAw"}
+GEMINI_IGNORED_RESPONSE_COMPLETE = {
+    "candidates": [{"content": {"parts": [{"text": ""}], "role": "model"}, "finishReason": "STOP", "index": 0}],
+    "usageMetadata": {
+        "promptTokenCount": 438,
+        "candidatesTokenCount": 24,
+        "totalTokenCount": 643,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 438}],
+        "thoughtsTokenCount": 181,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "3qkwaajMJ9eez7IPsvrYqQw",
+}
+GEMINI_ACTIONABLE_FUNCTION_CALL = {
+    "candidates": [
+        {
+            "content": {
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": "gmail_digest__list",
+                            "args": {"op": "list", "max_results": 5},
+                        },
+                        "thoughtSignature": "signature1",
+                    }
+                ],
+                "role": "model",
+            },
+            "index": 0,
+        }
+    ],
+    "usageMetadata": {
+        "promptTokenCount": 438,
+        "candidatesTokenCount": 24,
+        "totalTokenCount": 643,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 438}],
+        "thoughtsTokenCount": 181,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "3qkwaajMJ9eez7IPsvrYqQw",
+}
+GEMINI_ACTIONABLE_OUTPUT_DELTA1 = {
+    "candidates": [{"content": {"parts": [{"text": "This is the first part.\n"}], "role": "model"}, "index": 0}],
+    "usageMetadata": {
+        "promptTokenCount": 3160,
+        "candidatesTokenCount": 39,
+        "totalTokenCount": 3505,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 3160}],
+        "thoughtsTokenCount": 306,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "5qkwae-BELesz7IP8eWloAw",
+}
+GEMINI_ACTIONABLE_OUTPUT_DELTA2 = {
+    "candidates": [{"content": {"parts": [{"text": "This is the second part."}], "role": "model"}, "index": 0}],
+    "usageMetadata": {
+        "promptTokenCount": 3160,
+        "candidatesTokenCount": 64,
+        "totalTokenCount": 3530,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 3160}],
+        "thoughtsTokenCount": 306,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "5qkwae-BELesz7IP8eWloAw",
+}
+GEMINI_ACTIONABLE_RESPONSE_COMPLETE = {
+    "candidates": [
+        {
+            "content": {"parts": [{"text": "", "thoughtSignature": "signature2"}], "role": "model"},
+            "finishReason": "STOP",
+            "index": 0,
+        }
+    ],
+    "usageMetadata": {
+        "promptTokenCount": 3160,
+        "candidatesTokenCount": 101,
+        "totalTokenCount": 3567,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 3160}],
+        "thoughtsTokenCount": 306,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "5qkwae-BELesz7IP8eWloAw",
+}
 
-ANTHROPIC_IGNORED_START = {"type": "message_start", "message": {"model": "claude-opus-4-5-20251101", "id": "msg_01VcjtckP9pmxw51nknxmv1A", "type": "message", "role": "assistant", "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 2913, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}, "output_tokens": 1, "service_tier": "standard"}}}
-ANTHROPIC_ACTIONABLE_FUNCTION_CALL1 = {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA", "name": "gmail_digest__list", "input": {}}}
-ANTHROPIC_ACTIONABLE_FUNCTION_CALL2 = {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": ""}}
-ANTHROPIC_ACTIONABLE_FUNCTION_CALL3 = {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"op\": \"dige"}}
-ANTHROPIC_ACTIONABLE_FUNCTION_CALL4 = {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "st\"}"}}
+ANTHROPIC_IGNORED_START = {
+    "type": "message_start",
+    "message": {
+        "model": "claude-opus-4-5-20251101",
+        "id": "msg_01VcjtckP9pmxw51nknxmv1A",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": 2913,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0},
+            "output_tokens": 1,
+            "service_tier": "standard",
+        },
+    },
+}
+ANTHROPIC_ACTIONABLE_FUNCTION_CALL1 = {
+    "type": "content_block_start",
+    "index": 0,
+    "content_block": {
+        "type": "tool_use",
+        "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA",
+        "name": "gmail_digest__list",
+        "input": {},
+    },
+}
+ANTHROPIC_ACTIONABLE_FUNCTION_CALL2 = {
+    "type": "content_block_delta",
+    "index": 0,
+    "delta": {"type": "input_json_delta", "partial_json": ""},
+}
+ANTHROPIC_ACTIONABLE_FUNCTION_CALL3 = {
+    "type": "content_block_delta",
+    "index": 0,
+    "delta": {"type": "input_json_delta", "partial_json": '{"op": "dige'},
+}
+ANTHROPIC_ACTIONABLE_FUNCTION_CALL4 = {
+    "type": "content_block_delta",
+    "index": 0,
+    "delta": {"type": "input_json_delta", "partial_json": 'st"}'},
+}
 ANTHROPIC_ACTIONABLE_FUNCTION_CALL5 = {"type": "content_block_stop", "index": 0}
-ANTRHOPIC_ACTIONABLE_FUNCTION_CALL_STOP = {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"input_tokens": 2913, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 55}}
+ANTRHOPIC_ACTIONABLE_FUNCTION_CALL_STOP = {
+    "type": "message_delta",
+    "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+    "usage": {
+        "input_tokens": 2913,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 55,
+    },
+}
 ANTHROPIC_ACTIONABLE_MESSAGE_STOP = {"type": "message_stop"}
-ANTHROPIC_ACTIONABLE_OUTPUT_DELTA1 = {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "This is the first part.\n"}}
-ANTHROPIC_ACTIONABLE_OUTPUT_DELTA2 = {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "This is the second part."}}
-ANTHROPIC_ACTIONABLE_OUTPUT_STOP = {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"input_tokens": 10578, "cache_creation_input_tokens": 10, "cache_read_input_tokens": 2, "output_tokens": 371}}
+ANTHROPIC_ACTIONABLE_OUTPUT_DELTA1 = {
+    "type": "content_block_delta",
+    "index": 0,
+    "delta": {"type": "text_delta", "text": "This is the first part.\n"},
+}
+ANTHROPIC_ACTIONABLE_OUTPUT_DELTA2 = {
+    "type": "content_block_delta",
+    "index": 0,
+    "delta": {"type": "text_delta", "text": "This is the second part."},
+}
+ANTHROPIC_ACTIONABLE_OUTPUT_STOP = {
+    "type": "message_delta",
+    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+    "usage": {
+        "input_tokens": 10578,
+        "cache_creation_input_tokens": 10,
+        "cache_read_input_tokens": 2,
+        "output_tokens": 371,
+    },
+}
 
 COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD = [
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': None, 'tool_calls': [{'index': 0, 'id': 'call_d8nloBG4cV9aqNRbjoyQL8Oo', 'type': 'function', 'function': {'name': 'gmail_digest__list', 'arguments': ''}}], 'refusal': None}, 'finish_reason': None}], 'obfuscation': 'A5uvESTsO14'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '{"'}}]}, 'finish_reason': None}], 'obfuscation': 'CcWG3vOLWASG'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'op'}}]}, 'finish_reason': None}], 'obfuscation': 'DMZpIHE8e7ncd'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '":"'}}]}, 'finish_reason': None}], 'obfuscation': 'hVcVWITnDf'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'list'}}]}, 'finish_reason': None}], 'obfuscation': 'xKEZhSIdlYC'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '","'}}]}, 'finish_reason': None}], 'obfuscation': '7qmNMIJSDo'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'since'}}]}, 'finish_reason': None}], 'obfuscation': 'MOahQ6NJvr'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '_hours'}}]}, 'finish_reason': None}], 'obfuscation': '2Faqv6ssV'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '":'}}]}, 'finish_reason': None}], 'obfuscation': 'E6WnZlcoKUGO'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '336'}}]}, 'finish_reason': None}], 'obfuscation': 'pxqU8n8NP2Ew'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '0'}}]}, 'finish_reason': None}], 'obfuscation': 'JcHIauGSw2RIRH'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': ',"'}}]}, 'finish_reason': None}], 'obfuscation': 'B5XsL3FtVdRq'},
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_d8nloBG4cV9aqNRbjoyQL8Oo",
+                            "type": "function",
+                            "function": {"name": "gmail_digest__list", "arguments": ""},
+                        }
+                    ],
+                    "refusal": None,
+                },
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "A5uvESTsO14",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "CcWG3vOLWASG",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "op"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "DMZpIHE8e7ncd",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '":"'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "hVcVWITnDf",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "list"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "xKEZhSIdlYC",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '","'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "7qmNMIJSDo",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "since"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "MOahQ6NJvr",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "_hours"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "2Faqv6ssV",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '":'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "E6WnZlcoKUGO",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "336"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "pxqU8n8NP2Ew",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "0"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "JcHIauGSw2RIRH",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": ',"'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "B5XsL3FtVdRq",
+    },
     # Random event that returns a usage. This usage should be ignored if there is another one following in this exact cycle.
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'query'}}]}, 'finish_reason': None}], 'usage': {'prompt_tokens': 885, 'completion_tokens': 500, 'total_tokens': 1385, 'prompt_tokens_details': {'cached_tokens': 0, 'audio_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 448, 'audio_tokens': 0, 'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0}}, 'obfuscation': 'suUWltvAPq'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '_filter'}}]}, 'finish_reason': None}], 'obfuscation': 'T6o2fCCf'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '":"'}}]}, 'finish_reason': None}], 'obfuscation': 'GfS0y0xCKO'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'in'}}]}, 'finish_reason': None}], 'obfuscation': 'FPHKVjgivfMkF'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': ':'}}]}, 'finish_reason': None}], 'obfuscation': 'UNTuMCzQht2fyu'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'in'}}]}, 'finish_reason': None}], 'obfuscation': 'deJnoymSsZhYt'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'box'}}]}, 'finish_reason': None}], 'obfuscation': 'vgv9ERAkpC9u'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': ' is'}}]}, 'finish_reason': None}], 'obfuscation': 'dmGYvFtyDwwq'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': ':'}}]}, 'finish_reason': None}], 'obfuscation': 'vwhPC0vlCviHeX'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'un'}}]}, 'finish_reason': None}], 'obfuscation': 'pQI04kIQYtCc0'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'read'}}]}, 'finish_reason': None}], 'obfuscation': 'IH8vwL65UT3'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '","'}}]}, 'finish_reason': None}], 'obfuscation': '7hZCAAF1od'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'max'}}]}, 'finish_reason': None}], 'obfuscation': 'RqrXNPHm55xC'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '_results'}}]}, 'finish_reason': None}], 'obfuscation': 'nhQsO4u'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '":'}}]}, 'finish_reason': None}], 'obfuscation': '1HkSxrx3K5cK'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '50'}}]}, 'finish_reason': None}], 'obfuscation': 'rVEichRV0FoUt'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': ',"'}}]}, 'finish_reason': None}], 'obfuscation': 'rdTKAo8F5dAK'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'preview'}}]}, 'finish_reason': None}], 'obfuscation': '4rBwq5bx'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '":'}}]}, 'finish_reason': None}], 'obfuscation': 'gbipyjrJJjKl'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': 'true'}}]}, 'finish_reason': None}], 'obfuscation': 'cLNpTfjZtXb'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0, 'function': {'arguments': '}'}}]}, 'finish_reason': None}], 'obfuscation': 'fBFVjwGHD93m6K'},
-    {'id': 'chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5', 'object': 'chat.completion.chunk', 'created': 1764979727, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}], 'obfuscation': 'iQ8Y6jXXV20SD'},
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "query"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 885,
+            "completion_tokens": 500,
+            "total_tokens": 1385,
+            "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 0},
+            "completion_tokens_details": {
+                "reasoning_tokens": 448,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 0,
+                "rejected_prediction_tokens": 0,
+            },
+        },
+        "obfuscation": "suUWltvAPq",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "_filter"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "T6o2fCCf",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '":"'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "GfS0y0xCKO",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "in"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "FPHKVjgivfMkF",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": ":"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "UNTuMCzQht2fyu",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "in"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "deJnoymSsZhYt",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "box"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "vgv9ERAkpC9u",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": " is"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "dmGYvFtyDwwq",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": ":"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "vwhPC0vlCviHeX",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "un"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "pQI04kIQYtCc0",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "read"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "IH8vwL65UT3",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '","'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "7hZCAAF1od",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "max"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "RqrXNPHm55xC",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "_results"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "nhQsO4u",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '":'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "1HkSxrx3K5cK",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "50"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "rVEichRV0FoUt",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": ',"'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "rdTKAo8F5dAK",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "preview"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "4rBwq5bx",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '":'}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "gbipyjrJJjKl",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "true"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "cLNpTfjZtXb",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "}"}}]},
+                "finish_reason": None,
+            }
+        ],
+        "obfuscation": "fBFVjwGHD93m6K",
+    },
+    {
+        "id": "chatcmpl-Cja8tuq0HdaF5vXpdUqZyVgRPNrB5",
+        "object": "chat.completion.chunk",
+        "created": 1764979727,
+        "model": "gpt-5-2025-08-07",
+        "service_tier": "default",
+        "system_fingerprint": None,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        "obfuscation": "iQ8Y6jXXV20SD",
+    },
 ]
-COMPLETIONS_IGNORED_FUNCTION_CALL_COMPLETION_PAYLOAD = {'id': 'chatcmpl-ClJyYyKUHQdnxspzXPWBe92SqHpdC', 'object': 'chat.completion.chunk', 'created': 1765394238, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [], 'usage': {'prompt_tokens': 885, 'completion_tokens': 500, 'total_tokens': 1385, 'prompt_tokens_details': {'cached_tokens': 0, 'audio_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 448, 'audio_tokens': 0, 'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0}}, 'obfuscation': 'lPTCV'}
-COMPLETIONS_ACTIONABLE_OUTPUT_DELTA1 = {'id': 'chatcmpl-Ck8CGZjygXnFs9BjgdNauuP8IJEAp', 'object': 'chat.completion.chunk', 'created': 1765110632, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'content': 'This is the first part.\n'}, 'finish_reason': None}], 'obfuscation': 'Xsv6D4tT'}
-COMPLETIONS_ACTIONABLE_OUTPUT_DELTA2 = {'id': 'chatcmpl-Ck8CGZjygXnFs9BjgdNauuP8IJEAp', 'object': 'chat.completion.chunk', 'created': 1765110632, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {'content': 'This is the second part.'}, 'finish_reason': None}], 'obfuscation': 'l7NKc'}
-COMPLETIONS_ACTIONABLE_OUTPUT_STOP = {'id': 'chatcmpl-Ck8CGZjygXnFs9BjgdNauuP8IJEAp', 'object': 'chat.completion.chunk', 'created': 1765110632, 'model': 'gpt-5-2025-08-07', 'service_tier': 'default', 'system_fingerprint': None, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': {'prompt_tokens': 1226, 'completion_tokens': 651, 'total_tokens': 1877, 'prompt_tokens_details': {'cached_tokens': 100, 'audio_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 512, 'audio_tokens': 0, 'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0}}, 'obfuscation': '4pe'}
+COMPLETIONS_IGNORED_FUNCTION_CALL_COMPLETION_PAYLOAD = {
+    "id": "chatcmpl-ClJyYyKUHQdnxspzXPWBe92SqHpdC",
+    "object": "chat.completion.chunk",
+    "created": 1765394238,
+    "model": "gpt-5-2025-08-07",
+    "service_tier": "default",
+    "system_fingerprint": None,
+    "choices": [],
+    "usage": {
+        "prompt_tokens": 885,
+        "completion_tokens": 500,
+        "total_tokens": 1385,
+        "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 0},
+        "completion_tokens_details": {
+            "reasoning_tokens": 448,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+    },
+    "obfuscation": "lPTCV",
+}
+COMPLETIONS_ACTIONABLE_OUTPUT_DELTA1 = {
+    "id": "chatcmpl-Ck8CGZjygXnFs9BjgdNauuP8IJEAp",
+    "object": "chat.completion.chunk",
+    "created": 1765110632,
+    "model": "gpt-5-2025-08-07",
+    "service_tier": "default",
+    "system_fingerprint": None,
+    "choices": [{"index": 0, "delta": {"content": "This is the first part.\n"}, "finish_reason": None}],
+    "obfuscation": "Xsv6D4tT",
+}
+COMPLETIONS_ACTIONABLE_OUTPUT_DELTA2 = {
+    "id": "chatcmpl-Ck8CGZjygXnFs9BjgdNauuP8IJEAp",
+    "object": "chat.completion.chunk",
+    "created": 1765110632,
+    "model": "gpt-5-2025-08-07",
+    "service_tier": "default",
+    "system_fingerprint": None,
+    "choices": [{"index": 0, "delta": {"content": "This is the second part."}, "finish_reason": None}],
+    "obfuscation": "l7NKc",
+}
+COMPLETIONS_ACTIONABLE_OUTPUT_STOP = {
+    "id": "chatcmpl-Ck8CGZjygXnFs9BjgdNauuP8IJEAp",
+    "object": "chat.completion.chunk",
+    "created": 1765110632,
+    "model": "gpt-5-2025-08-07",
+    "service_tier": "default",
+    "system_fingerprint": None,
+    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    "usage": {
+        "prompt_tokens": 1226,
+        "completion_tokens": 651,
+        "total_tokens": 1877,
+        "prompt_tokens_details": {"cached_tokens": 100, "audio_tokens": 0},
+        "completion_tokens_details": {
+            "reasoning_tokens": 512,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+    },
+    "obfuscation": "4pe",
+}
 
 ## COMPLETE PAYLOAD
 
@@ -709,9 +1404,7 @@ OPENAI_COMPLETE_FUNCTION_CALL_PAYLOAD = {
                         "minimum": 1,
                         "maximum": 336,
                         "default": 48,
-                        "x-ui": {
-                            "help": "Look-back window in hours when no syncToken is present."
-                        },
+                        "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                     },
                     "time_min": {
                         "type": ["string", "None"],
@@ -772,23 +1465,17 @@ OPENAI_COMPLETE_FUNCTION_CALL_PAYLOAD = {
                     "message_ids": {
                         "type": ["array", "null"],
                         "items": {"type": "string"},
-                        "x-ui": {
-                            "help": "For actions, provide Gmail message ids to modify."
-                        },
+                        "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                     },
                     "preview": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "When true with approve=false, returns a plan without side effects."
-                        },
+                        "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                     },
                     "approve": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "Set to true (with or without preview) to perform the action."
-                        },
+                        "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                     },
                     "kb_id": {
                         "type": ["string", "null"],
@@ -842,23 +1529,17 @@ OPENAI_COMPLETE_FUNCTION_CALL_PAYLOAD = {
                     "message_ids": {
                         "type": ["array", "null"],
                         "items": {"type": "string"},
-                        "x-ui": {
-                            "help": "For actions, provide Gmail message ids to modify."
-                        },
+                        "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                     },
                     "preview": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "When true with approve=false, returns a plan without side effects."
-                        },
+                        "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                     },
                     "approve": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "Set to true (with or without preview) to perform the action."
-                        },
+                        "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                     },
                     "kb_id": {
                         "type": ["string", "null"],
@@ -969,9 +1650,7 @@ OPENAI_COMPLETE_OUTPUT_PAYLOAD = {
                         "minimum": 1,
                         "maximum": 336,
                         "default": 48,
-                        "x-ui": {
-                            "help": "Look-back window in hours when no syncToken is present."
-                        },
+                        "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                     },
                     "time_min": {
                         "type": ["string", "null"],
@@ -1032,23 +1711,17 @@ OPENAI_COMPLETE_OUTPUT_PAYLOAD = {
                     "message_ids": {
                         "type": ["array", "null"],
                         "items": {"type": "string"},
-                        "x-ui": {
-                            "help": "For actions, provide Gmail message ids to modify."
-                        },
+                        "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                     },
                     "preview": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "When true with approve=false, returns a plan without side effects."
-                        },
+                        "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                     },
                     "approve": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "Set to true (with or without preview) to perform the action."
-                        },
+                        "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                     },
                     "kb_id": {
                         "type": ["string", "null"],
@@ -1102,23 +1775,17 @@ OPENAI_COMPLETE_OUTPUT_PAYLOAD = {
                     "message_ids": {
                         "type": ["array", "null"],
                         "items": {"type": "string"},
-                        "x-ui": {
-                            "help": "For actions, provide Gmail message ids to modify."
-                        },
+                        "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                     },
                     "preview": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "When true with approve=false, returns a plan without side effects."
-                        },
+                        "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                     },
                     "approve": {
                         "type": ["boolean", "null"],
                         "default": None,
-                        "x-ui": {
-                            "help": "Set to true (with or without preview) to perform the action."
-                        },
+                        "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                     },
                     "kb_id": {
                         "type": ["string", "null"],
@@ -1161,14 +1828,180 @@ OPENAI_COMPLETE_OUTPUT_PAYLOAD = {
     "metadata": {},
 }
 
-GEMINI_COMPLETE_FUNCTION_CALL_PAYLOAD = {"candidates": [{"content": {"parts": [{"functionCall": {"name": "gmail_digest__list", "args": {"op": "list", "max_results": 5}}, "thoughtSignature": "signature1"}], "role": "model"}, "finishReason": "STOP", "index": 0, "finishMessage": "Model generated function call(s)."}], "usageMetadata": {"promptTokenCount": 438, "candidatesTokenCount": 29, "totalTokenCount": 975, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 438}], "thoughtsTokenCount": 508}, "modelVersion": "gemini-3-pro-preview", "responseId": "H6swad7cHr3Oz7IPurHSsAw"}
-GEMINI_COMPLETE_OUTPUT_PAYLOAD = {"candidates": [{"content": {"parts": [{"text": "This is the first part.\nThis is the second part.", "thoughtSignature": "signature2"}], "role": "model"}, "finishReason": "STOP", "index": 0}], "usageMetadata": {"promptTokenCount": 8348, "candidatesTokenCount": 197, "totalTokenCount": 9075, "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 8348}], "thoughtsTokenCount": 530}, "modelVersion": "gemini-3-pro-preview", "responseId": "LqswaZ7oEO6Jz7IPidS4wQw"}
+GEMINI_COMPLETE_FUNCTION_CALL_PAYLOAD = {
+    "candidates": [
+        {
+            "content": {
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": "gmail_digest__list",
+                            "args": {"op": "list", "max_results": 5},
+                        },
+                        "thoughtSignature": "signature1",
+                    }
+                ],
+                "role": "model",
+            },
+            "finishReason": "STOP",
+            "index": 0,
+            "finishMessage": "Model generated function call(s).",
+        }
+    ],
+    "usageMetadata": {
+        "promptTokenCount": 438,
+        "candidatesTokenCount": 29,
+        "totalTokenCount": 975,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 438}],
+        "thoughtsTokenCount": 508,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "H6swad7cHr3Oz7IPurHSsAw",
+}
+GEMINI_COMPLETE_OUTPUT_PAYLOAD = {
+    "candidates": [
+        {
+            "content": {
+                "parts": [
+                    {
+                        "text": "This is the first part.\nThis is the second part.",
+                        "thoughtSignature": "signature2",
+                    }
+                ],
+                "role": "model",
+            },
+            "finishReason": "STOP",
+            "index": 0,
+        }
+    ],
+    "usageMetadata": {
+        "promptTokenCount": 8348,
+        "candidatesTokenCount": 197,
+        "totalTokenCount": 9075,
+        "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 8348}],
+        "thoughtsTokenCount": 530,
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "LqswaZ7oEO6Jz7IPidS4wQw",
+}
 
-ANTHROPIC_COMPLETE_FUNCTION_CALL_PAYLOAD = {"model": "claude-opus-4-5-20251101", "id": "msg_01XAYy4TqeTGa1zwcKRMrcpH", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "This is the first part.\nThis is the second part."}, {"type": "tool_use", "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA", "name": "gmail_digest__list", "input": {"op": "digest"}}], "stop_reason": "tool_use", "stop_sequence": None, "usage": {"input_tokens": 3077, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}, "output_tokens": 55, "service_tier": "standard"}}
-ANTHROPIC_COMPLETE_OUTPUT_PAYLOAD = {"model": "claude-opus-4-5-20251101", "id": "msg_01Aj1WvEPPXr4bxAXd7WxTGY", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "This is the first part.\nThis is the second part."}], "stop_reason": "end_turn", "stop_sequence": None, "usage": {"input_tokens": 10505, "cache_creation_input_tokens": 2, "cache_read_input_tokens": 3, "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}, "output_tokens": 450, "service_tier": "standard"}}
+ANTHROPIC_COMPLETE_FUNCTION_CALL_PAYLOAD = {
+    "model": "claude-opus-4-5-20251101",
+    "id": "msg_01XAYy4TqeTGa1zwcKRMrcpH",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+        {"type": "text", "text": "This is the first part.\nThis is the second part."},
+        {
+            "type": "tool_use",
+            "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA",
+            "name": "gmail_digest__list",
+            "input": {"op": "digest"},
+        },
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": None,
+    "usage": {
+        "input_tokens": 3077,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0},
+        "output_tokens": 55,
+        "service_tier": "standard",
+    },
+}
+ANTHROPIC_COMPLETE_OUTPUT_PAYLOAD = {
+    "model": "claude-opus-4-5-20251101",
+    "id": "msg_01Aj1WvEPPXr4bxAXd7WxTGY",
+    "type": "message",
+    "role": "assistant",
+    "content": [{"type": "text", "text": "This is the first part.\nThis is the second part."}],
+    "stop_reason": "end_turn",
+    "stop_sequence": None,
+    "usage": {
+        "input_tokens": 10505,
+        "cache_creation_input_tokens": 2,
+        "cache_read_input_tokens": 3,
+        "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0},
+        "output_tokens": 450,
+        "service_tier": "standard",
+    },
+}
 
-COMPLETIONS_COMPLETE_FUNCTION_CALL_PAYLOAD =  {'id': 'chatcmpl-Ck8eJrYJjGJQ7UPhyDLm7a2DxD3A9', 'object': 'chat.completion', 'created': 1765112371, 'model': 'gpt-5-2025-08-07', 'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'call_d8nloBG4cV9aqNRbjoyQL8Oo', 'type': 'function', 'function': {'name': 'gmail_digest__list', 'arguments': '{"op":"list","since_hours":3360,"query_filter":"in:inbox is:unread","max_results":50,"preview":true}'}}], 'refusal': None, 'annotations': []}, 'finish_reason': 'tool_calls'}], 'usage': {'prompt_tokens': 662, 'completion_tokens': 560, 'total_tokens': 1222, 'prompt_tokens_details': {'cached_tokens': 0, 'audio_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 512, 'audio_tokens': 0, 'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0}}, 'service_tier': 'default', 'system_fingerprint': None}
-COMPLETIONS_COMPLETE_OUTPUT_PAYLOAD = {'id': 'chatcmpl-Ck8ZFRwAcRMQaEiM8BE0B65FepAwu', 'object': 'chat.completion', 'created': 1765112057, 'model': 'gpt-5-2025-08-07', 'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'This is the first part.\nThis is the second part.', 'refusal': None, 'annotations': []}, 'finish_reason': 'stop'}], 'usage': {'prompt_tokens': 623, 'completion_tokens': 95, 'total_tokens': 718, 'prompt_tokens_details': {'cached_tokens': 100, 'audio_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 64, 'audio_tokens': 0, 'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0}}, 'service_tier': 'default', 'system_fingerprint': None}
+COMPLETIONS_COMPLETE_FUNCTION_CALL_PAYLOAD = {
+    "id": "chatcmpl-Ck8eJrYJjGJQ7UPhyDLm7a2DxD3A9",
+    "object": "chat.completion",
+    "created": 1765112371,
+    "model": "gpt-5-2025-08-07",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_d8nloBG4cV9aqNRbjoyQL8Oo",
+                        "type": "function",
+                        "function": {
+                            "name": "gmail_digest__list",
+                            "arguments": '{"op":"list","since_hours":3360,"query_filter":"in:inbox is:unread","max_results":50,"preview":true}',
+                        },
+                    }
+                ],
+                "refusal": None,
+                "annotations": [],
+            },
+            "finish_reason": "tool_calls",
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 662,
+        "completion_tokens": 560,
+        "total_tokens": 1222,
+        "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 0},
+        "completion_tokens_details": {
+            "reasoning_tokens": 512,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+    },
+    "service_tier": "default",
+    "system_fingerprint": None,
+}
+COMPLETIONS_COMPLETE_OUTPUT_PAYLOAD = {
+    "id": "chatcmpl-Ck8ZFRwAcRMQaEiM8BE0B65FepAwu",
+    "object": "chat.completion",
+    "created": 1765112057,
+    "model": "gpt-5-2025-08-07",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "This is the first part.\nThis is the second part.",
+                "refusal": None,
+                "annotations": [],
+            },
+            "finish_reason": "stop",
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 623,
+        "completion_tokens": 95,
+        "total_tokens": 718,
+        "prompt_tokens_details": {"cached_tokens": 100, "audio_tokens": 0},
+        "completion_tokens_details": {
+            "reasoning_tokens": 64,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+    },
+    "service_tier": "default",
+    "system_fingerprint": None,
+}
 
 ## OTHER CONSTANTS
 
@@ -1228,23 +2061,17 @@ TOOLS = [
                 "message_ids": {
                     "type": ["array", "null"],
                     "items": {"type": "string"},
-                    "x-ui": {
-                        "help": "For actions, provide Gmail message ids to modify."
-                    },
+                    "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                 },
                 "preview": {
                     "type": ["boolean", "null"],
                     "default": None,
-                    "x-ui": {
-                        "help": "When true with approve=false, returns a plan without side effects."
-                    },
+                    "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                 },
                 "approve": {
                     "type": ["boolean", "null"],
                     "default": None,
-                    "x-ui": {
-                        "help": "Set to true (with or without preview) to perform the action."
-                    },
+                    "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                 },
                 "kb_id": {
                     "type": ["string", "null"],
@@ -1290,9 +2117,7 @@ TOOLS = [
                     "minimum": 1,
                     "maximum": 336,
                     "default": 48,
-                    "x-ui": {
-                        "help": "Look-back window in hours when no syncToken is present."
-                    },
+                    "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                 },
                 "time_min": {
                     "type": ["string", "null"],

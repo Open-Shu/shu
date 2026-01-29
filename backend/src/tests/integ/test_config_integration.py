@@ -9,8 +9,7 @@ These tests verify configuration system functionality:
 """
 
 import sys
-import os
-from typing import List, Callable
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
@@ -20,10 +19,10 @@ async def test_public_config_endpoint_accessible(client, db, auth_headers):
     """Test that public configuration endpoint is accessible without authentication."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     data = response.json()
     assert "data" in data
-    
+
     config = data["data"]
     assert "app_name" in config
     assert "version" in config
@@ -35,17 +34,12 @@ async def test_public_config_contains_required_fields(client, db, auth_headers):
     """Test that public configuration contains all required fields."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     config = extract_data(response)
 
     # Required fields for frontend
-    required_fields = [
-        "app_name",
-        "version", 
-        "environment",
-        "google_client_id"
-    ]
-    
+    required_fields = ["app_name", "version", "environment", "google_client_id"]
+
     for field in required_fields:
         assert field in config, f"Required field '{field}' missing from public config"
         assert config[field] is not None, f"Required field '{field}' is None"
@@ -56,23 +50,23 @@ async def test_public_config_values_are_valid(client, db, auth_headers):
     """Test that public configuration values are valid."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     config = extract_data(response)
 
     # Validate app_name
     assert isinstance(config["app_name"], str)
     assert len(config["app_name"]) > 0
-    
+
     # Validate version format (should be semantic version)
     version = config["version"]
     assert isinstance(version, str)
     assert len(version.split(".")) >= 2  # At least major.minor
-    
+
     # Validate environment
     environment = config["environment"]
     assert isinstance(environment, str)
     assert environment in ["development", "staging", "production", "test"]
-    
+
     # Validate Google client ID format
     google_client_id = config["google_client_id"]
     assert isinstance(google_client_id, str)
@@ -84,7 +78,7 @@ async def test_config_endpoint_no_sensitive_data(client, db, auth_headers):
     """Test that public config endpoint doesn't expose sensitive data."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     config = extract_data(response)
 
     # Sensitive fields that should NOT be in public config
@@ -95,12 +89,12 @@ async def test_config_endpoint_no_sensitive_data(client, db, auth_headers):
         "google_client_secret",
         "api_key",
         "password",
-        "token"
+        "token",
     ]
-    
+
     for field in sensitive_fields:
         assert field not in config, f"Sensitive field '{field}' found in public config"
-    
+
     # Check that no values look like secrets
     for key, value in config.items():
         if isinstance(value, str):
@@ -153,8 +147,7 @@ async def test_config_response_format(client, db, auth_headers):
     config = extract_data(response)
     for key, value in config.items():
         assert isinstance(key, str), f"Config key '{key}' is not a string"
-        assert _is_json_serializable(value), \
-            f"Config value for '{key}' is not a valid JSON type"
+        assert _is_json_serializable(value), f"Config value for '{key}' is not a valid JSON type"
 
     # Verify upload_restrictions structure if present
     if "upload_restrictions" in config:
@@ -177,11 +170,11 @@ async def test_config_caching_headers(client, db, auth_headers):
     """Test that configuration endpoint has appropriate caching headers."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     # Configuration should be cacheable since it doesn't change often
     # Check that response doesn't have no-cache headers
     headers = response.headers
-    
+
     # Should not have strict no-cache directives for public config
     cache_control = headers.get("cache-control", "").lower()
     assert "no-store" not in cache_control, "Public config should be cacheable"
@@ -190,13 +183,13 @@ async def test_config_caching_headers(client, db, auth_headers):
 async def test_config_endpoint_performance(client, db, auth_headers):
     """Test that configuration endpoint responds quickly."""
     import time
-    
+
     start_time = time.time()
     response = await client.get("/api/v1/config/public")
     end_time = time.time()
-    
+
     assert response.status_code == 200
-    
+
     # Configuration endpoint should be very fast (under 100ms)
     response_time = end_time - start_time
     assert response_time < 0.1, f"Config endpoint too slow: {response_time:.3f}s"
@@ -207,10 +200,10 @@ async def test_config_with_different_http_methods(client, db, auth_headers):
     # GET should work
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     # Other methods should not be allowed
     methods_to_test = ["POST", "PUT", "DELETE", "PATCH"]
-    
+
     for method in methods_to_test:
         if method == "POST":
             response = await client.post("/api/v1/config/public", json={})
@@ -220,24 +213,26 @@ async def test_config_with_different_http_methods(client, db, auth_headers):
             response = await client.delete("/api/v1/config/public")
         elif method == "PATCH":
             response = await client.patch("/api/v1/config/public", json={})
-        
+
         # Should return method not allowed or not found
-        assert response.status_code in [405, 404], \
-            f"{method} should not be allowed on config endpoint"
+        assert response.status_code in [
+            405,
+            404,
+        ], f"{method} should not be allowed on config endpoint"
 
 
 async def test_config_version_format(client, db, auth_headers):
     """Test that version follows semantic versioning format."""
     response = await client.get("/api/v1/config/public")
     assert response.status_code == 200
-    
+
     config = extract_data(response)
     version = config["version"]
-    
+
     # Basic semantic version validation
     parts = version.split(".")
     assert len(parts) >= 2, f"Version should have at least major.minor: {version}"
-    
+
     # First two parts should be numeric
     try:
         int(parts[0])  # major
@@ -248,8 +243,8 @@ async def test_config_version_format(client, db, auth_headers):
 
 class ConfigurationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for Configuration functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all configuration test functions."""
         return [
             test_public_config_endpoint_accessible,
@@ -263,15 +258,15 @@ class ConfigurationTestSuite(BaseIntegrationTestSuite):
             test_config_with_different_http_methods,
             test_config_version_format,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Configuration Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "End-to-end integration tests for configuration system and public config endpoint"
-    
+
     def get_cli_examples(self) -> str:
         """Return configuration-specific CLI examples."""
         return """

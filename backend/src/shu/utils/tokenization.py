@@ -1,5 +1,4 @@
-"""
-Tokenization utilities for LLM context management.
+"""Tokenization utilities for LLM context management.
 
 Provides consistent token counting across the codebase for:
 - Document profiling routing decisions (full-doc vs chunk-aggregation)
@@ -17,7 +16,6 @@ tokenizers or the provider's token counting API.
 """
 
 from functools import lru_cache
-from typing import Optional
 
 import structlog
 
@@ -42,22 +40,21 @@ def _get_encoder(encoding_name: str = DEFAULT_ENCODING):
 
     Returns:
         tiktoken.Encoding instance
+
     """
     try:
         import tiktoken
 
         return tiktoken.get_encoding(encoding_name)
     except ImportError:
-        logger.warning(
-            "tiktoken not installed, using word-count heuristic for token estimation"
-        )
+        logger.warning("tiktoken not installed, using word-count heuristic for token estimation")
         return None
     except Exception as e:
         logger.warning(f"Failed to load tiktoken encoding {encoding_name}: {e}")
         return None
 
 
-def estimate_tokens(text: str, encoding: Optional[str] = None) -> int:
+def estimate_tokens(text: str, encoding: str | None = None) -> int:
     """Estimate the number of tokens in a text string.
 
     Uses tiktoken for accurate counting when available, falling back to a
@@ -75,6 +72,7 @@ def estimate_tokens(text: str, encoding: Optional[str] = None) -> int:
         4
         >>> estimate_tokens("This is a longer piece of text with more tokens.")
         10
+
     """
     if not text:
         return 0
@@ -93,7 +91,7 @@ def estimate_tokens(text: str, encoding: Optional[str] = None) -> int:
     return int(len(text.split()) * 1.3)
 
 
-def estimate_tokens_for_chunks(chunks: list[str], encoding: Optional[str] = None) -> int:
+def estimate_tokens_for_chunks(chunks: list[str], encoding: str | None = None) -> int:
     """Estimate total tokens across multiple text chunks.
 
     Args:
@@ -102,6 +100,7 @@ def estimate_tokens_for_chunks(chunks: list[str], encoding: Optional[str] = None
 
     Returns:
         Total estimated token count
+
     """
     return sum(estimate_tokens(chunk, encoding) for chunk in chunks)
 
@@ -117,6 +116,7 @@ def tokens_to_chars_estimate(tokens: int) -> int:
 
     Returns:
         Estimated character count
+
     """
     return tokens * 4
 
@@ -132,6 +132,6 @@ def chars_to_tokens_estimate(chars: int) -> int:
 
     Returns:
         Estimated token count
+
     """
     return chars // 4
-

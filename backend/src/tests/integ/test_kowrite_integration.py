@@ -20,7 +20,11 @@ async def test_kowrite_upsert_and_query(client, db, auth_headers):
 
     # 2) Create a knowledge base
     unique = str(uuid.uuid4())[:8]
-    kb_payload = {"name": f"Test KO Write KB {unique}", "description": "KO write path test", "sync_enabled": True}
+    kb_payload = {
+        "name": f"Test KO Write KB {unique}",
+        "description": "KO write path test",
+        "sync_enabled": True,
+    }
     kb_resp = await client.post("/api/v1/knowledge-bases", json=kb_payload, headers=auth_headers)
     assert kb_resp.status_code == 201, kb_resp.text
     kb = kb_resp.json().get("data") or {}
@@ -51,7 +55,9 @@ async def test_kowrite_upsert_and_query(client, db, auth_headers):
     assert docs_resp.status_code == 200, docs_resp.text
     docs_data = docs_resp.json().get("data") or {}
     items = docs_data.get("items") or []
-    assert any(d.get("source_id") == external_id for d in items), f"Document with source_id {external_id} not found in KB docs: {docs_resp.text}"
+    assert any(
+        d.get("source_id") == external_id for d in items
+    ), f"Document with source_id {external_id} not found in KB docs: {docs_resp.text}"
 
     # Prefer strong assertion on chunking if available
     try:
@@ -69,9 +75,7 @@ async def test_kowrite_upsert_and_query(client, db, auth_headers):
     assert q_resp.status_code in [200, 404], q_resp.text
     if q_resp.status_code == 200:
         q = q_resp.json().get("data") or {}
-        total = (q.get("total_results")
-                 or q.get("total")
-                 or len(q.get("results") or []))
+        total = q.get("total_results") or q.get("total") or len(q.get("results") or [])
         assert total >= 0  # At least the call succeeded; chunk_count assertion above covers indexing
 
 
@@ -90,4 +94,3 @@ class KoWriteTestSuite(BaseIntegrationTestSuite):
 
 if __name__ == "__main__":
     create_test_runner_script(KoWriteTestSuite, globals())
-

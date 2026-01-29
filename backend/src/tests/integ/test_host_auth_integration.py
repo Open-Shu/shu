@@ -3,10 +3,10 @@ Host Auth Integration Tests
 
 Verifies the generic provider-agnostic delegation check endpoint.
 """
-import sys
-import os
-from typing import List, Callable
+
 import logging
+import sys
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 
@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 async def test_delegation_check_unsupported_provider(client, db, auth_headers):
     """Unsupported providers should return 400 with error envelope."""
-    payload = {"provider": "dropbox", "subject": "user@example.com", "scopes": ["files.metadata.read"]}
+    payload = {
+        "provider": "dropbox",
+        "subject": "user@example.com",
+        "scopes": ["files.metadata.read"],
+    }
     response = await client.post("/api/v1/host/auth/delegation-check", json=payload, headers=auth_headers)
     assert response.status_code == 400
     body = response.json()
@@ -24,9 +28,11 @@ async def test_delegation_check_unsupported_provider(client, db, auth_headers):
 
 async def test_delegation_check_google_returns_payload(client, db, auth_headers):
     """Google provider returns a payload regardless of readiness; assert shape."""
-    payload = {"provider": "google", "subject": "user@example.com", "scopes": [
-        "https://www.googleapis.com/auth/gmail.readonly"
-    ]}
+    payload = {
+        "provider": "google",
+        "subject": "user@example.com",
+        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+    }
     response = await client.post("/api/v1/host/auth/delegation-check", json=payload, headers=auth_headers)
     assert response.status_code == 200
     data = response.json().get("data", {})
@@ -41,7 +47,7 @@ async def test_delegation_check_google_returns_payload(client, db, auth_headers)
 class HostAuthTestSuite(BaseIntegrationTestSuite):
     """Integration tests for Host Auth generic provider endpoints."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_delegation_check_unsupported_provider,
             test_delegation_check_google_returns_payload,
@@ -58,4 +64,3 @@ if __name__ == "__main__":
     suite = HostAuthTestSuite()
     exit_code = suite.run()
     sys.exit(exit_code)
-

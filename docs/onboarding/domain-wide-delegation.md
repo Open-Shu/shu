@@ -151,4 +151,3 @@ gmail_service = get_api_client("gmail", "v1", user_email)
 </augment_code_snippet>
 
 For more complex examples, refer to Google's official DWD documentation and adapt scopes and subjects to match Shu's configuration.
-

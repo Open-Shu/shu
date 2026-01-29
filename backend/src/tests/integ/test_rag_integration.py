@@ -9,13 +9,9 @@ Tests the enhanced RAG system including:
 """
 
 import sys
-import os
-from typing import Dict, Any
 
-from integ.helpers.api_helpers import process_streaming_result
-from integ.response_utils import extract_data
 from integ.base_integration_test import BaseIntegrationTestSuite
-
+from integ.helpers.api_helpers import process_streaming_result
 
 # Test Data
 PROVIDER_DATA = {
@@ -23,7 +19,7 @@ PROVIDER_DATA = {
     "provider_type": "local",
     "api_endpoint": "https://api.openai.com/v1",
     "api_key": "test-api-key-12345",
-    "is_active": True
+    "is_active": True,
 }
 
 MODEL_DATA = {
@@ -34,7 +30,7 @@ MODEL_DATA = {
     "max_tokens": 4096,
     "supports_streaming": True,
     "supports_functions": False,
-    "supports_vision": False
+    "supports_vision": False,
 }
 
 MODEL_CONFIG_DATA = {
@@ -43,41 +39,28 @@ MODEL_CONFIG_DATA = {
     "model_name": "gpt-4",  # This will be set dynamically from model_data
     "is_active": True,
     "created_by": "test-user",
-    "knowledge_base_ids": []
+    "knowledge_base_ids": [],
 }
 
-KB_DATA = {
-    "name": "Test RAG KB",
-    "description": "Test knowledge base for RAG testing"
-}
+KB_DATA = {"name": "Test RAG KB", "description": "Test knowledge base for RAG testing"}
 
 
 async def test_enhanced_rag_context_formatting(client, db, auth_headers):
     """Test enhanced RAG context formatting with citations."""
     # Create test LLM provider
-    provider_response = await client.post(
-        "/api/v1/llm/providers",
-        json=PROVIDER_DATA,
-        headers=auth_headers
-    )
+    provider_response = await client.post("/api/v1/llm/providers", json=PROVIDER_DATA, headers=auth_headers)
     assert provider_response.status_code == 201, provider_response.text
     provider_data = provider_response.json()["data"]
 
     # Create test model
     model_response = await client.post(
-        f"/api/v1/llm/providers/{provider_data['id']}/models",
-        json=MODEL_DATA,
-        headers=auth_headers
+        f"/api/v1/llm/providers/{provider_data['id']}/models", json=MODEL_DATA, headers=auth_headers
     )
     assert model_response.status_code == 200, model_response.text  # Model creation returns 200, not 201
     model_data = model_response.json()["data"]
 
     # Create knowledge base first (needed for model configuration)
-    kb_response = await client.post(
-        "/api/v1/knowledge-bases",
-        json=KB_DATA,
-        headers=auth_headers
-    )
+    kb_response = await client.post("/api/v1/knowledge-bases", json=KB_DATA, headers=auth_headers)
     assert kb_response.status_code == 201, kb_response.text
     kb_data = kb_response.json()["data"]
 
@@ -86,11 +69,7 @@ async def test_enhanced_rag_context_formatting(client, db, auth_headers):
     config_data["llm_provider_id"] = provider_data["id"]
     config_data["model_name"] = model_data["model_name"]
     config_data["knowledge_base_ids"] = [kb_data["id"]]  # Attach KB during creation
-    config_response = await client.post(
-        "/api/v1/model-configurations",
-        json=config_data,
-        headers=auth_headers
-    )
+    config_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
     assert config_response.status_code == 201, config_response.tetx
     model_config_data = config_response.json()["data"]
 
@@ -103,11 +82,8 @@ async def test_enhanced_rag_context_formatting(client, db, auth_headers):
     # Create conversation
     conversation_response = await client.post(
         "/api/v1/chat/conversations",
-        json={
-            "title": "Test RAG Conversation",
-            "model_configuration_id": model_config_data["id"]
-        },
-        headers=auth_headers
+        json={"title": "Test RAG Conversation", "model_configuration_id": model_config_data["id"]},
+        headers=auth_headers,
     )
     assert conversation_response.status_code == 200, conversation_response.text
     conversation_data = conversation_response.json()["data"]
@@ -119,11 +95,11 @@ async def test_enhanced_rag_context_formatting(client, db, auth_headers):
             "message": "What is the test document about?",
             "rag_rewrite_mode": "raw_query",
         },
-        headers=auth_headers
+        headers=auth_headers,
     )
     assert message_response.status_code == 200, message_response.text
     result = await process_streaming_result(message_response)
-    assert result is not None, f"Expected result but got None from streaming result"
+    assert result is not None, "Expected result but got None from streaming result"
     # Handle both dict (new format) and string (old format) responses
     content = result.get("content") if isinstance(result, dict) else result
     assert content == "Echo: What is the test document about?", f"Got unexpected content: {content}"
@@ -132,19 +108,13 @@ async def test_enhanced_rag_context_formatting(client, db, auth_headers):
 async def test_rag_performance_caching(client, db, auth_headers):
     """Test RAG performance optimization with caching."""
     # Create test LLM provider
-    provider_response = await client.post(
-        "/api/v1/llm/providers",
-        json=PROVIDER_DATA,
-        headers=auth_headers
-    )
+    provider_response = await client.post("/api/v1/llm/providers", json=PROVIDER_DATA, headers=auth_headers)
     assert provider_response.status_code == 201
     provider_data = provider_response.json()["data"]
 
     # Create test model
     model_response = await client.post(
-        f"/api/v1/llm/providers/{provider_data['id']}/models",
-        json=MODEL_DATA,
-        headers=auth_headers
+        f"/api/v1/llm/providers/{provider_data['id']}/models", json=MODEL_DATA, headers=auth_headers
     )
     assert model_response.status_code == 200  # Model creation returns 200, not 201
     model_data = model_response.json()["data"]
@@ -153,11 +123,7 @@ async def test_rag_performance_caching(client, db, auth_headers):
     config_data = MODEL_CONFIG_DATA.copy()
     config_data["llm_provider_id"] = provider_data["id"]
     config_data["model_name"] = model_data["model_name"]
-    config_response = await client.post(
-        "/api/v1/model-configurations",
-        json=config_data,
-        headers=auth_headers
-    )
+    config_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
     assert config_response.status_code == 201
     model_config_data = config_response.json()["data"]
 
@@ -166,9 +132,9 @@ async def test_rag_performance_caching(client, db, auth_headers):
         "/api/v1/chat/conversations",
         json={
             "title": "Test RAG Cache Conversation",
-            "model_configuration_id": model_config_data["id"]
+            "model_configuration_id": model_config_data["id"],
         },
-        headers=auth_headers
+        headers=auth_headers,
     )
     assert conversation_response.status_code == 200
     conversation_data = conversation_response.json()["data"]
@@ -180,7 +146,7 @@ async def test_rag_performance_caching(client, db, auth_headers):
             "message": "What is the test document about?",
             "rag_rewrite_mode": "raw_query",
         },
-        headers=auth_headers
+        headers=auth_headers,
     )
 
     assert first_response.status_code == 200
@@ -192,12 +158,12 @@ async def test_rag_performance_caching(client, db, auth_headers):
             "message": "What is the test document about?",
             "rag_rewrite_mode": "raw_query",
         },
-        headers=auth_headers
+        headers=auth_headers,
     )
 
     assert second_response.status_code == 200
     second_result = await process_streaming_result(second_response)
-    assert second_result is not None, f"Expected result but got None from streaming result"
+    assert second_result is not None, "Expected result but got None from streaming result"
     # Handle both dict (new format) and string (old format) responses
     second_content = second_result.get("content") if isinstance(second_result, dict) else second_result
     assert second_content == "Echo: What is the test document about?", f"Got unexpected content: {second_content}"
@@ -224,7 +190,9 @@ class RAGIntegrationTestSuite(BaseIntegrationTestSuite):
 
 if __name__ == "__main__":
     import asyncio
+
     suite = RAGIntegrationTestSuite()
     exit_code = asyncio.run(suite.run_suite())
     import sys
+
     sys.exit(exit_code)

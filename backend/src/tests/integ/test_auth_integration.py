@@ -8,13 +8,12 @@ These tests verify end-to-end authentication workflows:
 - User session management
 """
 
-import sys
-import os
 import logging
-from typing import List, Callable
+import sys
+from collections.abc import Callable
 
-from integ.helpers.decorators import replace_auth_headers_for_user
 from integ.base_integration_test import BaseIntegrationTestSuite
+from integ.helpers.decorators import replace_auth_headers_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +28,10 @@ TEST_USER_DATA = {
 }
 
 ADMIN_USER_DATA = {
-    "email": "test-admin-auth@example.com", 
+    "email": "test-admin-auth@example.com",
     "name": "Test Admin User",
     "google_id": "test_google_admin_123",
-    "role": "admin"
+    "role": "admin",
 }
 
 
@@ -82,14 +81,12 @@ async def test_admin_only_endpoints(client, db, auth_headers):
         "supports_functions": False,
         "supports_vision": False,
         "rate_limit_rpm": 60,
-        "rate_limit_tpm": 60000
+        "rate_limit_tpm": 60000,
     }
-    
-    response = await client.post("/api/v1/llm/providers", 
-                                json=provider_data, 
-                                headers=auth_headers)
+
+    response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
     assert response.status_code == 201
-    
+
     payload = response.json()
     assert "data" in payload
     provider = payload["data"]
@@ -105,10 +102,10 @@ async def test_user_session_persistence(client, db, auth_headers):
     # Make multiple authenticated requests
     response1 = await client.get("/api/v1/llm/providers", headers=auth_headers)
     assert response1.status_code == 200
-    
+
     response2 = await client.get("/api/v1/llm/providers", headers=auth_headers)
     assert response2.status_code == 200
-    
+
     # Both requests should succeed with same auth headers
     assert response1.json() == response2.json()
 
@@ -151,20 +148,18 @@ async def test_rbac_role_enforcement(client, db, auth_headers):
     """Test that role-based access control is properly enforced."""
     # Admin user should be able to perform admin actions
     # (auth_headers contains admin token from test framework)
-    
+
     # Test admin can create provider
     provider_data = {
         "name": "RBAC Test Provider",
-        "provider_type": "openai", 
+        "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "api_key": "rbac-test-key",
         "rate_limit_rpm": 100,
-        "rate_limit_tpm": 10000
+        "rate_limit_tpm": 10000,
     }
-    
-    response = await client.post("/api/v1/llm/providers",
-                                json=provider_data,
-                                headers=auth_headers)
+
+    response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
     assert response.status_code == 201, response.status_code
     payload = response.json()
     assert "data" in payload, payload
@@ -173,19 +168,16 @@ async def test_rbac_role_enforcement(client, db, auth_headers):
     # Test admin can update provider
     update_data = {
         "name": "RBAC Updated Provider",
-        "provider_type": "openai", 
+        "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
     }
-    response = await client.put(f"/api/v1/llm/providers/{provider_id}",
-                               json=update_data,
-                               headers=auth_headers)
+    response = await client.put(f"/api/v1/llm/providers/{provider_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200, response.status_code
     payload = response.json()
     assert payload["data"]["name"] == "RBAC Updated Provider", payload
-    
+
     # Test admin can delete provider
-    response = await client.delete(f"/api/v1/llm/providers/{provider_id}",
-                                  headers=auth_headers)
+    response = await client.delete(f"/api/v1/llm/providers/{provider_id}", headers=auth_headers)
     assert response.status_code in (200, 204)
 
 
@@ -193,7 +185,7 @@ async def test_cors_and_security_headers(client, db, auth_headers):
     """Test that proper security headers are set."""
     response = await client.get("/api/v1/health", headers=auth_headers)
     assert response.status_code == 200, response.status_code
-    
+
     # Check that response has proper structure (security handled by middleware)
     data = response.json()
     assert "data" in data, data
@@ -204,37 +196,33 @@ async def test_authentication_workflow_integration(client, db, auth_headers):
     # 1. Unauthenticated request should fail
     response = await client.get("/api/v1/llm/providers")
     assert response.status_code == 401
-    
+
     # 2. Authenticated request should succeed
     response = await client.get("/api/v1/llm/providers", headers=auth_headers)
     assert response.status_code == 200
-    
+
     # 3. Admin action should succeed
     provider_data = {
         "name": "Workflow Test Provider",
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "rate_limit_rpm": 60,
-        "rate_limit_tpm": 60000
+        "rate_limit_tpm": 60000,
     }
-    
-    response = await client.post("/api/v1/llm/providers",
-                                json=provider_data,
-                                headers=auth_headers)
+
+    response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
     assert response.status_code == 201
     payload = response.json()
     assert "data" in payload
 
     # 4. Verify data persisted correctly
     provider_id = payload["data"]["id"]
-    response = await client.get(f"/api/v1/llm/providers/{provider_id}",
-                               headers=auth_headers)
+    response = await client.get(f"/api/v1/llm/providers/{provider_id}", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["data"]["name"] == "Workflow Test Provider"
-    
+
     # 5. Clean up
-    response = await client.delete(f"/api/v1/llm/providers/{provider_id}",
-                                  headers=auth_headers)
+    response = await client.delete(f"/api/v1/llm/providers/{provider_id}", headers=auth_headers)
     assert response.status_code in (200, 204)
 
 
@@ -248,7 +236,7 @@ async def test_token_refresh_functionality(client, db, auth_headers):
         "email": unique_email,
         "password": "test_password_123",
         "name": "Test Refresh User",
-        "role": "regular_user"
+        "role": "regular_user",
     }
 
     # Create user via admin endpoint (active by default)
@@ -256,10 +244,7 @@ async def test_token_refresh_functionality(client, db, auth_headers):
     assert response.status_code == 200
 
     # Login to get tokens
-    login_data = {
-        "email": unique_email,
-        "password": "test_password_123"
-    }
+    login_data = {"email": unique_email, "password": "test_password_123"}
 
     response = await client.post("/api/v1/auth/login/password", json=login_data)
     assert response.status_code == 200
@@ -336,8 +321,8 @@ async def test_user_access(client, db, auth_headers):
 
 class AuthenticationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for Authentication functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all authentication test functions."""
         return [
             test_admin_access,
@@ -354,15 +339,15 @@ class AuthenticationTestSuite(BaseIntegrationTestSuite):
             test_authentication_workflow_integration,
             test_token_refresh_functionality,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Authentication Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "End-to-end integration tests for authentication, authorization, and RBAC functionality"
-    
+
     def get_cli_examples(self) -> str:
         """Return authentication-specific CLI examples."""
         return """

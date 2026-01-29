@@ -346,4 +346,3 @@ The **Cross-Cutting** roadmap initiative includes:
 - [Onboarding Guide - Section 4](./onboarding/README.md#4-authentication-and-authorization-how-to-get-an-auth-token) - Authentication details
 - [API Response Standard](./policies/API_RESPONSE_STANDARD.md) - Response envelope format
 - [API Key Authentication Plan](./API_KEY_AUTHENTICATION_PLAN.md) - Future API key system design
-

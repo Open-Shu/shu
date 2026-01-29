@@ -10,16 +10,11 @@ These tests verify the new base model discovery and management features:
 """
 
 import sys
-import os
-from typing import List, Callable
+from collections.abc import Callable
+
 from sqlalchemy import text
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.expected_error_context import (
-    expect_validation_errors,
-    ExpectedErrorContext
-)
-
 
 # Test Data - Using proper test naming for automatic cleanup
 VALID_PROVIDER_DATA = {
@@ -34,7 +29,7 @@ VALID_PROVIDER_DATA = {
     "supports_vision": False,
     "rate_limit_rpm": 3500,
     "rate_limit_tpm": 90000,
-    "budget_limit_monthly": 100.0
+    "budget_limit_monthly": 100.0,
 }
 
 MOCK_DISCOVERED_MODELS = [
@@ -48,7 +43,7 @@ MOCK_DISCOVERED_MODELS = [
         "supports_functions": True,
         "supports_vision": True,
         "input_cost_per_token": 0.000005,
-        "output_cost_per_token": 0.000015
+        "output_cost_per_token": 0.000015,
     },
     {
         "model_name": "gpt-4o-mini",
@@ -60,8 +55,8 @@ MOCK_DISCOVERED_MODELS = [
         "supports_functions": True,
         "supports_vision": True,
         "input_cost_per_token": 0.00000015,
-        "output_cost_per_token": 0.0000006
-    }
+        "output_cost_per_token": 0.0000006,
+    },
 ]
 
 MANUAL_MODEL_DATA = {
@@ -75,17 +70,13 @@ MANUAL_MODEL_DATA = {
     "supports_vision": True,
     "cost_per_input_token": 0.00001,  # Fixed field name
     "cost_per_output_token": 0.00003,  # Fixed field name
-    "is_active": True  # Added missing field
+    "is_active": True,  # Added missing field
 }
 
 
 async def _create_test_provider(client, auth_headers):
     """Helper function to create a test provider for base model tests."""
-    response = await client.post(
-        "/api/v1/llm/providers",
-        json=VALID_PROVIDER_DATA,
-        headers=auth_headers
-    )
+    response = await client.post("/api/v1/llm/providers", json=VALID_PROVIDER_DATA, headers=auth_headers)
 
     assert response.status_code == 201
     response_data = response.json()
@@ -101,11 +92,7 @@ async def _create_test_provider(client, auth_headers):
 
 async def test_create_provider_for_base_models(client, db, auth_headers):
     """Test creating a provider for base model testing."""
-    response = await client.post(
-        "/api/v1/llm/providers",
-        json=VALID_PROVIDER_DATA,
-        headers=auth_headers
-    )
+    response = await client.post("/api/v1/llm/providers", json=VALID_PROVIDER_DATA, headers=auth_headers)
 
     assert response.status_code == 201
     response_data = response.json()
@@ -130,14 +117,11 @@ async def test_discover_models_endpoint(client, db, auth_headers):
 
     # Note: This will likely fail in test environment without real API keys
     # but we can test the endpoint structure and error handling
-    response = await client.get(
-        f"/api/v1/llm/providers/{provider_id}/discover-models",
-        headers=auth_headers
-    )
+    response = await client.get(f"/api/v1/llm/providers/{provider_id}/discover-models", headers=auth_headers)
 
     # Should return either success with models or a proper error
     assert response.status_code in [200, 400, 401, 403, 500]
-    
+
     if response.status_code == 200:
         response_data = response.json()
         data = response_data.get("data", response_data)
@@ -158,9 +142,7 @@ async def test_create_manual_model(client, db, auth_headers):
     provider_id = await _create_test_provider(client, auth_headers)
 
     response = await client.post(
-        f"/api/v1/llm/providers/{provider_id}/models",
-        json=MANUAL_MODEL_DATA,
-        headers=auth_headers
+        f"/api/v1/llm/providers/{provider_id}/models", json=MANUAL_MODEL_DATA, headers=auth_headers
     )
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
@@ -180,7 +162,7 @@ async def test_create_manual_model(client, db, auth_headers):
     # Verify in database
     result = await db.execute(
         text("SELECT model_name, provider_id, is_active FROM llm_models WHERE id = :id"),
-        {"id": model["id"]}
+        {"id": model["id"]},
     )
     db_row = result.fetchone()
     assert db_row is not None
@@ -198,16 +180,11 @@ async def test_list_provider_models(client, db, auth_headers):
 
     # Create a model for the provider
     model_response = await client.post(
-        f"/api/v1/llm/providers/{provider_id}/models",
-        json=MANUAL_MODEL_DATA,
-        headers=auth_headers
+        f"/api/v1/llm/providers/{provider_id}/models", json=MANUAL_MODEL_DATA, headers=auth_headers
     )
     assert model_response.status_code == 200
 
-    response = await client.get(
-        f"/api/v1/llm/models?provider_id={provider_id}",
-        headers=auth_headers
-    )
+    response = await client.get(f"/api/v1/llm/models?provider_id={provider_id}", headers=auth_headers)
 
     assert response.status_code == 200
     response_data = response.json()
@@ -239,9 +216,7 @@ async def test_sync_models_endpoint(client, db, auth_headers):
     sync_data = [MANUAL_MODEL_DATA["model_name"]]
 
     response = await client.post(
-        f"/api/v1/llm/providers/{provider_id}/sync-models",
-        json=sync_data,
-        headers=auth_headers
+        f"/api/v1/llm/providers/{provider_id}/sync-models", json=sync_data, headers=auth_headers
     )
 
     # Should return either success or a proper error
@@ -260,14 +235,10 @@ async def test_provider_validation(client, db, auth_headers):
     invalid_data = {
         "name": "",  # Empty name should fail
         "provider_type": "invalid_type",
-        "api_endpoint": "not-a-url"
+        "api_endpoint": "not-a-url",
     }
 
-    response = await client.post(
-        "/api/v1/llm/providers",
-        json=invalid_data,
-        headers=auth_headers
-    )
+    response = await client.post("/api/v1/llm/providers", json=invalid_data, headers=auth_headers)
 
     # Should return validation error
     assert response.status_code in [400, 422]
@@ -276,7 +247,7 @@ async def test_provider_validation(client, db, auth_headers):
 class LLMBaseModelsTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for LLM Provider Base Model functionality."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return all LLM base model test functions."""
         return [
             test_create_provider_for_base_models,

@@ -20,18 +20,20 @@ os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
 import asyncio
 import logging
 import traceback
-from typing import List, Callable, Dict, Any, Optional
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
+
 import httpx
 from sqlalchemy import text
 
-from shu.main import app
-from shu.core.logging import setup_logging
-from shu.core.database import get_db_session
-from shu.auth.models import User, UserRole
-from shu.auth.jwt_manager import JWTManager
-from integ.test_data_cleanup import TestDataCleaner
 from integ.expected_error_context import expect_test_suite_errors
+from integ.test_data_cleanup import TestDataCleaner
+from shu.auth.jwt_manager import JWTManager
+from shu.auth.models import User, UserRole
+from shu.core.database import get_db_session
+from shu.core.logging import setup_logging
+from shu.main import app
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,25 +42,24 @@ logger = logging.getLogger(__name__)
 
 class TestResult:
     """Represents the result of a single test."""
-    
-    def __init__(self, name: str, passed: bool, error: Optional[str] = None, duration: float = 0.0):
+
+    def __init__(self, name: str, passed: bool, error: str | None = None, duration: float = 0.0):
         self.name = name
         self.passed = passed
         self.error = error
         self.duration = duration
-    
+
     def __str__(self):
         status = "✅ PASS" if self.passed else "❌ FAIL"
         duration_str = f"({self.duration:.3f}s)"
         if self.passed:
             return f"{status} {self.name} {duration_str}"
-        else:
-            return f"{status} {self.name} {duration_str}\n  Error: {self.error}"
+        return f"{status} {self.name} {duration_str}\n  Error: {self.error}"
 
 
 class IntegrationTestRunner:
     """Custom integration test runner for Shu application."""
-    
+
     def __init__(self, enable_file_logging: bool = False):
         self.app = app
         self.db = None
@@ -66,7 +67,7 @@ class IntegrationTestRunner:
         self.admin_user = None
         self.admin_token = None
         self.auth_headers = None
-        self.test_results: List[TestResult] = []
+        self.test_results: list[TestResult] = []
         self.enable_file_logging = enable_file_logging
         self.log_file_handler = None
         self._lifespan_cm = None
@@ -86,7 +87,7 @@ class IntegrationTestRunner:
                 os.remove(log_file_path)
             except PermissionError:
                 # File might be in use, try to truncate it instead
-                with open(log_file_path, 'w') as f:
+                with open(log_file_path, "w") as f:
                     f.truncate(0)
 
         # Create file handler
@@ -94,7 +95,7 @@ class IntegrationTestRunner:
         self.log_file_handler.setLevel(logging.INFO)
 
         # Create formatter
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         self.log_file_handler.setFormatter(formatter)
 
         # Add handler to root logger to capture all logs
@@ -141,10 +142,7 @@ class IntegrationTestRunner:
             logger.info("✅ Database connection established")
 
             # Create HTTP client for API testing
-            self.client = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=self.app),
-                base_url="http://test"
-            )
+            self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://test")
             logger.info("✅ API client created")
 
             # Create admin user for authenticated tests
@@ -158,15 +156,24 @@ class IntegrationTestRunner:
         except Exception as e:
             logger.error(f"❌ Setup failed: {e}")
             raise
-    
+
     async def _create_admin_user(self):
         """Create an admin user for testing."""
         import uuid
+
         test_id = str(uuid.uuid4())[:8]
-        
+
         # Clean up any existing test admin users (and dependent rows)
-        await self.db.execute(text("DELETE FROM plugin_subscriptions WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"))
-        await self.db.execute(text("DELETE FROM provider_credentials WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"))
+        await self.db.execute(
+            text(
+                "DELETE FROM plugin_subscriptions WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+            )
+        )
+        await self.db.execute(
+            text(
+                "DELETE FROM provider_credentials WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+            )
+        )
         await self.db.execute(text("DELETE FROM users WHERE email LIKE 'test-admin-%@example.com'"))
         await self.db.commit()
 
@@ -176,25 +183,25 @@ class IntegrationTestRunner:
             name=f"Test Admin {test_id}",
             role=UserRole.ADMIN.value,
             google_id=f"test_admin_{test_id}",
-            is_active=True
+            is_active=True,
         )
         self.db.add(self.admin_user)
         await self.db.commit()
         await self.db.refresh(self.admin_user)
-        
+
         # Generate JWT token
         jwt_manager = JWTManager()
         token_data = {
             "user_id": self.admin_user.id,
             "email": self.admin_user.email,
-            "role": self.admin_user.role
+            "role": self.admin_user.role,
         }
         self.admin_token = jwt_manager.create_access_token(token_data)
         self.auth_headers = {
             "Authorization": f"Bearer {self.admin_token}",
             "_user_id": self.admin_user.id,
         }
-    
+
     async def _cleanup_test_data(self, quick: bool = True):
         """Clean up test data using API-based cleanup."""
         try:
@@ -209,22 +216,25 @@ class IntegrationTestRunner:
                     stats = await cleaner.cleanup_all_test_data()
 
                 # Log cleanup results
-                total_cleaned = sum(stats.get(key, 0) for key in (
-                    'plugins',
-                    'knowledge_bases',
-                    'sources',
-                    'sync_jobs',
-                    'llm_providers',
-                    'prompts',
-                    'prompt_assignments',
-                    'conversations',
-                    'users',
-                    'model_configurations',
-                ))
+                total_cleaned = sum(
+                    stats.get(key, 0)
+                    for key in (
+                        "plugins",
+                        "knowledge_bases",
+                        "sources",
+                        "sync_jobs",
+                        "llm_providers",
+                        "prompts",
+                        "prompt_assignments",
+                        "conversations",
+                        "users",
+                        "model_configurations",
+                    )
+                )
                 if total_cleaned > 0:
                     logger.info(f"✅ Cleaned up {total_cleaned} test entities")
 
-                if stats['errors']:
+                if stats["errors"]:
                     logger.warning(f"⚠️  {len(stats['errors'])} cleanup errors occurred")
             else:
                 # Fallback to basic SQL cleanup if API client not available
@@ -244,53 +254,68 @@ class IntegrationTestRunner:
             # Clean up test data in dependency order
 
             # 1. Clean up model configurations first (they reference LLM providers)
-            await self.db.execute(text("""
+            await self.db.execute(
+                text("""
                 DELETE FROM model_configurations
                 WHERE name LIKE 'Test %' OR name LIKE '%Test%' OR name LIKE '%Integration%'
-            """))
+            """)
+            )
 
             # 2. Clean up LLM providers
-            await self.db.execute(text("""
+            await self.db.execute(
+                text("""
                 DELETE FROM llm_providers
                 WHERE name LIKE 'Test %' OR name LIKE '%Test Provider%' OR name LIKE '%Integration%'
                    OR name LIKE '%test%' OR name LIKE '%Test%'
-            """))
+            """)
+            )
 
             # 3. Clean up prompts
-            await self.db.execute(text("""
+            await self.db.execute(
+                text("""
                 DELETE FROM prompts
                 WHERE name LIKE 'Test %' OR name LIKE '%Test%' OR name LIKE '%Integration%'
                    OR name LIKE '%test%'
-            """))
+            """)
+            )
 
             # 4. Clean up knowledge bases and related data
-            await self.db.execute(text("""
+            await self.db.execute(
+                text("""
                 DELETE FROM knowledge_bases
                 WHERE name LIKE 'Test %' OR name LIKE '%Test%' OR name LIKE '%Integration%'
                    OR name LIKE '%test%'
-            """))
+            """)
+            )
 
             # 5. Clean up conversations
-            await self.db.execute(text("""
+            await self.db.execute(
+                text("""
                 DELETE FROM conversations
                 WHERE title LIKE 'Test %' OR title LIKE '%Test%' OR title LIKE '%Integration%'
                    OR title LIKE '%test%'
-            """))
+            """)
+            )
 
             # 6. Clean up test users (except our current admin user)
             if self.admin_user:
-                await self.db.execute(text("""
+                await self.db.execute(
+                    text("""
                     DELETE FROM users
                     WHERE (email LIKE 'test-%' OR email LIKE '%@test.%' OR email LIKE '%integration%'
                            OR email LIKE '%test%' OR name LIKE 'Test %' OR name LIKE '%Test%')
                       AND id != :admin_id
-                """), {"admin_id": self.admin_user.id})
+                """),
+                    {"admin_id": self.admin_user.id},
+                )
             else:
-                await self.db.execute(text("""
+                await self.db.execute(
+                    text("""
                     DELETE FROM users
                     WHERE email LIKE 'test-%' OR email LIKE '%@test.%' OR email LIKE '%integration%'
                        OR email LIKE '%test%' OR name LIKE 'Test %' OR name LIKE '%Test%'
-                """))
+                """)
+                )
 
             await self.db.commit()
             logger.info("✅ Basic SQL cleanup completed")
@@ -301,7 +326,7 @@ class IntegrationTestRunner:
                 await self.db.rollback()
             except Exception as rollback_error:
                 logger.warning(f"Rollback error: {rollback_error}")
-    
+
     async def run_test(self, test_func: Callable, test_name: str = None) -> TestResult:
         """Run a single integration test."""
         if test_name is None:
@@ -321,16 +346,16 @@ class IntegrationTestRunner:
 
         except Exception as e:
             duration = (datetime.now() - start_time).total_seconds()
-            error_msg = f"{type(e).__name__}: {str(e)}"
+            error_msg = f"{type(e).__name__}: {e!s}"
             result = TestResult(test_name, False, error_msg, duration)
 
             # Log full traceback for debugging
             logger.debug(f"Full traceback for {test_name}:\n{traceback.format_exc()}")
-        
+
         self.test_results.append(result)
         return result
-    
-    async def run_test_suite(self, tests: List[Callable]) -> Dict[str, Any]:
+
+    async def run_test_suite(self, tests: list[Callable]) -> dict[str, Any]:
         """Run a suite of integration tests."""
         logger.info(f"🎯 Running integration test suite with {len(tests)} tests")
         print()  # Add blank line for better separation
@@ -360,7 +385,7 @@ class IntegrationTestRunner:
                     print(f"❌ FAIL: {test_name} ({result.duration:.3f}s)")
                     print(f"   Error: {result.error}")
 
-                logger.info(f"--------------------------------------------------------------------------------\n")
+                logger.info("--------------------------------------------------------------------------------\n")
                 print()  # Add blank line after each test
 
         total_duration = (datetime.now() - start_time).total_seconds()
@@ -374,41 +399,40 @@ class IntegrationTestRunner:
             "passed": len(passed_tests),
             "failed": len(failed_tests),
             "duration": total_duration,
-            "pass_rate": len(passed_tests) / len(self.test_results) * 100 if self.test_results else 0
+            "pass_rate": len(passed_tests) / len(self.test_results) * 100 if self.test_results else 0,
         }
 
         return results
-    
+
     def print_summary(self):
         """Print test results summary."""
         if not self.test_results:
             logger.info("No tests were run")
-            return
-        
-        print("\n" + "="*80)
+            return None
+
+        print("\n" + "=" * 80)
         print("🧪 INTEGRATION TEST RESULTS")
-        print("="*80)
-        
+        print("=" * 80)
+
         # Print individual test results
         for result in self.test_results:
             print(result)
-        
+
         # Print summary
         passed = len([r for r in self.test_results if r.passed])
         failed = len([r for r in self.test_results if not r.passed])
         total_duration = sum(r.duration for r in self.test_results)
-        
-        print("\n" + "-"*80)
+
+        print("\n" + "-" * 80)
         print(f"📊 SUMMARY: {passed}/{len(self.test_results)} tests passed ({passed/len(self.test_results)*100:.1f}%)")
         print(f"⏱️  Total time: {total_duration:.3f}s")
-        
+
         if failed > 0:
             print(f"❌ {failed} tests failed")
             return False
-        else:
-            print("🎉 All tests passed!")
-            return True
-    
+        print("🎉 All tests passed!")
+        return True
+
     async def teardown(self):
         """Clean up test environment."""
         logger.info("🧹 Cleaning up test environment...")
@@ -416,7 +440,7 @@ class IntegrationTestRunner:
         # Do final cleanup BEFORE closing client
         if self.client and self.db:
             try:
-                await self._cleanup_test_data(quick=False) # Use comprehensive cleanup for suite-level
+                await self._cleanup_test_data(quick=False)  # Use comprehensive cleanup for suite-level
             except Exception as e:
                 logger.warning(f"⚠️  Error during final cleanup: {e}")
 
@@ -459,6 +483,7 @@ class IntegrationTestRunner:
 
         # Force garbage collection to clean up any remaining connections
         import gc
+
         gc.collect()
 
         # Additional delay to allow async cleanup to complete
@@ -479,7 +504,9 @@ class IntegrationTestRunner:
 
 
 # Convenience function for running tests
-async def run_integration_tests(tests: List[Callable], enable_file_logging: bool = False, wipe_log_file: bool = False) -> bool:
+async def run_integration_tests(
+    tests: list[Callable], enable_file_logging: bool = False, wipe_log_file: bool = False
+) -> bool:
     """Run integration tests and return success status."""
     runner = IntegrationTestRunner(enable_file_logging=enable_file_logging)
 
@@ -492,7 +519,7 @@ async def run_integration_tests(tests: List[Callable], enable_file_logging: bool
         await runner.teardown()
 
 
-def filter_tests_by_name(all_tests: List[Callable], test_names: List[str]) -> List[Callable]:
+def filter_tests_by_name(all_tests: list[Callable], test_names: list[str]) -> list[Callable]:
     """Filter tests by their function names."""
     if not test_names:
         return all_tests
@@ -511,7 +538,7 @@ def filter_tests_by_name(all_tests: List[Callable], test_names: List[str]) -> Li
     return filtered_tests
 
 
-def filter_tests_by_pattern(all_tests: List[Callable], pattern: str) -> List[Callable]:
+def filter_tests_by_pattern(all_tests: list[Callable], pattern: str) -> list[Callable]:
     """Filter tests by pattern matching (e.g., 'create' matches all tests with 'create' in name)."""
     import re
 
@@ -523,12 +550,12 @@ def filter_tests_by_pattern(all_tests: List[Callable], pattern: str) -> List[Cal
 
 
 async def run_integration_test_suite(
-    all_tests: List[Callable],
-    test_names: List[str] = None,
+    all_tests: list[Callable],
+    test_names: list[str] = None,
     pattern: str = None,
     list_tests: bool = False,
     enable_file_logging: bool = False,
-    wipe_log_file: bool = False
+    wipe_log_file: bool = False,
 ) -> bool:
     """
     Run integration test suite with filtering options.
@@ -564,7 +591,9 @@ async def run_integration_test_suite(
 
     logger.info(f"Running {len(tests_to_run)} out of {len(all_tests)} available tests")
 
-    return await run_integration_tests(tests_to_run, enable_file_logging=enable_file_logging, wipe_log_file=wipe_log_file)
+    return await run_integration_tests(
+        tests_to_run, enable_file_logging=enable_file_logging, wipe_log_file=wipe_log_file
+    )
 
 
 if __name__ == "__main__":
@@ -573,6 +602,6 @@ if __name__ == "__main__":
         """Example test function."""
         response = await client.get("/api/v1/health", headers=auth_headers)
         assert response.status_code == 200
-    
+
     # Run the example
     asyncio.run(run_integration_tests([example_test]))

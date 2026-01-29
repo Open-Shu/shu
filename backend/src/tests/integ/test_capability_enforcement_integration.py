@@ -47,4 +47,3 @@ class CapabilityEnforcementTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(CapabilityEnforcementTestSuite, globals())
-

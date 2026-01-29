@@ -1,17 +1,17 @@
-"""
-ProviderCredential model: provider-agnostic storage of OAuth credentials.
+"""ProviderCredential model: provider-agnostic storage of OAuth credentials.
 
 Stores encrypted access/refresh tokens and related metadata for any provider.
 Links to ProviderIdentity via credential_id.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Boolean, Text, Index
+from datetime import UTC, datetime
 
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, String, Text
+
+from ..core.oauth_encryption import get_oauth_encryption_service
 from .base import BaseModel
-from ..core.oauth_encryption import get_oauth_encryption_service, OAuthEncryptionError
 
 
 class ProviderCredential(BaseModel):
@@ -70,7 +70,7 @@ class ProviderCredential(BaseModel):
         svc = get_oauth_encryption_service()
         self.refresh_token_encrypted = svc.encrypt_token(token)
 
-    def get_refresh_token(self) -> Optional[str]:
+    def get_refresh_token(self) -> str | None:
         if not self.refresh_token_encrypted:
             return None
         svc = get_oauth_encryption_service()
@@ -79,5 +79,4 @@ class ProviderCredential(BaseModel):
     def is_expired(self) -> bool:
         if not self.expires_at:
             return False
-        return datetime.now(timezone.utc) >= self.expires_at
-
+        return datetime.now(UTC) >= self.expires_at

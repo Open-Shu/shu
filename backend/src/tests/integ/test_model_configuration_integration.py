@@ -10,19 +10,13 @@ These tests verify the model configuration system that combines:
 """
 
 import sys
-import os
-from typing import List, Callable
+from collections.abc import Callable
+
 from sqlalchemy import text
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.expected_error_context import (
-    expect_not_found_errors,
-    expect_duplicate_errors,
-    ExpectedErrorContext
-)
-from integ.response_utils import extract_data
 from integ.helpers.auth import create_active_user_headers
-
+from integ.response_utils import extract_data
 
 SIDE_CALL_SETTING_KEY = "side_call_model_config_id"
 
@@ -42,7 +36,7 @@ PROVIDER_DATA = {
     "provider_type": "openai",
     "api_endpoint": "https://api.openai.com/v1",
     "api_key": "test-api-key-configs",
-    "is_active": True
+    "is_active": True,
 }
 
 MODEL_DATA = {
@@ -55,26 +49,26 @@ MODEL_DATA = {
     "supports_functions": True,
     "cost_per_input_token": 0.000005,
     "cost_per_output_token": 0.000015,
-    "is_active": True
+    "is_active": True,
 }
 
 PROMPT_DATA = {
     "name": "Test Model Configuration Prompt",  # Follows test naming convention
     "content": "You are a helpful AI assistant for testing model configurations.",
     "entity_type": "llm_model",
-    "description": "Test prompt for model configuration integration tests"
+    "description": "Test prompt for model configuration integration tests",
 }
 
 KB_DATA = {
     "name": "Test Model Configuration KB",  # Follows test naming convention
     "description": "Test KB for model configuration tests",
-    "source_type": "google_drive"
+    "source_type": "google_drive",
 }
 
 CONFIG_DATA = {
     "name": "Test Model Configuration",  # Already follows test naming convention
     "description": "Integration test configuration combining model, prompt, and KB",
-    "is_active": True
+    "is_active": True,
 }
 
 
@@ -86,8 +80,7 @@ async def _create_test_dependencies(client, auth_headers):
     provider_id = extract_data(response)["id"]
 
     # Create model
-    response = await client.post(f"/api/v1/llm/providers/{provider_id}/models",
-                                json=MODEL_DATA, headers=auth_headers)
+    response = await client.post(f"/api/v1/llm/providers/{provider_id}/models", json=MODEL_DATA, headers=auth_headers)
     assert response.status_code == 200
     model_id = extract_data(response)["id"]
 
@@ -125,7 +118,7 @@ async def test_create_model_configuration_minimal(client, db, auth_headers):
         "name": "Test Minimal Model Configuration",  # Follows test naming convention
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -155,7 +148,7 @@ async def test_create_model_configuration_with_prompt(client, db, auth_headers):
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
         "prompt_id": prompt_id,
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -182,7 +175,7 @@ async def test_create_model_configuration_full(client, db, auth_headers):
         "model_name": MODEL_DATA["model_name"],
         "prompt_id": prompt_id,
         "knowledge_base_ids": [kb_id],  # Knowledge base attachment works correctly
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -193,10 +186,18 @@ async def test_create_model_configuration_full(client, db, auth_headers):
     assert config["prompt_id"] == prompt_id, f"Expected prompt_id {prompt_id}, got {config.get('prompt_id')}"
 
     # Test that knowledge base attachment works correctly
-    assert config["has_knowledge_bases"] is True, f"Expected has_knowledge_bases True, got {config.get('has_knowledge_bases')}"
-    assert config["knowledge_base_count"] == 1, f"Expected knowledge_base_count 1, got {config.get('knowledge_base_count')}"
-    assert len(config["knowledge_bases"]) == 1, f"Expected 1 knowledge base, got {len(config.get('knowledge_bases', []))}"
-    assert config["knowledge_bases"][0]["id"] == kb_id, f"Expected KB id {kb_id}, got {config['knowledge_bases'][0].get('id')}"
+    assert (
+        config["has_knowledge_bases"] is True
+    ), f"Expected has_knowledge_bases True, got {config.get('has_knowledge_bases')}"
+    assert (
+        config["knowledge_base_count"] == 1
+    ), f"Expected knowledge_base_count 1, got {config.get('knowledge_base_count')}"
+    assert (
+        len(config["knowledge_bases"]) == 1
+    ), f"Expected 1 knowledge base, got {len(config.get('knowledge_bases', []))}"
+    assert (
+        config["knowledge_bases"][0]["id"] == kb_id
+    ), f"Expected KB id {kb_id}, got {config['knowledge_bases'][0].get('id')}"
 
     # Configuration will be automatically cleaned up by test framework due to "Test" in name
 
@@ -212,7 +213,7 @@ async def test_list_model_configurations(client, db, auth_headers):
         "name": "Test List Model Configuration",
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     create_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -283,7 +284,7 @@ async def test_regular_user_sees_only_active_configurations(client, db, auth_hea
     assert inactive_name not in inactive_names
 
     # Configurations will be automatically cleaned up by test framework due to "Test" in name
-	
+
 
 async def test_regular_user_listing_with_kb_does_not_expose_relationships(client, db, auth_headers):
     """Regular users can list configs that have KBs without seeing KB details or causing errors."""
@@ -321,7 +322,7 @@ async def test_regular_user_listing_with_kb_does_not_expose_relationships(client
         assert config.get("knowledge_bases") == []
 
     # Configuration will be automatically cleaned up by test framework due to "Test" in name
-    
+
 
 async def test_get_model_configuration_by_id(client, db, auth_headers):
     """Test getting a specific model configuration by ID."""
@@ -336,7 +337,7 @@ async def test_get_model_configuration_by_id(client, db, auth_headers):
         "model_name": MODEL_DATA["model_name"],
         "prompt_id": prompt_id,
         "knowledge_base_ids": [kb_id],  # Knowledge base attachment works correctly
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     create_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -373,7 +374,7 @@ async def test_update_model_configuration(client, db, auth_headers):
         "name": "Test Update Model Configuration",
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     create_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -384,7 +385,7 @@ async def test_update_model_configuration(client, db, auth_headers):
     update_data = {
         "name": "Test Updated Model Configuration",
         "description": "Updated description for testing",
-        "is_active": False
+        "is_active": False,
     }
 
     response = await client.put(
@@ -407,9 +408,7 @@ async def test_toggle_off_side_call_clears_config(client, db, auth_headers):
     await _clear_side_call_setting(db)
 
     # Create test dependencies and a side-call-capable configuration
-    provider_id, model_id, prompt_id, kb_id = await _create_test_dependencies(
-        client, auth_headers
-    )
+    provider_id, model_id, prompt_id, kb_id = await _create_test_dependencies(client, auth_headers)
 
     create_payload = {
         **CONFIG_DATA,
@@ -471,7 +470,7 @@ async def test_filter_configurations_by_active_status(client, db, auth_headers):
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
         "is_active": True,
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     active_response = await client.post("/api/v1/model-configurations", json=active_config_data, headers=auth_headers)
@@ -484,10 +483,12 @@ async def test_filter_configurations_by_active_status(client, db, auth_headers):
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
         "is_active": False,
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
-    inactive_response = await client.post("/api/v1/model-configurations", json=inactive_config_data, headers=auth_headers)
+    inactive_response = await client.post(
+        "/api/v1/model-configurations", json=inactive_config_data, headers=auth_headers
+    )
     assert inactive_response.status_code == 201
 
     # Test active configurations filter
@@ -522,7 +523,7 @@ async def test_search_configurations_by_name(client, db, auth_headers):
         "name": "Test Searchable Model Configuration",
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     create_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -553,7 +554,7 @@ async def test_create_configuration_duplicate_name(client, db, auth_headers):
         "name": "Test Duplicate Model Configuration",
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     first_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -565,7 +566,7 @@ async def test_create_configuration_duplicate_name(client, db, auth_headers):
         "name": "Test Duplicate Model Configuration",  # Same name
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     response = await client.post("/api/v1/model-configurations", json=duplicate_data, headers=auth_headers)
@@ -584,7 +585,7 @@ async def test_create_configuration_invalid_provider(client, db, auth_headers):
         "name": "Invalid Provider Config",
         "llm_provider_id": "invalid-provider-id",
         "model_name": "some-model",
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     response = await client.post("/api/v1/model-configurations", json=invalid_data, headers=auth_headers)
@@ -602,7 +603,7 @@ async def test_delete_model_configurations(client, db, auth_headers):
         "name": "Test Delete Model Configuration",
         "llm_provider_id": provider_id,
         "model_name": MODEL_DATA["model_name"],
-        "created_by": "test-user"
+        "created_by": "test-user",
     }
 
     create_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
@@ -630,7 +631,7 @@ async def test_cleanup_test_dependencies(client, db, auth_headers):
 class ModelConfigurationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for Model Configuration functionality."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return all model configuration test functions."""
         return [
             test_setup_test_dependencies,

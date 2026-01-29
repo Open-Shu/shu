@@ -14,8 +14,8 @@ def _enable_rate_limiting():
     import EXECUTOR at module load time and hold a direct reference to the
     original object.
     """
-    from shu.plugins.executor import EXECUTOR
     from shu.core.rate_limiting import TokenBucketRateLimiter
+    from shu.plugins.executor import EXECUTOR
 
     # Save original limiters
     old_limiter = EXECUTOR._limiter
@@ -43,7 +43,6 @@ def _enable_rate_limiting():
 
 # --- Test functions ---
 async def test_provider_rpm_cap_429(client, db, auth_headers):
-
     # Sync and enable test_schema
     resp = await client.post("/api/v1/plugins/admin/sync", headers=auth_headers)
     assert resp.status_code == 200, resp.text
