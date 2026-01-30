@@ -378,7 +378,7 @@ async def test_update_model_configuration(client, db, auth_headers):
     }
 
     create_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
-    assert create_response.status_code == 201
+    assert create_response.status_code == 201, create_response.status_code
     config_id = extract_data(create_response)["id"]
 
     # Now test updating
@@ -393,12 +393,14 @@ async def test_update_model_configuration(client, db, auth_headers):
         json=update_data,
         headers=auth_headers,
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.status_code
 
     config = extract_data(response)
-    assert config["name"] == update_data["name"]
-    assert config["description"] == update_data["description"]
-    assert config["is_active"] == update_data["is_active"]
+    assert config["name"] == update_data["name"], config["name"]
+    assert config["description"] == update_data["description"], config["description"]
+    assert (
+        config["is_active"] == update_data["is_active"]
+    ), f"Expected {update_data['is_active']}, got {config['is_active']}"
 
     # Configuration will be automatically cleaned up by test framework due to "Test" in name
 

@@ -108,7 +108,7 @@ class ProfilingService:
         max_tokens = self.settings.profiling_max_input_tokens
         token_count = estimate_tokens(content)
         if token_count > max_tokens:
-            error_msg = f"Input exceeds profiling_max_input_tokens: " f"{token_count} > {max_tokens}"
+            error_msg = f"Input exceeds profiling_max_input_tokens: {token_count} > {max_tokens}"
             logger.warning(
                 "profiling_input_too_large",
                 context=context,
@@ -252,7 +252,7 @@ class ProfilingService:
         )
 
         if not result.success:
-            logger.warning("chunk_batch_profiling_failed", error=result.error_message)
+            logger.warning(f"chunk_batch_profiling_failed: {result.error_message}")
             # Return failed results for all chunks
             failed_results = [
                 self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks

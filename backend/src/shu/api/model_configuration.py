@@ -323,7 +323,7 @@ async def update_model_configuration(
             await side_call_service.clear_side_call_model(current_user.id)
 
         # Reload with relationships to ensure they're available for serialization
-        config_with_relationships = await service.get_model_configuration(config.id, include_relationships=True)
+        config_with_relationships = await service.get_model_configuration(config_id, include_relationships=True)
 
         response_data = service._to_response(config_with_relationships)
         side_call_model_id = await _get_side_call_model_id(side_call_service)

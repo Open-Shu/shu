@@ -443,7 +443,7 @@ async def microsoft_login(current_user: User | None = Depends(lambda: None)):
             raise ValueError("Failed to build Microsoft authorization URL")
         return RedirectResponse(url=url)
     except Exception as e:
-        logger.error("microsoft_login error", error=str(e), exc_info=True)
+        logger.error(f"microsoft_login error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Microsoft SSO redirect unavailable: {e}",
@@ -500,7 +500,7 @@ async def microsoft_exchange_login(
         # Adapter errors (user info request failures) come as ValueError
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
     except Exception as e:
-        logger.error("microsoft_exchange_login error", error=str(e), exc_info=True)
+        logger.error(f"microsoft_exchange_login error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Microsoft login exchange failed"
         ) from e

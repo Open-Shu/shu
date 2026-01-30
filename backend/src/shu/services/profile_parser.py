@@ -114,7 +114,7 @@ class ProfileParser:
             return results
 
         except Exception as e:
-            logger.warning("failed_to_parse_chunk_profiles", error=str(e))
+            logger.warning(f"failed_to_parse_chunk_profiles: {e}")
             return [self.create_failed_chunk_result(c, str(e)) for c in chunks]
 
     def extract_json(self, content: str) -> str:

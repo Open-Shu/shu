@@ -90,6 +90,13 @@ class ModelConfigurationUpdate(BaseModel):
     parameter_overrides: dict[str, Any] | None = Field(
         None, description="Replace per-model LLM parameter overrides JSON (entire object)"
     )
+    is_active: bool | None = None
+    knowledge_base_ids: list[str] | None = None
+    kb_prompt_assignments: list[ModelConfigKBPromptAssignment] | None = Field(
+        None, description="KB-specific prompt assignments to update"
+    )
+    functionalities: dict[str, Any] | None = Field(None, description="Enabled functionalities for the given model")
+    is_side_call_model: bool | None = Field(None, description="Whether this model is designated for side-calls")
 
     @field_validator("name")
     @classmethod
