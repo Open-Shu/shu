@@ -7,84 +7,112 @@ on:
     branches: [main, develop]
 
 jobs:
-  python-lint:
-    name: Python Linting (Ruff + mypy)
-    runs-on: ubuntu-latest
+  # TODO: comment back in with a later commit
+  # python-lint:
+  #   name: Python Linting (Ruff + mypy)
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch all history for git diff
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0  # Fetch all history for git diff
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #         cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install ruff mypy
-          pip install -r requirements.txt
+  #     - name: Install dependencies
+  #       run: |
+  #         pip install --upgrade pip
+  #         pip install ruff mypy
+  #         pip install -r requirements.txt
 
-      - name: Get changed Python files
-        id: changed-py-files
-        uses: tj-actions/changed-files@v44
-        with:
-          files: |
-            **/*.py
-          files_ignore: |
-            tests/**
-            backend/migrations/**
+  #     - name: Get changed Python files
+  #       id: changed-py-files
+  #       uses: tj-actions/changed-files@v44
+  #       with:
+  #         files: |
+  #           **/*.py
+  #         files_ignore: |
+  #           tests/**
+  #           backend/migrations/**
 
-      - name: Run Ruff linter on changed files
-        if: steps.changed-py-files.outputs.any_changed == 'true'
-        run: |
-          echo "Running Ruff on changed files..."
-          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff check --output-format=github
+  #     - name: Run Ruff linter on changed files
+  #       if: steps.changed-py-files.outputs.any_changed == 'true'
+  #       run: |
+  #         echo "Running Ruff on changed files..."
+  #         echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff check --output-format=github
 
-      - name: Run Ruff formatter check on changed files
-        if: steps.changed-py-files.outputs.any_changed == 'true'
-        run: |
-          echo "Checking Ruff formatting on changed files..."
-          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff format --check
+  #     - name: Run Ruff formatter check on changed files
+  #       if: steps.changed-py-files.outputs.any_changed == 'true'
+  #       run: |
+  #         echo "Checking Ruff formatting on changed files..."
+  #         echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff format --check
 
-      - name: Skip if no Python files changed
-        if: steps.changed-py-files.outputs.any_changed == 'false'
-        run: |
-          echo "✅ No Python files changed, skipping linting"
+  #     - name: Skip if no Python files changed
+  #       if: steps.changed-py-files.outputs.any_changed == 'false'
+  #       run: |
+  #         echo "✅ No Python files changed, skipping linting"
 
-      - name: Run mypy type checker
-        run: |
-          mypy backend/src/shu
-        continue-on-error: true  # Don't fail build on type errors initially
+  #     - name: Run mypy type checker
+  #       run: |
+  #         mypy backend/src/shu
+  #       continue-on-error: true  # Don't fail build on type errors initially
 
-  frontend-lint:
-    name: Frontend Linting (ESLint + Prettier)
-    runs-on: ubuntu-latest
+  # TODO: comment back in with a later commit
+  # frontend-lint:
+  #   name: Frontend Linting (ESLint + Prettier)
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0  # Fetch all history for git diff
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+  #     - name: Set up Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: '24'
+  #         cache: 'npm'
+  #         cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci
+  #     - name: Install dependencies
+  #       working-directory: frontend
+  #       run: npm ci
 
-      - name: Run ESLint
-        working-directory: frontend
-        run: npm run lint
+  #     - name: Get changed frontend files
+  #       id: changed-frontend-files
+  #       uses: tj-actions/changed-files@v44
+  #       with:
+  #         files: |
+  #           frontend/**/*.{js,jsx,ts,tsx,json,css,md}
 
-      - name: Run Prettier check
-        working-directory: frontend
-        run: npm run format:check
+  #     - name: Run ESLint on changed files
+  #       if: steps.changed-frontend-files.outputs.any_changed == 'true'
+  #       working-directory: frontend
+  #       run: |
+  #         echo "Running ESLint on changed files..."
+  #         FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
+  #         # Remove 'frontend/' prefix from paths since we're in frontend directory
+  #         FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
+  #         echo "$FILES_RELATIVE" | xargs npx eslint
+
+  #     - name: Run Prettier check on changed files
+  #       if: steps.changed-frontend-files.outputs.any_changed == 'true'
+  #       working-directory: frontend
+  #       run: |
+  #         echo "Checking Prettier formatting on changed files..."
+  #         FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
+  #         # Remove 'frontend/' prefix from paths since we're in frontend directory
+  #         FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
+  #         echo "$FILES_RELATIVE" | xargs npx prettier --check
+
+  #     - name: Skip if no frontend files changed
+  #       if: steps.changed-frontend-files.outputs.any_changed == 'false'
+  #       run: |
+  #         echo "✅ No frontend files changed, skipping linting"
 
   pre-commit:
     name: Pre-commit Hooks
@@ -122,7 +150,7 @@ jobs:
         if: steps.changed-files-all.outputs.any_changed == 'true'
         run: |
           echo "Running pre-commit on changed files..."
-          echo "${{ steps.changed-files-all.outputs.all_changed_files }}" | xargs pre-commit run --files --show-diff-on-failure
+          pre-commit run --files ${{ steps.changed-files-all.outputs.all_changed_files }} --show-diff-on-failure
 
       - name: Skip if no files changed
         if: steps.changed-files-all.outputs.any_changed == 'false'

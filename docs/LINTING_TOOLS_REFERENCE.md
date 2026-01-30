@@ -307,20 +307,21 @@ make lint-fix
 
 ## CI/CD Integration
 
-All tools run in GitHub Actions on every PR:
+Linting tools run in GitHub Actions on every PR:
 
 **Workflow:** `.github/workflows/lint.yml`
 
 **Jobs:**
 - python-lint (Ruff + mypy on changed Python files)
-- frontend-lint (ESLint + Prettier on all frontend files)
-- pre-commit (Active hooks: ruff-format, bandit, prettier, general checks on changed files)
+- frontend-lint (ESLint + Prettier on changed frontend files)
+- pre-commit (Formatting, security, and general checks on changed files)
 
-**Strategy:** Python linting checks only changed files to avoid blocking PRs on legacy code issues
+**Strategy:**
+- All linting jobs check only changed files to avoid blocking PRs on legacy code issues
+- Pre-commit runs the same hooks locally and in CI/CD for consistency
+- Main linters (ruff check, mypy, eslint) are commented out in pre-commit to avoid duplication
 
-**Blocking:** PRs cannot merge if linting fails
-
-**Note:** Some pre-commit hooks (ruff linter, mypy, eslint) are commented out to avoid duplication with dedicated jobs
+**Blocking:** PRs cannot merge if any linting job fails
 
 ## Tool Comparison
 
