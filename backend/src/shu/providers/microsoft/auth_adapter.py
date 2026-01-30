@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from datetime import UTC
+from typing import Any
 
 import certifi
 import httpx
 
-from ..base_auth_adapter import BaseAuthAdapter
 from ...core.logging import get_logger
+from ..base_auth_adapter import BaseAuthAdapter
 
 logger = get_logger(__name__)
 
@@ -19,6 +20,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
     - Token endpoint (v2):        https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
     - Default tenant = "common" unless MICROSOFT_TENANT_ID is set.
     - Scopes must include offline_access to receive refresh_token.
+
     """
 
     def _tenant(self) -> str:
@@ -32,24 +34,28 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
     def _token_url(self) -> str:
         return f"https://login.microsoftonline.com/{self._tenant()}/oauth2/v2.0/token"
 
-    async def user_token(self, *, required_scopes: Optional[List[str]] = None) -> Optional[str]:
+    async def user_token(self, *, required_scopes: list[str] | None = None) -> str | None:
         """Fetch a Microsoft user access token from ProviderCredential, refreshing via OAuth if needed."""
-        from sqlalchemy import select, and_  # type: ignore
-        from ...models.provider_credential import ProviderCredential  # type: ignore
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import and_, select  # type: ignore
+
         from ...core.database import get_db_session  # type: ignore
-        from datetime import datetime, timezone, timedelta
+        from ...models.provider_credential import ProviderCredential  # type: ignore
 
         settings = self._auth._settings
         db = await get_db_session()
         try:
             res = await db.execute(
-                select(ProviderCredential).where(
+                select(ProviderCredential)
+                .where(
                     and_(
                         ProviderCredential.user_id == self._auth._user_id,
                         ProviderCredential.provider_key == "microsoft",
                         ProviderCredential.is_active == True,  # noqa: E712
                     )
-                ).order_by(ProviderCredential.updated_at.desc())
+                )
+                .order_by(ProviderCredential.updated_at.desc())
             )
             row = res.scalars().first()
             if not row:
@@ -97,7 +103,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             try:
                 row.set_access_token(access_token)
                 exp_in = int((body.get("expires_in") if isinstance(body, dict) else 3600) or 3600)
-                setattr(row, "expires_at", datetime.now(timezone.utc) + timedelta(seconds=max(1, exp_in)))
+                row.expires_at = datetime.now(UTC) + timedelta(seconds=max(1, exp_in))
                 await db.commit()
             except Exception:
                 try:
@@ -111,17 +117,21 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             except Exception:
                 pass
 
-    async def service_account_token(self, *, scopes: List[str], subject: Optional[str] = None) -> str:
+    async def service_account_token(self, *, scopes: list[str], subject: str | None = None) -> str:
         # Not applicable for Microsoft consumer OAuth in this minimal adapter; raise for now.
         raise NotImplementedError("Microsoft service account token not implemented")
 
-    async def delegation_check(self, *, scopes: List[str], subject: str) -> Dict[str, Any]:
+    async def delegation_check(self, *, scopes: list[str], subject: str) -> dict[str, Any]:
         # Not applicable for Microsoft in this minimal adapter; return a neutral response.
         return {"ready": False, "status": 0, "scopes": scopes, "note": "Not implemented"}
 
-    async def build_authorization_url(self, *, scopes: List[str]) -> Dict[str, Any]:
+    async def build_authorization_url(self, *, scopes: list[str]) -> dict[str, Any]:
         s = self._auth._settings
-        redirect_uri = s.get_oauth_redirect_uri("microsoft") if hasattr(s, "get_oauth_redirect_uri") else getattr(s, "microsoft_redirect_uri", None)
+        redirect_uri = (
+            s.get_oauth_redirect_uri("microsoft")
+            if hasattr(s, "get_oauth_redirect_uri")
+            else getattr(s, "microsoft_redirect_uri", None)
+        )
         if not (getattr(s, "microsoft_client_id", None) and redirect_uri):
             raise RuntimeError("Microsoft OAuth is not configured")
         # Ensure offline_access scope for refresh tokens
@@ -140,11 +150,18 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         )
         return {"url": res.get("url"), "state": "provider=microsoft"}
 
-    async def exchange_code(self, *, code: str, scopes: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def exchange_code(self, *, code: str, scopes: list[str] | None = None) -> dict[str, Any]:
         import requests
+
         s = self._auth._settings
-        redirect_uri = s.get_oauth_redirect_uri("microsoft") if hasattr(s, "get_oauth_redirect_uri") else getattr(s, "microsoft_redirect_uri", None)
-        if not (getattr(s, "microsoft_client_id", None) and getattr(s, "microsoft_client_secret", None) and redirect_uri):
+        redirect_uri = (
+            s.get_oauth_redirect_uri("microsoft")
+            if hasattr(s, "get_oauth_redirect_uri")
+            else getattr(s, "microsoft_redirect_uri", None)
+        )
+        if not (
+            getattr(s, "microsoft_client_id", None) and getattr(s, "microsoft_client_secret", None) and redirect_uri
+        ):
             raise RuntimeError("Microsoft OAuth is not configured")
         scope_str = " ".join(list({*(scopes or []), "offline_access"})) if scopes else "offline_access"
         resp = requests.post(
@@ -164,9 +181,11 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             raise RuntimeError(f"Provider token exchange failed: {resp.text[:300]}")
         return resp.json() or {}
 
-    async def status(self, *, user_id: str, db) -> Dict[str, Any]:
-        from sqlalchemy import select, and_  # type: ignore
+    async def status(self, *, user_id: str, db) -> dict[str, Any]:
+        from sqlalchemy import and_, select  # type: ignore
+
         from ...models.provider_credential import ProviderCredential  # type: ignore
+
         result = await db.execute(
             select(ProviderCredential).where(
                 and_(
@@ -177,10 +196,10 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             )
         )
         creds = result.scalars().all()
-        scopes_union: List[str] = []
+        scopes_union: list[str] = []
         for c in creds:
             try:
-                for s in (c.scopes or []):
+                for s in c.scopes or []:
                     if s not in scopes_union:
                         scopes_union.append(s)
             except Exception:
@@ -189,7 +208,9 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
 
     async def disconnect(self, *, user_id: str, db) -> None:
         from sqlalchemy import delete  # type: ignore
+
         from ...models.provider_credential import ProviderCredential  # type: ignore
+
         await db.execute(
             delete(ProviderCredential).where(
                 ProviderCredential.user_id == user_id,
@@ -198,11 +219,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         )
 
     async def get_user_info(
-        self,
-        *,
-        access_token: Optional[str] = None,
-        id_token: Optional[str] = None,
-        db=None
+        self, *, access_token: Optional[str] = None, id_token: Optional[str] = None, db=None
     ) -> Dict[str, Any]:
         """Get Microsoft user info via Graph API and return normalized user info.
 
@@ -221,6 +238,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
 
         Raises:
             ValueError: If access_token is missing, invalid, or request fails
+
         """
         del id_token, db  # intentionally unused - Microsoft uses access_token only
         if not access_token:
@@ -231,11 +249,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         try:
             async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
                 resp = await client.get(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json"
-                    }
+                    url, headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
                 )
 
             if resp.status_code != 200:
@@ -260,4 +274,3 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             "name": data.get("displayName") or email.split("@")[0],
             "picture": None,  # MS Graph /me doesn't return photo URL directly
         }
-

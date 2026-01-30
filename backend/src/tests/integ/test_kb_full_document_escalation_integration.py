@@ -1,8 +1,6 @@
-import sys, os
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from typing import List, Callable
-
 from integ.response_utils import extract_data
 
 
@@ -50,7 +48,7 @@ async def test_rag_config_full_doc_fields_roundtrip(client, db, auth_headers):
 
 
 class KBFullDocumentEscalationTestSuite(BaseIntegrationTestSuite):
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_rag_config_full_doc_fields_roundtrip,
         ]

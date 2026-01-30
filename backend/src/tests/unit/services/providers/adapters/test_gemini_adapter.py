@@ -3,7 +3,18 @@ import types
 from unittest.mock import AsyncMock
 
 import pytest
+from shared import (
+    GEMINI_ACTIONABLE_FUNCTION_CALL,
+    GEMINI_ACTIONABLE_OUTPUT_DELTA1,
+    GEMINI_ACTIONABLE_OUTPUT_DELTA2,
+    GEMINI_ACTIONABLE_RESPONSE_COMPLETE,
+    GEMINI_COMPLETE_FUNCTION_CALL_PAYLOAD,
+    GEMINI_COMPLETE_OUTPUT_PAYLOAD,
+    GEMINI_IGNORED_RESPONSE_COMPLETE,
+    TOOLS,
+)
 
+from shu.services.chat_types import ChatContext
 from shu.services.providers import adapter_base
 from shu.services.providers.adapter_base import (
     ProviderAdapterContext,
@@ -12,19 +23,7 @@ from shu.services.providers.adapter_base import (
     ProviderToolCallEventResult,
     ToolCallInstructions,
 )
-from shu.services.chat_types import ChatContext
 from shu.services.providers.adapters.gemini_adapter import GeminiAdapter
-
-from shared import (
-    TOOLS,
-    GEMINI_IGNORED_RESPONSE_COMPLETE,
-    GEMINI_ACTIONABLE_FUNCTION_CALL,
-    GEMINI_ACTIONABLE_OUTPUT_DELTA1,
-    GEMINI_ACTIONABLE_OUTPUT_DELTA2,
-    GEMINI_ACTIONABLE_RESPONSE_COMPLETE,
-    GEMINI_COMPLETE_FUNCTION_CALL_PAYLOAD,
-    GEMINI_COMPLETE_OUTPUT_PAYLOAD,
-)
 
 FAKE_PLUGIN_RESULT = {"ok": True}
 
@@ -81,14 +80,14 @@ def _evaluate_tool_call_events(tool_event):
     assistant_msg = tool_event.additional_messages[0]
     assert assistant_msg.role == "assistant"
     assert assistant_msg.content == [
-            {
-                "function": {
-                    "name": "gmail_digest__list",
-                    "arguments": json.dumps({"op": "list", "max_results": 5}),
-                    "thoughtSignature": "signature1",
-                },
-            }
-        ]
+        {
+            "function": {
+                "name": "gmail_digest__list",
+                "arguments": json.dumps({"op": "list", "max_results": 5}),
+                "thoughtSignature": "signature1",
+            },
+        }
+    ]
 
     result_msg = tool_event.additional_messages[1]
     assert result_msg.role == "tool"
@@ -98,7 +97,6 @@ def _evaluate_tool_call_events(tool_event):
 
 
 def test_provider_settings(gemini_adapter):
-
     info = gemini_adapter.get_provider_information()
     assert info.key == "gemini"
     assert info.display_name == "Gemini"
@@ -122,10 +120,9 @@ def test_provider_settings(gemini_adapter):
 
 @pytest.mark.asyncio
 async def test_event_handling(gemini_adapter, patch_plugin_calls):
-
     # Streaming function call
     assert await gemini_adapter.handle_provider_event(GEMINI_ACTIONABLE_FUNCTION_CALL) is None
-    
+
     # Ignore an empty completion
     assert await gemini_adapter.handle_provider_event(GEMINI_IGNORED_RESPONSE_COMPLETE) is None
 
@@ -202,7 +199,7 @@ async def test_inject_functions(gemini_adapter):
                         "thoughtSignature": "sig-123",
                     },
                     "id": "call_1",
-                }
+                },
             ],
             "tool_calls": [],
         },

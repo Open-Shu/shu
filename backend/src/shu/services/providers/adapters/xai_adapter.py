@@ -1,12 +1,22 @@
 import copy
-from typing import Any, Dict, List
+from typing import Any
 
-from shu.models.plugin_execution import CallableTool
 from shu.core.logging import get_logger
+from shu.models.plugin_execution import CallableTool
 
 from ..adapter_base import ProviderCapabilities, ProviderInformation, register_adapter
+from ..parameter_definitions import (
+    ArrayParameter,
+    BooleanParameter,
+    EnumParameter,
+    InputField,
+    IntegerParameter,
+    NumberParameter,
+    ObjectParameter,
+    Option,
+    StringParameter,
+)
 from .responses_adapter import ResponsesAdapter
-from ..parameter_definitions import ArrayParameter, BooleanParameter, EnumParameter, InputField, IntegerParameter, NumberParameter, ObjectParameter, Option, StringParameter
 
 logger = get_logger(__name__)
 
@@ -27,24 +37,28 @@ class XAIAdapter(ResponsesAdapter):
     def get_api_base_url(self) -> str:
         return "https://api.x.ai/v1"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         return {
             "scheme": "bearer",
             "headers": {"Authorization": f"Bearer {self.api_key}"},
         }
-    
-    async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:
-        res: List[Dict[str, Any]] = []
+
+    async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
+        res: list[dict[str, Any]] = []
         for tool in tools:
             title = None
             if isinstance(tool.enum_labels, dict):
                 title = tool.enum_labels.get(str(tool.op))
             fname = f"{tool.name}__{tool.op}"
-            op_schema = copy.deepcopy(tool.schema) if tool.schema else {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            }
+            op_schema = (
+                copy.deepcopy(tool.schema)
+                if tool.schema
+                else {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True,
+                }
+            )
             props = op_schema.setdefault("properties", {})
             props["op"] = {
                 "type": "string",
@@ -68,7 +82,7 @@ class XAIAdapter(ResponsesAdapter):
         payload["tools"] = payload.get("tools", []) + res
         return payload
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             # --- Sampling / generation controls (chat.completions) ---
             "temperature": NumberParameter(
@@ -95,8 +109,7 @@ class XAIAdapter(ResponsesAdapter):
                 min=1,
                 label="Max output tokens",
                 description=(
-                    "Maximum number of tokens Grok-4 can generate for this completion "
-                    "(output tokens only)."
+                    "Maximum number of tokens Grok-4 can generate for this completion " "(output tokens only)."
                 ),
             ),
             "reasoning": ObjectParameter(
@@ -126,9 +139,7 @@ class XAIAdapter(ResponsesAdapter):
                     ),
                 },
             ),
-
             # --- Function calling (client-side tools) ---
-
             "tools": ArrayParameter(
                 label="Tools",
                 description="Built-in tools to enable for this response.",
@@ -151,9 +162,7 @@ class XAIAdapter(ResponsesAdapter):
                                 ),
                                 "enable_image_understanding": BooleanParameter(
                                     label="Image understanding",
-                                    description=(
-                                        "Enable image understanding during X search."
-                                    ),
+                                    description=("Enable image understanding during X search."),
                                 ),
                                 "excluded_domains": ArrayParameter(
                                     label="Excluded domains",
@@ -176,9 +185,7 @@ class XAIAdapter(ResponsesAdapter):
                                 ),
                                 "search_context_size": EnumParameter(
                                     label="Search Context Size",
-                                    description=(
-                                        "How much retrieved web content is fed back to the model."
-                                    ),
+                                    description=("How much retrieved web content is fed back to the model."),
                                     options=[
                                         Option(value="low", label="Low"),
                                         Option(value="medium", label="Medium"),
@@ -211,15 +218,11 @@ class XAIAdapter(ResponsesAdapter):
                                 ),
                                 "enable_image_understanding": BooleanParameter(
                                     label="Image understanding",
-                                    description=(
-                                        "Enable image understanding during X search."
-                                    ),
+                                    description=("Enable image understanding during X search."),
                                 ),
                                 "enable_video_understanding": BooleanParameter(
                                     label="Video understanding",
-                                    description=(
-                                        "Enable video understanding during X search."
-                                    ),
+                                    description=("Enable video understanding during X search."),
                                 ),
                                 "excluded_x_handles": ArrayParameter(
                                     label="Excluded X handles",
@@ -247,7 +250,6 @@ class XAIAdapter(ResponsesAdapter):
                     ),
                 ],
             ),
-
             "tool_choice": EnumParameter(
                 label="Tool Choice",
                 description=(
@@ -281,17 +283,12 @@ class XAIAdapter(ResponsesAdapter):
                     ),
                 ],
             ),
-
             "parallel_tool_calls": BooleanParameter(
                 label="Parallel Tool Calls",
                 default=True,
-                description=(
-                    "If enabled, the model may request multiple tool calls in parallel during a single step."
-                ),
+                description=("If enabled, the model may request multiple tool calls in parallel during a single step."),
             ),
-
             # --- User identifier (for logging / abuse monitoring) ---
-
             "user": StringParameter(
                 label="User ID",
                 description=(

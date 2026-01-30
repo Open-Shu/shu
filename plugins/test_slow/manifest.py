@@ -6,4 +6,3 @@ PLUGIN_MANIFEST = {
     "module": "plugins.test_slow.plugin:TestSlowPlugin",
     "capabilities": [],
 }
-

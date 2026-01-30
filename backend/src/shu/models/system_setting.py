@@ -1,5 +1,4 @@
-"""
-SystemSetting model for storing configurable application values.
+"""SystemSetting model for storing configurable application values.
 
 Provides a flexible key/value store where values are persisted as JSON blobs,
 making it easy to add new application-wide settings without migrations.

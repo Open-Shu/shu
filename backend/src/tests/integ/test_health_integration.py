@@ -6,12 +6,10 @@ and system status verification.
 """
 
 import sys
-import os
-from typing import List, Callable
 import time
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from sqlalchemy import text
 
 
 async def test_basic_health_check(client, db, auth_headers):
@@ -22,7 +20,7 @@ async def test_basic_health_check(client, db, auth_headers):
     response_data = response.json()
     assert "data" in response_data
     data = response_data["data"]
-    
+
     # Check required health fields
     assert "status" in data
     assert data["status"] in ["healthy", "warning", "unhealthy"]
@@ -50,7 +48,7 @@ async def test_health_check_database_connectivity(client, db, auth_headers):
 
     data = response.json()["data"]
     checks = data["checks"]
-    
+
     # Should have database connectivity check
     assert "database" in checks or "db" in checks or any("database" in str(key).lower() for key in checks.keys())
 
@@ -59,17 +57,17 @@ async def test_readiness_probe(client, db, auth_headers):
     """Test Kubernetes readiness probe endpoint."""
     response = await client.get("/api/v1/health/readiness")
     assert response.status_code in [200, 503]  # 503 if not ready
-    
+
     response_data = response.json()
     assert "data" in response_data
     data = response_data["data"]
-    
+
     # Check readiness fields
     assert "ready" in data
     assert isinstance(data["ready"], bool)
     assert "timestamp" in data
     assert "checks" in data
-    
+
     if response.status_code == 503:
         # If not ready, should have errors
         assert "errors" in data
@@ -80,11 +78,11 @@ async def test_liveness_probe(client, db, auth_headers):
     """Test Kubernetes liveness probe endpoint."""
     response = await client.get("/api/v1/health/liveness")
     assert response.status_code == 200
-    
+
     response_data = response.json()
     assert "data" in response_data
     data = response_data["data"]
-    
+
     # Check liveness fields
     assert "alive" in data
     assert data["alive"] is True
@@ -98,7 +96,7 @@ async def test_liveness_probe_performance(client, db, auth_headers):
     start_time = time.time()
     response = await client.get("/api/v1/health/liveness")
     end_time = time.time()
-    
+
     assert response.status_code == 200
     # Liveness should be extremely fast (under 0.5 seconds)
     assert (end_time - start_time) < 0.5, "Liveness probe should be very fast"
@@ -137,20 +135,23 @@ async def test_health_endpoints_no_auth_required(client, db, auth_headers):
     for endpoint in endpoints:
         response = await client.get(endpoint)
         # Should not require authentication
-        assert response.status_code in [200, 503], f"Health endpoint {endpoint} should not require auth"
+        assert response.status_code in [
+            200,
+            503,
+        ], f"Health endpoint {endpoint} should not require auth"
 
 
 async def test_health_check_consistency(client, db, auth_headers):
     """Test that health checks are consistent across multiple calls."""
     responses = []
-    
+
     # Make multiple health check calls
     for _ in range(3):
         response = await client.get("/api/v1/health", headers=auth_headers)
         assert response.status_code == 200
         responses.append(response.json())
         time.sleep(0.1)  # Small delay between calls
-    
+
     # Status should be consistent (allowing for timestamp differences)
     first_status = responses[0]["data"]["status"]
     for response in responses[1:]:
@@ -163,16 +164,16 @@ async def test_health_check_system_info(client, db, auth_headers):
     assert response.status_code == 200
 
     data = response.json()["data"]
-    
+
     # Should include system information
     system_fields = ["version", "environment", "timestamp"]
     for field in system_fields:
         assert field in data, f"Health check should include {field}"
-    
+
     # Version should be a string
     assert isinstance(data["version"], str)
     assert len(data["version"]) > 0
-    
+
     # Environment should be valid
     assert data["environment"] in ["development", "staging", "production", "test"]
 
@@ -181,10 +182,10 @@ async def test_readiness_probe_database_check(client, db, auth_headers):
     """Test that readiness probe checks database connectivity."""
     response = await client.get("/api/v1/health/readiness")
     assert response.status_code in [200, 503]
-    
+
     data = response.json()["data"]
     checks = data["checks"]
-    
+
     # Should check database connectivity for readiness
     assert "database" in checks or "db" in checks or any("database" in str(key).lower() for key in checks.keys())
 
@@ -218,11 +219,11 @@ async def test_health_endpoints_response_format(client, db, auth_headers):
     for endpoint in auth_endpoints:
         response = await client.get(endpoint, headers=auth_headers)
         assert response.status_code in [200, 503]
-        
+
         # Should follow Shu response envelope format
         response_data = response.json()
         assert "data" in response_data, f"Endpoint {endpoint} should use envelope format"
-        
+
         # Should have timestamp
         data = response_data["data"]
         assert "timestamp" in data, f"Endpoint {endpoint} should include timestamp"
@@ -245,27 +246,30 @@ async def test_health_metrics_collection(client, db, auth_headers):
     assert response.status_code == 200
 
     data = response.json()["data"]
-    
+
     # Should have execution time or performance metrics
     performance_indicators = [
-        "execution_time", "response_time", "duration", 
-        "checks", "memory", "cpu"
+        "execution_time",
+        "response_time",
+        "duration",
+        "checks",
+        "memory",
+        "cpu",
     ]
-    
+
     # At least some performance indicators should be present
     has_performance_data = any(
-        indicator in data or 
-        any(indicator in str(key).lower() for key in data.keys())
+        indicator in data or any(indicator in str(key).lower() for key in data.keys())
         for indicator in performance_indicators
     )
-    
+
     assert has_performance_data, "Health check should include performance metrics"
 
 
 class HealthIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for health monitoring functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all health integration test functions."""
         return [
             test_basic_health_check,
@@ -283,15 +287,15 @@ class HealthIntegrationTestSuite(BaseIntegrationTestSuite):
             test_health_check_error_handling,
             test_health_metrics_collection,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Health Monitoring Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "End-to-end integration tests for health monitoring, readiness, and liveness probes"
-    
+
     def get_cli_examples(self) -> str:
         """Return health-specific CLI examples."""
         return """

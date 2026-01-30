@@ -4,4 +4,3 @@ PLUGIN_MANIFEST = {
     "module": "plugins.shu_runtime_bad_import.plugin:RuntimeBadImportPlugin",
     "capabilities": [],
 }
-

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +12,7 @@ from ..models.user_preferences import UserPreferences
 
 
 class ContextPreferencesResolver:
-    """
-    Shared helper that resolves context-window sizing and user preference bundles.
+    """Shared helper that resolves context-window sizing and user preference bundles.
 
     ChatService previously owned this logic directly; moving it here allows other
     services (agents, workflows, etc.) to reuse the same resolution rules.
@@ -23,11 +22,8 @@ class ContextPreferencesResolver:
         self.db_session = db_session
         self.config_manager = config_manager
 
-    def resolve_max_context_tokens(
-        self, *, active_model_config: Optional[ModelConfiguration]
-    ) -> int:
-        """
-        Determine the max context window allowed for the current execution.
+    def resolve_max_context_tokens(self, *, active_model_config: ModelConfiguration | None) -> int:
+        """Determine the max context window allowed for the current execution.
 
         Order of precedence:
         1. Model configuration parameter overrides (max_context_window)
@@ -52,10 +48,9 @@ class ContextPreferencesResolver:
         self,
         *,
         user_id: str,
-        current_user: Optional[User],
-    ) -> Dict[str, Any]:
-        """
-        Resolve user-controlled context preferences (currently memory depth).
+        current_user: User | None,
+    ) -> dict[str, Any]:
+        """Resolve user-controlled context preferences (currently memory depth).
 
         Pulls from the in-flight user object when available to avoid extra queries,
         otherwise falls back to loading preferences from the database.

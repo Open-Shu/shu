@@ -8,9 +8,10 @@ Tests cover:
 - Fixed-window algorithm behavior
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Set required environment variables BEFORE any shu imports
 os.environ.setdefault("SHU_DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test_db")
@@ -49,22 +50,22 @@ class TestGetClientIp:
 
 class TestRateLimitResult:
     """Tests for RateLimitResult dataclass."""
-    
+
     def test_default_values(self):
         """RateLimitResult has sensible defaults."""
         from shu.core.rate_limiting import RateLimitResult
-        
+
         result = RateLimitResult(allowed=True)
         assert result.allowed is True
         assert result.retry_after_seconds == 0
         assert result.remaining == 0
         assert result.limit == 0
         assert result.reset_seconds == 0
-    
+
     def test_to_headers_allowed(self):
         """Headers for allowed request."""
         from shu.core.rate_limiting import RateLimitResult
-        
+
         result = RateLimitResult(
             allowed=True,
             remaining=50,
@@ -72,16 +73,16 @@ class TestRateLimitResult:
             reset_seconds=30,
         )
         headers = result.to_headers()
-        
+
         assert headers["RateLimit-Limit"] == "100"
         assert headers["RateLimit-Remaining"] == "50"
         assert headers["RateLimit-Reset"] == "30"
         assert "Retry-After" not in headers
-    
+
     def test_to_headers_denied(self):
         """Headers for denied request include Retry-After."""
         from shu.core.rate_limiting import RateLimitResult
-        
+
         result = RateLimitResult(
             allowed=False,
             retry_after_seconds=10,
@@ -90,21 +91,21 @@ class TestRateLimitResult:
             reset_seconds=10,
         )
         headers = result.to_headers()
-        
+
         assert headers["Retry-After"] == "10"
         assert headers["RateLimit-Remaining"] == "0"
 
 
 class TestTokenBucketRateLimiter:
     """Tests for TokenBucketRateLimiter with CacheBackend."""
-    
+
     @pytest.fixture
     def mock_cache_backend(self):
         """
         Create a mock CacheBackend for testing rate limiting.
-        
+
         The mock implements async `get`, `incr`, `decr`, and `expire` operations backed by an internal `_store` dict.
-        
+
         Returns:
             AsyncMock: A mock CacheBackend instance with the required methods.
         """
@@ -134,24 +135,24 @@ class TestTokenBucketRateLimiter:
         cache.decr = mock_decr
         cache.expire = mock_expire
         return cache
-    
+
     @pytest.mark.asyncio
     async def test_check_allows_within_capacity(self, mock_cache_backend):
         """Requests within capacity are allowed."""
         from shu.core.rate_limiting import TokenBucketRateLimiter
-        
+
         with patch.object(TokenBucketRateLimiter, "_get_cache", return_value=mock_cache_backend):
             limiter = TokenBucketRateLimiter(
                 namespace="test",
                 capacity=10,
                 refill_per_second=1,
             )
-            
+
             result = await limiter.check(key="user:123")
-            
+
             assert result.allowed is True
             assert result.remaining >= 0
-    
+
     @pytest.mark.asyncio
     async def test_check_denies_over_capacity(self, mock_cache_backend):
         """Requests over capacity are denied after exceeding limit."""
@@ -187,7 +188,7 @@ class TestTokenBucketRateLimiter:
             )
 
             # Mock time to control window boundaries - patch the exact module reference
-            with patch('shu.core.rate_limiting.time.time', return_value=1000):
+            with patch("shu.core.rate_limiting.time.time", return_value=1000):
                 # First 5 requests should be allowed
                 for i in range(5):
                     result = await limiter.check(key="user:123")
@@ -241,11 +242,7 @@ class TestProviderRateLimits:
         service = RateLimitService(settings=mock_settings)
 
         # Check with provider-specific limit (required, not optional)
-        result = await service.check_llm_rpm_limit(
-            user_id="user1",
-            provider_id="provider_openai",
-            rpm_override=30
-        )
+        result = await service.check_llm_rpm_limit(user_id="user1", provider_id="provider_openai", rpm_override=30)
 
         assert result.allowed is True
         assert result.limit == 30
@@ -263,10 +260,7 @@ class TestProviderRateLimits:
 
         # Check with provider-specific TPM limit (required, not optional)
         result = await service.check_llm_tpm_limit(
-            user_id="user1",
-            token_cost=500,
-            provider_id="provider_anthropic",
-            tpm_override=10000
+            user_id="user1", token_cost=500, provider_id="provider_anthropic", tpm_override=10000
         )
 
         assert result.allowed is True
@@ -276,7 +270,7 @@ class TestProviderRateLimits:
     async def test_zero_limit_means_no_check_at_streaming_layer(self):
         """
         Documents that a provider rate limit of 0 is handled by the streaming layer and not by the RateLimitService.
-        
+
         The streaming layer (_check_provider_rate_limits) short-circuits and skips calling the service when a provider's configured limit is 0; the service itself expects positive limits and does not perform this zero-limit short-circuiting.
         """
         # This is a documentation test - actual skipping is in chat_streaming.py
@@ -286,7 +280,7 @@ class TestProviderRateLimits:
 
 class TestRateLimitService:
     """Tests for RateLimitService."""
-    
+
     def test_service_initialization(self):
         """Service initializes with settings."""
         from shu.core.rate_limiting import RateLimitService

@@ -10,11 +10,11 @@ This tests the middleware authentication flow in middleware.py that:
 3. Maps requests to user via SHU_API_KEY_USER_EMAIL
 """
 
-import sys
-import os
 import logging
+import os
+import sys
 import uuid
-from typing import List, Callable
+from collections.abc import Callable
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +32,7 @@ TEST_API_KEY = f"test-api-key-{uuid.uuid4().hex[:16]}"
 async def test_api_key_auth_success(client, db, auth_headers):
     """Test that valid API key authentication works end-to-end."""
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
 
     # Get the admin user email from auth_headers
@@ -42,9 +43,10 @@ async def test_api_key_auth_success(client, db, auth_headers):
     admin_email = user_data["email"]
 
     # Patch settings to configure API key auth
-    with patch.object(settings, 'api_key', TEST_API_KEY), \
-         patch.object(settings, 'api_key_user_email', admin_email):
-
+    with (
+        patch.object(settings, "api_key", TEST_API_KEY),
+        patch.object(settings, "api_key_user_email", admin_email),
+    ):
         # Make request with API key header
         api_key_headers = {"Authorization": f"ApiKey {TEST_API_KEY}"}
         response = await client.get("/api/v1/llm/providers", headers=api_key_headers)
@@ -57,11 +59,13 @@ async def test_api_key_auth_success(client, db, auth_headers):
 async def test_api_key_auth_invalid_key(client, db, auth_headers):
     """Test that invalid API key is rejected."""
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
 
-    with patch.object(settings, 'api_key', TEST_API_KEY), \
-         patch.object(settings, 'api_key_user_email', "test@example.com"):
-
+    with (
+        patch.object(settings, "api_key", TEST_API_KEY),
+        patch.object(settings, "api_key_user_email", "test@example.com"),
+    ):
         # Make request with wrong API key
         api_key_headers = {"Authorization": "ApiKey wrong-key-value"}
         response = await client.get("/api/v1/llm/providers", headers=api_key_headers)
@@ -74,29 +78,33 @@ async def test_api_key_auth_invalid_key(client, db, auth_headers):
 async def test_api_key_auth_no_key_configured(client, db, auth_headers):
     """Test that API key auth fails when no key is configured."""
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
 
-    with patch.object(settings, 'api_key', None), \
-         patch.object(settings, 'api_key_user_email', "test@example.com"):
-
+    with (
+        patch.object(settings, "api_key", None),
+        patch.object(settings, "api_key_user_email", "test@example.com"),
+    ):
         api_key_headers = {"Authorization": f"ApiKey {TEST_API_KEY}"}
         response = await client.get("/api/v1/llm/providers", headers=api_key_headers)
 
-        assert response.status_code == 401, f"Expected 401 when no API key configured"
+        assert response.status_code == 401, "Expected 401 when no API key configured"
 
 
 async def test_api_key_auth_no_user_mapping(client, db, auth_headers):
     """Test that API key auth fails when user mapping is not configured."""
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
 
-    with patch.object(settings, 'api_key', TEST_API_KEY), \
-         patch.object(settings, 'api_key_user_email', None):
-
+    with (
+        patch.object(settings, "api_key", TEST_API_KEY),
+        patch.object(settings, "api_key_user_email", None),
+    ):
         api_key_headers = {"Authorization": f"ApiKey {TEST_API_KEY}"}
         response = await client.get("/api/v1/llm/providers", headers=api_key_headers)
 
-        assert response.status_code == 401, f"Expected 401 when user mapping not configured"
+        assert response.status_code == 401, "Expected 401 when user mapping not configured"
         data = response.json()
         assert "API key user mapping not configured" in data.get("detail", "")
 
@@ -104,20 +112,23 @@ async def test_api_key_auth_no_user_mapping(client, db, auth_headers):
 async def test_api_key_auth_user_not_found(client, db, auth_headers):
     """Test that API key auth fails when mapped user doesn't exist."""
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
 
-    with patch.object(settings, 'api_key', TEST_API_KEY), \
-         patch.object(settings, 'api_key_user_email', "nonexistent@example.com"):
-
+    with (
+        patch.object(settings, "api_key", TEST_API_KEY),
+        patch.object(settings, "api_key_user_email", "nonexistent@example.com"),
+    ):
         api_key_headers = {"Authorization": f"ApiKey {TEST_API_KEY}"}
         response = await client.get("/api/v1/llm/providers", headers=api_key_headers)
 
-        assert response.status_code == 401, f"Expected 401 when mapped user doesn't exist"
+        assert response.status_code == 401, "Expected 401 when mapped user doesn't exist"
 
 
 async def test_api_key_auth_creates_conversation(client, db, auth_headers):
     """Test that API key auth can create resources (not just read)."""
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
 
     # Get admin user email
@@ -131,9 +142,10 @@ async def test_api_key_auth_creates_conversation(client, db, auth_headers):
     assert len(configs_data["items"]) > 0, "No model configurations available for test"
     model_config_id = configs_data["items"][0]["id"]
 
-    with patch.object(settings, 'api_key', TEST_API_KEY), \
-         patch.object(settings, 'api_key_user_email', admin_email):
-
+    with (
+        patch.object(settings, "api_key", TEST_API_KEY),
+        patch.object(settings, "api_key_user_email", admin_email),
+    ):
         api_key_headers = {"Authorization": f"ApiKey {TEST_API_KEY}"}
 
         # Create a conversation via API key auth
@@ -143,7 +155,7 @@ async def test_api_key_auth_creates_conversation(client, db, auth_headers):
                 "title": "API Key Test Conversation",
                 "model_configuration_id": model_config_id,
             },
-            headers=api_key_headers
+            headers=api_key_headers,
         )
 
         # Note: The API returns 200 for conversation creation (not 201)
@@ -159,7 +171,7 @@ async def test_api_key_auth_creates_conversation(client, db, auth_headers):
 class ApiKeyAuthTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for API Key Authentication."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_api_key_auth_success,
             test_api_key_auth_invalid_key,
@@ -180,4 +192,3 @@ if __name__ == "__main__":
     suite = ApiKeyAuthTestSuite()
     exit_code = suite.run()
     sys.exit(exit_code)
-

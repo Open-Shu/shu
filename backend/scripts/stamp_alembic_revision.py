@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-One-off admin script to stamp the database's Alembic version to a given revision
+"""One-off admin script to stamp the database's Alembic version to a given revision
 when legacy revisions were squashed and are no longer present in the repo.
 
 Use only in development. Prefer `alembic stamp <rev>`; this script is a fallback
@@ -9,6 +8,7 @@ when Alembic cannot locate an old revision id (e.g., '005') after a squash.
 Usage:
   SHU_DATABASE_URL=postgresql://... python scripts/stamp_alembic_revision.py --rev 006
 """
+
 import argparse
 import os
 import sys
@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
     import psycopg2
-except Exception as e:
+except Exception:
     print("psycopg2 not installed. Run: pip install -r requirements.txt")
     raise
 
@@ -35,6 +35,7 @@ def main():
         # Attempt to load from settings (loads .env via our config system)
         try:
             from shu.core.config import get_settings_instance
+
             db_url = get_settings_instance().database_url
         except Exception:
             pass
@@ -74,4 +75,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

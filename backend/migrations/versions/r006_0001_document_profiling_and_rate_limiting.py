@@ -23,17 +23,16 @@ SHU-416 Changes:
   (token costs belong on models, not providers)
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 
 from migrations.helpers import (
-    column_exists,
-    table_exists,
-    index_exists,
+    add_column_if_not_exists,
     drop_column_if_exists,
     drop_table_if_exists,
-    add_column_if_not_exists,
+    index_exists,
+    table_exists,
 )
 
 # Optional pgvector
@@ -52,7 +51,7 @@ depends_on = None
 def upgrade() -> None:
     """
     Apply the migration that updates document-related schema, adds new tables and indexes, and removes provider-level token cost columns.
-    
+
     This migration performs the following changes in an idempotent manner:
     - Adds columns to the `documents` table: `synopsis`, `synopsis_embedding`, `document_type`, `capability_manifest`, `profiling_status` (default 'pending'), `profiling_error`, and `relational_context`.
     - Adds columns to the `document_chunks` table: `summary`, `keywords`, and `topics`.
@@ -62,7 +61,7 @@ def upgrade() -> None:
     - Creates vector indexes for embedding columns when the pgvector extension is available (ivfflat with cosine operator class).
     - Creates GIN indexes for JSONB columns (`capability_manifest`, `keywords`, `topics`, `relational_context`) to improve containment queries.
     - Removes `cost_per_input_token` and `cost_per_output_token` from `llm_providers`.
-    
+
     All creations and drops are guarded by existence checks to ensure safe, repeatable application.
     """
     conn = op.get_bind()
@@ -76,7 +75,8 @@ def upgrade() -> None:
     add_column_if_not_exists(inspector, "documents", sa.Column("document_type", sa.String(50), nullable=True))
     add_column_if_not_exists(inspector, "documents", sa.Column("capability_manifest", JSONB(), nullable=True))
     add_column_if_not_exists(
-        inspector, "documents",
+        inspector,
+        "documents",
         sa.Column("profiling_status", sa.String(20), nullable=True, server_default="'pending'"),
     )
     add_column_if_not_exists(inspector, "documents", sa.Column("profiling_error", sa.Text(), nullable=True))
@@ -147,8 +147,10 @@ def upgrade() -> None:
             sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
             sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
             sa.UniqueConstraint(
-                "document_id", "entity_name", "role",
-                name="uq_document_participants_doc_entity_role"
+                "document_id",
+                "entity_name",
+                "role",
+                name="uq_document_participants_doc_entity_role",
             ),
         )
         # Index on entity_type for filtering
@@ -183,10 +185,7 @@ def upgrade() -> None:
             sa.Column("association_strength", sa.Float(), nullable=True),
             sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
             sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
-            sa.UniqueConstraint(
-                "document_id", "project_name",
-                name="uq_document_projects_doc_project"
-            ),
+            sa.UniqueConstraint("document_id", "project_name", name="uq_document_projects_doc_project"),
         )
 
     # ========================================================================
@@ -265,7 +264,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """
     Revert the schema changes applied by the corresponding upgrade migration.
-    
+
     Drops indexes created for document-related features, removes the document_projects, document_participants, and document_queries tables, and drops columns added to document_chunks and documents. Finally, restores the llm_providers columns `cost_per_input_token` and `cost_per_output_token` to revert the SHU-416 change.
     """
     conn = op.get_bind()
@@ -304,10 +303,12 @@ def downgrade() -> None:
 
     # Re-add cost columns to llm_providers (SHU-416 rollback)
     add_column_if_not_exists(
-        inspector, "llm_providers",
-        sa.Column("cost_per_input_token", sa.Numeric(precision=12, scale=10), nullable=True)
+        inspector,
+        "llm_providers",
+        sa.Column("cost_per_input_token", sa.Numeric(precision=12, scale=10), nullable=True),
     )
     add_column_if_not_exists(
-        inspector, "llm_providers",
-        sa.Column("cost_per_output_token", sa.Numeric(precision=12, scale=10), nullable=True)
+        inspector,
+        "llm_providers",
+        sa.Column("cost_per_output_token", sa.Numeric(precision=12, scale=10), nullable=True),
     )

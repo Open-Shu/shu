@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo } from "react";
 import {
   Avatar,
   Box,
@@ -8,7 +8,7 @@ import {
   Tooltip,
   CircularProgress,
   Button,
-} from '@mui/material';
+} from "@mui/material";
 import {
   Person as UserIcon,
   SmartToy as BotIcon,
@@ -17,11 +17,11 @@ import {
   NavigateBefore as NavigateBeforeIcon,
   NavigateNext as NavigateNextIcon,
   ViewColumn as SideBySideIcon,
-} from '@mui/icons-material';
-import MessageContent from './MessageContent';
-import UserAvatar from '../../shared/UserAvatar.jsx';
-import { formatMessageTimestamp } from './utils/messageVariants';
-import { PLACEHOLDER_THINKING } from './utils/chatConfig';
+} from "@mui/icons-material";
+import MessageContent from "./MessageContent";
+import UserAvatar from "../../shared/UserAvatar.jsx";
+import { formatMessageTimestamp } from "./utils/messageVariants";
+import { PLACEHOLDER_THINKING } from "./utils/chatConfig";
 
 const MessageItem = React.memo(function MessageItem({
   message,
@@ -45,11 +45,18 @@ const MessageItem = React.memo(function MessageItem({
   onToggleReasoning,
 }) {
   const parentId = message.parent_message_id || message.id;
-  const group = useMemo(() => variantGroups[parentId] || [message], [parentId, message, variantGroups]);
+  const group = useMemo(
+    () => variantGroups[parentId] || [message],
+    [parentId, message, variantGroups],
+  );
   const currentIndex = useMemo(() => {
     if (!group.length) return 0;
     const explicit = variantSelection[parentId];
-    if (typeof explicit === 'number' && explicit >= 0 && explicit < group.length) {
+    if (
+      typeof explicit === "number" &&
+      explicit >= 0 &&
+      explicit < group.length
+    ) {
       return explicit;
     }
     const fallback = group.findIndex((item) => item.id === message.id);
@@ -67,12 +74,15 @@ const MessageItem = React.memo(function MessageItem({
   };
 
   const pendingRegenerationForGroup = useMemo(() => {
-    if (!regenerationRequests || typeof regenerationRequests.forEach !== 'function') {
+    if (
+      !regenerationRequests ||
+      typeof regenerationRequests.forEach !== "function"
+    ) {
       return false;
     }
     let pending = false;
     regenerationRequests.forEach((entry) => {
-      if (entry?.parentId === parentId && entry?.status === 'pending') {
+      if (entry?.parentId === parentId && entry?.status === "pending") {
         pending = true;
       }
     });
@@ -80,9 +90,11 @@ const MessageItem = React.memo(function MessageItem({
   }, [regenerationRequests, parentId]);
 
   const disableRegenerate =
-    message.isStreaming || isVariantGroupStreaming(parentId) || pendingRegenerationForGroup;
+    message.isStreaming ||
+    isVariantGroupStreaming(parentId) ||
+    pendingRegenerationForGroup;
 
-  const isUser = message.role === 'user';
+  const isUser = message.role === "user";
 
   const avatarNode = isUser ? (
     <UserAvatar
@@ -109,21 +121,24 @@ const MessageItem = React.memo(function MessageItem({
     </Avatar>
   );
 
-  const containerDirection = isUser ? 'row-reverse' : 'row';
-  const containerJustify = isUser ? 'flex-end' : 'flex-start';
-  const timestampColor = isUser ? chatStyles.userBubbleText : theme.palette.text.secondary;
+  const containerDirection = isUser ? "row-reverse" : "row";
+  const containerJustify = isUser ? "flex-end" : "flex-start";
+  const timestampColor = isUser
+    ? chatStyles.userBubbleText
+    : theme.palette.text.secondary;
 
   const extractModelInfo = (msg) => {
-    const rawContent = typeof msg?.content === 'string' ? msg.content : '';
+    const rawContent = typeof msg?.content === "string" ? msg.content : "";
     const hasRenderableContent =
-      rawContent.trim().length > 0 && rawContent.trim() !== PLACEHOLDER_THINKING.trim();
-    if (msg?.role === 'assistant' && !hasRenderableContent) {
-      return { name: null, tooltip: '' };
+      rawContent.trim().length > 0 &&
+      rawContent.trim() !== PLACEHOLDER_THINKING.trim();
+    if (msg?.role === "assistant" && !hasRenderableContent) {
+      return { name: null, tooltip: "" };
     }
     const snapshot =
       msg?.model_configuration ||
       (msg?.message_metadata && msg.message_metadata.model_configuration) ||
-      (msg?.role === 'assistant' ? fallbackModelConfig : null);
+      (msg?.role === "assistant" ? fallbackModelConfig : null);
 
     const name =
       snapshot?.name ||
@@ -132,14 +147,16 @@ const MessageItem = React.memo(function MessageItem({
       snapshot?.id ||
       null;
 
-    let tooltip = '';
+    let tooltip = "";
     if (snapshot) {
       const tooltipParts = [];
       if (snapshot.name) {
         tooltipParts.push(`Configuration: ${snapshot.name}`);
       }
       if (snapshot.display_name || snapshot.model_name) {
-        tooltipParts.push(`Model: ${snapshot.display_name || snapshot.model_name}`);
+        tooltipParts.push(
+          `Model: ${snapshot.display_name || snapshot.model_name}`,
+        );
       }
       if (snapshot.id) {
         tooltipParts.push(`ID: ${snapshot.id}`);
@@ -147,13 +164,13 @@ const MessageItem = React.memo(function MessageItem({
       if (snapshot.provider?.name) {
         const providerType = snapshot.provider?.provider_type;
         tooltipParts.push(
-          `Provider: ${snapshot.provider.name}${providerType ? ` (${providerType})` : ''}`
+          `Provider: ${snapshot.provider.name}${providerType ? ` (${providerType})` : ""}`,
         );
       }
       if (tooltipParts.length === 0) {
-        tooltipParts.push('Unknown configuration');
+        tooltipParts.push("Unknown configuration");
       }
-      tooltip = tooltipParts.filter(Boolean).join(' • ');
+      tooltip = tooltipParts.filter(Boolean).join(" • ");
     }
 
     return {
@@ -167,32 +184,32 @@ const MessageItem = React.memo(function MessageItem({
     const userBubbleSx = {
       p: 2,
       flexShrink: 1,
-      width: 'fit-content',
-      maxWidth: 'min(85%, calc(100% - 56px))',
+      width: "fit-content",
+      maxWidth: "min(85%, calc(100% - 56px))",
       minWidth: 0,
-      overflowWrap: 'anywhere',
-      wordBreak: 'break-word',
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
       bgcolor: chatStyles.userBubbleBg,
-      border: 'none',
-      boxShadow: 'none',
+      border: "none",
+      boxShadow: "none",
     };
 
     return (
       <Box id={`msg-${message.id}`} sx={{ mb: isLast ? 0 : 2 }}>
         <Box
           sx={{
-            display: 'flex',
+            display: "flex",
             justifyContent: containerJustify,
           }}
         >
           <Box
             sx={{
-              display: 'flex',
+              display: "flex",
               flexDirection: containerDirection,
-              alignItems: 'flex-end',
+              alignItems: "flex-end",
               gap: 1.25,
-              width: '100%',
-              maxWidth: '100%',
+              width: "100%",
+              maxWidth: "100%",
               pr: 6,
             }}
           >
@@ -212,7 +229,7 @@ const MessageItem = React.memo(function MessageItem({
                 variant="caption"
                 sx={{
                   mt: 1,
-                  display: 'block',
+                  display: "block",
                   color: timestampColor,
                   fontWeight: 500,
                 }}
@@ -220,15 +237,15 @@ const MessageItem = React.memo(function MessageItem({
                 {formatMessageTimestamp(message.created_at)}
                 {name && (
                   <>
-                    {' • '}
+                    {" • "}
                     <Tooltip title={tooltip || name} arrow>
                       <Box
                         component="span"
                         sx={{
-                          display: 'inline',
+                          display: "inline",
                           color: timestampColor,
                           fontWeight: 600,
-                          cursor: 'default',
+                          cursor: "default",
                           opacity: 0.85,
                         }}
                       >
@@ -250,77 +267,99 @@ const MessageItem = React.memo(function MessageItem({
       p: 2,
       flexShrink: isSideBySide ? 1 : 0,
       flexGrow: isSideBySide ? 1 : 0,
-      flexBasis: isSideBySide ? { xs: '100%', sm: '48%', lg: '45%' } : 'auto',
-      width: isSideBySide ? { xs: '100%', md: 'auto' } : 'fit-content',
+      flexBasis: isSideBySide ? { xs: "100%", sm: "48%", lg: "45%" } : "auto",
+      width: isSideBySide ? { xs: "100%", md: "auto" } : "fit-content",
       maxWidth: isSideBySide
-        ? { xs: '100%', md: 'min(480px, 100%)', xl: 'min(620px, 100%)' }
-        : 'min(85%, calc(100% - 56px))',
-      minWidth: isSideBySide ? { xs: '100%', sm: 280, lg: 320 } : 0,
-      overflowWrap: 'anywhere',
-      wordBreak: 'break-word',
-      bgcolor: variant.role === 'user' ? chatStyles.userBubbleBg : chatStyles.assistantBubbleBg,
-      border: variant.role === 'user' ? 'none' : chatStyles.assistantBubbleBorder,
-      boxShadow: 'none',
-      cursor: variant.isStreaming || isVariantPending ? 'wait' : undefined,
-      display: 'flex',
-      flexDirection: 'column',
+        ? { xs: "100%", md: "min(480px, 100%)", xl: "min(620px, 100%)" }
+        : "min(85%, calc(100% - 56px))",
+      minWidth: isSideBySide ? { xs: "100%", sm: 280, lg: 320 } : 0,
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
+      bgcolor:
+        variant.role === "user"
+          ? chatStyles.userBubbleBg
+          : chatStyles.assistantBubbleBg,
+      border:
+        variant.role === "user" ? "none" : chatStyles.assistantBubbleBorder,
+      boxShadow: "none",
+      cursor: variant.isStreaming || isVariantPending ? "wait" : undefined,
+      display: "flex",
+      flexDirection: "column",
       gap: 1,
     };
 
     return base;
   };
 
-  const variantsToRender = isSideBySide ? group : [group[currentIndex] || message];
+  const variantsToRender = isSideBySide
+    ? group
+    : [group[currentIndex] || message];
 
-  const shouldCollapseBottomMargin = isLast && message.role === 'assistant';
+  const shouldCollapseBottomMargin = isLast && message.role === "assistant";
 
   return (
-    <Box id={`msg-${message.id}`} sx={{ mb: shouldCollapseBottomMargin ? 0 : 2 }}>
+    <Box
+      id={`msg-${message.id}`}
+      sx={{ mb: shouldCollapseBottomMargin ? 0 : 2 }}
+    >
       <Box
         sx={{
-          display: 'flex',
+          display: "flex",
           justifyContent: containerJustify,
         }}
       >
         <Box
           sx={{
-            display: 'flex',
+            display: "flex",
             flexDirection: containerDirection,
-            alignItems: 'flex-end',
+            alignItems: "flex-end",
             gap: 1.25,
-            width: '100%',
-            maxWidth: '100%',
+            width: "100%",
+            maxWidth: "100%",
             pr: 0,
           }}
         >
           {avatarNode}
           <Box
             sx={{
-              display: 'flex',
-              flexDirection: isSideBySide ? 'row' : 'column',
-              alignItems: isSideBySide ? 'stretch' : 'flex-start',
+              display: "flex",
+              flexDirection: isSideBySide ? "row" : "column",
+              alignItems: isSideBySide ? "stretch" : "flex-start",
               gap: isSideBySide ? 1.5 : 0,
-              flexWrap: isSideBySide ? 'wrap' : 'nowrap',
-              width: '100%',
-              maxWidth: '100%',
-              justifyContent: isSideBySide ? (isUser ? 'flex-end' : 'flex-start') : 'flex-start',
+              flexWrap: isSideBySide ? "wrap" : "nowrap",
+              width: "100%",
+              maxWidth: "100%",
+              justifyContent: isSideBySide
+                ? isUser
+                  ? "flex-end"
+                  : "flex-start"
+                : "flex-start",
             }}
           >
             {variantsToRender.map((variant, idx) => {
               const variantRequestEntry =
-                regenerationRequests && typeof regenerationRequests.get === 'function'
+                regenerationRequests &&
+                typeof regenerationRequests.get === "function"
                   ? regenerationRequests.get(variant.id)
                   : null;
-              const variantPending = Boolean(variantRequestEntry && variantRequestEntry.status === 'pending');
+              const variantPending = Boolean(
+                variantRequestEntry && variantRequestEntry.status === "pending",
+              );
               const { name, tooltip } = extractModelInfo(variant);
               const showVariantLabel = isSideBySide && group.length > 1;
-              const reasoningText = (variant.reasoning_stream || '').trim();
+              const reasoningText = (variant.reasoning_stream || "").trim();
               const hasReasoning = reasoningText.length > 0;
               const reasoningCollapsed = Boolean(variant.reasoning_collapsed);
               return (
-                <Paper key={variant.id} sx={getBubbleSx(variant, variantPending)}>
+                <Paper
+                  key={variant.id}
+                  sx={getBubbleSx(variant, variantPending)}
+                >
                   {showVariantLabel && (
-                    <Typography variant="caption" sx={{ fontWeight: 600, opacity: 0.7 }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 600, opacity: 0.7 }}
+                    >
                       Variant {idx + 1}
                     </Typography>
                   )}
@@ -331,18 +370,21 @@ const MessageItem = React.memo(function MessageItem({
                         p: 1,
                         borderRadius: 1,
                         bgcolor: theme.palette.action.hover,
-                        width: '100%',
+                        width: "100%",
                       }}
                     >
                       <Box
                         sx={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
                           mb: reasoningCollapsed ? 0 : 0.5,
                         }}
                       >
-                        <Typography variant="caption" sx={{ fontWeight: 600, opacity: 0.8 }}>
+                        <Typography
+                          variant="caption"
+                          sx={{ fontWeight: 600, opacity: 0.8 }}
+                        >
                           Reasoning
                         </Typography>
                         <Button
@@ -351,13 +393,13 @@ const MessageItem = React.memo(function MessageItem({
                             onToggleReasoning?.(variant.id, !reasoningCollapsed)
                           }
                         >
-                          {reasoningCollapsed ? 'Show' : 'Hide'}
+                          {reasoningCollapsed ? "Show" : "Hide"}
                         </Button>
                       </Box>
                       {!reasoningCollapsed && (
                         <Typography
                           variant="body2"
-                          sx={{ whiteSpace: 'pre-wrap', opacity: 0.85 }}
+                          sx={{ whiteSpace: "pre-wrap", opacity: 0.85 }}
                         >
                           {reasoningText}
                         </Typography>
@@ -375,7 +417,13 @@ const MessageItem = React.memo(function MessageItem({
                     attachmentChipStyles={attachmentChipStyles}
                   />
                   {variant.isStreaming && (
-                    <Box sx={{ display: 'inline-flex', alignItems: 'center', ml: 1 }}>
+                    <Box
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        ml: 1,
+                      }}
+                    >
                       <CircularProgress
                         size={12}
                         sx={{ color: theme.palette.secondary.main }}
@@ -386,7 +434,7 @@ const MessageItem = React.memo(function MessageItem({
                     variant="caption"
                     sx={{
                       mt: 0.5,
-                      display: 'block',
+                      display: "block",
                       color: timestampColor,
                       fontWeight: 500,
                     }}
@@ -394,15 +442,15 @@ const MessageItem = React.memo(function MessageItem({
                     {formatMessageTimestamp(variant.created_at)}
                     {name && (
                       <>
-                        {' • '}
+                        {" • "}
                         <Tooltip title={tooltip || name} arrow>
                           <Box
                             component="span"
                             sx={{
-                              display: 'inline',
+                              display: "inline",
                               color: timestampColor,
                               fontWeight: 600,
-                              cursor: 'default',
+                              cursor: "default",
                               opacity: isUser ? 0.85 : 1,
                             }}
                           >
@@ -419,8 +467,10 @@ const MessageItem = React.memo(function MessageItem({
         </Box>
       </Box>
 
-      {message.role === 'assistant' && (
-        <Box sx={{ mt: 0.5, pl: 7, display: 'flex', alignItems: 'center', gap: 1 }}>
+      {message.role === "assistant" && (
+        <Box
+          sx={{ mt: 0.5, pl: 7, display: "flex", alignItems: "center", gap: 1 }}
+        >
           {group.length > 1 && !isSideBySide && (
             <>
               <Tooltip title="Previous variant">
@@ -453,13 +503,19 @@ const MessageItem = React.memo(function MessageItem({
             </>
           )}
           {group.length > 1 && (
-            <Tooltip title={isSideBySide ? 'Exit side-by-side view' : 'Show variants side-by-side'}>
+            <Tooltip
+              title={
+                isSideBySide
+                  ? "Exit side-by-side view"
+                  : "Show variants side-by-side"
+              }
+            >
               <span>
                 <IconButton
                   size="small"
                   onClick={() => onToggleSideBySide?.(parentId)}
                   aria-label="Toggle side-by-side variants"
-                  color={isSideBySide ? 'primary' : 'default'}
+                  color={isSideBySide ? "primary" : "default"}
                   disabled={!onToggleSideBySide}
                 >
                   <SideBySideIcon fontSize="small" />
@@ -477,7 +533,9 @@ const MessageItem = React.memo(function MessageItem({
               <IconButton
                 size="small"
                 disabled={disableRegenerate}
-                onClick={() => !disableRegenerate && onRegenerate(message.id, parentId)}
+                onClick={() =>
+                  !disableRegenerate && onRegenerate(message.id, parentId)
+                }
                 aria-label="Regenerate"
               >
                 <RefreshIcon fontSize="small" />
@@ -487,7 +545,7 @@ const MessageItem = React.memo(function MessageItem({
           <Tooltip title="Copy">
             <IconButton
               size="small"
-              onClick={() => onCopy(message.content || '')}
+              onClick={() => onCopy(message.content || "")}
               aria-label="Copy"
             >
               <ContentCopyIcon fontSize="small" />

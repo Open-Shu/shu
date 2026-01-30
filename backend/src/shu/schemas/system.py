@@ -7,4 +7,3 @@ class VersionInfo(BaseModel):
     build_timestamp: str | None = None
     db_release: str | None = None
     environment: str
-

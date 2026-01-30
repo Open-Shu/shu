@@ -1,10 +1,9 @@
-from .host_builder import make_host, HostContext
 from .exceptions import CapabilityDenied, EgressDenied
+from .host_builder import HostContext, make_host
 
 __all__ = [
-    "make_host",
-    "HostContext",
     "CapabilityDenied",
     "EgressDenied",
+    "HostContext",
+    "make_host",
 ]
-

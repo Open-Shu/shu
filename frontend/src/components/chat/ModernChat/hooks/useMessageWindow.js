@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { CHAT_WINDOW_SIZE, CHAT_OVERSCAN } from '../utils/chatConfig';
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { CHAT_WINDOW_SIZE, CHAT_OVERSCAN } from "../utils/chatConfig";
 
 const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
 
@@ -9,10 +9,12 @@ const useMessageWindow = (
     windowSize = CHAT_WINDOW_SIZE,
     overscan = CHAT_OVERSCAN,
     pinned = true,
-  } = {}
+  } = {},
 ) => {
   const total = Array.isArray(messages) ? messages.length : 0;
-  const [startIndex, setStartIndex] = useState(() => Math.max(total - windowSize, 0));
+  const [startIndex, setStartIndex] = useState(() =>
+    Math.max(total - windowSize, 0),
+  );
   const prevLengthRef = useRef(total);
 
   useEffect(() => {
@@ -30,16 +32,22 @@ const useMessageWindow = (
   }, [messages, pinned, windowSize]);
 
   const expandWindow = useCallback((count) => {
-    if (!count) return;
+    if (!count) {
+      return;
+    }
     setStartIndex((prev) => Math.max(prev - count, 0));
   }, []);
 
-  const advanceWindow = useCallback((count) => {
-    if (!count) return;
-    const length = Array.isArray(messages) ? messages.length : 0;
-    setStartIndex((prev) => clamp(prev + count, 0, Math.max(length - 1, 0)));
-  }, [messages]);
-
+  const advanceWindow = useCallback(
+    (count) => {
+      if (!count) {
+        return;
+      }
+      const length = Array.isArray(messages) ? messages.length : 0;
+      setStartIndex((prev) => clamp(prev + count, 0, Math.max(length - 1, 0)));
+    },
+    [messages],
+  );
 
   const visibleRange = useMemo(() => {
     const length = Array.isArray(messages) ? messages.length : 0;
@@ -50,7 +58,9 @@ const useMessageWindow = (
   }, [messages, overscan, startIndex, windowSize]);
 
   const visibleMessages = useMemo(() => {
-    if (!Array.isArray(messages)) return [];
+    if (!Array.isArray(messages)) {
+      return [];
+    }
     return messages.slice(visibleRange.overscannedStart, visibleRange.end);
   }, [messages, visibleRange.end, visibleRange.overscannedStart]);
 

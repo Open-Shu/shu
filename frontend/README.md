@@ -20,6 +20,7 @@ A React-based interface for the Shu Backend API.
 ## Setup
 
 1. **Install Dependencies**:
+
    ```bash
    cd frontend
    npm install
@@ -27,6 +28,7 @@ A React-based interface for the Shu Backend API.
 
 2. **Configure API URL** (optional):
    Create a `.env` file in the frontend directory:
+
    ```bash
    REACT_APP_API_BASE_URL=http://localhost:8000
    # If not set, the frontend will use same-origin behind your ingress
@@ -42,16 +44,19 @@ The application will be available at `http://localhost:3000`.
 ## Usage
 
 ### Dashboard
+
 - View system overview and quick statistics
 - Access quick actions for common tasks
 
 ### Knowledge Bases
+
 - Create new knowledge bases with Google Drive configuration
 - Edit existing knowledge base settings
 - View detailed knowledge base information
 - Delete knowledge bases (with confirmation)
 
 ### Sync Jobs
+
 - Select a knowledge base to view its sync jobs
 - Start new sync operations with custom configuration
 - Monitor job progress in real-time
@@ -59,6 +64,7 @@ The application will be available at `http://localhost:3000`.
 - View detailed job information
 
 ### Query Tester
+
 - Select a knowledge base for testing
 - Choose between similarity and hybrid search
 - Configure query parameters (limit, threshold)
@@ -67,6 +73,7 @@ The application will be available at `http://localhost:3000`.
 - Inspect request/response payloads
 
 ### Health Monitor
+
 - Real-time system health monitoring
 - Database connection status
 - API endpoint health checks
@@ -76,6 +83,7 @@ The application will be available at `http://localhost:3000`.
 ## API Integration
 
 The frontend communicates with the Shu API using:
+
 - **Axios** for HTTP requests
 - **React Query** for data fetching and caching
 - **Material-UI** for the user interface
@@ -84,6 +92,7 @@ The frontend communicates with the Shu API using:
 ## Development
 
 ### Project Structure
+
 ```
 frontend/
 ├── public/
@@ -112,6 +121,7 @@ frontend/
 ```
 
 ### Key Dependencies
+
 - **React 18**: UI framework
 - **Material-UI**: Component library
 - **React Query**: Data fetching and caching
@@ -120,6 +130,7 @@ frontend/
 - **React JSON View**: JSON visualization
 
 ### End-to-End Testing (Playwright)
+
 - Install browser binaries once: `npx playwright install`
 - Run the Playwright suite (from the `frontend` directory): `npx playwright test`
 - Target a single spec while iterating, e.g. `npx playwright test tests/login.spec.ts --headed`
@@ -127,10 +138,13 @@ frontend/
 ## Configuration
 
 ### Environment Variables
+
 - `REACT_APP_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: http://localhost:8000
 
 ### API Endpoints
+
 The frontend uses all major Shu API endpoints:
+
 - Health checks (`/health/*`)
 - Knowledge base management (`/knowledge-bases/*`)
 - Sync job management (`/sync/*`)
@@ -169,4 +183,4 @@ The build artifacts will be in the `build/` directory.
 2. Add proper error handling for API calls
 3. Include loading states for async operations
 4. Test all CRUD operations thoroughly
-5. Update documentation for new features 
+5. Update documentation for new features

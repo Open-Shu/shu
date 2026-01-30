@@ -20,4 +20,3 @@ async def get_version(current_user: User = Depends(get_current_user)):
         environment=settings.environment,
     )
     return ShuResponse.success(info)
-

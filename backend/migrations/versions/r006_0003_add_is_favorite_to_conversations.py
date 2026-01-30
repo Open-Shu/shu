@@ -8,8 +8,8 @@ Adds:
 - Index on is_favorite for efficient filtering
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 from migrations.helpers import (
     column_exists,

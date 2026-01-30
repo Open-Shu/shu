@@ -1,20 +1,20 @@
-import React from 'react';
+import React from "react";
 import {
   FormControl,
   InputLabel,
   Select,
   MenuItem,
   FormHelperText,
-} from '@mui/material';
+} from "@mui/material";
 
 /**
  * StyledSelect - A properly configured Select component that prevents common styling issues
- * 
+ *
  * This component enforces the correct pattern for Material-UI Select components:
  * - Uses only InputLabel for labeling (no conflicting label prop)
  * - No displayEmpty or custom renderValue that interfere with label behavior
  * - Consistent styling that works with the global theme
- * 
+ *
  * Usage:
  * <StyledSelect
  *   label="Select an option"
@@ -51,7 +51,7 @@ function StyledSelect({
 }) {
   // Generate unique IDs for accessibility
   const labelId = `styled-select-label-${Math.random().toString(36).substr(2, 9)}`;
-  
+
   const handleChange = (event) => {
     if (onChange) {
       onChange(event.target.value, event);
@@ -59,18 +59,16 @@ function StyledSelect({
   };
 
   return (
-    <FormControl 
-      fullWidth={fullWidth} 
-      margin={margin} 
+    <FormControl
+      fullWidth={fullWidth}
+      margin={margin}
       variant={variant}
       required={required}
       error={error}
       size={size}
       {...otherProps}
     >
-      <InputLabel id={labelId}>
-        {label}
-      </InputLabel>
+      <InputLabel id={labelId}>{label}</InputLabel>
       <Select
         labelId={labelId}
         value={value}
@@ -79,17 +77,22 @@ function StyledSelect({
       >
         {allowEmpty && (
           <MenuItem value={emptyValue}>
-            <span style={{ color: '#999', fontStyle: 'italic' }}>
+            <span style={{ color: "#999", fontStyle: "italic" }}>
               {emptyLabel}
             </span>
           </MenuItem>
         )}
         {options.map((option, index) => {
           // Handle both object and primitive options
-          const optionValue = typeof option === 'object' ? option.value : option;
-          const optionLabel = typeof option === 'object' ? option.label : option;
-          const optionKey = typeof option === 'object' && option.key ? option.key : `option-${index}`;
-          
+          const optionValue =
+            typeof option === "object" ? option.value : option;
+          const optionLabel =
+            typeof option === "object" ? option.label : option;
+          const optionKey =
+            typeof option === "object" && option.key
+              ? option.key
+              : `option-${index}`;
+
           return (
             <MenuItem key={optionKey} value={optionValue}>
               {optionLabel}
@@ -97,9 +100,7 @@ function StyledSelect({
           );
         })}
       </Select>
-      {helperText && (
-        <FormHelperText>{helperText}</FormHelperText>
-      )}
+      {helperText && <FormHelperText>{helperText}</FormHelperText>}
     </FormControl>
   );
 }

@@ -1,18 +1,18 @@
-"""
-Document and DocumentChunk models for Shu RAG Backend.
+"""Document and DocumentChunk models for Shu RAG Backend.
 
 This module defines the Document and DocumentChunk models which store
 document metadata, content, and vector embeddings.
 """
 
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Float, JSON
-from sqlalchemy.dialects.postgresql import TIMESTAMP, JSONB
-from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import ARRAY
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import Any
+
+from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
+
 try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
@@ -28,11 +28,12 @@ class CapabilityManifest(TypedDict, total=False):
 
     All fields are optional (total=False) since manifests may be partial.
     """
-    answers_questions_about: List[str]  # Topics the document can inform about
-    provides_information_type: List[str]  # e.g., "facts", "opinions", "decisions"
+
+    answers_questions_about: list[str]  # Topics the document can inform about
+    provides_information_type: list[str]  # e.g., "facts", "opinions", "decisions"
     authority_level: str  # e.g., "primary", "secondary", "commentary"
     completeness: str  # e.g., "complete", "partial", "reference"
-    question_domains: List[str]  # e.g., "who", "what", "when", "why", "how"
+    question_domains: list[str]  # e.g., "who", "what", "when", "why", "how"
 
 
 # Type definitions for relational context structure (SHU-355)
@@ -41,54 +42,56 @@ class RelationalContext(TypedDict, total=False):
 
     Denormalized summary of participants and projects for query-time access.
     """
+
     participant_count: int
-    primary_participants: List[str]  # Top entity names
-    project_associations: List[str]  # Top project names
-    temporal_scope: Dict[str, str]  # start_date, end_date if detectable
-    interaction_signals: List[str]  # e.g., "meeting", "decision", "request"
+    primary_participants: list[str]  # Top entity names
+    project_associations: list[str]  # Top project names
+    temporal_scope: dict[str, str]  # start_date, end_date if detectable
+    interaction_signals: list[str]  # e.g., "meeting", "decision", "request"
 
 
 class Document(BaseModel):
-    """
-    Document metadata and content.
-    
+    """Document metadata and content.
+
     Represents a single document that has been processed and stored
     in a knowledge base.
     """
-    
+
     __tablename__ = "documents"
-    
+
     # Foreign key to knowledge base
     knowledge_base_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
-    
+
     # Source type label (e.g., "plugin:gmail", "filesystem", etc.)
     source_type = Column(String(50), nullable=False, index=True)
 
     # Document identification
     source_id = Column(String(500), nullable=False, index=True)  # Original document ID from source
     title = Column(String(500), nullable=False)
-    
+
     # File information
     file_type = Column(String(50), nullable=False)  # 'pdf', 'docx', 'txt', etc.
     file_size = Column(Integer, nullable=True)  # Size in bytes
     mime_type = Column(String(100), nullable=True)
-    
+
     # Document content
     content = Column(Text, nullable=False)  # Full text content
     content_hash = Column(String(64), nullable=True, index=True)  # SHA256 hash of content for fast comparison
-    source_hash = Column(String(64), nullable=True, index=True)  # Hash of original source content (md5Checksum, etag, etc.)
-    
+    source_hash = Column(
+        String(64), nullable=True, index=True
+    )  # Hash of original source content (md5Checksum, etag, etc.)
+
     # Processing information
     processing_status = Column(String(50), default="pending", nullable=False)  # 'pending', 'processed', 'error'
     processing_error = Column(Text, nullable=True)
-    
+
     # Extraction metadata (for OCR verification and tracking)
     extraction_method = Column(String(50), nullable=True)  # 'ocr', 'text', 'pdfplumber', 'pymupdf', etc.
     extraction_engine = Column(String(50), nullable=True)  # 'paddleocr', 'tesseract', 'easyocr', etc.
     extraction_confidence = Column(Float, nullable=True)  # Average confidence score
     extraction_duration = Column(Float, nullable=True)  # Extraction time in seconds
     extraction_metadata = Column(JSON, nullable=True)  # Detailed extraction info (pages, errors, etc.)
-    
+
     # Source metadata
     source_url = Column(String(1000), nullable=True)  # Original URL or path
     source_modified_at = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -96,7 +99,7 @@ class Document(BaseModel):
 
     # Processing timestamps
     processed_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    
+
     # Content statistics
     word_count = Column(Integer, nullable=True)
     character_count = Column(Integer, nullable=True)
@@ -130,49 +133,51 @@ class Document(BaseModel):
 
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, title='{self.title}', kb_id='{self.knowledge_base_id}')>"
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary with computed fields."""
         base_dict = super().to_dict()
-        base_dict.update({
-            "chunk_count": self.chunk_count,
-            "processing_status": self.processing_status,
-            "processed_at": self.processed_at.isoformat() if self.processed_at else None,
-            "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
-            # Profile fields (SHU-342)
-            "synopsis": self.synopsis,
-            "document_type": self.document_type,
-            "capability_manifest": self.capability_manifest,
-            "profiling_status": self.profiling_status,
-            "profiling_error": self.profiling_error,
-            "has_synopsis_embedding": self.synopsis_embedding is not None,
-            # Relational context (SHU-355)
-            "relational_context": self.relational_context,
-        })
+        base_dict.update(
+            {
+                "chunk_count": self.chunk_count,
+                "processing_status": self.processing_status,
+                "processed_at": self.processed_at.isoformat() if self.processed_at else None,
+                "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
+                # Profile fields (SHU-342)
+                "synopsis": self.synopsis,
+                "document_type": self.document_type,
+                "capability_manifest": self.capability_manifest,
+                "profiling_status": self.profiling_status,
+                "profiling_error": self.profiling_error,
+                "has_synopsis_embedding": self.synopsis_embedding is not None,
+                # Relational context (SHU-355)
+                "relational_context": self.relational_context,
+            }
+        )
         return base_dict
-    
+
     @property
     def is_processed(self) -> bool:
         """Check if document has been processed successfully."""
         return self.processing_status == "processed"
-    
+
     @property
     def has_error(self) -> bool:
         """Check if document processing had an error."""
         return self.processing_status == "error"
-    
+
     def mark_processed(self) -> None:
         """Mark document as processed successfully."""
         self.processing_status = "processed"
-        self.processed_at = datetime.now(timezone.utc)
+        self.processed_at = datetime.now(UTC)
         self.processing_error = None
-    
+
     def mark_error(self, error_message: str) -> None:
         """Mark document as having a processing error."""
         self.processing_status = "error"
         self.processing_error = error_message
-        self.processed_at = datetime.now(timezone.utc)
-    
+        self.processed_at = datetime.now(UTC)
+
     def update_content_stats(self, word_count: int, character_count: int, chunk_count: int) -> None:
         """Update content statistics."""
         self.word_count = word_count
@@ -201,11 +206,10 @@ class Document(BaseModel):
         self,
         synopsis: str,
         document_type: str,
-        capability_manifest: Dict[str, Any],
-        synopsis_embedding: Optional[List[float]] = None,
+        capability_manifest: dict[str, Any],
+        synopsis_embedding: list[float] | None = None,
     ) -> None:
-        """
-        Mark document profiling as complete with profile data.
+        """Mark document profiling as complete with profile data.
 
         Args:
             synopsis: One-paragraph summary of the document
@@ -215,6 +219,7 @@ class Document(BaseModel):
 
         Raises:
             ValueError: If document_type is not a valid type
+
         """
         # Validate document_type
         if document_type not in self.VALID_DOCUMENT_TYPES:
@@ -230,46 +235,45 @@ class Document(BaseModel):
         self.profiling_status = "complete"
         self.profiling_error = None  # Clear any previous error
 
-    def mark_profiling_failed(self, error_message: Optional[str] = None) -> None:
+    def mark_profiling_failed(self, error_message: str | None = None) -> None:
         """Mark document profiling as failed with optional error message."""
         self.profiling_status = "failed"
         self.profiling_error = error_message
 
 
 class DocumentChunk(BaseModel):
-    """
-    Document chunk with vector embedding.
-    
+    """Document chunk with vector embedding.
+
     Represents a processed chunk of a document with its vector embedding
     for similarity search.
     """
-    
+
     __tablename__ = "document_chunks"
-    
+
     # Foreign keys
     document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     knowledge_base_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
-    
+
     # Chunk information
     chunk_index = Column(Integer, nullable=False)  # Position within the document
     content = Column(Text, nullable=False)  # Chunk text content
-    
+
     # Vector embedding (384 dimensions for all-MiniLM-L6-v2)
     embedding = Column(Vector(384), nullable=True)
-    
+
     # Chunk metadata
     char_count = Column(Integer, nullable=False)
     word_count = Column(Integer, nullable=True)
     token_count = Column(Integer, nullable=True)
-    
+
     # Position information
     start_char = Column(Integer, nullable=True)  # Start position in original document
-    end_char = Column(Integer, nullable=True)    # End position in original document
-    
+    end_char = Column(Integer, nullable=True)  # End position in original document
+
     # Similarity search metadata
     embedding_model = Column(String(100), nullable=True)  # Model used for embedding
     embedding_created_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    
+
     # Chunk metadata
     chunk_metadata = Column(JSON, nullable=True)  # Flexible metadata storage for chunk-specific data
 
@@ -284,44 +288,46 @@ class DocumentChunk(BaseModel):
     # Relationships
     document = relationship("Document", back_populates="chunks")
     knowledge_base = relationship("KnowledgeBase")
-    
+
     def __repr__(self) -> str:
         return f"<DocumentChunk(id={self.id}, doc_id='{self.document_id}', chunk_index={self.chunk_index})>"
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary with computed fields."""
         base_dict = super().to_dict()
-        base_dict.update({
-            "char_count": self.char_count,
-            "word_count": self.word_count,
-            "token_count": self.token_count,
-            "chunk_index": self.chunk_index,
-            "has_embedding": self.embedding is not None,
-            "embedding_created_at": self.embedding_created_at.isoformat() if self.embedding_created_at else None,
-            # Profile fields
-            "summary": self.summary,
-            "keywords": self.keywords,
-            "topics": self.topics,
-        })
+        base_dict.update(
+            {
+                "char_count": self.char_count,
+                "word_count": self.word_count,
+                "token_count": self.token_count,
+                "chunk_index": self.chunk_index,
+                "has_embedding": self.embedding is not None,
+                "embedding_created_at": self.embedding_created_at.isoformat() if self.embedding_created_at else None,
+                # Profile fields
+                "summary": self.summary,
+                "keywords": self.keywords,
+                "topics": self.topics,
+            }
+        )
         # Don't include the actual embedding vector in the dict (too large)
         return base_dict
-    
+
     @property
     def has_embedding(self) -> bool:
         """Check if chunk has an embedding."""
         return self.embedding is not None
-    
-    def set_embedding(self, embedding: List[float], model_name: str) -> None:
+
+    def set_embedding(self, embedding: list[float], model_name: str) -> None:
         """Set the embedding vector for this chunk."""
         self.embedding = embedding
         self.embedding_model = model_name
-        self.embedding_created_at = datetime.now(timezone.utc)
+        self.embedding_created_at = datetime.now(UTC)
 
     def set_profile(
         self,
         summary: str,
-        keywords: List[str],
-        topics: List[str],
+        keywords: list[str],
+        topics: list[str],
     ) -> None:
         """Set the chunk profile data."""
         self.summary = summary
@@ -338,8 +344,8 @@ class DocumentChunk(BaseModel):
         if len(self.content) <= max_chars:
             return self.content
         return self.content[:max_chars] + "..."
-    
-    def calculate_similarity_score(self, query_embedding: List[float]) -> float:
+
+    def calculate_similarity_score(self, query_embedding: list[float]) -> float:
         """Calculate cosine similarity with query embedding.
 
         Note: In production, similarity search is done at the database level
@@ -349,6 +355,7 @@ class DocumentChunk(BaseModel):
         Raises:
             ValueError: If embedding dimensions don't match (likely due to
                 embedding model change in configuration).
+
         """
         if not self.embedding or not query_embedding:
             return 0.0
@@ -365,7 +372,8 @@ class DocumentChunk(BaseModel):
 
         # Simple cosine similarity calculation
         import math
-        dot_product = sum(a * b for a, b in zip(self.embedding, query_embedding))
+
+        dot_product = sum(a * b for a, b in zip(self.embedding, query_embedding, strict=False))
         magnitude_a = math.sqrt(sum(a * a for a in self.embedding))
         magnitude_b = math.sqrt(sum(b * b for b in query_embedding))
 
@@ -373,7 +381,7 @@ class DocumentChunk(BaseModel):
             return 0.0
 
         return dot_product / (magnitude_a * magnitude_b)
-    
+
     @classmethod
     def create_from_text(
         cls,
@@ -381,8 +389,8 @@ class DocumentChunk(BaseModel):
         knowledge_base_id: str,
         chunk_index: int,
         content: str,
-        start_char: Optional[int] = None,
-        end_char: Optional[int] = None
+        start_char: int | None = None,
+        end_char: int | None = None,
     ) -> "DocumentChunk":
         """Create a document chunk from text content."""
         chunk = cls(
@@ -399,8 +407,7 @@ class DocumentChunk(BaseModel):
 
 
 class DocumentQuery(BaseModel):
-    """
-    Synthesized query for a document (Shu RAG).
+    """Synthesized query for a document (Shu RAG).
 
     Stores hypothetical queries that a document can answer. These are generated
     during document profiling and enable query-match retrieval, where user queries
@@ -445,13 +452,15 @@ class DocumentQuery(BaseModel):
             preview = "<not set>"
         return f"<DocumentQuery(id={self.id}, doc_id='{self.document_id}', query='{preview}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         base_dict = super().to_dict()
-        base_dict.update({
-            "query_text": self.query_text,
-            "has_embedding": self.query_embedding is not None,
-        })
+        base_dict.update(
+            {
+                "query_text": self.query_text,
+                "has_embedding": self.query_embedding is not None,
+            }
+        )
         return base_dict
 
     @property
@@ -459,7 +468,7 @@ class DocumentQuery(BaseModel):
         """Check if query has an embedding."""
         return self.query_embedding is not None
 
-    def set_embedding(self, embedding: List[float]) -> None:
+    def set_embedding(self, embedding: list[float]) -> None:
         """Set the embedding vector for this query."""
         self.query_embedding = embedding
 
@@ -469,7 +478,7 @@ class DocumentQuery(BaseModel):
         document_id: str,
         knowledge_base_id: str,
         query_text: str,
-        query_embedding: Optional[List[float]] = None,
+        query_embedding: list[float] | None = None,
     ) -> "DocumentQuery":
         """Create a synthesized query for a document."""
         return cls(
@@ -483,6 +492,7 @@ class DocumentQuery(BaseModel):
 # Entity type enum (SHU-355)
 class ParticipantEntityType(str, Enum):
     """Entity types for document participants."""
+
     PERSON = "person"
     ORGANIZATION = "organization"
     EMAIL_ADDRESS = "email_address"
@@ -491,6 +501,7 @@ class ParticipantEntityType(str, Enum):
 # Participant role enum (SHU-355)
 class ParticipantRole(str, Enum):
     """Roles that entities can have in a document."""
+
     AUTHOR = "author"
     RECIPIENT = "recipient"
     MENTIONED = "mentioned"
@@ -510,8 +521,7 @@ ROLE_SUBJECT = ParticipantRole.SUBJECT.value
 
 
 class DocumentParticipant(BaseModel):
-    """
-    Document participant entity (Shu RAG Relational Context).
+    """Document participant entity (Shu RAG Relational Context).
 
     Tracks people, organizations, and email addresses mentioned in or
     associated with a document. Used for relational boost scoring.
@@ -556,16 +566,18 @@ class DocumentParticipant(BaseModel):
     def __repr__(self) -> str:
         return f"<DocumentParticipant(id={self.id}, entity='{self.entity_name}', role='{self.role}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         base_dict = super().to_dict()
-        base_dict.update({
-            "entity_id": self.entity_id,
-            "entity_type": self.entity_type,
-            "entity_name": self.entity_name,
-            "role": self.role,
-            "confidence": self.confidence,
-        })
+        base_dict.update(
+            {
+                "entity_id": self.entity_id,
+                "entity_type": self.entity_type,
+                "entity_name": self.entity_name,
+                "role": self.role,
+                "confidence": self.confidence,
+            }
+        )
         return base_dict
 
     @classmethod
@@ -576,8 +588,8 @@ class DocumentParticipant(BaseModel):
         entity_type: str,
         entity_name: str,
         role: str,
-        confidence: Optional[float] = None,
-        entity_id: Optional[str] = None,
+        confidence: float | None = None,
+        entity_id: str | None = None,
     ) -> "DocumentParticipant":
         """Create a participant record for a document."""
         return cls(
@@ -592,8 +604,7 @@ class DocumentParticipant(BaseModel):
 
 
 class DocumentProject(BaseModel):
-    """
-    Document project association (Shu RAG Relational Context).
+    """Document project association (Shu RAG Relational Context).
 
     Tracks projects, initiatives, or topics associated with a document.
     Used for relational boost scoring based on user's active projects.
@@ -628,13 +639,15 @@ class DocumentProject(BaseModel):
     def __repr__(self) -> str:
         return f"<DocumentProject(id={self.id}, project='{self.project_name}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         base_dict = super().to_dict()
-        base_dict.update({
-            "project_name": self.project_name,
-            "association_strength": self.association_strength,
-        })
+        base_dict.update(
+            {
+                "project_name": self.project_name,
+                "association_strength": self.association_strength,
+            }
+        )
         return base_dict
 
     @classmethod
@@ -643,7 +656,7 @@ class DocumentProject(BaseModel):
         document_id: str,
         knowledge_base_id: str,
         project_name: str,
-        association_strength: Optional[float] = None,
+        association_strength: float | None = None,
     ) -> "DocumentProject":
         """Create a project association for a document."""
         return cls(

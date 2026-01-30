@@ -1,7 +1,8 @@
 from unittest.mock import patch
-from integ.response_utils import extract_data
-from integ.helpers.api_helpers import execute_plugin
+
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
+from integ.helpers.api_helpers import execute_plugin
+from integ.response_utils import extract_data
 
 
 # --- Test functions ---
@@ -20,7 +21,10 @@ async def test_gmail_action_preview_returns_plan(client, db, auth_headers):
     # does not work, since the auth isn't set up
     resp = await execute_plugin(client, "gmail_digest", auth_headers)
     assert resp.status_code == 403, resp.text
-    assert extract_data(resp).get("error", {}).get("message", {}).get("error", {}).get("message", "") == "Provider account (google) connected but missing required scopes for this operation. Reconnect via the plugin panel."
+    assert (
+        extract_data(resp).get("error", {}).get("message", {}).get("error", {}).get("message", "")
+        == "Provider account (google) connected but missing required scopes for this operation. Reconnect via the plugin panel."
+    )
 
     # mock the provider response as we don't actually want to interface with google credentials
     with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code") as mock_adapter:
@@ -34,9 +38,9 @@ async def test_gmail_action_preview_returns_plan(client, db, auth_headers):
             json={
                 "provider": "google",
                 "code": "somecoed",
-                "scopes": ["https://www.googleapis.com/auth/gmail.modify"]
+                "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
             },
-            headers=auth_headers
+            headers=auth_headers,
         )
         assert resp.status_code == 200, resp.text
 
@@ -71,4 +75,3 @@ class ToolsGmailActionsTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(ToolsGmailActionsTestSuite, globals())
-

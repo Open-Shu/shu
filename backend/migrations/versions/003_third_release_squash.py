@@ -12,9 +12,8 @@ Replaces: r003_0001_remove_conversation_provider_prompt,
 
 import json
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "003"
@@ -67,9 +66,7 @@ def upgrade() -> None:
 
     # Seed the side-call model configuration system setting if missing.
     result = bind.execute(
-        sa.text(
-            "SELECT 1 FROM system_settings WHERE key = 'side_call_model_config_id' LIMIT 1"
-        )
+        sa.text("SELECT 1 FROM system_settings WHERE key = 'side_call_model_config_id' LIMIT 1")
     ).scalar()
 
     if not result:
@@ -104,9 +101,7 @@ def downgrade() -> None:
         batch_op.drop_column("meta")
 
     bind = op.get_bind()
-    bind.execute(
-        sa.text("DELETE FROM system_settings WHERE key = 'side_call_model_config_id'")
-    )
+    bind.execute(sa.text("DELETE FROM system_settings WHERE key = 'side_call_model_config_id'"))
     print("Removed side_call_model_config_id system setting")
 
     with op.batch_alter_table("conversations") as batch_op:

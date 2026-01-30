@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, memo } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, memo } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import {
   Box,
   Typography,
@@ -27,7 +27,7 @@ import {
   Tabs,
   Tab,
   Collapse,
-} from '@mui/material';
+} from "@mui/material";
 import {
   Visibility as PreviewIcon,
   Search as SearchIcon,
@@ -38,60 +38,83 @@ import {
   ExpandLess as ExpandLessIcon,
   Description as DocumentIcon,
   Delete as DeleteIcon,
-} from '@mui/icons-material';
-import KBPluginFeedsTab from './KBPluginFeedsTab';
-import DocumentPreview from './DocumentPreview';
-import FileDropzone from './shared/FileDropzone';
-import PageHelpHeader from './PageHelpHeader';
-import { knowledgeBaseAPI, extractDataFromResponse, formatError } from '../services/api';
-import { configService } from '../services/config';
+} from "@mui/icons-material";
+import KBPluginFeedsTab from "./KBPluginFeedsTab";
+import DocumentPreview from "./DocumentPreview";
+import FileDropzone from "./shared/FileDropzone";
+import PageHelpHeader from "./PageHelpHeader";
+import {
+  knowledgeBaseAPI,
+  extractDataFromResponse,
+  formatError,
+} from "../services/api";
+import { configService } from "../services/config";
 
-const SearchFilter = memo(function SearchFilter({searchQuery, setSearchQuery, filterBy, setFilterBy, fetchDocuments, setPage}) {
-  return <Paper sx={{ p: 2, mb: 3 }}>
-    <Grid container spacing={2} alignItems="center">
-      <Grid item xs={12} md={6}>
-        <TextField
-          fullWidth
-          placeholder="Search documents..."
-          value={searchQuery}
-          onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Grid>
-      <Grid item xs={12} md={3}>
-        <FormControl fullWidth>
-          <InputLabel>Filter by</InputLabel>
-          <Select
-            value={filterBy}
-            onChange={(e) => { setFilterBy(e.target.value); setPage(0); }}
-            label="Filter by"
+const SearchFilter = memo(function SearchFilter({
+  searchQuery,
+  setSearchQuery,
+  filterBy,
+  setFilterBy,
+  fetchDocuments,
+  setPage,
+}) {
+  return (
+    <Paper sx={{ p: 2, mb: 3 }}>
+      <Grid container spacing={2} alignItems="center">
+        <Grid item xs={12} md={6}>
+          <TextField
+            fullWidth
+            placeholder="Search documents..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(0);
+            }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <FormControl fullWidth>
+            <InputLabel>Filter by</InputLabel>
+            <Select
+              value={filterBy}
+              onChange={(e) => {
+                setFilterBy(e.target.value);
+                setPage(0);
+              }}
+              label="Filter by"
+            >
+              <MenuItem value="all">All Documents</MenuItem>
+              <MenuItem value="ocr">OCR Processed</MenuItem>
+              <MenuItem value="text">Text Extracted</MenuItem>
+              <MenuItem value="high-confidence">
+                High Confidence (≥80%)
+              </MenuItem>
+              <MenuItem value="low-confidence">
+                Low Confidence (&lt;60%)
+              </MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <Button
+            fullWidth
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={() => fetchDocuments()}
           >
-            <MenuItem value="all">All Documents</MenuItem>
-            <MenuItem value="ocr">OCR Processed</MenuItem>
-            <MenuItem value="text">Text Extracted</MenuItem>
-            <MenuItem value="high-confidence">High Confidence (≥80%)</MenuItem>
-            <MenuItem value="low-confidence">Low Confidence (&lt;60%)</MenuItem>
-          </Select>
-        </FormControl>
+            Refresh
+          </Button>
+        </Grid>
       </Grid>
-      <Grid item xs={12} md={3}>
-        <Button
-          fullWidth
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={() => fetchDocuments()}
-        >
-          Refresh
-        </Button>
-      </Grid>
-    </Grid>
-  </Paper>;
+    </Paper>
+  );
 });
 
 const DocumentResults = function DocumentResults({
@@ -125,37 +148,56 @@ const DocumentResults = function DocumentResults({
 
   const getExtractionMethodColor = (method) => {
     switch (method?.toLowerCase()) {
-      case 'ocr': return 'warning';
-      case 'text': return 'success';
-      case 'pdfplumber': return 'info';
-      case 'pymupdf': return 'primary';
-      default: return 'default';
+      case "ocr":
+        return "warning";
+      case "text":
+        return "success";
+      case "pdfplumber":
+        return "info";
+      case "pymupdf":
+        return "primary";
+      default:
+        return "default";
     }
   };
 
   const getConfidenceColor = (confidence) => {
-    if (!confidence) return 'default';
-    if (confidence >= 0.8) return 'success';
-    if (confidence >= 0.6) return 'warning';
-    return 'error';
+    if (!confidence) {
+      return "default";
+    }
+    if (confidence >= 0.8) {
+      return "success";
+    }
+    if (confidence >= 0.6) {
+      return "warning";
+    }
+    return "error";
   };
 
   const formatFileSize = (bytes) => {
-    if (!bytes) return 'N/A';
-    const sizes = ['B', 'KB', 'MB', 'GB'];
+    if (!bytes) {
+      return "N/A";
+    }
+    const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
+    if (!dateString) {
+      return "N/A";
+    }
     return new Date(dateString).toLocaleDateString();
   };
 
-
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="400px"
+      >
         <CircularProgress />
       </Box>
     );
@@ -193,7 +235,7 @@ const DocumentResults = function DocumentResults({
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={doc.file_type?.toUpperCase() || 'Unknown'}
+                    label={doc.file_type?.toUpperCase() || "Unknown"}
                     size="small"
                     variant="outlined"
                   />
@@ -206,15 +248,21 @@ const DocumentResults = function DocumentResults({
                 <TableCell>
                   <Box>
                     <Chip
-                      label={doc.extraction_method || 'Unknown'}
+                      label={doc.extraction_method || "Unknown"}
                       color={getExtractionMethodColor(doc.extraction_method)}
                       size="small"
                     />
-                    {doc.extraction_engine && doc.extraction_engine !== doc.extraction_method && (
-                      <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>
-                        {doc.extraction_engine}
-                      </Typography>
-                    )}
+                    {doc.extraction_engine &&
+                      doc.extraction_engine !== doc.extraction_method && (
+                        <Typography
+                          variant="caption"
+                          display="block"
+                          color="text.secondary"
+                          sx={{ mt: 0.5 }}
+                        >
+                          {doc.extraction_engine}
+                        </Typography>
+                      )}
                   </Box>
                 </TableCell>
                 <TableCell>
@@ -232,13 +280,19 @@ const DocumentResults = function DocumentResults({
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2">
-                    {doc.extraction_duration ? `${(doc.extraction_duration).toFixed(2)}s` : 'N/A'}
+                    {doc.extraction_duration
+                      ? `${doc.extraction_duration.toFixed(2)}s`
+                      : "N/A"}
                   </Typography>
                 </TableCell>
                 <TableCell>
                   <Chip
                     label={doc.processing_status}
-                    color={doc.processing_status === 'processed' ? 'success' : 'default'}
+                    color={
+                      doc.processing_status === "processed"
+                        ? "success"
+                        : "default"
+                    }
                     size="small"
                   />
                 </TableCell>
@@ -249,17 +303,17 @@ const DocumentResults = function DocumentResults({
                 </TableCell>
                 <TableCell align="right">
                   <Tooltip title="Preview Document">
-                    <IconButton
-                      onClick={() => handlePreview(doc)}
-                      size="small"
-                    >
+                    <IconButton onClick={() => handlePreview(doc)} size="small">
                       <PreviewIcon />
                     </IconButton>
                   </Tooltip>
-                  <Tooltip title={canDeleteDocument(doc)
-                    ? "Delete Document"
-                    : "Feed-sourced documents cannot be deleted. Manage through the feed instead."
-                  }>
+                  <Tooltip
+                    title={
+                      canDeleteDocument(doc)
+                        ? "Delete Document"
+                        : "Feed-sourced documents cannot be deleted. Manage through the feed instead."
+                    }
+                  >
                     <span>
                       <IconButton
                         onClick={() => onDeleteDocument(doc)}
@@ -289,13 +343,12 @@ const DocumentResults = function DocumentResults({
     </>
   ) : (
     <Alert severity="info">
-      {searchQuery || filterBy !== 'all'
-        ? 'No documents match your search criteria.'
-        : 'No documents found in this knowledge base.'
-      }
+      {searchQuery || filterBy !== "all"
+        ? "No documents match your search criteria."
+        : "No documents found in this knowledge base."}
     </Alert>
   );
-}
+};
 
 function Documents() {
   const { kbId } = useParams();
@@ -304,9 +357,9 @@ function Documents() {
   const [error, setError] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [filterBy, setFilterBy] = useState('all');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [filterBy, setFilterBy] = useState("all");
   const [knowledgeBase, setKnowledgeBase] = useState(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
@@ -320,30 +373,34 @@ function Documents() {
   const [uploadError, setUploadError] = useState(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = ((searchParams.get('tab') || '') === 'feeds') ? 1 : 0;
+  const initialTab = (searchParams.get("tab") || "") === "feeds" ? 1 : 0;
   const [tab, setTab] = useState(initialTab);
 
   // Get KB-specific upload restrictions (text extraction only, no image OCR)
   const uploadRestrictions = configService.getKbUploadRestrictions();
 
   useEffect(() => {
-    const desired = tab === 1 ? 'feeds' : 'documents';
-    const current = searchParams.get('tab') || 'documents';
+    const desired = tab === 1 ? "feeds" : "documents";
+    const current = searchParams.get("tab") || "documents";
     if (current !== desired) {
       const sp = new URLSearchParams(searchParams);
-      sp.set('tab', desired);
+      sp.set("tab", desired);
       setSearchParams(sp, { replace: true });
     }
   }, [tab, searchParams, setSearchParams]);
 
   const fetchKnowledgeBase = React.useCallback(async () => {
-    if (!kbId) return;
+    if (!kbId) {
+      return;
+    }
     try {
       const response = await knowledgeBaseAPI.get(kbId);
       const data = extractDataFromResponse(response);
       setKnowledgeBase(data);
     } catch (err) {
-      setError(`Failed to load knowledge base: ${err.message || 'Unknown error'}`);
+      setError(
+        `Failed to load knowledge base: ${err.message || "Unknown error"}`,
+      );
     }
   }, [kbId]);
 
@@ -356,27 +413,33 @@ function Documents() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchDocuments = useCallback(async (pageNum = page, pageSize = rowsPerPage) => {
-    if (!kbId) return;
-    setLoading(true);
-    try {
-      const response = await knowledgeBaseAPI.getDocuments(kbId, {
-        limit: pageSize,
-        offset: pageNum * pageSize,
-        search_query: debouncedSearchQuery,
-        filter_by: filterBy,
-      });
-      const data = extractDataFromResponse(response);
-      const items = data.items || [];
-      const total = typeof data.total === 'number' ? data.total : items.length;
-      setDocuments(items);
-      setTotalDocuments(total);
-    } catch (err) {
-      setError(`Failed to load documents: ${err.message || 'Unknown error'}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [kbId, page, rowsPerPage, debouncedSearchQuery, filterBy]);
+  const fetchDocuments = useCallback(
+    async (pageNum = page, pageSize = rowsPerPage) => {
+      if (!kbId) {
+        return;
+      }
+      setLoading(true);
+      try {
+        const response = await knowledgeBaseAPI.getDocuments(kbId, {
+          limit: pageSize,
+          offset: pageNum * pageSize,
+          search_query: debouncedSearchQuery,
+          filter_by: filterBy,
+        });
+        const data = extractDataFromResponse(response);
+        const items = data.items || [];
+        const total =
+          typeof data.total === "number" ? data.total : items.length;
+        setDocuments(items);
+        setTotalDocuments(total);
+      } catch (err) {
+        setError(`Failed to load documents: ${err.message || "Unknown error"}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [kbId, page, rowsPerPage, debouncedSearchQuery, filterBy],
+  );
 
   useEffect(() => {
     fetchKnowledgeBase();
@@ -393,57 +456,70 @@ function Documents() {
     setSelectedDocument(null);
   };
 
-  const handleFilesSelected = useCallback(async (files) => {
-    if (!files.length || !kbId) return;
-
-    setUploading(true);
-    setUploadProgress(0);
-    setUploadResults([]);
-    setUploadError(null);
-
-    try {
-      const response = await knowledgeBaseAPI.uploadDocuments(
-        kbId,
-        files,
-        (progressEvent) => {
-          // Guard against missing/zero total to prevent NaN/Infinity
-          const total = progressEvent.total || 0;
-          const percent = total > 0 ? Math.round((progressEvent.loaded * 100) / total) : 0;
-          setUploadProgress(percent);
-        }
-      );
-
-      const data = extractDataFromResponse(response);
-      setUploadResults(data.results || []);
-
-      // Refresh documents list if any uploads succeeded
-      if (data.successful > 0) {
-        fetchDocuments();
+  const handleFilesSelected = useCallback(
+    async (files) => {
+      if (!files.length || !kbId) {
+        return;
       }
-    } catch (err) {
-      setUploadError(formatError(err));
-    } finally {
-      setUploading(false);
-    }
-  }, [kbId, fetchDocuments]);
+
+      setUploading(true);
+      setUploadProgress(0);
+      setUploadResults([]);
+      setUploadError(null);
+
+      try {
+        const response = await knowledgeBaseAPI.uploadDocuments(
+          kbId,
+          files,
+          (progressEvent) => {
+            // Guard against missing/zero total to prevent NaN/Infinity
+            const total = progressEvent.total || 0;
+            const percent =
+              total > 0 ? Math.round((progressEvent.loaded * 100) / total) : 0;
+            setUploadProgress(percent);
+          },
+        );
+
+        const data = extractDataFromResponse(response);
+        setUploadResults(data.results || []);
+
+        // Refresh documents list if any uploads succeeded
+        if (data.successful > 0) {
+          fetchDocuments();
+        }
+      } catch (err) {
+        setUploadError(formatError(err));
+      } finally {
+        setUploading(false);
+      }
+    },
+    [kbId, fetchDocuments],
+  );
 
   // Derive ingesting state: true when upload is done (100%) but still waiting for server response
   const isIngesting = uploading && uploadProgress >= 100;
 
-  const handleDeleteDocument = useCallback(async (doc) => {
-    if (!window.confirm(`Are you sure you want to delete "${doc.title}"? This cannot be undone.`)) {
-      return;
-    }
-    try {
-      await knowledgeBaseAPI.deleteDocument(kbId, doc.id);
-      fetchDocuments();
-    } catch (err) {
-      setError(formatError(err));
-    }
-  }, [kbId, fetchDocuments]);
+  const handleDeleteDocument = useCallback(
+    async (doc) => {
+      if (
+        !window.confirm(
+          `Are you sure you want to delete "${doc.title}"? This cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+      try {
+        await knowledgeBaseAPI.deleteDocument(kbId, doc.id);
+        fetchDocuments();
+      } catch (err) {
+        setError(formatError(err));
+      }
+    },
+    [kbId, fetchDocuments],
+  );
 
   // Helper to check if document can be deleted (only manual uploads)
-  const canDeleteDocument = (doc) => doc.source_type === 'plugin:manual_upload';
+  const canDeleteDocument = (doc) => doc.source_type === "plugin:manual_upload";
 
   if (error) {
     return (
@@ -482,89 +558,93 @@ function Documents() {
         <Tab label="Plugin Feeds" />
       </Tabs>
 
-      {tab === 1 && (
-        <KBPluginFeedsTab knowledgeBaseId={kbId} />
+      {tab === 1 && <KBPluginFeedsTab knowledgeBaseId={kbId} />}
+
+      {tab === 0 && (
+        <>
+          <PageHelpHeader
+            title="Documents in this Knowledge Base"
+            description="Documents are the content that powers RAG retrieval. Each document is automatically chunked and embedded for semantic search. Upload files directly or configure Plugin Feeds for automated ingestion."
+            icon={<DocumentIcon />}
+            tips={[
+              "Upload documents using the dropzone below or configure Plugin Feeds for automated sync",
+              "Supported formats include PDF, DOC, TXT, HTML, and more",
+              "Use the preview button to inspect document content and chunk boundaries",
+              "Filter by status to find documents that failed processing or need attention",
+            ]}
+          />
+
+          {/* Upload Section */}
+          <Paper sx={{ p: 2, mb: 3, mt: 2 }}>
+            <Box
+              display="flex"
+              alignItems="center"
+              justifyContent="space-between"
+              onClick={() => setUploadExpanded(!uploadExpanded)}
+              sx={{ cursor: "pointer" }}
+            >
+              <Box display="flex" alignItems="center" gap={1}>
+                <UploadIcon color="primary" />
+                <Typography variant="subtitle1" fontWeight={500}>
+                  Upload Documents
+                </Typography>
+              </Box>
+              <IconButton size="small">
+                {uploadExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              </IconButton>
+            </Box>
+            <Collapse in={uploadExpanded}>
+              <Box sx={{ mt: 2 }}>
+                {uploadError && (
+                  <Alert
+                    severity="error"
+                    sx={{ mb: 2 }}
+                    onClose={() => setUploadError(null)}
+                  >
+                    {uploadError}
+                  </Alert>
+                )}
+                <FileDropzone
+                  allowedTypes={uploadRestrictions.allowed_types}
+                  maxSizeBytes={uploadRestrictions.max_size_bytes}
+                  multiple
+                  disabled={uploading}
+                  onFilesSelected={handleFilesSelected}
+                  uploadResults={uploadResults}
+                  uploading={uploading}
+                  uploadProgress={uploadProgress}
+                  ingesting={isIngesting}
+                />
+              </Box>
+            </Collapse>
+          </Paper>
+
+          <SearchFilter
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            filterBy={filterBy}
+            setFilterBy={setFilterBy}
+            fetchDocuments={fetchDocuments}
+            setPage={setPage}
+          />
+
+          <DocumentResults
+            documents={documents}
+            setSelectedDocument={setSelectedDocument}
+            setPreviewOpen={setPreviewOpen}
+            setPage={setPage}
+            setRowsPerPage={setRowsPerPage}
+            totalDocuments={totalDocuments}
+            page={page}
+            rowsPerPage={rowsPerPage}
+            searchQuery={searchQuery}
+            filterBy={filterBy}
+            loading={loading}
+            onDeleteDocument={handleDeleteDocument}
+            canDeleteDocument={canDeleteDocument}
+          />
+        </>
       )}
-
-      {tab === 0 && (<>
-        <PageHelpHeader
-          title="Documents in this Knowledge Base"
-          description="Documents are the content that powers RAG retrieval. Each document is automatically chunked and embedded for semantic search. Upload files directly or configure Plugin Feeds for automated ingestion."
-          icon={<DocumentIcon />}
-          tips={[
-            'Upload documents using the dropzone below or configure Plugin Feeds for automated sync',
-            'Supported formats include PDF, DOC, TXT, HTML, and more',
-            'Use the preview button to inspect document content and chunk boundaries',
-            'Filter by status to find documents that failed processing or need attention',
-          ]}
-        />
-
-        {/* Upload Section */}
-        <Paper sx={{ p: 2, mb: 3, mt: 2 }}>
-          <Box
-            display="flex"
-            alignItems="center"
-            justifyContent="space-between"
-            onClick={() => setUploadExpanded(!uploadExpanded)}
-            sx={{ cursor: 'pointer' }}
-          >
-            <Box display="flex" alignItems="center" gap={1}>
-              <UploadIcon color="primary" />
-              <Typography variant="subtitle1" fontWeight={500}>
-                Upload Documents
-              </Typography>
-            </Box>
-            <IconButton size="small">
-              {uploadExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={uploadExpanded}>
-            <Box sx={{ mt: 2 }}>
-              {uploadError && (
-                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setUploadError(null)}>
-                  {uploadError}
-                </Alert>
-              )}
-              <FileDropzone
-                allowedTypes={uploadRestrictions.allowed_types}
-                maxSizeBytes={uploadRestrictions.max_size_bytes}
-                multiple
-                disabled={uploading}
-                onFilesSelected={handleFilesSelected}
-                uploadResults={uploadResults}
-                uploading={uploading}
-                uploadProgress={uploadProgress}
-                ingesting={isIngesting}
-              />
-            </Box>
-          </Collapse>
-        </Paper>
-
-        <SearchFilter
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          filterBy={filterBy}
-          setFilterBy={setFilterBy}
-          fetchDocuments={fetchDocuments}
-          setPage={setPage}
-        />
-
-        <DocumentResults
-          documents={documents}
-          setSelectedDocument={setSelectedDocument}
-          setPreviewOpen={setPreviewOpen}
-          setPage={setPage}
-          setRowsPerPage={setRowsPerPage}
-          totalDocuments={totalDocuments}
-          page={page}
-          rowsPerPage={rowsPerPage}
-          searchQuery={searchQuery}
-          filterBy={filterBy}
-          loading={loading}
-          onDeleteDocument={handleDeleteDocument}
-          canDeleteDocument={canDeleteDocument}
-        />
-      </>)}
 
       {/* Document Preview Dialog */}
       {selectedDocument && (
@@ -576,8 +656,6 @@ function Documents() {
           maxChars={2000}
         />
       )}
-
-
     </Box>
   );
 }

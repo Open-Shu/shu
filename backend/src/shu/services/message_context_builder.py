@@ -1,6 +1,6 @@
-import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,15 +12,15 @@ from ..auth.models import User
 from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager
 from ..models.llm_provider import Conversation, LLMModel, Message
-from .chat_types import ChatContext, ChatMessage
 from ..models.model_configuration import ModelConfiguration
 from ..models.prompt import EntityType
 from ..schemas.query import QueryRequest, RagRewriteMode
+from .chat_types import ChatContext, ChatMessage
 from .context_preferences_resolver import ContextPreferencesResolver
 from .context_window_manager import ContextWindowManager
 from .message_utils import collapse_assistant_variants
-from .rag_query_processing import execute_rag_queries
 from .providers.adapter_base import get_adapter_from_provider
+from .rag_query_processing import execute_rag_queries
 from .side_call_service import SideCallService
 
 logger = logging.getLogger(__name__)
@@ -83,14 +83,14 @@ class MessageContextBuilder:
         user_message: str,
         current_user: User,
         model: LLMModel,
-        knowledge_base_id: Optional[str] = None,
+        knowledge_base_id: str | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
-        conversation_messages: Optional[List[Message]] = None,
-        model_configuration_override: Optional[ModelConfiguration] = None,
-        recent_messages_limit: Optional[int] = None,
-    ) -> Tuple[ChatContext, List[Dict]]:
+        conversation_messages: list[Message] | None = None,
+        model_configuration_override: ModelConfiguration | None = None,
+        recent_messages_limit: int | None = None,
+    ) -> tuple[ChatContext, list[dict]]:
         """Build message context using model configuration with conditional RAG + attachments."""
-        system_sections: List[str] = []
+        system_sections: list[str] = []
         active_model_config = model_configuration_override or getattr(conversation, "model_configuration", None)
 
         base_prompt = await self._get_base_system_prompt(conversation, active_model_config)
@@ -128,7 +128,7 @@ class MessageContextBuilder:
 
         combined_system = "\n\n".join([s for s in system_sections if s and s.strip()])
 
-        chat_messages: List[ChatMessage] = []
+        chat_messages: list[ChatMessage] = []
         for msg in recent_chat_messages:
             if msg.role in ["user", "assistant"]:
                 chat_messages.append(msg)
@@ -149,15 +149,16 @@ class MessageContextBuilder:
     async def _hydrate_chat_messages(
         self,
         conversation: Conversation,
-        messages: List[Message],
+        messages: list[Message],
         vision_enabled: bool = True,
-    ) -> List[ChatMessage]:
+    ) -> list[ChatMessage]:
         """Load conversation attachments and return ChatMessage objects with attachments.
-        
+
         Args:
             conversation: The conversation to load attachments for
             messages: List of messages to hydrate
             vision_enabled: If False, image attachments are filtered out
+
         """
         if not messages:
             return []
@@ -170,7 +171,7 @@ class MessageContextBuilder:
                 return [ChatMessage.from_message(m, []) for m in messages]
 
             msg_by_id = {m.id: m for m in messages if getattr(m, "id", None)}
-            msg_to_atts: Dict[str, List[Any]] = {}
+            msg_to_atts: dict[str, list[Any]] = {}
             for msg_id, att in rows:
                 if msg_id:
                     # Filter out image attachments if vision is disabled
@@ -178,7 +179,7 @@ class MessageContextBuilder:
                         continue
                     msg_to_atts.setdefault(msg_id, []).append(att)
 
-            chat_messages: List[ChatMessage] = []
+            chat_messages: list[ChatMessage] = []
             for m in messages:
                 atts = msg_to_atts.get(getattr(m, "id", ""), [])
                 chat_messages.append(ChatMessage.from_message(m, atts))
@@ -190,8 +191,8 @@ class MessageContextBuilder:
     async def _get_base_system_prompt(
         self,
         conversation: Conversation,
-        model_config: Optional[ModelConfiguration] = None,
-    ) -> Optional[str]:
+        model_config: ModelConfiguration | None = None,
+    ) -> str | None:
         if model_config is None and conversation.model_configuration_id:
             model_config = conversation.model_configuration
         if model_config and model_config.prompt:
@@ -208,8 +209,7 @@ class MessageContextBuilder:
 
             if model:
                 prompts = await self.prompt_service.get_entity_prompts(
-                    entity_id=model.id,
-                    entity_type=EntityType.LLM_MODEL
+                    entity_id=model.id, entity_type=EntityType.LLM_MODEL
                 )
                 if prompts:
                     first_prompt = prompts[0]
@@ -217,48 +217,48 @@ class MessageContextBuilder:
 
         return None
 
-
     async def _get_rag_sections(
         self,
         conversation: Conversation,
         user_message: str,
         current_user: User,
-        knowledge_base_id: Optional[str],
+        knowledge_base_id: str | None,
         rag_rewrite_mode: RagRewriteMode,
         model: LLMModel,
-        conversation_messages: List[Message],
-        model_configuration_override: Optional[ModelConfiguration] = None,
-        recent_messages_limit: Optional[int] = None,
-    ) -> Tuple[List[str], List[Dict]]:
-        sections: List[str] = []
-        all_source_metadata: List[Dict] = []
+        conversation_messages: list[Message],
+        model_configuration_override: ModelConfiguration | None = None,
+        recent_messages_limit: int | None = None,
+    ) -> tuple[list[str], list[dict]]:
+        sections: list[str] = []
+        all_source_metadata: list[dict] = []
 
         should_use_rag = rag_rewrite_mode != RagRewriteMode.NO_RAG
         if not (should_use_rag and user_message):
             return sections, all_source_metadata
 
-        kb_ids: List[str] = []
-        kb_source_config: Optional[ModelConfiguration] = model_configuration_override or getattr(conversation, "model_configuration", None)
+        kb_ids: list[str] = []
+        kb_source_config: ModelConfiguration | None = model_configuration_override or getattr(
+            conversation, "model_configuration", None
+        )
         if knowledge_base_id:
             kb_ids = [knowledge_base_id]
-        else:
-            if kb_source_config and getattr(kb_source_config, 'knowledge_bases', None):
-                try:
-                    accessible: List[str] = []
-                    for kb in kb_source_config.knowledge_bases:
-                        if not kb.is_active:
-                            continue
-                        has_access = await rbac.can_access_knowledge_base(current_user, kb.id, self.db_session)
-                        if has_access:
-                            accessible.append(kb.id)
-                    kb_ids = accessible
-                except Exception as e:
-                    logger.warning(f"Error accessing model configuration knowledge bases: {e}")
+        elif kb_source_config and getattr(kb_source_config, "knowledge_bases", None):
+            try:
+                accessible: list[str] = []
+                for kb in kb_source_config.knowledge_bases:
+                    if not kb.is_active:
+                        continue
+                    has_access = await rbac.can_access_knowledge_base(current_user, kb.id, self.db_session)
+                    if has_access:
+                        accessible.append(kb.id)
+                kb_ids = accessible
+            except Exception as e:
+                logger.warning(f"Error accessing model configuration knowledge bases: {e}")
 
         if not kb_ids:
             return sections, all_source_metadata
 
-        def build_query_request(kb_id: str, rag_config: Dict[str, Any], query_text: str) -> QueryRequest:
+        def build_query_request(kb_id: str, rag_config: dict[str, Any], query_text: str) -> QueryRequest:
             query_type = rag_config.get("search_type") or self.config_manager.get_rag_search_type()
             logger.info(
                 "Chat RAG query",
@@ -267,13 +267,14 @@ class MessageContextBuilder:
                     "query_type": query_type,
                     "rag_config_search_type": rag_config.get("search_type"),
                     "title_weighting": rag_config.get("title_weighting_enabled"),
-                }
+                },
             )
             return QueryRequest(
                 query=query_text,
                 query_type=query_type,
                 limit=rag_config.get("max_results") or self.config_manager.get_rag_max_results(),
-                similarity_threshold=rag_config.get("search_threshold") or self.config_manager.get_rag_search_threshold(),
+                similarity_threshold=rag_config.get("search_threshold")
+                or self.config_manager.get_rag_search_threshold(),
                 include_metadata=True,
                 rag_rewrite_mode=rag_rewrite_mode,
             )
@@ -312,17 +313,18 @@ class MessageContextBuilder:
                             "title": d.get("title"),
                             "token_cap_enforced": bool(d.get("token_cap_enforced")),
                         }
-                        for d in (escalation.get("docs") or []) if isinstance(d, dict)
+                        for d in (escalation.get("docs") or [])
+                        if isinstance(d, dict)
                     ],
                 }
                 self._append_rag_diagnostic("escalations", esc_copy)
 
             escalated_doc_ids: set[str] = set()
             try:
-                escalated_metadata: List[Dict[str, Any]] = []
+                escalated_metadata: list[dict[str, Any]] = []
                 if isinstance(escalation, dict) and escalation.get("enabled"):
-                    parts: List[str] = []
-                    for d in (escalation.get("docs") or []):
+                    parts: list[str] = []
+                    for d in escalation.get("docs") or []:
                         if not isinstance(d, dict):
                             continue
                         doc_id = d.get("document_id")
@@ -387,9 +389,9 @@ class MessageContextBuilder:
 
         return sections, all_source_metadata
 
-    async def _is_vision_enabled(self, model: LLMModel, model_config: Optional[ModelConfiguration] = None) -> bool:
+    async def _is_vision_enabled(self, model: LLMModel, model_config: ModelConfiguration | None = None) -> bool:
         """Check if vision is enabled for the model/configuration.
-        
+
         Defaults to False if not explicitly supported.
         Checks:
         1. Provider capabilities (including configuration overrides)
@@ -403,14 +405,14 @@ class MessageContextBuilder:
             adapter = get_adapter_from_provider(self.db_session, provider)
             caps = adapter.get_field_with_override("get_capabilities")
             vision_supported_by_provider = caps.get("vision", {}).get("value", False)
-            
+
             if not vision_supported_by_provider:
                 return False
 
             if model_config:
                 funcs = getattr(model_config, "functionalities", {}) or {}
                 return funcs.get("supports_vision", False)
-            
+
             return False
 
         except Exception as e:
@@ -429,10 +431,10 @@ class MessageContextBuilder:
 
     async def _build_enhanced_rag_context(
         self,
-        results: List[Dict],
-        rag_config: Dict,
-        knowledge_base_id: Optional[str] = None,
-    ) -> Tuple[str, List[Dict]]:
+        results: list[dict],
+        rag_config: dict,
+        knowledge_base_id: str | None = None,
+    ) -> tuple[str, list[dict]]:
         if not results:
             return "", []
 
@@ -479,7 +481,7 @@ class MessageContextBuilder:
                 "document_id": document_id,
                 "file_type": file_type,
                 "similarity_score": similarity_score,
-                "chunk_id": getattr(result, "chunk_id", "")
+                "chunk_id": getattr(result, "chunk_id", ""),
             }
 
             # Add knowledge base ID if provided
@@ -518,12 +520,11 @@ class MessageContextBuilder:
     async def _post_process_references(
         self,
         response_content: str,
-        source_metadata: List[Dict],
-        knowledge_base_id: Optional[str] = None,
-        force_references: bool = False
-    ) -> tuple[str, List[Dict]]:
-        """
-        Post-process LLM response to intelligently add system references.
+        source_metadata: list[dict],
+        knowledge_base_id: str | None = None,
+        force_references: bool = False,
+    ) -> tuple[str, list[dict]]:
+        """Post-process LLM response to intelligently add system references.
 
         Analyzes the response to see what citations already exist and adds
         system references only when needed to avoid duplication.
@@ -536,6 +537,7 @@ class MessageContextBuilder:
 
         Returns:
             Tuple of (processed_content, final_source_metadata)
+
         """
         if not source_metadata:
             return response_content, []
@@ -546,6 +548,7 @@ class MessageContextBuilder:
             # Single KB specified
             try:
                 from .knowledge_base_service import KnowledgeBaseService
+
                 kb_service = KnowledgeBaseService(self.db_session)
                 rag_config_response = await kb_service.get_rag_config(knowledge_base_id)
                 rag_config = rag_config_response.model_dump()
@@ -557,13 +560,14 @@ class MessageContextBuilder:
             # Multiple KBs from model config - check if any sources have KB info
             try:
                 from .knowledge_base_service import KnowledgeBaseService
+
                 kb_service = KnowledgeBaseService(self.db_session)
 
                 # Get unique KB IDs from source metadata
                 kb_ids = set()
                 for meta in source_metadata:
-                    if 'knowledge_base_id' in meta:
-                        kb_ids.add(meta['knowledge_base_id'])
+                    if "knowledge_base_id" in meta:
+                        kb_ids.add(meta["knowledge_base_id"])
 
                 # Check include_references setting for each KB
                 # If ANY KB has include_references=False, respect that
@@ -584,10 +588,9 @@ class MessageContextBuilder:
 
         # Use the new post-processing logic
         from ..utils.prompt_utils import should_add_system_references
+
         should_add, reason, sources_to_add = should_add_system_references(
-            response_content,
-            source_metadata,
-            kb_include_references
+            response_content, source_metadata, kb_include_references
         )
         logger.info(
             "DEBUG: Reference post-processing decision: should_add=%s, reason=%s, kb_include_references=%s, sources_count=%s",
@@ -623,6 +626,7 @@ class MessageContextBuilder:
 
             # Smart reference addition based on what's already in the response
             from ..utils.prompt_utils import analyze_response_references
+
             analysis = analyze_response_references(response_content, source_metadata)
 
             if analysis["reference_section_indicators"]:
@@ -637,5 +641,4 @@ class MessageContextBuilder:
                 processed_content = f"{response_content}\n\n**KB References:**\n{references_text}"
 
             return processed_content, sources_to_add
-        else:
-            return response_content, []
+        return response_content, []

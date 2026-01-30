@@ -1,5 +1,5 @@
 # Shu Contributor License Agreement (CLA)
- 
+
 By contributing to Shu, you agree to the terms below.
 
 ## 1. Definitions
@@ -14,10 +14,10 @@ By contributing to Shu, you agree to the terms below.
 
 ## 2. Copyright and License Grant
 
-2.1 **Retention of Ownership**  
+2.1 **Retention of Ownership**
 You retain the copyright in your Contributions.
 
-2.2 **License to the Project**  
+2.2 **License to the Project**
 You grant Open Shu Technologies, LLC. a worldwide, perpetual, irrevocable, non-exclusive, transferable, sublicensable, royalty-free license to:
 
 - use, reproduce, modify, publish, distribute, and create derivative works of your Contributions; and
@@ -25,7 +25,7 @@ You grant Open Shu Technologies, LLC. a worldwide, perpetual, irrevocable, non-e
 
 This allows the Project to be licensed under both GPLv3 and commercial terms.
 
-2.3 **License to the Public**  
+2.3 **License to the Public**
 You also grant a license to the public to use your Contributions under the same license(s) that the Project uses at the time of your Contribution (currently GPLv3 and any future versions thereof, as well as any other licenses the Project may adopt for public use).
 
 ---

@@ -5,4 +5,3 @@ PLUGIN_MANIFEST = {
     # Capability whitelist for exercising host surfaces
     "capabilities": ["secrets", "storage", "cache", "identity"],
 }
-

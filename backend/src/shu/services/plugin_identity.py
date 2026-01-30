@@ -1,5 +1,4 @@
-"""
-Shared helpers for resolving provider identities, secrets, and user email for plugin execution paths.
+"""Shared helpers for resolving provider identities, secrets, and user email for plugin execution paths.
 
 Auth requirements for plugin operations are declared in manifests via:
 - ``required_identities``: global list of provider/mode/scopes requirements
@@ -7,31 +6,32 @@ Auth requirements for plugin operations are declared in manifests via:
 
 Secrets in ``op_auth[op].secrets`` are declared as:
 ```
-{
-    "key_name": { "allowed_scope": "user" | "system" | "system_or_user" }
-}
+{"key_name": {"allowed_scope": "user" | "system" | "system_or_user"}}
 ```
 ``allowed_scope`` (default: "system_or_user") controls which storage scope satisfies the requirement:
 - "user": Must have a user-scoped secret (no fallback to system).
 - "system": Must have a system-scoped secret (ignores user secrets).
 - "system_or_user": User secret preferred; system secret accepted as fallback.
 """
-from __future__ import annotations
-from typing import Dict, List, Any, Optional, Tuple
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
+
+from typing import Any
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Models are imported lazily inside functions to avoid circulars in some import contexts
 
 
-async def get_provider_identities_map(db: AsyncSession, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+async def get_provider_identities_map(db: AsyncSession, user_id: str) -> dict[str, list[dict[str, Any]]]:
     """Return provider identities grouped by provider_key for the given user.
     Shape matches what host.identity expects: {provider_key: [identity_dict, ...]}
     """
     try:
         from ..models.provider_identity import ProviderIdentity  # local import
-        providers_map: Dict[str, List[Dict[str, Any]]] = {}
+
+        providers_map: dict[str, list[dict[str, Any]]] = {}
         q_pi = select(ProviderIdentity).where(ProviderIdentity.user_id == str(user_id))
         pi_res = await db.execute(q_pi)
         for pi in pi_res.scalars().all():
@@ -44,10 +44,10 @@ async def get_provider_identities_map(db: AsyncSession, user_id: str) -> Dict[st
 async def resolve_user_email_for_execution(
     db: AsyncSession,
     user_id: str,
-    params: Optional[Dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
     *,
     allow_impersonate: bool = True,
-) -> Optional[str]:
+) -> str | None:
     """Resolve an effective user email for execution context.
 
     Resolution order:
@@ -67,6 +67,7 @@ async def resolve_user_email_for_execution(
     # Fallback to User.email
     try:
         from ..auth.models import User  # local import
+
         r = await db.execute(select(User).where(User.id == str(user_id)))
         u = r.scalars().first()
         if u and getattr(u, "email", None):
@@ -80,6 +81,7 @@ async def has_provider_identity(db: AsyncSession, user_id: str, provider_key: st
     """Return True if the given user has at least one ProviderIdentity (or active ProviderCredential) for provider_key."""
     try:
         from ..models.provider_identity import ProviderIdentity
+
         res = await db.execute(
             select(ProviderIdentity).where(
                 (ProviderIdentity.user_id == str(user_id)) & (ProviderIdentity.provider_key == str(provider_key))
@@ -93,6 +95,7 @@ async def has_provider_identity(db: AsyncSession, user_id: str, provider_key: st
     # Fallback: check for an active credential even if identity row is missing
     try:
         from ..models.provider_credential import ProviderCredential
+
         cred_res = await db.execute(
             select(ProviderCredential).where(
                 (ProviderCredential.user_id == str(user_id))
@@ -106,7 +109,9 @@ async def has_provider_identity(db: AsyncSession, user_id: str, provider_key: st
         return False
 
 
-def resolve_auth_requirements(plugin: Any, params: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[List[str]]]:
+def resolve_auth_requirements(
+    plugin: Any, params: dict[str, Any] | None = None
+) -> tuple[str | None, str | None, str | None, list[str] | None]:
     """Resolve (provider, mode, subject, scopes) from plugin manifest and params.
     - Prefer plugin._op_auth[op] if present
     - Overlay with params provider/mode/scopes/subject when explicitly provided
@@ -115,16 +120,16 @@ def resolve_auth_requirements(plugin: Any, params: Optional[Dict[str, Any]] = No
     """
     p = dict(params or {})
     op = str(p.get("op") or "").lower()
-    provider: Optional[str] = None
-    mode: Optional[str] = None
-    scopes: Optional[List[str]] = None
-    subject: Optional[str] = None
+    provider: str | None = None
+    mode: str | None = None
+    scopes: list[str] | None = None
+    subject: str | None = None
     try:
         op_auth = getattr(plugin, "_op_auth", None)
         if isinstance(op_auth, dict) and op:
             spec = op_auth.get(op) or {}
-            provider = (spec.get("provider") or None)
-            mode = (spec.get("mode") or None)
+            provider = spec.get("provider") or None
+            mode = spec.get("mode") or None
             sc = spec.get("scopes")
             if isinstance(sc, list):
                 scopes = [str(s) for s in sc]
@@ -167,21 +172,19 @@ def resolve_auth_requirements(plugin: Any, params: Optional[Dict[str, Any]] = No
         pass
 
     # Normalize
-    provider = (provider or None)
+    provider = provider or None
     if isinstance(provider, str):
         provider = provider.strip().lower() or None
-    mode = (mode or None)
+    mode = mode or None
     if isinstance(mode, str):
         mode = mode.strip().lower() or None
-    subject = (subject or None)
+    subject = subject or None
     if isinstance(subject, str):
         subject = subject.strip() or None
     return provider, mode, subject, scopes
 
 
-def resolve_secret_requirements(
-    plugin: Any, params: Optional[Dict[str, Any]] = None
-) -> Dict[str, str]:
+def resolve_secret_requirements(plugin: Any, params: dict[str, Any] | None = None) -> dict[str, str]:
     """Resolve secret requirements from plugin manifest for the given op.
 
     Returns a dict mapping secret key names to their allowed_scope constraint.
@@ -206,7 +209,7 @@ def resolve_secret_requirements(
         secrets = spec.get("secrets")
         if not isinstance(secrets, dict):
             return {}
-        result: Dict[str, str] = {}
+        result: dict[str, str] = {}
         for key, val in secrets.items():
             if not isinstance(key, str) or not key.strip():
                 continue
@@ -215,7 +218,11 @@ def resolve_secret_requirements(
                 a = val.get("allowed_scope")
                 if isinstance(a, str) and a.strip().lower() in ("user", "system", "system_or_user"):
                     allowed = a.strip().lower()
-            elif isinstance(val, str) and val.strip().lower() in ("user", "system", "system_or_user"):
+            elif isinstance(val, str) and val.strip().lower() in (
+                "user",
+                "system",
+                "system_or_user",
+            ):
                 allowed = val.strip().lower()
             result[key.strip()] = allowed
         return result
@@ -227,7 +234,7 @@ async def ensure_secrets_for_plugin(
     plugin: Any,
     plugin_name: str,
     user_id: str,
-    params: Optional[Dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
 ) -> None:
     """Ensure all declared secrets are available for the plugin op.
 
@@ -238,11 +245,11 @@ async def ensure_secrets_for_plugin(
     if not requirements:
         return
 
-    from ..plugins.host.secrets_capability import SecretsCapability
     from ..plugins.host._storage_ops import storage_get, storage_get_system
+    from ..plugins.host.secrets_capability import SecretsCapability
 
     secrets_cap = SecretsCapability(plugin_name=plugin_name, user_id=user_id)
-    missing: List[str] = []
+    missing: list[str] = []
 
     for key, allowed_scope in requirements.items():
         value = None
@@ -281,7 +288,7 @@ async def ensure_secrets_for_plugin(
 class PluginIdentityError(Exception):
     """Raised when plugin execution is blocked due to missing subscriptions or identities."""
 
-    def __init__(self, code: str, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.details = details or {}
@@ -292,10 +299,9 @@ async def ensure_user_identity_for_plugin(
     plugin: Any,
     plugin_name: str,
     user_id: str,
-    params: Optional[Dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
 ) -> None:
-    """
-    Ensure the current user can execute the plugin op specified in params.
+    """Ensure the current user can execute the plugin op specified in params.
     Raises PluginIdentityError when execution should be blocked.
     """
     provider, mode_eff, _, scopes = resolve_auth_requirements(plugin, params)
@@ -339,7 +345,7 @@ async def ensure_user_identity_for_plugin(
         )
 
 
-async def compute_identity_status(db: AsyncSession, owner_user_id: Optional[str], params: Optional[Dict[str, Any]]) -> str:
+async def compute_identity_status(db: AsyncSession, owner_user_id: str | None, params: dict[str, Any] | None) -> str:
     """Compute identity status for a feed row using params and host overlay.
     Returns one of: 'no_owner' | 'delegation' | 'delegation_subject_missing' | 'connected' | 'missing_identity' | 'unknown'
     """
@@ -350,7 +356,9 @@ async def compute_identity_status(db: AsyncSession, owner_user_id: Optional[str]
         subj = str(p.get("impersonate_email") or p.get("subject") or "").strip()
         if not mode or not provider_key:
             host_overlay = p.get("__host") if isinstance(p.get("__host"), dict) else None
-            auth_overlay = host_overlay.get("auth") if host_overlay and isinstance(host_overlay.get("auth"), dict) else None
+            auth_overlay = (
+                host_overlay.get("auth") if host_overlay and isinstance(host_overlay.get("auth"), dict) else None
+            )
             if auth_overlay:
                 for k, v in auth_overlay.items():
                     if not provider_key and isinstance(k, str):
@@ -359,7 +367,7 @@ async def compute_identity_status(db: AsyncSession, owner_user_id: Optional[str]
                         if not mode and isinstance(v.get("mode"), str):
                             mode = v.get("mode").strip().lower()
                         if not subj and isinstance(v.get("subject") or v.get("impersonate_email"), str):
-                            subj = (v.get("subject") or v.get("impersonate_email"))
+                            subj = v.get("subject") or v.get("impersonate_email")
                     break
         if not owner_user_id:
             return "no_owner" if provider_key else "unknown"

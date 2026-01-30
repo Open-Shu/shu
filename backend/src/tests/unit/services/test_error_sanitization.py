@@ -126,7 +126,7 @@ class TestSanitizeString:
         text = "Model not found: gpt-4"
         result = ErrorSanitizer.sanitize_string(text)
 
-        assert "Model not found: gpt-4" == result
+        assert result == "Model not found: gpt-4"
 
 
 class TestSanitizeDict:
@@ -182,7 +182,9 @@ class TestExtractProviderError:
         """Test extraction from OpenAI-style error response."""
         mock_response = MagicMock()
         mock_response.status_code = 401
-        mock_response.text = '{"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}}'
+        mock_response.text = (
+            '{"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}}'
+        )
         mock_response.json.return_value = {
             "error": {
                 "message": "Invalid API key",
@@ -236,9 +238,7 @@ class TestExtractProviderError:
         mock_response = MagicMock()
         mock_response.status_code = 400
         mock_response.text = '{"error": [{"message": "First error", "type": "validation_error"}]}'
-        mock_response.json.return_value = {
-            "error": [{"message": "First error", "type": "validation_error"}]
-        }
+        mock_response.json.return_value = {"error": [{"message": "First error", "type": "validation_error"}]}
 
         result = ErrorSanitizer.extract_provider_error(mock_response)
 

@@ -1,6 +1,4 @@
-"""
-Branding configuration API endpoints.
-"""
+"""Branding configuration API endpoints."""
 
 from fastapi import (
     APIRouter,

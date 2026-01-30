@@ -11,13 +11,12 @@ Requires:
 - TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL set
 - TEST_GDRIVE_FOLDER_ID set or falls back to the shared constant from existing tests
 """
+
 from __future__ import annotations
-import sys
-from os.path import abspath, dirname, join
 
 import os
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 from integ.integration_test_runner import run_integration_tests
 
@@ -48,12 +47,15 @@ async def test_gdrive_feed_run_now_domain_delegate(client, db, auth_headers):
 
         # Resolve impersonation subject
         from shu.core.config import get_settings_instance
+
         settings = get_settings_instance()
         subject = os.getenv("TEST_GOOGLE_IMPERSONATE_EMAIL") or (settings.google_admin_user_email or None)
-        assert subject, "Impersonation subject not set. Set TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL in .env"
+        assert (
+            subject
+        ), "Impersonation subject not set. Set TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL in .env"
 
         # Create feed
-        feed_body: Dict[str, Any] = {
+        feed_body: dict[str, Any] = {
             "name": f"GDrive Feed {uuid.uuid4().hex[:6]}",
             "plugin_name": "gdrive_files",
             "params": {
@@ -81,7 +83,11 @@ async def test_gdrive_feed_run_now_domain_delegate(client, db, auth_headers):
         assert rn.status_code == 200, rn.text
 
         # Process the pending execution
-        rp = await client.post("/api/v1/plugins/admin/executions/run-pending", json={"limit": 1, "schedule_id": schedule_id}, headers=auth_headers)
+        rp = await client.post(
+            "/api/v1/plugins/admin/executions/run-pending",
+            json={"limit": 1, "schedule_id": schedule_id},
+            headers=auth_headers,
+        )
         assert rp.status_code == 200, rp.text
 
         # Fetch executions for this schedule
@@ -91,7 +97,7 @@ async def test_gdrive_feed_run_now_domain_delegate(client, db, auth_headers):
         assert len(rows) >= 1
         last = rows[-1]
         assert last.get("status") in ("completed",)
-        result = (last.get("result") or {})
+        result = last.get("result") or {}
         data = result.get("data") or {}
         # Expect some processing to have occurred (at least discovering files); ingestion may be zero depending on filters
         assert isinstance(data.get("processed"), int) and data.get("processed", 0) >= 1, data
@@ -113,5 +119,5 @@ async def test_gdrive_feed_run_now_domain_delegate(client, db, auth_headers):
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(run_integration_tests([test_gdrive_feed_run_now_domain_delegate], enable_file_logging=True))
 
+    asyncio.run(run_integration_tests([test_gdrive_feed_run_now_domain_delegate], enable_file_logging=True))

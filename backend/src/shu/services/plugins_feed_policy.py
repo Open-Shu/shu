@@ -1,16 +1,18 @@
-"""
-Feed op policy enforcement for plugin feeds.
+"""Feed op policy enforcement for plugin feeds.
 - Reads allowed_feed_ops and default_feed_op from registry manifest
 - Validates/sets params["op"] accordingly
 """
+
 from __future__ import annotations
-from typing import Dict, Any, Optional
+
+from typing import Any
+
 from fastapi import HTTPException
 
 from ..plugins.registry import REGISTRY
 
 
-def enforce_feed_op(plugin_name: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def enforce_feed_op(plugin_name: str, params: dict[str, Any] | None) -> dict[str, Any]:
     p = dict(params or {})
     try:
         manifest = REGISTRY.get_manifest(refresh_if_empty=True)
@@ -29,14 +31,19 @@ def enforce_feed_op(plugin_name: str, params: Optional[Dict[str, Any]]) -> Dict[
         if default_op:
             p["op"] = default_op
         else:
-            raise HTTPException(status_code=400, detail={
-                "error": "invalid_feed_op",
-                "message": f"op is required; allowed: {allowed}",
-            })
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_feed_op",
+                    "message": f"op is required; allowed: {allowed}",
+                },
+            )
     elif op not in allowed:
-        raise HTTPException(status_code=400, detail={
-            "error": "invalid_feed_op",
-            "message": f"op '{op}' not allowed for feeds; allowed: {allowed}",
-        })
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_feed_op",
+                "message": f"op '{op}' not allowed for feeds; allowed: {allowed}",
+            },
+        )
     return p
-

@@ -1,16 +1,18 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional
+
 import os
+from typing import Any
+
 
 # Local ToolResult shim to avoid importing shu.* from plugins
 class ToolResult:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status = status
         self.data = data or {}
         self.error = error
 
     @classmethod
-    def ok(cls, data: Optional[Dict[str, Any]] = None):
+    def ok(cls, data: dict[str, Any] | None = None):
         return cls(status="success", data=data)
 
 
@@ -25,13 +27,22 @@ class EchoPlugin:
     name = "test_echo"
     version = "1"
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         # Base schema
-        schema: Dict[str, Any] = {
+        schema: dict[str, Any] = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "op": {"type": ["string", "null"], "enum": ["run"], "default": "run", "x-ui": {"help": "Execute the echo test.", "enum_labels": {"run": "Run"}, "enum_help": {"run": "Echo the provided message N times"}}},
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": ["run"],
+                    "default": "run",
+                    "x-ui": {
+                        "help": "Execute the echo test.",
+                        "enum_labels": {"run": "Run"},
+                        "enum_help": {"run": "Echo the provided message N times"},
+                    },
+                },
                 "message": {"type": "string"},
                 "count": {"type": "integer", "minimum": 0, "default": 1},
             },
@@ -43,7 +54,7 @@ class EchoPlugin:
             schema["properties"]["force_invalid_output"] = {"type": "boolean", "default": False}
         return schema
 
-    def get_output_schema(self) -> Optional[Dict[str, Any]]:
+    def get_output_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -56,17 +67,20 @@ class EchoPlugin:
             "additionalProperties": True,
         }
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> ToolResult:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> ToolResult:
         # Only honor the test hook in debug/non-production
         if _force_invalid_allowed() and params.get("force_invalid_output"):
             # Omit required 'echo' to deliberately violate output schema for testing
-            return ToolResult.ok({
+            return ToolResult.ok(
+                {
+                    "user_id": getattr(context, "user_id", None),
+                    "agent_key": getattr(context, "agent_key", None),
+                }
+            )
+        return ToolResult.ok(
+            {
+                "echo": params,
                 "user_id": getattr(context, "user_id", None),
                 "agent_key": getattr(context, "agent_key", None),
-            })
-        return ToolResult.ok({
-            "echo": params,
-            "user_id": getattr(context, "user_id", None),
-            "agent_key": getattr(context, "agent_key", None),
-        })
-
+            }
+        )

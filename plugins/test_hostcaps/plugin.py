@@ -1,20 +1,21 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional
+
+from typing import Any
 
 
 # Local minimal result shim to avoid importing host internals
 class _Result:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status = status
         self.data = data
         self.error = error
 
     @classmethod
-    def ok(cls, data: Optional[Dict[str, Any]] = None):
+    def ok(cls, data: dict[str, Any] | None = None):
         return cls("success", data or {})
 
     @classmethod
-    def err(cls, message: str, code: str = "tool_error", details: Optional[Dict[str, Any]] = None):
+    def err(cls, message: str, code: str = "tool_error", details: dict[str, Any] | None = None):
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
 
@@ -22,12 +23,45 @@ class TestHostcapsPlugin:
     name = "test_hostcaps"
     version = "1"
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "op": {"type": ["string", "null"], "enum": ["get_identity","secret_get","secret_set","storage_put","storage_get","cache_set","cache_get"], "default": "get_identity", "x-ui": {"help": "Exercise host capabilities.", "enum_labels": {"get_identity": "Get Identity", "secret_get": "Secret: Get", "secret_set": "Secret: Set", "storage_put": "Storage: Put", "storage_get": "Storage: Get", "cache_set": "Cache: Set", "cache_get": "Cache: Get"}, "enum_help": {"get_identity":"Fetch the primary identity (email) for a provider","secret_get":"Read a secret from host.secrets","secret_set":"Write a secret into host.secrets","storage_put":"Put an object into host.storage","storage_get":"Get an object from host.storage","cache_set":"Set a key in host.cache with optional TTL","cache_get":"Get a key from host.cache"}}},
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": [
+                        "get_identity",
+                        "secret_get",
+                        "secret_set",
+                        "storage_put",
+                        "storage_get",
+                        "cache_set",
+                        "cache_get",
+                    ],
+                    "default": "get_identity",
+                    "x-ui": {
+                        "help": "Exercise host capabilities.",
+                        "enum_labels": {
+                            "get_identity": "Get Identity",
+                            "secret_get": "Secret: Get",
+                            "secret_set": "Secret: Set",
+                            "storage_put": "Storage: Put",
+                            "storage_get": "Storage: Get",
+                            "cache_set": "Cache: Set",
+                            "cache_get": "Cache: Get",
+                        },
+                        "enum_help": {
+                            "get_identity": "Fetch the primary identity (email) for a provider",
+                            "secret_get": "Read a secret from host.secrets",
+                            "secret_set": "Write a secret into host.secrets",
+                            "storage_put": "Put an object into host.storage",
+                            "storage_get": "Get an object from host.storage",
+                            "cache_set": "Set a key in host.cache with optional TTL",
+                            "cache_get": "Get a key from host.cache",
+                        },
+                    },
+                },
                 "key": {"type": ["string", "null"]},
                 "value": {},
                 "ttl": {"type": ["integer", "null"], "minimum": 1, "maximum": 86400},
@@ -36,7 +70,7 @@ class TestHostcapsPlugin:
             "additionalProperties": True,
         }
 
-    def get_output_schema(self) -> Optional[Dict[str, Any]]:
+    def get_output_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -47,7 +81,7 @@ class TestHostcapsPlugin:
             "additionalProperties": True,
         }
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> _Result:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> _Result:
         op = params.get("op")
         key = params.get("key")
         if not op:
@@ -115,4 +149,3 @@ class TestHostcapsPlugin:
             return _Result.ok({"result": val})
 
         return _Result.err(f"unknown op: {op}")
-

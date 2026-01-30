@@ -16,8 +16,8 @@ def _enable_rate_limiting():
     import EXECUTOR at module load time and hold a direct reference to the
     original object.
     """
-    from shu.plugins.executor import EXECUTOR
     from shu.core.rate_limiting import TokenBucketRateLimiter
+    from shu.plugins.executor import EXECUTOR
 
     # Save original limiters
     old_limiter = EXECUTOR._limiter
@@ -96,7 +96,12 @@ async def test_per_tool_rate_limit_override_headers(client, db, auth_headers):
     finally:
         # Best-effort restore of previous limits; note: API does not support clearing keys explicitly
         restore_payload = {}
-        for k in ("rate_limit_user_requests", "rate_limit_user_period", "quota_daily_requests", "quota_monthly_requests"):
+        for k in (
+            "rate_limit_user_requests",
+            "rate_limit_user_period",
+            "quota_daily_requests",
+            "quota_monthly_requests",
+        ):
             if k in prev_limits:
                 restore_payload[k] = prev_limits[k]
         if restore_payload:
@@ -150,7 +155,12 @@ async def test_per_tool_quota_override_headers(client, db, auth_headers):
     finally:
         # Best-effort restore of previous limits
         restore_payload = {}
-        for k in ("rate_limit_user_requests", "rate_limit_user_period", "quota_daily_requests", "quota_monthly_requests"):
+        for k in (
+            "rate_limit_user_requests",
+            "rate_limit_user_period",
+            "quota_daily_requests",
+            "quota_monthly_requests",
+        ):
             if k in prev_limits:
                 restore_payload[k] = prev_limits[k]
         if restore_payload:
@@ -179,4 +189,3 @@ class PluginOverridesTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(PluginOverridesTestSuite, globals())
-

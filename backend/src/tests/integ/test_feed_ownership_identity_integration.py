@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
@@ -51,7 +50,10 @@ async def test_feed_create_list_identity_missing(client, db, auth_headers):
     match = next((r for r in rows if r.get("id") == sched["id"]), None)
     assert match is not None, f"Created schedule not found in list: {rows}"
     assert match.get("owner_user_id") == owner_user_id
-    assert match.get("identity_status") in ("missing_identity", "unknown")  # allow unknown if provider probing changes
+    assert match.get("identity_status") in (
+        "missing_identity",
+        "unknown",
+    )  # allow unknown if provider probing changes
 
 
 async def test_run_now_with_missing_identity_fails(client, db, auth_headers):
@@ -154,4 +156,3 @@ class FeedOwnershipIdentitySuite(BaseIntegrationTestSuite):
 
 if __name__ == "__main__":
     create_test_runner_script(FeedOwnershipIdentitySuite, globals())
-

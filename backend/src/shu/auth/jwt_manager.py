@@ -1,17 +1,19 @@
 """JWT token management for Shu authentication"""
 
-from jose import jwt, JWTError
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional
 import logging
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from jose import JWTError, jwt
 
 from ..core.config import get_settings_instance
 
 logger = logging.getLogger(__name__)
 
+
 class JWTManager:
     """JWT token management for Shu authentication"""
-    
+
     def __init__(self):
         settings = get_settings_instance()
         self.secret_key = settings.jwt_secret_key
@@ -21,42 +23,37 @@ class JWTManager:
 
         if not self.secret_key:
             raise ValueError("JWT_SECRET_KEY not configured in settings")
-    
-    def create_access_token(self, user_data: Dict[str, Any]) -> str:
+
+    def create_access_token(self, user_data: dict[str, Any]) -> str:
         """Create JWT access token with user information"""
         if not self.secret_key:
             raise ValueError("JWT secret key not configured")
 
-        expire = datetime.now(timezone.utc) + timedelta(minutes=self.access_token_expire_minutes)
+        expire = datetime.now(UTC) + timedelta(minutes=self.access_token_expire_minutes)
 
         payload = {
             "user_id": user_data["user_id"],
             "email": user_data["email"],
             "role": user_data["role"],
             "exp": expire,
-            "iat": datetime.now(timezone.utc),
-            "type": "access"
+            "iat": datetime.now(UTC),
+            "type": "access",
         }
 
         return jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
-    
+
     def create_refresh_token(self, user_id: str) -> str:
         """Create JWT refresh token"""
         if not self.secret_key:
             raise ValueError("JWT secret key not configured")
 
-        expire = datetime.now(timezone.utc) + timedelta(days=self.refresh_token_expire_days)
+        expire = datetime.now(UTC) + timedelta(days=self.refresh_token_expire_days)
 
-        payload = {
-            "user_id": user_id,
-            "exp": expire,
-            "iat": datetime.now(timezone.utc),
-            "type": "refresh"
-        }
+        payload = {"user_id": user_id, "exp": expire, "iat": datetime.now(UTC), "type": "refresh"}
 
         return jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
-    
-    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
+
+    def verify_token(self, token: str) -> dict[str, Any] | None:
         """Verify and decode JWT token"""
         if not self.secret_key:
             logger.error("JWT secret key not configured")
@@ -68,19 +65,19 @@ class JWTManager:
         except JWTError as e:
             logger.warning(f"JWT verification failed: {e}")
             return None
-    
-    def extract_user_from_token(self, token: str) -> Optional[Dict[str, Any]]:
+
+    def extract_user_from_token(self, token: str) -> dict[str, Any] | None:
         """Extract user information from access token"""
         payload = self.verify_token(token)
         if not payload or payload.get("type") != "access":
             return None
-        
+
         return {
             "user_id": payload.get("user_id"),
             "email": payload.get("email"),
-            "role": payload.get("role")
+            "role": payload.get("role"),
         }
-    
+
     def is_token_expired(self, token: str) -> bool:
         """Check if token is expired without raising exception"""
         if not self.secret_key:
@@ -103,14 +100,14 @@ class JWTManager:
             if not exp_timestamp:
                 return True
 
-            exp_datetime = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
-            buffer_time = datetime.now(timezone.utc) + timedelta(minutes=buffer_minutes)
+            exp_datetime = datetime.fromtimestamp(exp_timestamp, tz=UTC)
+            buffer_time = datetime.now(UTC) + timedelta(minutes=buffer_minutes)
 
             return buffer_time >= exp_datetime
         except JWTError:
             return True
 
-    def refresh_access_token(self, refresh_token: str) -> Optional[str]:
+    def refresh_access_token(self, refresh_token: str) -> str | None:
         """Create new access token from valid refresh token"""
         if not self.secret_key:
             logger.error("JWT secret key not configured")

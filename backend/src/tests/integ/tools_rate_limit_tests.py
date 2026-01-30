@@ -4,18 +4,20 @@ Integration test for Tools rate limiting.
 This suite enables rate limiting and verifies that rapid consecutive executions
 are limited (HTTP 429) when exceeding the per-user-per-tool threshold.
 """
+
 from __future__ import annotations
+
 import asyncio
-import os, sys
+import os
 
 # Enable rate limiting for this test
 os.environ["SHU_ENABLE_API_RATE_LIMITING"] = "1"
 # Configure a very small bucket to force 429 on immediate consecutive calls
-os.environ["SHU_API_RATE_LIMIT_USER_REQUESTS"] = "1"   # capacity
-os.environ["SHU_API_RATE_LIMIT_USER_PERIOD"] = "60"    # seconds (only used to compute refill)
+os.environ["SHU_API_RATE_LIMIT_USER_REQUESTS"] = "1"  # capacity
+os.environ["SHU_API_RATE_LIMIT_USER_PERIOD"] = "60"  # seconds (only used to compute refill)
 
-from shu.models.plugin_registry import PluginDefinition
 from integ.integration_test_runner import run_integration_tests
+from shu.models.plugin_registry import PluginDefinition
 
 
 async def test_rate_limit_execute(client, db, auth_headers):
@@ -47,5 +49,3 @@ async def test_rate_limit_execute(client, db, auth_headers):
 
 if __name__ == "__main__":
     asyncio.run(run_integration_tests([test_rate_limit_execute]))
-
-

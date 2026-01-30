@@ -36,4 +36,3 @@ jobs:
               "version": "${{ github.ref_name }}",
               "sha": "${{ github.sha }}"
             }
-

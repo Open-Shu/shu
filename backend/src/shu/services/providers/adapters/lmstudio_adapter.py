@@ -1,10 +1,10 @@
-from typing import Any, Dict
+from typing import Any
 
 from shu.core.logging import get_logger
 
 from ..adapter_base import ProviderCapabilities, ProviderInformation, register_adapter
-from .completions_adapter import CompletionsAdapter
 from ..parameter_definitions import IntegerParameter, NumberParameter
+from .completions_adapter import CompletionsAdapter
 
 logger = get_logger(__name__)
 
@@ -27,11 +27,11 @@ class LMStudioAdapter(CompletionsAdapter):
         # Default local server; overrideable via provider config if needed.
         return "http://localhost:1234/v1"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         # No auth by default for local LM Studio server.
         return {"scheme": None, "headers": {}}
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         # Minimal OpenAI-compatible knobs commonly supported by LM Studio.
         return {
             "temperature": NumberParameter(

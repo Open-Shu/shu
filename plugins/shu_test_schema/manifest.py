@@ -4,4 +4,3 @@ PLUGIN_MANIFEST = {
     "module": "plugins.shu_test_schema.plugin:TestSchemaPlugin",
     "capabilities": [],
 }
-

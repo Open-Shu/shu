@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -13,13 +13,13 @@ class IdentityCapability:
     """
 
     user_id: str
-    user_email: Optional[str]
-    providers: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    user_email: str | None
+    providers: dict[str, list[dict[str, Any]]] | None = None
 
-    def get_current_user_identity(self) -> Dict[str, Any]:
+    def get_current_user_identity(self) -> dict[str, Any]:
         return {"user_id": self.user_id, "email": self.user_email}
 
-    def get_primary_email(self, provider: str) -> Optional[str]:
+    def get_primary_email(self, provider: str) -> str | None:
         try:
             prov = (self.providers or {}).get(provider) or []
             if prov:
@@ -27,4 +27,3 @@ class IdentityCapability:
         except Exception:
             return None
         return None
-

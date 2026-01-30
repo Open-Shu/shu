@@ -4,13 +4,13 @@ import logging
 from typing import Any
 
 from ...core.oauth_encryption import get_oauth_encryption_service
-from .base import ImmutableCapabilityMixin
 from ._storage_ops import (
+    storage_delete,
     storage_get,
     storage_get_system,
     storage_set,
-    storage_delete,
 )
+from .base import ImmutableCapabilityMixin
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class SecretsCapability(ImmutableCapabilityMixin):
     plugins from mutating _plugin_name or _user_id to access other plugins' secrets.
     """
 
-    __slots__ = ("_plugin_name", "_user_id", "_enc")
+    __slots__ = ("_enc", "_plugin_name", "_user_id")
     NAMESPACE = "secret"
 
     _plugin_name: str
@@ -49,9 +49,7 @@ class SecretsCapability(ImmutableCapabilityMixin):
 
     async def set(self, key: str, value: str) -> None:
         enc = self._enc.encrypt_token(value)
-        await storage_set(
-            self._user_id, self._plugin_name, self.NAMESPACE, key, {"v": enc}
-        )
+        await storage_set(self._user_id, self._plugin_name, self.NAMESPACE, key, {"v": enc})
         logger.info(
             "host.secrets.set",
             extra={"plugin": self._plugin_name, "user_id": self._user_id, "key": key},
@@ -65,7 +63,6 @@ class SecretsCapability(ImmutableCapabilityMixin):
         1. User-scoped secret for (user_id, plugin_name, key)
         2. System-scoped secret for (plugin_name, key)
         """
-
         # User-scoped first
         raw = await storage_get(self._user_id, self._plugin_name, self.NAMESPACE, key)
         if not raw:
@@ -91,4 +88,3 @@ class SecretsCapability(ImmutableCapabilityMixin):
             "host.secrets.delete",
             extra={"plugin": self._plugin_name, "user_id": self._user_id, "key": key},
         )
-

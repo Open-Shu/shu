@@ -1,5 +1,4 @@
 from __future__ import annotations
-import sys, os
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
@@ -41,5 +40,5 @@ if __name__ == "__main__":
     suite = MicrosoftHostAuthTestSuite()
     exit_code = suite.run()
     import sys as _sys
-    _sys.exit(exit_code)
 
+    _sys.exit(exit_code)

@@ -5,10 +5,8 @@ import pytest
 
 from shu.services.providers.adapter_base import (
     ProviderAdapterContext,
-    ProviderFinalEventResult,
 )
 from shu.services.providers.adapters.generic_completions_adapter import GenericCompletionsAdapter
-from tests.unit.services.providers.adapters.shared import COMPLETIONS_COMPLETE_OUTPUT_PAYLOAD
 
 
 @pytest.fixture(scope="function")

@@ -1,18 +1,17 @@
-"""
-Plugins API (admin executions): list/get/run-pending + scheduler metrics
+"""Plugins API (admin executions): list/get/run-pending + scheduler metrics
 Preserves original paths under /plugins/admin/executions* and /plugins/admin/scheduler/metrics
 """
+
 from __future__ import annotations
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
-from ..auth.rbac import require_power_user
 from ..auth.models import User
+from ..auth.rbac import require_power_user
 from ..core.response import ShuResponse
 from ..models.plugin_execution import PluginExecution
 
@@ -21,22 +20,25 @@ router = APIRouter()
 
 class RunPendingRequest(BaseModel):
     limit: int = 10
-    schedule_id: Optional[str] = None
-    execution_id: Optional[str] = None
+    schedule_id: str | None = None
+    execution_id: str | None = None
 
 
 @router.get("/admin/executions")
 async def admin_list_executions(
-    schedule_id: Optional[str] = Query(None, description="Filter by schedule id"),
-    plugin_name: Optional[str] = Query(None, description="Filter by plugin name"),
-    status: Optional[str] = Query(None, description="Filter by status"),
+    schedule_id: str | None = Query(None, description="Filter by schedule id"),
+    plugin_name: str | None = Query(None, description="Filter by plugin name"),
+    status: str | None = Query(None, description="Filter by status"),
     limit: int = Query(50, description="Max rows to return (default 50)"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_power_user),
 ):
     res = await db.execute(
-        select(PluginExecution)
-            .order_by(PluginExecution.created_at.desc(), PluginExecution.started_at.desc(), PluginExecution.id.desc())
+        select(PluginExecution).order_by(
+            PluginExecution.created_at.desc(),
+            PluginExecution.started_at.desc(),
+            PluginExecution.id.desc(),
+        )
     )
     execs = res.scalars().all()
     if schedule_id:
@@ -65,6 +67,7 @@ async def admin_get_execution(
     rec = res.scalars().first()
     if not rec:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="execution not found")
     return ShuResponse.success(rec.to_dict())
 
@@ -76,6 +79,7 @@ async def admin_run_pending(
     admin: User = Depends(require_power_user),
 ):
     from ..services.plugins_scheduler_service import PluginsSchedulerService
+
     svc = PluginsSchedulerService(db)
     stats = await svc.run_pending(
         limit=max(1, int(getattr(body, "limit", 10) or 10)),
@@ -92,6 +96,7 @@ async def admin_scheduler_metrics(
     admin: User = Depends(require_power_user),
 ):
     from ..services.plugins_scheduler_service import TICK_HISTORY
+
     try:
         lim = max(1, min(int(limit), 500))
     except Exception:

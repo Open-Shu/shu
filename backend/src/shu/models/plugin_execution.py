@@ -1,15 +1,17 @@
-"""
-Minimal Plugin Execution persistence for Plugins v1.
+"""Minimal Plugin Execution persistence for Plugins v1.
 
 Tracks executions triggered via API or schedules. Kept intentionally simple
 for Option A Step 4.
 """
+
 from __future__ import annotations
+
 from dataclasses import dataclass
-from sqlalchemy import Column, String, Text, JSON, ForeignKey, Index
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import JSON, Column, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
-from typing import Any, Dict, Optional
-from datetime import datetime, timezone
 
 from shu.plugins.base import Plugin
 
@@ -46,19 +48,17 @@ class PluginExecution(BaseModel):
     started_at = Column(TIMESTAMP(timezone=True), nullable=True)
     completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
-    __table_args__ = (
-        Index("ix_plugin_exec_status_plugin", "status", "plugin_name"),
-    )
+    __table_args__ = (Index("ix_plugin_exec_status_plugin", "status", "plugin_name"),)
 
     @staticmethod
     def now_utc() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 @dataclass
 class CallableTool:
     name: str
     op: str
-    plugin: Optional[Plugin]
-    schema: Optional[Dict[str, Any]]
-    enum_labels: Optional[Dict[str, Any]]
+    plugin: Plugin | None
+    schema: dict[str, Any] | None
+    enum_labels: dict[str, Any] | None

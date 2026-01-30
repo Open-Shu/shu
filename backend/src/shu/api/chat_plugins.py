@@ -1,30 +1,31 @@
-"""
-Chat Plugins API router: per-op descriptors for LLM plugin-calling and minimal execution facade.
+"""Chat Plugins API router: per-op descriptors for LLM plugin-calling and minimal execution facade.
 M1 scope: expose read-only ops only (as declared by plugin manifest chat_callable_ops).
 """
+
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+
 import copy
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.response import ShuResponse
-from ..schemas.envelope import SuccessResponse
-from ..auth.rbac import get_current_user
-from ..auth.models import User
 from ..api.dependencies import get_db
+from ..auth.models import User
+from ..auth.rbac import get_current_user
+from ..core.response import ShuResponse
 from ..models.plugin_registry import PluginDefinition
-from ..plugins.registry import REGISTRY
 from ..plugins.executor import EXECUTOR
+from ..plugins.registry import REGISTRY
+from ..schemas.envelope import SuccessResponse
 from ..services.plugin_identity import (
+    PluginIdentityError,
+    ensure_secrets_for_plugin,
+    ensure_user_identity_for_plugin,
     get_provider_identities_map,
     resolve_user_email_for_execution,
-    ensure_user_identity_for_plugin,
-    ensure_secrets_for_plugin,
-    PluginIdentityError,
 )
 
 router = APIRouter(prefix="/chat/plugins", tags=["chat-plugins"])  # prefixed by settings.api_v1_prefix in main
@@ -33,22 +34,22 @@ router = APIRouter(prefix="/chat/plugins", tags=["chat-plugins"])  # prefixed by
 class ChatPluginOpDescriptor(BaseModel):
     name: str
     op: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    input_schema: Optional[Dict[str, Any]] = None
-    required_identities: Optional[List[Dict[str, Any]]] = None
+    title: str | None = None
+    description: str | None = None
+    input_schema: dict[str, Any] | None = None
+    required_identities: list[dict[str, Any]] | None = None
     chat_callable: bool = True
 
 
 class ChatPluginListResponse(BaseModel):
-    plugins: List[ChatPluginOpDescriptor] = Field(default_factory=list)
+    plugins: list[ChatPluginOpDescriptor] = Field(default_factory=list)
 
 
 class ChatPluginExecuteRequest(BaseModel):
     name: str
     op: str
-    params: Dict[str, Any] = Field(default_factory=dict)
-    agent_key: Optional[str] = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    agent_key: str | None = None
 
 
 @router.get("", response_model=SuccessResponse[ChatPluginListResponse])
@@ -70,7 +71,7 @@ async def list_chat_plugins(
     rows = res.scalars().all()
     enabled = {r.name for r in rows}
 
-    out: List[ChatPluginOpDescriptor] = []
+    out: list[ChatPluginOpDescriptor] = []
     for name, rec in (manifest or {}).items():
         if name not in enabled:
             continue
@@ -96,9 +97,9 @@ async def list_chat_plugins(
         # Derive enum labels/help for title/description when available
         enum_labels = None
         try:
-            enum_labels = (
-                (((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})
-            ).get("enum_labels")
+            enum_labels = ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get(
+                "enum_labels"
+            )
         except Exception:
             enum_labels = None
         for op in chat_ops:
@@ -111,10 +112,14 @@ async def list_chat_plugins(
             # Fallback titles
             if not title:
                 title = f"{name}:{op}"
-            base_schema = schema or {"type": "object", "properties": {}, "additionalProperties": True}
+            base_schema = schema or {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            }
             # Deep-copy the base schema so we can pin the `op` field per chat-callable operation
             # without mutating the plugin's original schema (shared across ops/endpoints). This limits
-            # the available operations to the chat-callable subset declared in the manifest, which prevents 
+            # the available operations to the chat-callable subset declared in the manifest, which prevents
             # op injection attacks or LLM accidental execution of non-chat-callable ops.
             op_schema = copy.deepcopy(base_schema)
             props = op_schema.setdefault("properties", {})
@@ -129,23 +134,25 @@ async def list_chat_plugins(
                     op_schema["required"].append("op")
             else:
                 op_schema["required"] = ["op"]
-            out.append(ChatPluginOpDescriptor(
-                name=name,
-                op=op,
-                title=title,
-                description=description,
-                input_schema=op_schema,
-                required_identities=list(getattr(rec, "required_identities", []) or []),
-                chat_callable=True,
-            ))
+            out.append(
+                ChatPluginOpDescriptor(
+                    name=name,
+                    op=op,
+                    title=title,
+                    description=description,
+                    input_schema=op_schema,
+                    required_identities=list(getattr(rec, "required_identities", []) or []),
+                    chat_callable=True,
+                )
+            )
 
     return ShuResponse.success(ChatPluginListResponse(plugins=out))
 
 
 class ChatPluginExecuteResponse(BaseModel):
     status: str
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[Dict[str, Any]] = None
+    data: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
 
 
 @router.post("/execute", response_model=SuccessResponse[ChatPluginExecuteResponse])
@@ -220,6 +227,7 @@ async def execute_chat_plugin(
     # Unified diagnostics logging (DRY)
     try:
         from ..plugins.utils import log_plugin_diagnostics as _log_diags
+
         _log_diags(payload, plugin_name=str(body.name))
     except Exception:
         pass

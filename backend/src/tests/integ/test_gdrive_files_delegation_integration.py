@@ -10,28 +10,33 @@ Requirements:
 - An impersonation subject email must be available via either TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL
 - The subject user must have access to the provided folder id
 """
+
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
-from typing import Any, Dict
-
-import sys
-from os.path import abspath, dirname, join
-
-import asyncio
+from typing import Any
 
 from integ.integration_test_runner import run_integration_tests
-
 
 FOLDER_ID = os.getenv("TEST_GDRIVE_FOLDER_ID", "1vVDP-xy3lQxw_jr5yZHOtwytx63JuMbt")
 
 
 async def _ensure_tool_enabled(db, name: str = "gdrive_files"):
     from sqlalchemy import select
+
     from shu.models.plugin_registry import PluginDefinition
 
-    existing = (await db.execute(select(PluginDefinition).where(PluginDefinition.name == name, PluginDefinition.version == "1"))).scalars().first()
+    existing = (
+        (
+            await db.execute(
+                select(PluginDefinition).where(PluginDefinition.name == name, PluginDefinition.version == "1")
+            )
+        )
+        .scalars()
+        .first()
+    )
     if existing:
         existing.enabled = True
         await db.commit()
@@ -50,13 +55,22 @@ async def test_gdrive_delegation_token_exchange(client, db, auth_headers):
     """
     # Determine subject email
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
     subject = os.getenv("TEST_GOOGLE_IMPERSONATE_EMAIL") or (settings.google_admin_user_email or None)
-    assert subject, "Impersonation subject not set. Set TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL in .env"
+    assert (
+        subject
+    ), "Impersonation subject not set. Set TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL in .env"
 
     # Build a host exposing only http+auth
     from shu.plugins.host.host_builder import make_host
-    host = make_host(plugin_name="gdrive_files", user_id="u1", user_email="u1@example.com", capabilities=["http", "auth"])  # type: ignore[arg-type]
+
+    host = make_host(
+        plugin_name="gdrive_files",
+        user_id="u1",
+        user_email="u1@example.com",
+        capabilities=["http", "auth"],
+    )  # type: ignore[arg-type]
 
     scopes = [
         "https://www.googleapis.com/auth/drive",
@@ -91,12 +105,15 @@ async def test_gdrive_files_ingest_domain_delegate(client, db, auth_headers):
     assert kb_id, "KB creation did not return id"
 
     from shu.core.config import get_settings_instance
+
     settings = get_settings_instance()
     subject = os.getenv("TEST_GOOGLE_IMPERSONATE_EMAIL") or (settings.google_admin_user_email or None)
-    assert subject, "Impersonation subject not set. Set TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL in .env"
+    assert (
+        subject
+    ), "Impersonation subject not set. Set TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL in .env"
 
     # Act: execute plugin via API
-    body: Dict[str, Any] = {
+    body: dict[str, Any] = {
         "params": {
             "op": "ingest",
             "kb_id": kb_id,
@@ -138,7 +155,7 @@ async def test_gdrive_files_ingest_service_account(client, db, auth_headers):
     kb_id = (r.json().get("data") or {}).get("id")
     assert kb_id, "KB creation did not return id"
 
-    body: Dict[str, Any] = {
+    body: dict[str, Any] = {
         "params": {
             "op": "ingest",
             "kb_id": kb_id,
@@ -160,9 +177,13 @@ async def test_gdrive_files_ingest_service_account(client, db, auth_headers):
 
 
 if __name__ == "__main__":
-    asyncio.run(run_integration_tests([
-        test_gdrive_delegation_token_exchange,
-        test_gdrive_files_ingest_domain_delegate,
-        test_gdrive_files_ingest_service_account,
-    ], enable_file_logging=True))
-
+    asyncio.run(
+        run_integration_tests(
+            [
+                test_gdrive_delegation_token_exchange,
+                test_gdrive_files_ingest_domain_delegate,
+                test_gdrive_files_ingest_service_account,
+            ],
+            enable_file_logging=True,
+        )
+    )

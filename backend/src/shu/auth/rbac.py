@@ -1,19 +1,20 @@
 """Role-Based Access Control for Shu API"""
 
-from fastapi import HTTPException, Depends, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from typing import Optional, List
 import logging
 
-from .models import User, UserRole
-from .jwt_manager import JWTManager
-from ..core.database import get_db
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from ..core.config import get_settings_instance
+from ..core.database import get_db
+from .jwt_manager import JWTManager
+from .models import User, UserRole
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
+
 
 class RBACController:
     """Role-Based Access Control for Shu API endpoints"""
@@ -24,7 +25,7 @@ class RBACController:
     async def get_current_user(
         self,
         credentials: HTTPAuthorizationCredentials = Depends(security),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         """Get current authenticated user from JWT token"""
         token = credentials.credentials
@@ -40,6 +41,7 @@ class RBACController:
 
         # Get user from database
         from sqlalchemy import select
+
         stmt = select(User).where(User.id == user_data["user_id"])
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -55,22 +57,23 @@ class RBACController:
 
     def require_role(self, required_role: UserRole):
         """Decorator factory to require specific role for endpoint access"""
+
         async def role_checker(
             credentials: HTTPAuthorizationCredentials = Depends(security),
-            db: AsyncSession = Depends(get_db)
+            db: AsyncSession = Depends(get_db),
         ) -> User:
             current_user = await self.get_current_user(credentials, db)
             if not current_user.has_role(required_role):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Insufficient permissions. Required: {required_role.value}"
+                    detail=f"Insufficient permissions. Required: {required_role.value}",
                 )
             return current_user
+
         return role_checker
-    
+
     async def can_access_knowledge_base(self, user: User, kb_id: str, db: AsyncSession) -> bool:
-        """
-        Check if user can access specific knowledge base using granular RBAC.
+        """Check if user can access specific knowledge base using granular RBAC.
 
         Uses database-driven granular access control with user groups and permissions
         to prevent RBAC bypass vulnerabilities.
@@ -82,8 +85,10 @@ class RBACController:
 
         Returns:
             True if user has access, False otherwise
+
         """
-        from sqlalchemy import select, or_, and_
+        from sqlalchemy import and_, select
+
         from ..models.knowledge_base import KnowledgeBase
         from ..models.rbac import KnowledgeBasePermission, UserGroupMembership
 
@@ -92,9 +97,7 @@ class RBACController:
             return True
 
         # Verify knowledge base exists first
-        kb_result = await db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        )
+        kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
         knowledge_base = kb_result.scalar_one_or_none()
 
         if not knowledge_base:
@@ -111,7 +114,7 @@ class RBACController:
                 and_(
                     KnowledgeBasePermission.knowledge_base_id == kb_id,
                     KnowledgeBasePermission.user_id == user.id,
-                    KnowledgeBasePermission.is_active == True
+                    KnowledgeBasePermission.is_active == True,
                 )
             )
         )
@@ -126,10 +129,7 @@ class RBACController:
         # Get all active groups the user belongs to
         user_groups_result = await db.execute(
             select(UserGroupMembership.group_id).where(
-                and_(
-                    UserGroupMembership.user_id == user.id,
-                    UserGroupMembership.is_active == True
-                )
+                and_(UserGroupMembership.user_id == user.id, UserGroupMembership.is_active == True)
             )
         )
         user_group_ids = [row[0] for row in user_groups_result.fetchall()]
@@ -141,7 +141,7 @@ class RBACController:
                     and_(
                         KnowledgeBasePermission.knowledge_base_id == kb_id,
                         KnowledgeBasePermission.group_id.in_(user_group_ids),
-                        KnowledgeBasePermission.is_active == True
+                        KnowledgeBasePermission.is_active == True,
                     )
                 )
             )
@@ -155,9 +155,8 @@ class RBACController:
         # No permissions found - deny access
         return False
 
-    async def get_kb_permission_level(self, user: User, kb_id: str, db: AsyncSession) -> Optional[str]:
-        """
-        Get the highest permission level a user has for a specific knowledge base.
+    async def get_kb_permission_level(self, user: User, kb_id: str, db: AsyncSession) -> str | None:
+        """Get the highest permission level a user has for a specific knowledge base.
 
         Args:
             user: User to check permissions for
@@ -166,19 +165,19 @@ class RBACController:
 
         Returns:
             Permission level string (owner/admin/member/read_only) or None if no access
+
         """
-        from sqlalchemy import select, and_
+        from sqlalchemy import and_, select
+
         from ..models.knowledge_base import KnowledgeBase
-        from ..models.rbac import KnowledgeBasePermission, UserGroupMembership, PermissionLevel
+        from ..models.rbac import KnowledgeBasePermission, PermissionLevel, UserGroupMembership
 
         # Admins and power users have owner-level access to all knowledge bases
         if user.role_enum in [UserRole.ADMIN, UserRole.POWER_USER]:
             return PermissionLevel.OWNER.value
 
         # Verify knowledge base exists first
-        kb_result = await db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-        )
+        kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
         knowledge_base = kb_result.scalar_one_or_none()
 
         if not knowledge_base:
@@ -196,7 +195,7 @@ class RBACController:
                 and_(
                     KnowledgeBasePermission.knowledge_base_id == kb_id,
                     KnowledgeBasePermission.user_id == user.id,
-                    KnowledgeBasePermission.is_active == True
+                    KnowledgeBasePermission.is_active == True,
                 )
             )
         )
@@ -208,10 +207,7 @@ class RBACController:
         # Check for group-based permissions
         user_groups_result = await db.execute(
             select(UserGroupMembership.group_id).where(
-                and_(
-                    UserGroupMembership.user_id == user.id,
-                    UserGroupMembership.is_active == True
-                )
+                and_(UserGroupMembership.user_id == user.id, UserGroupMembership.is_active == True)
             )
         )
         user_group_ids = [row[0] for row in user_groups_result.fetchall()]
@@ -222,7 +218,7 @@ class RBACController:
                     and_(
                         KnowledgeBasePermission.knowledge_base_id == kb_id,
                         KnowledgeBasePermission.group_id.in_(user_group_ids),
-                        KnowledgeBasePermission.is_active == True
+                        KnowledgeBasePermission.is_active == True,
                     )
                 )
             )
@@ -239,11 +235,11 @@ class RBACController:
         # Priority: owner > admin > member > read_only
         if PermissionLevel.OWNER.value in permission_levels:
             return PermissionLevel.OWNER.value
-        elif PermissionLevel.ADMIN.value in permission_levels:
+        if PermissionLevel.ADMIN.value in permission_levels:
             return PermissionLevel.ADMIN.value
-        elif PermissionLevel.MEMBER.value in permission_levels:
+        if PermissionLevel.MEMBER.value in permission_levels:
             return PermissionLevel.MEMBER.value
-        elif PermissionLevel.READ_ONLY.value in permission_levels:
+        if PermissionLevel.READ_ONLY.value in permission_levels:
             return PermissionLevel.READ_ONLY.value
 
         return None
@@ -252,13 +248,19 @@ class RBACController:
         """Check if user can manage knowledge base (owner/admin level access)."""
         permission_level = await self.get_kb_permission_level(user, kb_id, db)
         from ..models.rbac import PermissionLevel
+
         return permission_level in [PermissionLevel.OWNER.value, PermissionLevel.ADMIN.value]
 
     async def can_modify_kb(self, user: User, kb_id: str, db: AsyncSession) -> bool:
         """Check if user can modify knowledge base content (owner/admin/member level access)."""
         permission_level = await self.get_kb_permission_level(user, kb_id, db)
         from ..models.rbac import PermissionLevel
-        return permission_level in [PermissionLevel.OWNER.value, PermissionLevel.ADMIN.value, PermissionLevel.MEMBER.value]
+
+        return permission_level in [
+            PermissionLevel.OWNER.value,
+            PermissionLevel.ADMIN.value,
+            PermissionLevel.MEMBER.value,
+        ]
 
     async def can_query_kb(self, user: User, kb_id: str, db: AsyncSession) -> bool:
         """Check if user can query knowledge base (any level access)."""
@@ -269,22 +271,23 @@ class RBACController:
         """Check if user can delete knowledge base (owner level access only)."""
         permission_level = await self.get_kb_permission_level(user, kb_id, db)
         from ..models.rbac import PermissionLevel
+
         return permission_level == PermissionLevel.OWNER.value
 
     async def can_manage_kb_permissions(self, user: User, kb_id: str, db: AsyncSession) -> bool:
         """Check if user can manage knowledge base permissions (owner/admin level access)."""
         permission_level = await self.get_kb_permission_level(user, kb_id, db)
         from ..models.rbac import PermissionLevel
+
         return permission_level in [PermissionLevel.OWNER.value, PermissionLevel.ADMIN.value]
+
 
 # Global RBAC instance
 rbac = RBACController()
 
+
 # Standalone dependency functions for FastAPI endpoints
-async def get_current_user(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-) -> User:
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Get current authenticated user - supports JWT or global API key (Tier 0)."""
     auth_header = request.headers.get("Authorization")
     if not auth_header:
@@ -312,6 +315,7 @@ async def get_current_user(
             )
         # Load mapped user from database
         from sqlalchemy import select
+
         stmt = select(User).where(User.email == settings.api_key_user_email).options(selectinload(User.preferences))
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -334,6 +338,7 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         from sqlalchemy import select
+
         stmt = select(User).where(User.id == user_data["user_id"]).options(selectinload(User.preferences))
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -351,49 +356,33 @@ async def get_current_user(
         detail="Unsupported Authorization scheme",
     )
 
-async def require_admin(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-) -> User:
+
+async def require_admin(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Require admin role for endpoint access - standalone dependency function"""
     current_user = await get_current_user(request, db)
     if not current_user.can_manage_users():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
-async def require_power_user(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-) -> User:
+
+async def require_power_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Require power user or admin role - standalone dependency function"""
     current_user = await get_current_user(request, db)
     if not current_user.has_role(UserRole.POWER_USER):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Power user access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Power user access required")
     return current_user
 
-async def require_regular_user(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-) -> User:
+
+async def require_regular_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Require regular user or higher role - standalone dependency function"""
     current_user = await get_current_user(request, db)
     if not current_user.has_role(UserRole.REGULAR_USER):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Regular user access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Regular user access required")
     return current_user
 
 
 def require_kb_access(kb_id_param: str = "kb_id"):
-    """
-    Dependency factory to require knowledge base access.
+    """Dependency factory to require knowledge base access.
 
     Creates a dependency that validates user access to a specific knowledge base.
     Prevents RBAC bypass vulnerabilities by enforcing database-driven access control.
@@ -403,18 +392,20 @@ def require_kb_access(kb_id_param: str = "kb_id"):
 
     Returns:
         FastAPI dependency function that validates KB access
+
     """
+
     async def kb_access_checker(
         request: Request,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         # Extract KB ID from path parameters
         kb_id = request.path_params.get(kb_id_param)
         if not kb_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Knowledge base ID parameter '{kb_id_param}' is required"
+                detail=f"Knowledge base ID parameter '{kb_id_param}' is required",
             )
 
         # Check if user has access to this knowledge base
@@ -426,12 +417,10 @@ def require_kb_access(kb_id_param: str = "kb_id"):
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied to knowledge base '{kb_id}'"
+                detail=f"Access denied to knowledge base '{kb_id}'",
             )
 
-        logger.debug(
-            f"KB access granted: user {current_user.email} accessing KB {kb_id}"
-        )
+        logger.debug(f"KB access granted: user {current_user.email} accessing KB {kb_id}")
         return current_user
 
     return kb_access_checker
@@ -440,95 +429,107 @@ def require_kb_access(kb_id_param: str = "kb_id"):
 # Granular KB permission dependency factories
 def require_kb_manage_access(kb_id_param: str = "kb_id"):
     """Require owner/admin level access to knowledge base."""
+
     async def kb_manage_checker(
         request: Request,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         kb_id = request.path_params.get(kb_id_param)
         if not kb_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Knowledge base ID parameter '{kb_id_param}' is required"
+                detail=f"Knowledge base ID parameter '{kb_id_param}' is required",
             )
 
         can_manage = await rbac.can_manage_kb(current_user, kb_id, db)
         if not can_manage:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions to manage knowledge base '{kb_id}'"
+                detail=f"Insufficient permissions to manage knowledge base '{kb_id}'",
             )
         return current_user
+
     return kb_manage_checker
+
 
 def require_kb_modify_access(kb_id_param: str = "kb_id"):
     """Require owner/admin/member level access to knowledge base."""
+
     async def kb_modify_checker(
         request: Request,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         kb_id = request.path_params.get(kb_id_param)
         if not kb_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Knowledge base ID parameter '{kb_id_param}' is required"
+                detail=f"Knowledge base ID parameter '{kb_id_param}' is required",
             )
 
         can_modify = await rbac.can_modify_kb(current_user, kb_id, db)
         if not can_modify:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions to modify knowledge base '{kb_id}'"
+                detail=f"Insufficient permissions to modify knowledge base '{kb_id}'",
             )
         return current_user
+
     return kb_modify_checker
+
 
 def require_kb_query_access(kb_id_param: str = "kb_id"):
     """Require any level access to knowledge base for querying."""
+
     async def kb_query_checker(
         request: Request,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         kb_id = request.path_params.get(kb_id_param)
         if not kb_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Knowledge base ID parameter '{kb_id_param}' is required"
+                detail=f"Knowledge base ID parameter '{kb_id_param}' is required",
             )
 
         can_query = await rbac.can_query_kb(current_user, kb_id, db)
         if not can_query:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied to knowledge base '{kb_id}'"
+                detail=f"Access denied to knowledge base '{kb_id}'",
             )
         return current_user
+
     return kb_query_checker
+
 
 def require_kb_delete_access(kb_id_param: str = "kb_id"):
     """Require owner level access to delete knowledge base."""
+
     async def kb_delete_checker(
         request: Request,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         kb_id = request.path_params.get(kb_id_param)
         if not kb_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Knowledge base ID parameter '{kb_id_param}' is required"
+                detail=f"Knowledge base ID parameter '{kb_id_param}' is required",
             )
 
         can_delete = await rbac.can_delete_kb(current_user, kb_id, db)
         if not can_delete:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions to delete knowledge base '{kb_id}'. Owner access required."
+                detail=f"Insufficient permissions to delete knowledge base '{kb_id}'. Owner access required.",
             )
         return current_user
+
     return kb_delete_checker
+
 
 # Convenience dependencies for common cases
 require_kb_access_default = require_kb_access("kb_id")

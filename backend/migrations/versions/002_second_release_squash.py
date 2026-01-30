@@ -11,9 +11,9 @@ Replaces: 007, 008, 009, 010, 011, 012_plugins_consolidation,
           015_provider_credentials, 015_system_settings,
           016_drop_user_google_credentials, 017_plugin_subscriptions
 """
-from alembic import op
+
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from alembic import op
 
 from migrations.seed_data.llm_provider_types import upsert_llm_provider_type_definitions
 
@@ -42,7 +42,6 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
-
     # 1) Legacy cleanup (skipped in dev):
     # To avoid transactional aborts on heterogeneous prior states, we skip
     # dropping legacy FKs/tables here. This migration focuses on additive
@@ -68,9 +67,9 @@ def upgrade() -> None:
             sa.UniqueConstraint("name", "version", name="uq_plugin_name_version"),
         )
         try:
-            op.create_index("ix_plugin_definitions_name", "plugin_definitions", ["name"]) 
-            op.create_index("ix_plugin_definitions_enabled", "plugin_definitions", ["enabled"]) 
-            op.create_index("ix_plugin_definitions_created_by", "plugin_definitions", ["created_by"]) 
+            op.create_index("ix_plugin_definitions_name", "plugin_definitions", ["name"])
+            op.create_index("ix_plugin_definitions_enabled", "plugin_definitions", ["enabled"])
+            op.create_index("ix_plugin_definitions_created_by", "plugin_definitions", ["created_by"])
         except Exception:
             pass
 
@@ -89,9 +88,9 @@ def upgrade() -> None:
             sa.UniqueConstraint("user_id", "agent_key", "key", name="uq_agent_memory_scope_key"),
         )
         try:
-            op.create_index("ix_agent_memory_user_id", "agent_memory", ["user_id"]) 
-            op.create_index("ix_agent_memory_agent_key", "agent_memory", ["agent_key"]) 
-            op.create_index("ix_agent_memory_key", "agent_memory", ["key"]) 
+            op.create_index("ix_agent_memory_user_id", "agent_memory", ["user_id"])
+            op.create_index("ix_agent_memory_agent_key", "agent_memory", ["agent_key"])
+            op.create_index("ix_agent_memory_key", "agent_memory", ["key"])
         except Exception:
             pass
 
@@ -118,7 +117,11 @@ def upgrade() -> None:
             ("ix_provider_identity_provider_key", ["provider_key"], False),
             ("ix_provider_identity_account_id", ["account_id"], False),
             ("ix_provider_identity_primary_email", ["primary_email"], False),
-            ("ux_provider_identity_user_provider_account", ["user_id", "provider_key", "account_id"], True),
+            (
+                "ux_provider_identity_user_provider_account",
+                ["user_id", "provider_key", "account_id"],
+                True,
+            ),
         ]:
             try:
                 op.create_index(ix_name, "provider_identities", cols, unique=unique)
@@ -158,10 +161,20 @@ def upgrade() -> None:
         op.create_table(
             "plugin_executions",
             sa.Column("id", sa.String(36), primary_key=True),
-            sa.Column("schedule_id", sa.String(36), sa.ForeignKey("plugin_feeds.id", ondelete="SET NULL"), nullable=True),
+            sa.Column(
+                "schedule_id",
+                sa.String(36),
+                sa.ForeignKey("plugin_feeds.id", ondelete="SET NULL"),
+                nullable=True,
+            ),
             sa.Column("plugin_name", sa.String(100), nullable=False),
             sa.Column("agent_key", sa.String(100), nullable=True),
-            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+            sa.Column(
+                "user_id",
+                sa.String(36),
+                sa.ForeignKey("users.id", ondelete="CASCADE"),
+                nullable=False,
+            ),
             sa.Column("params", sa.JSON(), nullable=True),
             sa.Column("result", sa.JSON(), nullable=True),
             sa.Column("status", sa.String(32), nullable=False, server_default=sa.text("'pending'")),
@@ -234,7 +247,13 @@ def upgrade() -> None:
             sa.Column("account_id", sa.String(), nullable=True),
             sa.Column("plugin_name", sa.String(), nullable=False),
             sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_plugin_sub_user", ondelete="CASCADE"),
-            sa.UniqueConstraint("user_id", "provider_key", "account_id", "plugin_name", name="ux_plugin_sub_user_provider_account_plugin"),
+            sa.UniqueConstraint(
+                "user_id",
+                "provider_key",
+                "account_id",
+                "plugin_name",
+                name="ux_plugin_sub_user_provider_account_plugin",
+            ),
         )
         for ix_name, cols, unique in [
             ("ix_plugin_sub_user", ["user_id"], False),
@@ -253,7 +272,10 @@ def upgrade() -> None:
     except Exception:
         pass
     try:
-        op.add_column("model_configurations", sa.Column("functionalities", sa.JSON(), nullable=False, server_default=sa.text("'{}'")))
+        op.add_column(
+            "model_configurations",
+            sa.Column("functionalities", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
+        )
     except Exception:
         pass
 
@@ -271,7 +293,7 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         )
         try:
-            op.create_index("ix_llm_provider_type_definitions_key", "llm_provider_type_definitions", ["key"]) 
+            op.create_index("ix_llm_provider_type_definitions_key", "llm_provider_type_definitions", ["key"])
         except Exception:
             pass
 
@@ -294,43 +316,64 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Best-effort downgrade: drop new objects. Legacy objects are not restored.
     for ix in [
-        ("plugin_subscriptions", [
-            "ix_plugin_sub_user_provider",
-            "ix_plugin_sub_provider",
-            "ix_plugin_sub_user",
-        ]),
-        ("plugin_executions", [
-            "ix_plugin_exec_status_plugin",
-            "ix_plugin_executions_schedule_id",
-            "ix_plugin_executions_user_id",
-            "ix_plugin_executions_plugin_name",
-            "ix_plugin_executions_status",
-        ]),
-        ("plugin_feeds", [
-            "ix_plugin_feeds_enabled",
-            "ix_plugin_feeds_plugin_name",
-            "ix_plugin_feeds_owner_user_id",
-            "ix_plugin_feeds_name",
-            "ix_plugin_feed_enabled_next",
-        ]),
-        ("provider_identities", [
-            "ux_provider_identity_user_provider_account",
-            "ix_provider_identity_primary_email",
-            "ix_provider_identity_account_id",
-            "ix_provider_identity_provider_key",
-            "ix_provider_identity_user",
-        ]),
-        ("plugin_definitions", [
-            "ix_plugin_definitions_created_by",
-            "ix_plugin_definitions_enabled",
-            "ix_plugin_definitions_name",
-        ]),
-        ("llm_provider_type_definitions", [
-            "ix_llm_provider_type_definitions_key",
-        ]),
-        ("provider_credentials", [
-            "ix_provider_credentials_user_provider_account",
-        ]),
+        (
+            "plugin_subscriptions",
+            [
+                "ix_plugin_sub_user_provider",
+                "ix_plugin_sub_provider",
+                "ix_plugin_sub_user",
+            ],
+        ),
+        (
+            "plugin_executions",
+            [
+                "ix_plugin_exec_status_plugin",
+                "ix_plugin_executions_schedule_id",
+                "ix_plugin_executions_user_id",
+                "ix_plugin_executions_plugin_name",
+                "ix_plugin_executions_status",
+            ],
+        ),
+        (
+            "plugin_feeds",
+            [
+                "ix_plugin_feeds_enabled",
+                "ix_plugin_feeds_plugin_name",
+                "ix_plugin_feeds_owner_user_id",
+                "ix_plugin_feeds_name",
+                "ix_plugin_feed_enabled_next",
+            ],
+        ),
+        (
+            "provider_identities",
+            [
+                "ux_provider_identity_user_provider_account",
+                "ix_provider_identity_primary_email",
+                "ix_provider_identity_account_id",
+                "ix_provider_identity_provider_key",
+                "ix_provider_identity_user",
+            ],
+        ),
+        (
+            "plugin_definitions",
+            [
+                "ix_plugin_definitions_created_by",
+                "ix_plugin_definitions_enabled",
+                "ix_plugin_definitions_name",
+            ],
+        ),
+        (
+            "llm_provider_type_definitions",
+            [
+                "ix_llm_provider_type_definitions_key",
+            ],
+        ),
+        (
+            "provider_credentials",
+            [
+                "ix_provider_credentials_user_provider_account",
+            ],
+        ),
     ]:
         table, indices = ix
         for name in indices:
@@ -340,7 +383,11 @@ def downgrade() -> None:
                 pass
     # Drop FK from llm_providers if exists
     try:
-        op.drop_constraint("fk_llm_providers_provider_type_provider_type_definitions", "llm_providers", type_="foreignkey")
+        op.drop_constraint(
+            "fk_llm_providers_provider_type_provider_type_definitions",
+            "llm_providers",
+            type_="foreignkey",
+        )
     except Exception:
         pass
     # Drop newly created tables (reverse order)

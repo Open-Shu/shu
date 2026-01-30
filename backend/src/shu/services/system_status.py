@@ -1,11 +1,11 @@
-from typing import Optional, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def check_db_release(session: AsyncSession, expected: Optional[str]) -> Dict[str, Any]:
-    """
-    Check runtime Alembic DB version against an expected release string.
+async def check_db_release(session: AsyncSession, expected: str | None) -> dict[str, Any]:
+    """Check runtime Alembic DB version against an expected release string.
 
     Returns a dict with keys:
       - ok: bool
@@ -14,7 +14,7 @@ async def check_db_release(session: AsyncSession, expected: Optional[str]) -> Di
       - mismatch: bool
       - error: Optional[str]
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "ok": True,
         "expected": expected,
         "current": None,
@@ -36,4 +36,3 @@ async def check_db_release(session: AsyncSession, expected: Optional[str]) -> Di
         result["error"] = str(e)
 
     return result
-

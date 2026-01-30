@@ -27,17 +27,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Set
 from urllib.parse import urlparse, urlunparse
-
-import re
 
 import alembic.command
 import alembic.config
-from alembic.script import ScriptDirectory
 import psycopg2
+from alembic.script import ScriptDirectory
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
@@ -74,12 +72,12 @@ def _normalize_url(url: str) -> str:
 
 
 def _build_database_url(
-    host: Optional[str] = None,
-    port: Optional[str] = None,
-    user: Optional[str] = None,
-    password: Optional[str] = None,
-    database: Optional[str] = None,
-    base_url: Optional[str] = None,
+    host: str | None = None,
+    port: str | None = None,
+    user: str | None = None,
+    password: str | None = None,
+    database: str | None = None,
+    base_url: str | None = None,
 ) -> str:
     """Build a database URL from components, with defaults.
 
@@ -131,12 +129,12 @@ def _build_database_url(
 
 
 def _get_database_url(
-    url_override: Optional[str] = None,
-    host: Optional[str] = None,
-    port: Optional[str] = None,
-    user: Optional[str] = None,
-    password: Optional[str] = None,
-    database: Optional[str] = None,
+    url_override: str | None = None,
+    host: str | None = None,
+    port: str | None = None,
+    user: str | None = None,
+    password: str | None = None,
+    database: str | None = None,
 ) -> str:
     """Get database URL from flags, environment, or defaults."""
     # Get base URL from override or environment
@@ -159,8 +157,8 @@ def _get_database_url(
 
 def _get_admin_url(
     url: str,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> str:
     """Get URL for connecting to 'postgres' database as admin user.
 
@@ -264,8 +262,8 @@ def ensure_extensions(url: str) -> bool:
 
 def execute_init_sql(
     url: str,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
     """Execute init-db.sql to set up extensions, functions, and configuration.
 
@@ -298,7 +296,7 @@ def execute_init_sql(
     print(f"{LOG_PREFIX} Executing init-db.sql...", flush=True)
     conn = _connect(connect_url, autocommit=False)  # Use transaction for all-or-nothing
     try:
-        with open(INIT_SQL_PATH, "r") as f:
+        with open(INIT_SQL_PATH) as f:
             sql_content = f.read()
 
         with conn.cursor() as cur:
@@ -332,14 +330,12 @@ def _get_alembic_config(url: str) -> alembic.config.Config:
     return cfg
 
 
-def _get_current_revision(url: str) -> Optional[str]:
+def _get_current_revision(url: str) -> str | None:
     """Get the current Alembic revision from the database."""
     conn = _connect(url, autocommit=False)
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alembic_version')"
-            )
+            cur.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alembic_version')")
             exists_row = cur.fetchone()
             if not exists_row or not exists_row[0]:
                 return None
@@ -350,9 +346,9 @@ def _get_current_revision(url: str) -> Optional[str]:
         conn.close()
 
 
-def _build_replaces_map(script_dir: ScriptDirectory) -> Dict[str, str]:
+def _build_replaces_map(script_dir: ScriptDirectory) -> dict[str, str]:
     """Build a mapping from replaced revision IDs to their replacing revision."""
-    replaces_map: Dict[str, str] = {}
+    replaces_map: dict[str, str] = {}
     for script in script_dir.walk_revisions():
         replaces = getattr(script.module, "replaces", None)
         if replaces:
@@ -361,7 +357,7 @@ def _build_replaces_map(script_dir: ScriptDirectory) -> Dict[str, str]:
     return replaces_map
 
 
-def _get_known_revisions(script_dir: ScriptDirectory) -> Set[str]:
+def _get_known_revisions(script_dir: ScriptDirectory) -> set[str]:
     """Get all known revision IDs from the script directory."""
     return {script.revision for script in script_dir.walk_revisions()}
 
@@ -392,7 +388,10 @@ def _resolve_orphaned_revision(cfg: alembic.config.Config, url: str) -> None:
             print(f"{LOG_PREFIX} Stamping directly to {squash_rev}", flush=True)
             alembic.command.stamp(cfg, squash_rev, purge=True)
         else:
-            print(f"{LOG_PREFIX} Stamping to {down_rev} so upgrade runs the squash migration", flush=True)
+            print(
+                f"{LOG_PREFIX} Stamping to {down_rev} so upgrade runs the squash migration",
+                flush=True,
+            )
             alembic.command.stamp(cfg, down_rev, purge=True)
     else:
         print(
@@ -415,12 +414,13 @@ def check_requirements(url: str) -> bool:
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Check if function exists
-            cur.execute(
-                "SELECT EXISTS (SELECT FROM pg_proc WHERE proname = 'check_requirements')"
-            )
+            cur.execute("SELECT EXISTS (SELECT FROM pg_proc WHERE proname = 'check_requirements')")
             row = cur.fetchone()
             if row is None or not row["exists"]:
-                print(f"{LOG_PREFIX} check_requirements() function not found, skipping check", flush=True)
+                print(
+                    f"{LOG_PREFIX} check_requirements() function not found, skipping check",
+                    flush=True,
+                )
                 return True
 
             cur.execute("SELECT * FROM check_requirements()")
@@ -437,7 +437,10 @@ def check_requirements(url: str) -> bool:
                     icon = "INFO"
                 else:
                     icon = "ERR"
-                print(f"{LOG_PREFIX}   [{icon}] {result['requirement']}: {result['details']}", flush=True)
+                print(
+                    f"{LOG_PREFIX}   [{icon}] {result['requirement']}: {result['details']}",
+                    flush=True,
+                )
                 if status == "ERROR":
                     all_ok = False
 
@@ -482,8 +485,8 @@ def cmd_migrate(url: str) -> bool:
 
 def cmd_setup(
     url: str,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
     """Full database setup: init-db.sql + migrations + requirements check.
 
@@ -517,24 +520,26 @@ def cmd_setup(
 def cmd_reset(
     url: str,
     force: bool = False,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
-    """
-    Reset the database by dropping and recreating the public schema and then performing full setup.
-    
+    """Reset the database by dropping and recreating the public schema and then performing full setup.
+
     This is a destructive operation: the public schema is dropped with CASCADE (all data and dependent objects removed),
     a new public schema is created, and full privileges on that schema are granted to the current user.
     After the schema recreation, the function runs the full setup sequence (migrations, init SQL, requirements check).
-    
-    Parameters:
+
+    Parameters
+    ----------
         url (str): Connection URL for the target database.
         force (bool): If True, skip the interactive confirmation prompt. Defaults to False.
         admin_user (Optional[str]): Optional admin/superuser name used by setup steps when elevated privileges are required.
         admin_password (Optional[str]): Optional admin/superuser password used by setup steps when elevated privileges are required.
-    
-    Returns:
+
+    Returns
+    -------
         success (bool): `True` if the reset and subsequent setup completed successfully, `False` on error or if cancelled.
+
     """
     db_name = _get_database_name(url)
 
@@ -580,15 +585,21 @@ def cmd_create_role(
     url: str,
     role_name: str,
     role_password: str,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
     """Create a database role if it doesn't exist."""
     # Validate identifier to prevent SQL injection
     if not _validate_identifier(role_name):
         print(f"{LOG_PREFIX} Error: Invalid role name '{role_name}'", file=sys.stderr)
-        print(f"{LOG_PREFIX} Names must start with a letter or underscore, contain only", file=sys.stderr)
-        print(f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars", file=sys.stderr)
+        print(
+            f"{LOG_PREFIX} Names must start with a letter or underscore, contain only",
+            file=sys.stderr,
+        )
+        print(
+            f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars",
+            file=sys.stderr,
+        )
         return False
 
     admin_url = _get_admin_url(url, admin_user, admin_password)
@@ -606,9 +617,7 @@ def cmd_create_role(
 
             # Create the role with login privilege
             cur.execute(
-                sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD %s").format(
-                    sql.Identifier(role_name)
-                ),
+                sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD %s").format(sql.Identifier(role_name)),
                 (role_password,),
             )
             print(f"{LOG_PREFIX} Role '{role_name}' created successfully", flush=True)
@@ -628,15 +637,21 @@ def cmd_create_role(
 def cmd_create_db(
     url: str,
     db_name: str,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
     """Create a new database and grant permissions to the app role."""
     # Validate identifier to prevent SQL injection
     if not _validate_identifier(db_name):
         print(f"{LOG_PREFIX} Error: Invalid database name '{db_name}'", file=sys.stderr)
-        print(f"{LOG_PREFIX} Names must start with a letter or underscore, contain only", file=sys.stderr)
-        print(f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars", file=sys.stderr)
+        print(
+            f"{LOG_PREFIX} Names must start with a letter or underscore, contain only",
+            file=sys.stderr,
+        )
+        print(
+            f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars",
+            file=sys.stderr,
+        )
         return False
 
     admin_url = _get_admin_url(url, admin_user, admin_password)
@@ -676,16 +691,18 @@ def cmd_create_db(
     try:
         with conn.cursor() as cur:
             # Grant usage and create on public schema to the app role
-            cur.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(
-                sql.Identifier(role_name)
-            ))
+            cur.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(sql.Identifier(role_name)))
             # Grant all privileges on all tables (for future tables too)
-            cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {}").format(
-                sql.Identifier(role_name)
-            ))
-            cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {}").format(
-                sql.Identifier(role_name)
-            ))
+            cur.execute(
+                sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {}").format(
+                    sql.Identifier(role_name)
+                )
+            )
+            cur.execute(
+                sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {}").format(
+                    sql.Identifier(role_name)
+                )
+            )
             if db_created:
                 print(f"{LOG_PREFIX} Granted schema permissions to role '{role_name}'", flush=True)
         return True
@@ -705,15 +722,21 @@ def cmd_cleanup(
     url: str,
     db_name: str,
     force: bool = False,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
     """Drop a database."""
     # Validate identifier to prevent SQL injection
     if not _validate_identifier(db_name):
         print(f"{LOG_PREFIX} Error: Invalid database name '{db_name}'", file=sys.stderr)
-        print(f"{LOG_PREFIX} Names must start with a letter or underscore, contain only", file=sys.stderr)
-        print(f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars", file=sys.stderr)
+        print(
+            f"{LOG_PREFIX} Names must start with a letter or underscore, contain only",
+            file=sys.stderr,
+        )
+        print(
+            f"{LOG_PREFIX} alphanumeric characters, underscores, or hyphens, and be <= 63 chars",
+            file=sys.stderr,
+        )
         return False
 
     admin_url = _get_admin_url(url, admin_user, admin_password)
@@ -779,8 +802,8 @@ def cmd_check(url: str) -> bool:
 
 def cmd_bootstrap(
     url: str,
-    admin_user: Optional[str] = None,
-    admin_password: Optional[str] = None,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
 ) -> bool:
     """Bootstrap a fresh database: create role, create database, run setup.
 
@@ -817,7 +840,9 @@ def cmd_bootstrap(
 
 
 def main() -> None:
-    default_url = f"postgresql+asyncpg://{DEFAULT_USER}:{DEFAULT_PASSWORD}@{DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DATABASE}"
+    default_url = (
+        f"postgresql+asyncpg://{DEFAULT_USER}:{DEFAULT_PASSWORD}@{DEFAULT_HOST}:{DEFAULT_PORT}/{DEFAULT_DATABASE}"
+    )
 
     parser = argparse.ArgumentParser(
         description="Shu Database Management",
@@ -871,7 +896,16 @@ Examples:
         "command",
         nargs="?",
         default="migrate",
-        choices=["bootstrap", "migrate", "setup", "reset", "create-role", "create-db", "cleanup", "check"],
+        choices=[
+            "bootstrap",
+            "migrate",
+            "setup",
+            "reset",
+            "create-role",
+            "create-db",
+            "cleanup",
+            "check",
+        ],
         metavar="COMMAND",
         help="Command to run (default: migrate)",
     )
@@ -890,27 +924,32 @@ Examples:
         help="Full PostgreSQL connection URL (overrides defaults)",
     )
     conn_group.add_argument(
-        "--host", "-H",
+        "--host",
+        "-H",
         metavar="HOST",
         help=f"Database host (default: {DEFAULT_HOST})",
     )
     conn_group.add_argument(
-        "--port", "-P",
+        "--port",
+        "-P",
         metavar="PORT",
         help=f"Database port (default: {DEFAULT_PORT})",
     )
     conn_group.add_argument(
-        "--user", "-U",
+        "--user",
+        "-U",
         metavar="USER",
         help=f"Database user (default: {DEFAULT_USER})",
     )
     conn_group.add_argument(
-        "--password", "-W",
+        "--password",
+        "-W",
         metavar="PASS",
         help=f"Database password (default: {DEFAULT_PASSWORD})",
     )
     conn_group.add_argument(
-        "--database", "-d",
+        "--database",
+        "-d",
         metavar="NAME",
         help=f"Database name (default: {DEFAULT_DATABASE})",
     )
@@ -972,7 +1011,13 @@ Examples:
         if not args.db_name:
             print("Error: db_name is required for cleanup command", file=sys.stderr)
             sys.exit(1)
-        success = cmd_cleanup(url, args.db_name, force=args.force, admin_user=args.admin_user, admin_password=args.admin_password)
+        success = cmd_cleanup(
+            url,
+            args.db_name,
+            force=args.force,
+            admin_user=args.admin_user,
+            admin_password=args.admin_password,
+        )
     elif args.command == "check":
         success = cmd_check(url)
 

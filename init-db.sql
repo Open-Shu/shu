@@ -40,28 +40,28 @@ RETURNS TABLE(
 BEGIN
     -- Check PostgreSQL version
     RETURN QUERY
-    SELECT 
+    SELECT
         'PostgreSQL Version'::TEXT,
-        CASE 
+        CASE
             WHEN current_setting('server_version_num')::int >= 120000 THEN 'OK'
             ELSE 'WARNING'
         END,
         'Version: ' || version();
-    
+
     -- Check pgvector extension
     RETURN QUERY
-    SELECT 
+    SELECT
         'pgvector Extension'::TEXT,
-        CASE 
+        CASE
             WHEN EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN 'OK'
             ELSE 'ERROR'
         END,
-        CASE 
-            WHEN EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector') 
+        CASE
+            WHEN EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')
             THEN 'pgvector extension is installed'
             ELSE 'pgvector extension is NOT installed - Shu will not work'
         END;
-    
+
     -- Check schema permissions (can create tables in public schema)
     RETURN QUERY
     SELECT
@@ -71,13 +71,13 @@ BEGIN
             ELSE 'ERROR'
         END,
         'User: ' || current_user || ' can create tables in public schema';
-    
+
     -- Check available memory
     RETURN QUERY
-    SELECT 
+    SELECT
         'Memory Configuration'::TEXT,
         'INFO'::TEXT,
-        'shared_buffers: ' || current_setting('shared_buffers') || 
+        'shared_buffers: ' || current_setting('shared_buffers') ||
         ', work_mem: ' || current_setting('work_mem');
 END;
 $$ LANGUAGE plpgsql;
@@ -88,7 +88,7 @@ RETURNS void AS $$
 BEGIN
     -- Configure for vector operations
     PERFORM set_config('max_parallel_workers_per_gather', '4', false);
-    
+
     -- Only set effective_io_concurrency on platforms that support it
     -- Skip on macOS/Darwin which lacks posix_fadvise()
     BEGIN
@@ -97,12 +97,12 @@ BEGIN
         WHEN OTHERS THEN
             RAISE NOTICE 'Skipping effective_io_concurrency setting (not supported on this platform)';
     END;
-    
+
     PERFORM set_config('random_page_cost', '1.1', false);
-    
+
     -- Configure for text search
     PERFORM set_config('default_text_search_config', 'pg_catalog.english', false);
-    
+
     RAISE NOTICE 'Shu database configuration applied successfully';
 END;
 $$ LANGUAGE plpgsql;
@@ -122,4 +122,4 @@ BEGIN
 END $$;
 
 -- Show the requirements check
-SELECT * FROM check_requirements(); 
+SELECT * FROM check_requirements();

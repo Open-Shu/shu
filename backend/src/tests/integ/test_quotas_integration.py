@@ -1,12 +1,15 @@
-import os
 import logging
+import os
 
 # Set env BEFORE importing test runner/app so settings pick up test overrides
 os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "true")  # rate limiter shouldn't interfere at these counts
 os.environ["SHU_PLUGIN_QUOTA_DAILY_REQUESTS_DEFAULT"] = "2"  # allow 2 per day
 os.environ["SHU_PLUGIN_QUOTA_MONTHLY_REQUESTS_DEFAULT"] = "0"  # disable monthly for this test
 
-from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script  # noqa: E402
+from integ.base_integration_test import (
+    BaseIntegrationTestSuite,
+    create_test_runner_script,
+)
 
 logger = logging.getLogger(__name__)
 

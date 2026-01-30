@@ -80,12 +80,12 @@ tests/
 ├── base_unit_test.py                  # Base class for unit tests
 ├── run_all_integration_tests.py       # Master runner (DO NOT MODIFY)
 ├── test_template.py                   # Copy this for new test suites
-├── test_llm_integration.py           # LLM provider tests 
+├── test_llm_integration.py           # LLM provider tests
 ├── test_auth_integration.py          # Authentication tests
 ├── test_rbac_integration.py          # RBAC tests
 ├── test_config_integration.py        # Configuration tests
 ├── test_llm_unit_migrated.py         # LLM unit tests
-├── test_api_key_unit.py               # API key unit tests 
+├── test_api_key_unit.py               # API key unit tests
 └── test_*_integration.py             # Your new test suites go here
 ```
 
@@ -115,10 +115,10 @@ class YourFeatureTestSuite(BaseIntegrationTestSuite):
             test_your_function_2,
             # Add all your test functions here
         ]
-    
+
     def get_suite_name(self) -> str:
         return "Your Feature Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         return "End-to-end tests for your feature"
 ```
@@ -128,11 +128,11 @@ class YourFeatureTestSuite(BaseIntegrationTestSuite):
 async def test_your_feature_create(client, db, auth_headers):
     """Test creating a resource."""
     # Test API endpoint
-    response = await client.post("/api/v1/your-endpoint", 
-                                json=test_data, 
+    response = await client.post("/api/v1/your-endpoint",
+                                json=test_data,
                                 headers=auth_headers)
     assert response.status_code == 201
-    
+
     # Verify database state
     from integ.response_utils import extract_data
 ...
@@ -155,7 +155,7 @@ python tests/test_your_feature_integration.py
 # Run all tests in a suite
 python -m tests.integ.test_llm_integration
 
-# List available tests  
+# List available tests
 python -m tests.integ.test_llm_integration --list
 
 # Run specific tests
@@ -374,8 +374,8 @@ assert "data" in obj
 ### **API Testing**
 ```python
 # Authenticated request
-response = await client.post("/api/v1/endpoint", 
-                            json=data, 
+response = await client.post("/api/v1/endpoint",
+                            json=data,
                             headers=auth_headers)
 assert response.status_code == 201
 
@@ -420,14 +420,14 @@ When writing tests that expect warnings, errors, or exceptions, **you MUST log t
 ```python
 async def test_authentication_failure_expected(client, db, auth_headers):
     """Test that unauthenticated requests properly fail with 401."""
-    
+
     # Log expected behavior BEFORE the test
     logger.info("=== EXPECTED TEST OUTPUT: The following 401 authentication errors are expected ===")
-    
+
     # Perform the test that should fail
     response = await client.get("/api/v1/protected-endpoint")
     assert response.status_code == 401
-    
+
     # Log confirmation of expected behavior
     logger.info("=== EXPECTED TEST OUTPUT: 401 error for unauthenticated request occurred as expected ===")
 ```
@@ -438,14 +438,14 @@ async def test_authentication_failure_expected(client, db, auth_headers):
 ```python
 async def test_invalid_token_rejection(client, db, auth_headers):
     """Test that invalid tokens are properly rejected."""
-    
+
     logger.info("=== EXPECTED TEST OUTPUT: The following 401 authentication error is expected ===")
-    
+
     # Test with invalid token
     invalid_headers = {"Authorization": "Bearer invalid_token"}
     response = await client.get("/api/v1/protected-endpoint", headers=invalid_headers)
     assert response.status_code == 401
-    
+
     logger.info("=== EXPECTED TEST OUTPUT: 401 error for invalid token occurred as expected ===")
 ```
 
@@ -453,14 +453,14 @@ async def test_invalid_token_rejection(client, db, auth_headers):
 ```python
 async def test_invalid_data_validation(client, db, auth_headers):
     """Test that invalid data is properly rejected."""
-    
+
     logger.info("=== EXPECTED TEST OUTPUT: The following 422 validation errors are expected ===")
-    
+
     # Test with invalid data
     invalid_data = {"name": ""}  # Missing required field
     response = await client.post("/api/v1/endpoint", json=invalid_data, headers=auth_headers)
     assert response.status_code == 422
-    
+
     logger.info("=== EXPECTED TEST OUTPUT: 422 validation error occurred as expected ===")
 ```
 
@@ -468,12 +468,12 @@ async def test_invalid_data_validation(client, db, auth_headers):
 ```python
 async def test_cleanup_operations(client, db, auth_headers):
     """Test cleanup operations that may generate warnings."""
-    
+
     logger.info("=== EXPECTED TEST OUTPUT: Authentication warnings may occur during cleanup operations ===")
-    
+
     # Perform cleanup that might generate warnings
     await cleanup_test_data()
-    
+
     logger.info("=== EXPECTED TEST OUTPUT: Any authentication warnings above were expected during cleanup ===")
 ```
 

@@ -122,11 +122,11 @@ import { extractDataFromResponse, extractItemsFromResponse } from '../services/a
 
 function MyComponent() {
   const { data: response } = useQuery('myData', api.getMyData);
-  
+
   // Extract data from envelope format
   const data = extractDataFromResponse(response);
   const items = extractItemsFromResponse(response);
-  
+
   return (
     <div>
       {items.map(item => (
@@ -183,7 +183,7 @@ import { extractDataFromResponse } from '../services/api';
 test('component displays data correctly', () => {
   const mockResponse = { data: { items: [{ id: 1, name: 'Test' }] } };
   const data = extractDataFromResponse(mockResponse);
-  
+
   render(<MyComponent data={data} />);
   expect(screen.getByText('Test')).toBeInTheDocument();
 });
@@ -212,7 +212,7 @@ async def get_data():
         return SuccessResponse(data=result)
     except ValueError as e:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=ErrorResponse(
                 error={
                     "message": str(e),
@@ -230,12 +230,12 @@ import { formatError } from '../services/api';
 
 function MyComponent() {
   const { data, error } = useQuery('myData', api.getMyData);
-  
+
   if (error) {
     const errorInfo = formatError(error);
     return <div>Error: {errorInfo.message}</div>;
   }
-  
+
   return <div>Data loaded successfully</div>;
 }
 ```

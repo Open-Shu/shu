@@ -52,4 +52,3 @@ When deploying Shu, ensure you:
 ## Scope
 
 This policy applies to the Shu repository and officially maintained components.
-

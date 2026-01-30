@@ -8,23 +8,21 @@ These tests verify that side-call configuration and execution behave correctly:
 """
 
 import sys
-import os
 import uuid
-from datetime import datetime, timezone
-from typing import List, Callable, Dict, Any
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import text, select
+from sqlalchemy import select, text
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.response_utils import extract_data
 from integ.helpers.auth import create_active_user_headers
-
+from integ.response_utils import extract_data
 from shu.models.provider_type_definition import ProviderTypeDefinition
-
 
 SIDE_CALL_SETTING_KEY = "side_call_model_config_id"
 
-LOCAL_PROVIDER_TYPE_DEFINITION: Dict[str, Any] = {
+LOCAL_PROVIDER_TYPE_DEFINITION: dict[str, Any] = {
     "key": "local",
     "display_name": "Local Test Provider",
     "provider_adapter_name": "local",
@@ -44,9 +42,7 @@ async def _clear_side_call_setting(db) -> None:
 async def _ensure_local_provider_type(db) -> None:
     """Insert a lightweight 'local' provider type definition if missing."""
     result = await db.execute(
-        select(ProviderTypeDefinition).where(
-            ProviderTypeDefinition.key == LOCAL_PROVIDER_TYPE_DEFINITION["key"]
-        )
+        select(ProviderTypeDefinition).where(ProviderTypeDefinition.key == LOCAL_PROVIDER_TYPE_DEFINITION["key"])
     )
     if result.scalar_one_or_none():
         return
@@ -56,19 +52,19 @@ async def _ensure_local_provider_type(db) -> None:
         display_name=LOCAL_PROVIDER_TYPE_DEFINITION["display_name"],
         provider_adapter_name=LOCAL_PROVIDER_TYPE_DEFINITION["provider_adapter_name"],
         is_active=LOCAL_PROVIDER_TYPE_DEFINITION["is_active"],
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     db.add(provider_type)
     await db.commit()
 
 
-async def _create_local_side_call_model_config(client, db, auth_headers) -> Dict[str, Any]:
+async def _create_local_side_call_model_config(client, db, auth_headers) -> dict[str, Any]:
     """
     Create a test local provider, a model, and a side-call model configuration for integration tests.
-    
+
     Creates a local provider and a model via the API, then creates a model-configuration suitable for side-call testing, and returns the created objects.
-    
+
     Returns:
         result (Dict[str, Any]): A dictionary with keys:
             - "provider": The created provider object as returned by the API.
@@ -88,9 +84,7 @@ async def _create_local_side_call_model_config(client, db, auth_headers) -> Dict
         "rate_limit_rpm": 1200,
         "rate_limit_tpm": 60000,
     }
-    provider_response = await client.post(
-        "/api/v1/llm/providers", json=provider_payload, headers=auth_headers
-    )
+    provider_response = await client.post("/api/v1/llm/providers", json=provider_payload, headers=auth_headers)
     assert provider_response.status_code == 201, provider_response.text
     provider = extract_data(provider_response)
 
@@ -142,15 +136,11 @@ async def _create_local_side_call_model_config(client, db, auth_headers) -> Dict
     }
 
 
-async def test_side_call_config_returns_unconfigured_when_not_set(
-    client, db, auth_headers
-):
+async def test_side_call_config_returns_unconfigured_when_not_set(client, db, auth_headers):
     """Side-call config endpoint reports no model when unset."""
     await _clear_side_call_setting(db)
 
-    response = await client.get(
-        "/api/v1/side-calls/config", headers=auth_headers
-    )
+    response = await client.get("/api/v1/side-calls/config", headers=auth_headers)
     assert response.status_code == 200
     data = extract_data(response)
 
@@ -177,9 +167,7 @@ async def test_side_call_config_admin_can_set_model(client, db, auth_headers):
     assert config_data["side_call_model_config"]["model_name"] == resources["config"]["model_name"]
 
     # Follow-up GET should reflect configured model
-    get_response = await client.get(
-        "/api/v1/side-calls/config", headers=auth_headers
-    )
+    get_response = await client.get("/api/v1/side-calls/config", headers=auth_headers)
     assert get_response.status_code == 200
     get_data = extract_data(get_response)
     assert get_data["configured"] is True
@@ -215,10 +203,11 @@ async def _set_side_call_model(client, model_config_id: str, headers) -> None:
     )
     assert response.status_code == 200, response.text
 
+
 class SideCallServiceTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for SideCallService workflows."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_side_call_config_returns_unconfigured_when_not_set,
             test_side_call_config_admin_can_set_model,

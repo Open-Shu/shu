@@ -11,4 +11,3 @@ SHELL ["/bin/bash", "-lc"]
 
 # Basic health check (no-op); jobs will override command
 CMD ["bash", "-lc", "echo runner ready"]
-

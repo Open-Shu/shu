@@ -1,21 +1,19 @@
-"""
-Conversation automation helpers for summaries and auto-rename.
-"""
+"""Conversation automation helpers for summaries and auto-rename."""
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.config import ConfigurationManager
 from shu.models.llm_provider import Conversation, Message
 from shu.services.chat_service import ChatService
-from shu.services.side_call_service import SideCallService
 from shu.services.message_utils import collapse_assistant_variants
+from shu.services.side_call_service import SideCallService
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +28,14 @@ class ConversationAutomationService:
         self.chat_service = ChatService(db_session, config_manager)
         self.side_call_service = SideCallService(db_session, config_manager)
 
-    def _get_summary_settings(self) -> Dict[str, Any]:
+    def _get_summary_settings(self) -> dict[str, Any]:
         return {
             "system_prompt": self.settings.conversation_summary_prompt,
             "timeout_ms": self.settings.conversation_summary_timeout_ms,
             "max_recent_messages": self.settings.conversation_summary_max_recent_messages,
         }
 
-    def _get_rename_settings(self) -> Dict[str, Any]:
+    def _get_rename_settings(self) -> dict[str, Any]:
         return {
             "system_prompt": self.settings.conversation_auto_rename_prompt,
             "timeout_ms": self.settings.conversation_auto_rename_timeout_ms,
@@ -47,17 +45,15 @@ class ConversationAutomationService:
         self,
         conversation: Conversation,
         *,
-        timeout_ms: Optional[int] = None,
+        timeout_ms: int | None = None,
         current_user_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Produce or refresh the summary for a conversation."""
         meta = dict(conversation.meta or {})
         previous_last_id = meta.get("summary_last_message_id")
         previous_summary = conversation.summary_text or ""
 
-        messages = await self.chat_service.get_conversation_messages(
-            conversation_id=conversation.id, limit=1000
-        )
+        messages = await self.chat_service.get_conversation_messages(conversation_id=conversation.id, limit=1000)
         messages = collapse_assistant_variants(list(messages), previous_last_id)
         last_message_id = messages[-1].id if messages else None
 
@@ -101,19 +97,16 @@ class ConversationAutomationService:
             {
                 "role": "user",
                 "content": [
+                    {"type": "input_text", "text": f"PREVIOUS_SUMMARY:\n\n{previous_summary}"},
                     {
                         "type": "input_text",
-                        "text": f"PREVIOUS_SUMMARY:\n\n{previous_summary}"
+                        "text": f"NEW_MESSAGES (JSON):\n\n{json.dumps(message_sequence)}",
                     },
                     {
                         "type": "input_text",
-                        "text": f"NEW_MESSAGES (JSON):\n\n{json.dumps(message_sequence)}"
+                        "text": "TASK: Produce the NEW_SUMMARY as bullet points only.",
                     },
-                    {
-                        "type": "input_text",
-                        "text": "TASK: Produce the NEW_SUMMARY as bullet points only."
-                    }
-                ]
+                ],
             }
         ]
 
@@ -126,16 +119,14 @@ class ConversationAutomationService:
         )
 
         if not side_call_result.success:
-            raise RuntimeError(
-                f"Conversation summary side-call failed: {side_call_result.error_message}"
-            )
+            raise RuntimeError(f"Conversation summary side-call failed: {side_call_result.error_message}")
 
         summary_text = side_call_result.content.strip()
 
         meta["summary_last_message_id"] = newest_message_id
         conversation.meta = meta
         conversation.summary_text = summary_text
-        conversation.updated_at = datetime.now(timezone.utc)
+        conversation.updated_at = datetime.now(UTC)
 
         await self.db_session.commit()
         await self.db_session.refresh(conversation)
@@ -146,19 +137,17 @@ class ConversationAutomationService:
             "was_updated": True,
             "tokens_used": side_call_result.tokens_used,
             "response_time_ms": side_call_result.response_time_ms,
-            "model_config_id": side_call_result.metadata.get("model_config_id")
-            if side_call_result.metadata
-            else None,
+            "model_config_id": side_call_result.metadata.get("model_config_id") if side_call_result.metadata else None,
         }
 
     async def auto_rename(
         self,
         conversation: Conversation,
         *,
-        timeout_ms: Optional[int] = None,
+        timeout_ms: int | None = None,
         current_user_id: str,
-        fallback_user_message: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        fallback_user_message: str | None = None,
+    ) -> dict[str, Any]:
         """Propose and apply an automated conversation title."""
         meta = dict(conversation.meta or {})
         title_locked = bool(meta.get("title_locked"))
@@ -174,9 +163,7 @@ class ConversationAutomationService:
                 "model_config_id": None,
             }
 
-        messages = await self.chat_service.get_conversation_messages(
-            conversation_id=conversation.id, limit=500
-        )
+        messages = await self.chat_service.get_conversation_messages(conversation_id=conversation.id, limit=500)
         messages = collapse_assistant_variants(list(messages))
         last_message_id = messages[-1].id if messages else None
 
@@ -184,7 +171,7 @@ class ConversationAutomationService:
         system_prompt = rename_settings["system_prompt"]
         default_timeout = rename_settings["timeout_ms"]
 
-        summary_source: Optional[str] = getattr(conversation, "summary_text", None)
+        summary_source: str | None = getattr(conversation, "summary_text", None)
         if not summary_source:
             if messages:
                 summary_source = messages[-1].content
@@ -206,15 +193,12 @@ class ConversationAutomationService:
             {
                 "role": "user",
                 "content": [
+                    {"type": "input_text", "text": f"SUMMARY:\n\n{summary_source or ''}"},
                     {
                         "type": "input_text",
-                        "text": f"SUMMARY:\n\n{summary_source or ''}"
+                        "text": "TASK: Produce the CHAT_NAME as it relates to the chat SUMMARY.",
                     },
-                    {
-                        "type": "input_text",
-                        "text": "TASK: Produce the CHAT_NAME as it relates to the chat SUMMARY."
-                    }
-                ]
+                ],
             }
         ]
 
@@ -227,9 +211,7 @@ class ConversationAutomationService:
         )
 
         if not side_call_result.success:
-            raise RuntimeError(
-                f"Conversation rename side-call failed: {side_call_result.error_message}"
-            )
+            raise RuntimeError(f"Conversation rename side-call failed: {side_call_result.error_message}")
 
         # The field itself only supports 200 chars, so let's force it if the LLM didn't
         proposed_title = side_call_result.content.strip()[:200]
@@ -239,7 +221,7 @@ class ConversationAutomationService:
             conversation.title = proposed_title
             meta["last_auto_title_message_id"] = last_message_id
             conversation.meta = meta
-            conversation.updated_at = datetime.now(timezone.utc)
+            conversation.updated_at = datetime.now(UTC)
             await self.db_session.commit()
             await self.db_session.refresh(conversation)
             renamed = True
@@ -259,24 +241,22 @@ class ConversationAutomationService:
             "last_message_id": last_message_id,
             "tokens_used": side_call_result.tokens_used,
             "response_time_ms": side_call_result.response_time_ms,
-            "model_config_id": side_call_result.metadata.get("model_config_id")
-            if side_call_result.metadata
-            else None,
+            "model_config_id": side_call_result.metadata.get("model_config_id") if side_call_result.metadata else None,
         }
 
     def _prepare_summary_messages(
         self,
-        messages: List[Message],
+        messages: list[Message],
         *,
         max_recent: int,
-    ) -> Tuple[List[Dict[str, str]], Optional[str]]:
+    ) -> tuple[list[dict[str, str]], str | None]:
         """Prepare a limited chat sequence for summarization calls."""
         if not messages:
             return [], None
 
         selected = messages[-max_recent:] if max_recent and len(messages) > max_recent else messages
 
-        sequence: List[Dict[str, str]] = []
+        sequence: list[dict[str, str]] = []
         for msg in selected:
             content = (msg.content or "").strip()
             sequence.append({"role": msg.role, "content": content})

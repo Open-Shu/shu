@@ -5,9 +5,10 @@ Tests the TokenBucketLimiter used by plugins to ensure it works correctly
 with the CacheBackend interface and fixed-window algorithm.
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch
 import os
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 # Set required environment variables BEFORE any shu imports
 os.environ.setdefault("SHU_DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test_db")
@@ -16,7 +17,7 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
 
 class TestPluginTokenBucketLimiter:
     """Tests for plugins TokenBucketLimiter with CacheBackend."""
-    
+
     @pytest.fixture
     def mock_cache_backend(self):
         """Create a mock CacheBackend for testing plugin rate limiting."""
@@ -46,24 +47,24 @@ class TestPluginTokenBucketLimiter:
         cache.decr = mock_decr
         cache.expire = mock_expire
         return cache
-    
+
     @pytest.mark.asyncio
     async def test_allow_within_capacity(self, mock_cache_backend):
         """Requests within capacity are allowed."""
         from shu.plugins.rate_limit import TokenBucketLimiter
-        
+
         with patch.object(TokenBucketLimiter, "_get_cache", return_value=mock_cache_backend):
             limiter = TokenBucketLimiter(
                 namespace="test:plugin",
                 capacity=5,
                 refill_per_second=1,
             )
-            
+
             allowed, retry_after = await limiter.allow(bucket="user:123")
-            
+
             assert allowed is True
             assert retry_after == 0
-    
+
     @pytest.mark.asyncio
     async def test_deny_over_capacity(self, mock_cache_backend):
         """Requests over capacity are denied."""
@@ -100,19 +101,11 @@ class TestPluginTokenBucketLimiter:
             )
 
             # Use override capacity of 1
-            allowed1, _ = await limiter.allow(
-                bucket="user:123", 
-                capacity=1, 
-                refill_per_second=1
-            )
+            allowed1, _ = await limiter.allow(bucket="user:123", capacity=1, refill_per_second=1)
             assert allowed1 is True
 
             # Second request with same override should be denied
-            allowed2, retry_after = await limiter.allow(
-                bucket="user:123", 
-                capacity=1, 
-                refill_per_second=1
-            )
+            allowed2, retry_after = await limiter.allow(bucket="user:123", capacity=1, refill_per_second=1)
             assert allowed2 is False
             assert retry_after > 0
 
@@ -159,6 +152,6 @@ class TestPluginTokenBucketLimiter:
 
             # Should allow request despite cache errors
             allowed, retry_after = await limiter.allow(bucket="user:123")
-            
+
             assert allowed is True
             assert retry_after == 0

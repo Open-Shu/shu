@@ -22,8 +22,8 @@ PLUGIN_MANIFEST = {
             "mode": "user",
             "scopes": [
                 "https://www.googleapis.com/auth/drive.readonly",
-                "https://www.googleapis.com/auth/drive.metadata.readonly"
-            ]
+                "https://www.googleapis.com/auth/drive.metadata.readonly",
+            ],
         }
     ],
     # Per-op auth (capability-driven)
@@ -32,10 +32,7 @@ PLUGIN_MANIFEST = {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate", "service_account"],
-            "scopes": [
-                "https://www.googleapis.com/auth/drive"
-            ]
+            "scopes": ["https://www.googleapis.com/auth/drive"],
         }
     },
 }
-

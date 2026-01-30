@@ -10,27 +10,62 @@ Usage (inside an Alembic upgrade function):
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Iterable, Mapping, Optional
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 
 PROVIDER_TYPE_DEFINITION_DEFAULTS: Iterable[Mapping[str, object]] = (
-    {"key": "openai", "display_name": "OpenAI", "provider_adapter_name": "openai", "is_active": True},
-    {"key": "anthropic", "display_name": "Anthropic", "provider_adapter_name": "anthropic", "is_active": True},
-    {"key": "lm_studio", "display_name": "LM Studio", "provider_adapter_name": "lm_studio", "is_active": True},
-    {"key": "ollama", "display_name": "Ollama", "provider_adapter_name": "ollama", "is_active": True},
+    {
+        "key": "openai",
+        "display_name": "OpenAI",
+        "provider_adapter_name": "openai",
+        "is_active": True,
+    },
+    {
+        "key": "anthropic",
+        "display_name": "Anthropic",
+        "provider_adapter_name": "anthropic",
+        "is_active": True,
+    },
+    {
+        "key": "lm_studio",
+        "display_name": "LM Studio",
+        "provider_adapter_name": "lm_studio",
+        "is_active": True,
+    },
+    {
+        "key": "ollama",
+        "display_name": "Ollama",
+        "provider_adapter_name": "ollama",
+        "is_active": True,
+    },
     {"key": "xai", "display_name": "xAI", "provider_adapter_name": "xai", "is_active": True},
-    {"key": "perplexity", "display_name": "Perplexity", "provider_adapter_name": "perplexity", "is_active": True},
-    {"key": "gemini", "display_name": "Gemini", "provider_adapter_name": "gemini", "is_active": True},
-    {"key": "generic_completions", "display_name": "Generic Completions", "provider_adapter_name": "generic_completions", "is_active": True},
+    {
+        "key": "perplexity",
+        "display_name": "Perplexity",
+        "provider_adapter_name": "perplexity",
+        "is_active": True,
+    },
+    {
+        "key": "gemini",
+        "display_name": "Gemini",
+        "provider_adapter_name": "gemini",
+        "is_active": True,
+    },
+    {
+        "key": "generic_completions",
+        "display_name": "Generic Completions",
+        "provider_adapter_name": "generic_completions",
+        "is_active": True,
+    },
 )
 
 
 def upsert_llm_provider_type_definitions(
     op,
     *,
-    definitions: Optional[Iterable[Mapping[str, object]]] = None,
+    definitions: Iterable[Mapping[str, object]] | None = None,
 ) -> None:
     """Upsert the canonical provider type definitions (minimal metadata)."""
 
@@ -40,11 +75,9 @@ def upsert_llm_provider_type_definitions(
             return
 
         bind = op.get_bind()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
-        existing_ids = dict(
-            bind.execute(sa.text("SELECT key, id FROM llm_provider_type_definitions")).fetchall()
-        )
+        existing_ids = dict(bind.execute(sa.text("SELECT key, id FROM llm_provider_type_definitions")).fetchall())
 
         values_sql = []
         params = {}

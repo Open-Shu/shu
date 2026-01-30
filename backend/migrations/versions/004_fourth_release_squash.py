@@ -13,8 +13,8 @@ Replaces: r004_0001_fix_openai_provider_parameters,
 
 from typing import Any
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 from migrations.seed_data.llm_provider_types import upsert_llm_provider_type_definitions
 
@@ -66,8 +66,18 @@ def _recreate_source_types_table(bind) -> None:
         sa.Column("supported_file_types", sa.JSON(), nullable=True),
         sa.Column("max_file_size", sa.String(20), nullable=True),
         sa.Column("supports_incremental_sync", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("supports_deletion_detection", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("supports_metadata_extraction", sa.Boolean, nullable=False, server_default=sa.text("true")),
+        sa.Column(
+            "supports_deletion_detection",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
+        sa.Column(
+            "supports_metadata_extraction",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
     )

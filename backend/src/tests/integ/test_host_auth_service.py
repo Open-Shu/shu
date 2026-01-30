@@ -1,10 +1,8 @@
 from __future__ import annotations
-import sys, os
-from typing import List
 
 from sqlalchemy import text
+
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.response_utils import extract_data
 
 
 async def _enable_plugin(client, auth_headers, name: str):
@@ -19,7 +17,9 @@ async def _enable_plugin(client, auth_headers, name: str):
 
 
 async def _get_admin_user_id(db) -> str:
-    res = await db.execute(text("SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com' ORDER BY created_at DESC LIMIT 1"))
+    res = await db.execute(
+        text("SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com' ORDER BY created_at DESC LIMIT 1")
+    )
     row = res.fetchone()
     assert row and row[0], "Admin user not found for test"
     return str(row[0])
@@ -32,8 +32,9 @@ async def test_compute_consent_scopes_empty_when_no_subscriptions(client, db, au
 
     # Call service directly with no subscriptions
     from shu.services.host_auth_service import HostAuthService
+
     user_id = await _get_admin_user_id(db)
-    scopes: List[str] = await HostAuthService.compute_consent_scopes(db, user_id, "google")
+    scopes: list[str] = await HostAuthService.compute_consent_scopes(db, user_id, "google")
 
     # Expect no scopes when there are no subscriptions
     assert scopes == []
@@ -44,6 +45,7 @@ async def test_compute_consent_scopes_honors_subscriptions(client, db, auth_head
     await _enable_plugin(client, auth_headers, "gdrive_files")
 
     from shu.services.host_auth_service import HostAuthService
+
     user_id = await _get_admin_user_id(db)
 
     # Subscribe only gmail_digest via service (idempotent)
@@ -51,7 +53,7 @@ async def test_compute_consent_scopes_honors_subscriptions(client, db, auth_head
     await HostAuthService.validate_and_create_subscription(db, user_id, "google", "gmail_digest", None)
 
     # Consent scopes should include gmail but not drive
-    scopes: List[str] = await HostAuthService.compute_consent_scopes(db, user_id, "google")
+    scopes: list[str] = await HostAuthService.compute_consent_scopes(db, user_id, "google")
     assert "https://www.googleapis.com/auth/gmail.readonly" in scopes
     assert "https://www.googleapis.com/auth/gmail.modify" in scopes
     assert "https://www.googleapis.com/auth/drive" not in scopes
@@ -75,5 +77,5 @@ if __name__ == "__main__":
     suite = HostAuthServiceTestSuite()
     exit_code = suite.run()
     import sys as _sys
-    _sys.exit(exit_code)
 
+    _sys.exit(exit_code)

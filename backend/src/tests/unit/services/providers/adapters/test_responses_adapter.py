@@ -3,20 +3,6 @@ import types
 from unittest.mock import AsyncMock
 
 import pytest
-
-from shu.services.providers import adapter_base
-from shu.services.providers.adapter_base import (
-    ProviderAdapterContext,
-    ProviderContentDeltaEventResult,
-    ProviderFinalEventResult,
-    ProviderReasoningDeltaEventResult,
-    ProviderToolCallEventResult,
-    ProviderToolCallEventResult,
-    ToolCallInstructions,
-)
-from shu.services.chat_types import ChatContext
-from shu.services.providers.adapters.responses_adapter import ResponsesAdapter
-
 from shared import (
     OPENAI_ACTIONABLE_FUNCTION_CALL,
     OPENAI_ACTIONABLE_OUTPUT_DELTA,
@@ -29,6 +15,18 @@ from shared import (
     OPENAI_IGNORED_RESPONSE_COMPLETE,
     TOOLS,
 )
+
+from shu.services.chat_types import ChatContext
+from shu.services.providers import adapter_base
+from shu.services.providers.adapter_base import (
+    ProviderAdapterContext,
+    ProviderContentDeltaEventResult,
+    ProviderFinalEventResult,
+    ProviderReasoningDeltaEventResult,
+    ProviderToolCallEventResult,
+    ToolCallInstructions,
+)
+from shu.services.providers.adapters.responses_adapter import ResponsesAdapter
 
 FAKE_PLUGIN_RESULT = {"ok": True}
 
@@ -92,7 +90,6 @@ def _evaluate_tool_call_events(tool_event):
 
 
 def test_provider_defaults(responses_adapter):
-
     capabilities = responses_adapter.get_capabilities()
     assert capabilities.streaming is True
     assert capabilities.tools is True
@@ -105,7 +102,6 @@ def test_provider_defaults(responses_adapter):
 
 @pytest.mark.asyncio
 async def test_event_handling(responses_adapter, patch_plugin_calls):
-
     # We don't work with function call delta values, we grab the full values when they are ready.
     assert await responses_adapter.handle_provider_event(OPENAI_IGNORED_FUNCTION_DELTA) is None
     # The final result needs to have text in its output, this just has reasoning and function calls.
@@ -148,7 +144,6 @@ async def test_event_handling(responses_adapter, patch_plugin_calls):
 
 @pytest.mark.asyncio
 async def test_completion_flow(responses_adapter, patch_plugin_calls):
-
     events = await responses_adapter.handle_provider_completion(OPENAI_COMPLETE_FUNCTION_CALL_PAYLOAD)
 
     # We get two events here, the first one is the tool call, the second is an empty final message.
@@ -175,7 +170,7 @@ async def test_completion_flow(responses_adapter, patch_plugin_calls):
         "output_tokens_details": {"reasoning_tokens": 512},
         "total_tokens": 5524,
     },
-    
+
     "usage": {
         "input_tokens": 5777,
         "input_tokens_details": {"cached_tokens": 5504},
@@ -245,9 +240,7 @@ async def test_inject_functions(responses_adapter):
                                 "minimum": 1,
                                 "maximum": 500,
                                 "default": 50,
-                                "x-ui": {
-                                    "help": "Max messages to inspect (capped at 500)."
-                                },
+                                "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                             },
                             "op": {
                                 "type": "string",
@@ -258,23 +251,17 @@ async def test_inject_functions(responses_adapter):
                             "message_ids": {
                                 "type": ["array", "null"],
                                 "items": {"type": "string"},
-                                "x-ui": {
-                                    "help": "For actions, provide Gmail message ids to modify."
-                                },
+                                "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                             },
                             "preview": {
                                 "type": ["boolean", "null"],
                                 "default": None,
-                                "x-ui": {
-                                    "help": "When true with approve=false, returns a plan without side effects."
-                                },
+                                "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                             },
                             "approve": {
                                 "type": ["boolean", "null"],
                                 "default": None,
-                                "x-ui": {
-                                    "help": "Set to true (with or without preview) to perform the action."
-                                },
+                                "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                             },
                             "kb_id": {
                                 "type": ["string", "null"],
@@ -317,9 +304,7 @@ async def test_inject_functions(responses_adapter):
                                 "minimum": 1,
                                 "maximum": 336,
                                 "default": 48,
-                                "x-ui": {
-                                    "help": "Look-back window in hours when no syncToken is present."
-                                },
+                                "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                             },
                             "time_min": {
                                 "type": ["string", "null"],

@@ -64,4 +64,3 @@ Standardize how we manage database schema changes so that:
 ## Pointers
 - See `.augment/rules/shu-base-rules.md` for the concise rules that LLMs must follow.
 - See `docs/policies/DEVELOPMENT_STANDARDS.md` for engineering expectations.
-

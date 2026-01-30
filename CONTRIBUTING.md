@@ -154,4 +154,3 @@ Be respectful and constructive. We're building something together.
 ## License
 
 By contributing, you agree that your contributions will be licensed under the project's dual license (GPLv3 and Commercial). See [LICENSE.md](LICENSE.md) for details.
-

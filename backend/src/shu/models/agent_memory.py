@@ -1,10 +1,9 @@
-"""
-Agent Memory v0 model for Agent Foundation MVP.
+"""Agent Memory v0 model for Agent Foundation MVP.
 
 Minimal per-user, per-agent scoped key/value store.
 """
 
-from sqlalchemy import Column, String, JSON, UniqueConstraint, ForeignKey
+from sqlalchemy import JSON, Column, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .base import BaseModel
@@ -28,13 +27,10 @@ class AgentMemory(BaseModel):
     value = Column(JSON, nullable=True)
 
     # Index uniqueness across the scope
-    __table_args__ = (
-        UniqueConstraint("user_id", "agent_key", "key", name="uq_agent_memory_scope_key"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "agent_key", "key", name="uq_agent_memory_scope_key"),)
 
     # Optional relationship for convenience
     user = relationship("User", backref="agent_memory_entries")
 
     def __repr__(self) -> str:
         return f"<AgentMemory(user_id={self.user_id}, agent_key={self.agent_key}, key={self.key})>"
-

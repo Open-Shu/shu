@@ -1,13 +1,13 @@
-"""
-HostAuthService: extracts business logic from host_auth API endpoints.
+"""HostAuthService: extracts business logic from host_auth API endpoints.
 - Compute consent scope unions from plugin manifests honoring subscriptions
 - CRUD helpers for PluginSubscription with validation against PluginDefinition
 - Read helpers for listing subscriptions
 
 This keeps API controllers thin and maintains provider-agnostic behavior.
 """
+
 from __future__ import annotations
-from typing import List, Optional
+
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +25,10 @@ class HostAuthService:
         user_id: str,
         provider: str,
         plugin_name: str,
-        account_id: Optional[str] = None,
+        account_id: str | None = None,
     ):
-        from sqlalchemy import select, and_  # local import
+        from sqlalchemy import and_, select  # local import
+
         prov = (provider or "").strip().lower()
         name = (plugin_name or "").strip()
 
@@ -44,7 +45,9 @@ class HostAuthService:
         return prov, name, sel.scalars().first()
 
     @staticmethod
-    def _log_subscription_event(action: str, *, user_id: str, provider: str, plugin_name: str, account_id: Optional[str]) -> None:
+    def _log_subscription_event(
+        action: str, *, user_id: str, provider: str, plugin_name: str, account_id: str | None
+    ) -> None:
         try:
             logger.info(
                 "subscription.%s | user=%s provider=%s plugin=%s account_id=%s",
@@ -58,7 +61,7 @@ class HostAuthService:
             pass
 
     @staticmethod
-    async def compute_consent_scopes(db: AsyncSession, user_id: str, provider: str) -> List[str]:
+    async def compute_consent_scopes(db: AsyncSession, user_id: str, provider: str) -> list[str]:
         """Compute union of delegated scopes for provider from plugin manifests, honoring subscriptions.
         If the user has no subscriptions for the provider, return an empty list (request nothing).
         """
@@ -67,7 +70,8 @@ class HostAuthService:
         if not provider_key:
             return union_scopes
         try:
-            from sqlalchemy import select, and_  # local import to avoid circulars
+            from sqlalchemy import and_, select  # local import to avoid circulars
+
             from ..models.plugin_registry import PluginDefinition
             from ..plugins.registry import REGISTRY
 
@@ -89,7 +93,12 @@ class HostAuthService:
             subs = subs_res.scalars().all()
             subscribed_names = {s.plugin_name for s in subs}
             try:
-                logger.debug("consent_scopes.compute | user=%s provider=%s subscribed=%s", str(user_id), provider_key, bool(subscribed_names))
+                logger.debug(
+                    "consent_scopes.compute | user=%s provider=%s subscribed=%s",
+                    str(user_id),
+                    provider_key,
+                    bool(subscribed_names),
+                )
             except Exception:
                 pass
 
@@ -107,7 +116,7 @@ class HostAuthService:
                         for spec in op_auth.values():
                             if not isinstance(spec, dict):
                                 continue
-                            if (str(spec.get("provider") or "").strip().lower() != provider_key):
+                            if str(spec.get("provider") or "").strip().lower() != provider_key:
                                 continue
                             if str(spec.get("mode") or "").strip().lower() != "user":
                                 continue
@@ -125,10 +134,8 @@ class HostAuthService:
         return union_scopes
 
     @staticmethod
-    async def list_subscriptions(
-        db: AsyncSession, user_id: str, provider: str, account_id: Optional[str] = None
-    ):
-        from sqlalchemy import select, and_  # local import
+    async def list_subscriptions(db: AsyncSession, user_id: str, provider: str, account_id: str | None = None):
+        from sqlalchemy import and_, select  # local import
 
         prov = (provider or "").strip().lower()
         q = select(PluginSubscription).where(
@@ -148,9 +155,10 @@ class HostAuthService:
         user_id: str,
         provider: str,
         plugin_name: str,
-        account_id: Optional[str] = None,
+        account_id: str | None = None,
     ):
         from sqlalchemy import select  # local import
+
         from ..models.plugin_registry import PluginDefinition
 
         prov = (provider or "").strip().lower()
@@ -199,9 +207,8 @@ class HostAuthService:
         user_id: str,
         provider: str,
         plugin_name: str,
-        account_id: Optional[str] = None,
+        account_id: str | None = None,
     ) -> bool:
-
         prov = (provider or "").strip().lower()
         name = (plugin_name or "").strip()
         if not name:

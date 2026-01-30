@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   Box,
   Button,
@@ -6,17 +6,17 @@ import {
   Paper,
   Typography,
   CircularProgress,
-} from '@mui/material';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+} from "@mui/material";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 
 const formatNumber = (value) =>
-  typeof value === 'number' ? value.toLocaleString() : 'N/A';
+  typeof value === "number" ? value.toLocaleString() : "N/A";
 
 const formatConfidence = (value) =>
-  typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : 'N/A';
+  typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "N/A";
 
 const formatDuration = (value) =>
-  typeof value === 'number' ? `${value.toFixed(2)}s` : 'N/A';
+  typeof value === "number" ? `${value.toFixed(2)}s` : "N/A";
 
 const DocumentPreviewContent = ({
   document,
@@ -37,7 +37,7 @@ const DocumentPreviewContent = ({
     source_id: sourceId,
     source_url: sourceUrl,
     processing_info: processingInfo = {},
-    preview = '',
+    preview = "",
     full_content_length: fullContentLength = 0,
     extraction_metadata: extractionMetadataRaw = null,
   } = document;
@@ -46,10 +46,15 @@ const DocumentPreviewContent = ({
   const extractionMetadataDetails = extraction?.metadata;
 
   const shouldShowFullContentButton =
-    fullContentLength > maxChars && !showFullContent && typeof onShowFullContent === 'function';
+    fullContentLength > maxChars &&
+    !showFullContent &&
+    typeof onShowFullContent === "function";
 
   const isInternalPreview =
-    sourceUrl && knowledgeBaseId && id && sourceUrl === `/documents/${knowledgeBaseId}/${id}`;
+    sourceUrl &&
+    knowledgeBaseId &&
+    id &&
+    sourceUrl === `/documents/${knowledgeBaseId}/${id}`;
 
   return (
     <Box>
@@ -63,32 +68,28 @@ const DocumentPreviewContent = ({
               Knowledge Base
             </Typography>
             <Typography variant="body1">
-              {knowledgeBaseId || 'Unknown'}
+              {knowledgeBaseId || "Unknown"}
             </Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Document ID
             </Typography>
-            <Typography variant="body1">
-              {id || 'Unknown'}
-            </Typography>
+            <Typography variant="body1">{id || "Unknown"}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               File Type
             </Typography>
             <Typography variant="body1">
-              {fileType ? fileType.toUpperCase() : 'Unknown'}
+              {fileType ? fileType.toUpperCase() : "Unknown"}
             </Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Source ID
             </Typography>
-            <Typography variant="body1">
-              {sourceId || 'N/A'}
-            </Typography>
+            <Typography variant="body1">{sourceId || "N/A"}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
@@ -119,7 +120,7 @@ const DocumentPreviewContent = ({
               Processed At
             </Typography>
             <Typography variant="body1">
-              {processingInfo.processed_at || 'N/A'}
+              {processingInfo.processed_at || "N/A"}
             </Typography>
           </Grid>
         </Grid>
@@ -151,7 +152,7 @@ const DocumentPreviewContent = ({
                 Method
               </Typography>
               <Typography variant="body1">
-                {extraction.method || 'Unknown'}
+                {extraction.method || "Unknown"}
               </Typography>
             </Grid>
             <Grid item xs={6}>
@@ -159,7 +160,7 @@ const DocumentPreviewContent = ({
                 Engine
               </Typography>
               <Typography variant="body1">
-                {extraction.engine || 'Unknown'}
+                {extraction.engine || "Unknown"}
               </Typography>
             </Grid>
             <Grid item xs={6}>
@@ -190,9 +191,9 @@ const DocumentPreviewContent = ({
                   variant="body2"
                   component="pre"
                   sx={{
-                    fontSize: '0.75rem',
-                    whiteSpace: 'pre-wrap',
-                    fontFamily: 'monospace',
+                    fontSize: "0.75rem",
+                    whiteSpace: "pre-wrap",
+                    fontFamily: "monospace",
                     mb: 0,
                   }}
                 >
@@ -211,31 +212,31 @@ const DocumentPreviewContent = ({
         <Box
           sx={{
             maxHeight: 360,
-            overflow: 'auto',
+            overflow: "auto",
             border: 1,
-            borderColor: 'divider',
+            borderColor: "divider",
             borderRadius: 1,
             p: 2,
-            bgcolor: 'grey.50',
+            bgcolor: "grey.50",
           }}
         >
           <Typography
             variant="body2"
             component="pre"
             sx={{
-              whiteSpace: 'pre-wrap',
-              fontFamily: 'inherit',
+              whiteSpace: "pre-wrap",
+              fontFamily: "inherit",
               margin: 0,
             }}
           >
-            {preview || 'No extracted text available.'}
+            {preview || "No extracted text available."}
           </Typography>
         </Box>
 
         {shouldShowFullContentButton && (
-          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Box sx={{ mt: 2, display: "flex", alignItems: "center", gap: 2 }}>
             <Typography variant="caption" color="text.secondary">
-              Showing first {maxChars.toLocaleString()} characters of{' '}
+              Showing first {maxChars.toLocaleString()} characters of{" "}
               {fullContentLength.toLocaleString()} total
             </Typography>
             <Button
@@ -247,7 +248,7 @@ const DocumentPreviewContent = ({
                 loadingFullContent ? <CircularProgress size={16} /> : null
               }
             >
-              {loadingFullContent ? 'Loading...' : 'Show All Content'}
+              {loadingFullContent ? "Loading..." : "Show All Content"}
             </Button>
           </Box>
         )}
@@ -256,9 +257,10 @@ const DocumentPreviewContent = ({
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ mt: 1, display: 'block' }}
+            sx={{ mt: 1, display: "block" }}
           >
-            Showing full content ({fullContentLength.toLocaleString()} characters)
+            Showing full content ({fullContentLength.toLocaleString()}{" "}
+            characters)
           </Typography>
         )}
       </Paper>

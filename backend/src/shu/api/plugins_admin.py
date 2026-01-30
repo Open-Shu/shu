@@ -1,27 +1,27 @@
-"""
-Plugins API (admin): registry controls, limits, upload, delete, sync
+"""Plugins API (admin): registry controls, limits, upload, delete, sync
 Preserves original paths under /plugins/admin and /plugins/upload
 """
-from __future__ import annotations
-from typing import Any, Dict, Optional, List
-from pathlib import Path
-import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
-from ..auth.rbac import require_power_user
 from ..auth.models import User
-from ..core.response import ShuResponse
-from ..schemas.envelope import SuccessResponse
-from ..models.plugin_registry import PluginDefinition
-
-from ..plugins.registry import REGISTRY
-from ..plugins.installer import validate_and_extract, install_plugin, InstallError
+from ..auth.rbac import require_power_user
 from ..core.config import get_settings_instance
+from ..core.response import ShuResponse
+from ..models.plugin_registry import PluginDefinition
+from ..plugins.installer import InstallError, install_plugin, validate_and_extract
+from ..plugins.registry import REGISTRY
+from ..schemas.envelope import SuccessResponse
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +37,13 @@ def _resolve_plugins_root(settings) -> Path:
     return (repo_root / plugins_root).resolve()
 
 
-
 class PluginEnableRequest(BaseModel):
     enabled: bool
 
 
 class PluginSchemaRequest(BaseModel):
-    input_schema: Optional[Dict[str, Any]] = None
-    output_schema: Optional[Dict[str, Any]] = None
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
 
 
 @router.patch("/admin/{name}/enable", response_model=SuccessResponse[dict])
@@ -61,13 +60,15 @@ async def admin_set_plugin_enabled(
     row.enabled = body.enabled
     await db.commit()
     await db.refresh(row)
-    return ShuResponse.success({
-        "name": row.name,
-        "version": getattr(row, "version", None),
-        "enabled": bool(row.enabled),
-        "input_schema": getattr(row, "input_schema", None),
-        "output_schema": getattr(row, "output_schema", None),
-    })
+    return ShuResponse.success(
+        {
+            "name": row.name,
+            "version": getattr(row, "version", None),
+            "enabled": bool(row.enabled),
+            "input_schema": getattr(row, "input_schema", None),
+            "output_schema": getattr(row, "output_schema", None),
+        }
+    )
 
 
 @router.put("/admin/{name}/schema", response_model=SuccessResponse[dict])
@@ -87,24 +88,26 @@ async def admin_set_plugin_schema(
         row.output_schema = body.output_schema
     await db.commit()
     await db.refresh(row)
-    return ShuResponse.success({
-        "name": row.name,
-        "version": getattr(row, "version", None),
-        "enabled": bool(row.enabled),
-        "input_schema": getattr(row, "input_schema", None),
-        "output_schema": getattr(row, "output_schema", None),
-    })
+    return ShuResponse.success(
+        {
+            "name": row.name,
+            "version": getattr(row, "version", None),
+            "enabled": bool(row.enabled),
+            "input_schema": getattr(row, "input_schema", None),
+            "output_schema": getattr(row, "output_schema", None),
+        }
+    )
 
 
 class PluginLimitsRequest(BaseModel):
-    rate_limit_user_requests: Optional[int] = None
-    rate_limit_user_period: Optional[int] = None
-    quota_daily_requests: Optional[int] = None
-    quota_monthly_requests: Optional[int] = None
-    provider_name: Optional[str] = None
-    provider_rpm: Optional[int] = None
-    provider_window_seconds: Optional[int] = None
-    provider_concurrency: Optional[int] = None
+    rate_limit_user_requests: int | None = None
+    rate_limit_user_period: int | None = None
+    quota_daily_requests: int | None = None
+    quota_monthly_requests: int | None = None
+    provider_name: str | None = None
+    provider_rpm: int | None = None
+    provider_window_seconds: int | None = None
+    provider_concurrency: int | None = None
 
 
 @router.get("/admin/{name}/limits", response_model=SuccessResponse[dict])
@@ -154,7 +157,6 @@ async def admin_set_plugin_limits(
     return ShuResponse.success({"name": name, "limits": row.limits or {}})
 
 
-
 @router.post("/admin/sync", response_model=SuccessResponse[dict])
 async def admin_sync_plugins(
     db: AsyncSession = Depends(get_db),
@@ -166,9 +168,9 @@ async def admin_sync_plugins(
 
 class PluginUploadResponse(BaseModel):
     plugin_name: str
-    version: Optional[str] = None
+    version: str | None = None
     installed_path: str
-    warnings: List[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     restart_required: bool = False
 
 
@@ -210,6 +212,7 @@ async def admin_upload_plugin(
     finally:
         try:
             import shutil
+
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
@@ -226,14 +229,18 @@ async def admin_delete_plugin(
     """
     # Referential integrity: block if feeds reference this plugin
     from ..models.plugin_feed import PluginFeed
+
     dep_res = await db.execute(select(PluginFeed.id).where(PluginFeed.plugin_name == name))
     dep_ids = [r[0] for r in dep_res.all()]
     if dep_ids:
-        raise HTTPException(status_code=409, detail={
-            "error": "plugin_delete_blocked",
-            "message": f"Cannot delete plugin '{name}' with dependent feeds",
-            "dependent_feed_ids": dep_ids,
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "plugin_delete_blocked",
+                "message": f"Cannot delete plugin '{name}' with dependent feeds",
+                "dependent_feed_ids": dep_ids,
+            },
+        )
 
     # Guarded FS removal (only under configured plugins_root)
     try:
@@ -246,6 +253,7 @@ async def admin_delete_plugin(
                 root = _resolve_plugins_root(settings)
                 if str(p).startswith(str(root)):
                     import shutil
+
                     shutil.rmtree(p, ignore_errors=True)
                 else:
                     logger.warning("Skip deleting '%s': outside plugins_root '%s'", p, root)

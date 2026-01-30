@@ -9,10 +9,9 @@ Tests cover:
 - Identity linking for existing email
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 
+import pytest
 from fastapi import HTTPException
 
 
@@ -28,6 +27,7 @@ class TestAuthenticateOrCreateSSOUser:
     def user_service(self):
         """Create a UserService instance with mocked dependencies."""
         from shu.services.user_service import UserService
+
         service = UserService()
         service.settings = MagicMock()
         service.settings.admin_emails = ["admin@example.com"]
@@ -41,7 +41,7 @@ class TestAuthenticateOrCreateSSOUser:
             "provider_key": "google",
             "email": "test@example.com",
             "name": "Test User",
-            "picture": "https://example.com/photo.jpg"
+            "picture": "https://example.com/photo.jpg",
         }
 
     @pytest.fixture
@@ -52,32 +52,35 @@ class TestAuthenticateOrCreateSSOUser:
             "provider_key": "microsoft",
             "email": "test@example.com",
             "name": "Test User",
-            "picture": None
+            "picture": None,
         }
 
     @pytest.mark.asyncio
     async def test_new_user_first_user_becomes_admin(self, user_service, mock_db, google_provider_info):
         """Test that the first user in the system becomes admin and is active."""
         # Mock: no existing auth method
-        mock_db.execute = AsyncMock(side_effect=[
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # get_user_auth_method
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # _get_user_by_identity (ProviderIdentity)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # email lookup
-            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),  # is_first_user
-        ])
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # get_user_auth_method
+                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # _get_user_by_identity (ProviderIdentity)
+                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # email lookup
+                MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),  # is_first_user
+            ]
+        )
         mock_db.add = MagicMock()
         mock_db.commit = AsyncMock()
         mock_db.refresh = AsyncMock()
         mock_db.flush = AsyncMock()
 
-        with patch.object(user_service, 'is_first_user', return_value=True):
-            with patch.object(user_service, 'determine_user_role') as mock_role:
+        with patch.object(user_service, "is_first_user", return_value=True):
+            with patch.object(user_service, "determine_user_role") as mock_role:
                 from shu.auth.models import UserRole
+
                 mock_role.return_value = UserRole.ADMIN
-                with patch.object(user_service, 'is_active', return_value=True):
-                    with patch.object(user_service, '_get_user_by_identity', return_value=None):
-                        with patch.object(user_service, 'get_user_auth_method', return_value=None):
-                            with patch.object(user_service, '_create_provider_identity', return_value=MagicMock()):
+                with patch.object(user_service, "is_active", return_value=True):
+                    with patch.object(user_service, "_get_user_by_identity", return_value=None):
+                        with patch.object(user_service, "get_user_auth_method", return_value=None):
+                            with patch.object(user_service, "_create_provider_identity", return_value=MagicMock()):
                                 user = await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
 
         assert user.email == "test@example.com"
@@ -89,20 +92,23 @@ class TestAuthenticateOrCreateSSOUser:
         """Test that a user with admin email becomes admin and is active."""
         google_provider_info["email"] = "admin@example.com"
 
-        with patch.object(user_service, 'is_first_user', return_value=False):
-            with patch.object(user_service, 'determine_user_role') as mock_role:
+        with patch.object(user_service, "is_first_user", return_value=False):
+            with patch.object(user_service, "determine_user_role") as mock_role:
                 from shu.auth.models import UserRole
+
                 mock_role.return_value = UserRole.ADMIN
-                with patch.object(user_service, 'is_active', return_value=True):
-                    with patch.object(user_service, '_get_user_by_identity', return_value=None):
-                        with patch.object(user_service, 'get_user_auth_method', return_value=None):
-                            with patch.object(user_service, '_create_provider_identity', return_value=MagicMock()):
+                with patch.object(user_service, "is_active", return_value=True):
+                    with patch.object(user_service, "_get_user_by_identity", return_value=None):
+                        with patch.object(user_service, "get_user_auth_method", return_value=None):
+                            with patch.object(user_service, "_create_provider_identity", return_value=MagicMock()):
                                 mock_db.add = MagicMock()
                                 mock_db.commit = AsyncMock()
                                 mock_db.refresh = AsyncMock()
                                 mock_db.flush = AsyncMock()
                                 # Mock email lookup to return None (no existing user)
-                                mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+                                mock_db.execute = AsyncMock(
+                                    return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+                                )
 
                                 user = await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
 
@@ -113,19 +119,22 @@ class TestAuthenticateOrCreateSSOUser:
     @pytest.mark.asyncio
     async def test_new_user_regular_requires_activation(self, user_service, mock_db, google_provider_info):
         """Test that a regular user requires activation (201 response)."""
-        with patch.object(user_service, 'is_first_user', return_value=False):
-            with patch.object(user_service, 'determine_user_role') as mock_role:
+        with patch.object(user_service, "is_first_user", return_value=False):
+            with patch.object(user_service, "determine_user_role") as mock_role:
                 from shu.auth.models import UserRole
+
                 mock_role.return_value = UserRole.REGULAR_USER
-                with patch.object(user_service, 'is_active', return_value=False):
-                    with patch.object(user_service, '_get_user_by_identity', return_value=None):
-                        with patch.object(user_service, 'get_user_auth_method', return_value=None):
-                            with patch.object(user_service, '_create_provider_identity', return_value=MagicMock()):
+                with patch.object(user_service, "is_active", return_value=False):
+                    with patch.object(user_service, "_get_user_by_identity", return_value=None):
+                        with patch.object(user_service, "get_user_auth_method", return_value=None):
+                            with patch.object(user_service, "_create_provider_identity", return_value=MagicMock()):
                                 mock_db.add = MagicMock()
                                 mock_db.commit = AsyncMock()
                                 mock_db.refresh = AsyncMock()
                                 mock_db.flush = AsyncMock()
-                                mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+                                mock_db.execute = AsyncMock(
+                                    return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+                                )
 
                                 with pytest.raises(HTTPException) as exc_info:
                                     await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
@@ -142,8 +151,8 @@ class TestAuthenticateOrCreateSSOUser:
         mock_user.is_active = True
         mock_user.picture_url = None
 
-        with patch.object(user_service, 'get_user_auth_method', return_value="google"):
-            with patch.object(user_service, '_get_user_by_identity', return_value=mock_user):
+        with patch.object(user_service, "get_user_auth_method", return_value="google"):
+            with patch.object(user_service, "_get_user_by_identity", return_value=mock_user):
                 mock_db.commit = AsyncMock()
 
                 user = await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
@@ -154,8 +163,8 @@ class TestAuthenticateOrCreateSSOUser:
     @pytest.mark.asyncio
     async def test_password_auth_conflict_returns_409(self, user_service, mock_db, google_provider_info):
         """Test that password auth conflict returns 409."""
-        with patch.object(user_service, '_get_user_by_identity', new_callable=AsyncMock, return_value=None):
-            with patch.object(user_service, 'get_user_auth_method', new_callable=AsyncMock, return_value="password"):
+        with patch.object(user_service, "_get_user_by_identity", new_callable=AsyncMock, return_value=None):
+            with patch.object(user_service, "get_user_auth_method", new_callable=AsyncMock, return_value="password"):
                 with pytest.raises(HTTPException) as exc_info:
                     await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
 
@@ -170,8 +179,8 @@ class TestAuthenticateOrCreateSSOUser:
         mock_user.email = "test@example.com"
         mock_user.is_active = False
 
-        with patch.object(user_service, 'get_user_auth_method', return_value="google"):
-            with patch.object(user_service, '_get_user_by_identity', return_value=mock_user):
+        with patch.object(user_service, "get_user_auth_method", return_value="google"):
+            with patch.object(user_service, "_get_user_by_identity", return_value=mock_user):
                 with pytest.raises(HTTPException) as exc_info:
                     await user_service.authenticate_or_create_sso_user(google_provider_info, mock_db)
 
@@ -187,10 +196,12 @@ class TestAuthenticateOrCreateSSOUser:
         mock_user.is_active = True
         mock_user.picture_url = None
 
-        with patch.object(user_service, 'get_user_auth_method', return_value="google"):  # Existing Google user
-            with patch.object(user_service, '_get_user_by_identity', return_value=None):  # No Microsoft identity yet
-                with patch.object(user_service, '_ensure_provider_identity', return_value=None) as mock_ensure:
-                    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user)))
+        with patch.object(user_service, "get_user_auth_method", return_value="google"):  # Existing Google user
+            with patch.object(user_service, "_get_user_by_identity", return_value=None):  # No Microsoft identity yet
+                with patch.object(user_service, "_ensure_provider_identity", return_value=None) as mock_ensure:
+                    mock_db.execute = AsyncMock(
+                        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user))
+                    )
                     mock_db.commit = AsyncMock()
 
                     user = await user_service.authenticate_or_create_sso_user(microsoft_provider_info, mock_db)
@@ -204,8 +215,8 @@ class TestCreateTokenResponse:
 
     def test_create_token_response_returns_valid_response(self):
         """Test that create_token_response returns a valid dict for TokenResponse."""
-        from shu.services.user_service import create_token_response
         from shu.auth import JWTManager
+        from shu.services.user_service import create_token_response
 
         mock_user = MagicMock()
         mock_user.id = "user-uuid"
@@ -213,7 +224,7 @@ class TestCreateTokenResponse:
             "user_id": "user-uuid",
             "email": "test@example.com",
             "name": "Test User",
-            "role": "regular_user"
+            "role": "regular_user",
         }
 
         mock_jwt_manager = MagicMock(spec=JWTManager)
@@ -239,6 +250,7 @@ class TestHelperMethods:
     def user_service(self):
         """Create a UserService instance."""
         from shu.services.user_service import UserService
+
         return UserService()
 
     @pytest.fixture
@@ -278,12 +290,12 @@ class TestHelperMethods:
             "provider_id": "google-123",
             "provider_key": "google",
             "email": "test@example.com",
-            "name": "Test User"
+            "name": "Test User",
         }
 
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
-        with patch.object(user_service, '_create_provider_identity', return_value=MagicMock()) as mock_create:
+        with patch.object(user_service, "_create_provider_identity", return_value=MagicMock()) as mock_create:
             await user_service._ensure_provider_identity(mock_user, provider_info, mock_db)
 
         mock_create.assert_called_once_with(mock_user, provider_info, mock_db)
@@ -298,13 +310,13 @@ class TestHelperMethods:
             "provider_id": "google-123",
             "provider_key": "google",
             "email": "test@example.com",
-            "name": "Test User"
+            "name": "Test User",
         }
 
         mock_identity = MagicMock()
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_identity)))
 
-        with patch.object(user_service, '_create_provider_identity', return_value=MagicMock()) as mock_create:
+        with patch.object(user_service, "_create_provider_identity", return_value=MagicMock()) as mock_create:
             await user_service._ensure_provider_identity(mock_user, provider_info, mock_db)
 
         mock_create.assert_not_called()
@@ -320,7 +332,7 @@ class TestHelperMethods:
             "provider_key": "google",
             "email": "test@example.com",
             "name": "Test User",
-            "picture": "https://example.com/photo.jpg"
+            "picture": "https://example.com/photo.jpg",
         }
 
         mock_db.add = MagicMock()

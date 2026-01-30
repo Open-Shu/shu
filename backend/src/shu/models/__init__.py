@@ -5,100 +5,99 @@ This package contains SQLAlchemy models for all database tables
 used by the Shu application.
 """
 
+from .agent_memory import AgentMemory
+from .attachment import Attachment, MessageAttachment
 from .base import Base
-from .knowledge_base import KnowledgeBase
-
-from .prompt import Prompt, PromptAssignment, EntityType
 from .document import (
+    ENTITY_TYPE_EMAIL_ADDRESS,
+    ENTITY_TYPE_ORGANIZATION,
+    # Backward-compatible constants
+    ENTITY_TYPE_PERSON,
+    ROLE_AUTHOR,
+    ROLE_DECISION_MAKER,
+    ROLE_MENTIONED,
+    ROLE_RECIPIENT,
+    ROLE_SUBJECT,
+    # TypedDicts for JSONB structures
+    CapabilityManifest,
     Document,
     DocumentChunk,
-    DocumentQuery,
     DocumentParticipant,
     DocumentProject,
+    DocumentQuery,
     # Enums (preferred)
     ParticipantEntityType,
     ParticipantRole,
-    # TypedDicts for JSONB structures
-    CapabilityManifest,
     RelationalContext,
-    # Backward-compatible constants
-    ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_ORGANIZATION,
-    ENTITY_TYPE_EMAIL_ADDRESS,
-    ROLE_AUTHOR,
-    ROLE_RECIPIENT,
-    ROLE_MENTIONED,
-    ROLE_DECISION_MAKER,
-    ROLE_SUBJECT,
 )
-from .llm_provider import LLMProvider, LLMModel, LLMUsage, Conversation, Message
-from .attachment import Attachment, MessageAttachment
+from .experience import Experience, ExperienceRun, ExperienceStep
+from .knowledge_base import KnowledgeBase
+from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message
 from .model_configuration import ModelConfiguration
 from .model_configuration_kb_prompt import ModelConfigurationKBPrompt
-from .user_preferences import UserPreferences
-
-from .provider_identity import ProviderIdentity
-from .provider_credential import ProviderCredential
-from .rbac import UserGroup, UserGroupMembership, KnowledgeBasePermission, PermissionLevel, GroupRole
-from .plugin_registry import PluginDefinition
-from .agent_memory import AgentMemory
-from .plugin_storage import PluginStorage
 from .plugin_execution import PluginExecution
 from .plugin_feed import PluginFeed
+from .plugin_registry import PluginDefinition
+from .plugin_storage import PluginStorage
 from .plugin_subscription import PluginSubscription
+from .prompt import EntityType, Prompt, PromptAssignment
+from .provider_credential import ProviderCredential
+from .provider_identity import ProviderIdentity
+from .rbac import (
+    GroupRole,
+    KnowledgeBasePermission,
+    PermissionLevel,
+    UserGroup,
+    UserGroupMembership,
+)
 from .system_setting import SystemSetting
-from .experience import Experience, ExperienceStep, ExperienceRun
+from .user_preferences import UserPreferences
 
 # Note: User model is in auth.models to avoid circular imports
 
 __all__ = [
+    "ENTITY_TYPE_EMAIL_ADDRESS",
+    "ENTITY_TYPE_ORGANIZATION",
+    "ENTITY_TYPE_PERSON",
+    "ROLE_AUTHOR",
+    "ROLE_DECISION_MAKER",
+    "ROLE_MENTIONED",
+    "ROLE_RECIPIENT",
+    "ROLE_SUBJECT",
+    "AgentMemory",
     "Base",
-    "KnowledgeBase",
-
-    "Prompt",
-    "PromptAssignment",
-    "EntityType",
+    "CapabilityManifest",
+    "Conversation",
     "Document",
     "DocumentChunk",
-    "DocumentQuery",
     "DocumentParticipant",
     "DocumentProject",
-    # Enums (preferred for new code)
-    "ParticipantEntityType",
-    "ParticipantRole",
-    # TypedDicts for JSONB structures
-    "CapabilityManifest",
-    "RelationalContext",
-    # Backward-compatible constants
-    "ENTITY_TYPE_PERSON",
-    "ENTITY_TYPE_ORGANIZATION",
-    "ENTITY_TYPE_EMAIL_ADDRESS",
-    "ROLE_AUTHOR",
-    "ROLE_RECIPIENT",
-    "ROLE_MENTIONED",
-    "ROLE_DECISION_MAKER",
-    "ROLE_SUBJECT",
-    "LLMProvider",
+    "DocumentQuery",
+    "EntityType",
+    "Experience",
+    "ExperienceRun",
+    "ExperienceStep",
+    "GroupRole",
+    "KnowledgeBase",
+    "KnowledgeBasePermission",
     "LLMModel",
+    "LLMProvider",
     "LLMUsage",
-    "Conversation",
     "Message",
     "ModelConfiguration",
     "ModelConfigurationKBPrompt",
-    "UserPreferences",
-
-    "ProviderIdentity",
+    "ParticipantEntityType",
+    "ParticipantRole",
+    "PermissionLevel",
+    "PluginDefinition",
+    "PluginStorage",
+    "Prompt",
+    "PromptAssignment",
     "ProviderCredential",
+    "ProviderIdentity",
+    "RelationalContext",
+    "SystemSetting",
     "UserGroup",
     "UserGroupMembership",
-    "KnowledgeBasePermission",
-    "PermissionLevel",
-    "GroupRole",
-    "PluginDefinition",
-    "AgentMemory",
-    "PluginStorage",
-    "SystemSetting",
-    "Experience",
-    "ExperienceStep",
-    "ExperienceRun",
+    "UserPreferences",
 ]

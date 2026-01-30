@@ -1,17 +1,16 @@
-"""
-Request size limit middleware, scoped by path prefix.
+"""Request size limit middleware, scoped by path prefix.
 Intended for /api/v1/plugins/* endpoints initially.
 """
+
 from __future__ import annotations
-from typing import Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, *, max_bytes: int, path_prefix: Optional[str] = None):
+    def __init__(self, app, *, max_bytes: int, path_prefix: str | None = None):
         super().__init__(app)
         self.max_bytes = int(max_bytes)
         self.path_prefix = path_prefix.rstrip("/") if path_prefix else None
@@ -54,4 +53,3 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
         request._receive = receive  # type: ignore[attr-defined]
         return await call_next(request)
-

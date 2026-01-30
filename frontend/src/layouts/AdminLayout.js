@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState } from "react";
 import {
   Box,
   Toolbar,
@@ -12,8 +12,8 @@ import {
   Divider,
   IconButton,
   useMediaQuery,
-} from '@mui/material';
-import { alpha, useTheme } from '@mui/material/styles';
+} from "@mui/material";
+import { alpha, useTheme } from "@mui/material/styles";
 import {
   RocketLaunch as QuickStartIcon,
   Storage as KnowledgeBasesIcon,
@@ -32,13 +32,12 @@ import {
   Palette as BrandingIcon,
   Menu as MenuIcon,
   AutoAwesome as ExperiencesIcon,
-} from '@mui/icons-material';
+} from "@mui/icons-material";
 
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useTheme as useAppTheme } from '../contexts/ThemeContext';
-import { getBrandingAppName, getBrandingLogoUrl } from '../utils/constants';
-import TopBar from '../components/layout/TopBar.jsx';
-
+import { useNavigate, useLocation } from "react-router-dom";
+import { useTheme as useAppTheme } from "../contexts/ThemeContext";
+import { getBrandingAppName, getBrandingLogoUrl } from "../utils/constants";
+import TopBar from "../components/layout/TopBar.jsx";
 
 const DRAWER_WIDTH = 280;
 
@@ -46,7 +45,7 @@ const AdminLayout = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const { branding, theme: appTheme } = useAppTheme();
@@ -66,27 +65,51 @@ const AdminLayout = ({ children }) => {
   };
 
   const adminMenuItems = [
-    { text: 'Quick Start', icon: <QuickStartIcon />, path: '/admin/dashboard' },
-    { text: 'Model Configurations', icon: <ModelConfigIcon />, path: '/admin/model-configurations' },
-    { text: 'Knowledge Bases', icon: <KnowledgeBasesIcon />, path: '/admin/knowledge-bases' },
-    { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
-    { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
-    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
-    { text: 'Experiences', icon: <ExperiencesIcon />, path: '/admin/experiences' },
-    { text: 'Query Tester', icon: <QueryTesterIcon />, path: '/admin/query-tester' },
-    { text: 'LLM Tester', icon: <LLMTesterIcon />, path: '/admin/llm-tester' },
-    { text: 'Health Monitor', icon: <HealthIcon />, path: '/admin/health' },
+    { text: "Quick Start", icon: <QuickStartIcon />, path: "/admin/dashboard" },
+    {
+      text: "Model Configurations",
+      icon: <ModelConfigIcon />,
+      path: "/admin/model-configurations",
+    },
+    {
+      text: "Knowledge Bases",
+      icon: <KnowledgeBasesIcon />,
+      path: "/admin/knowledge-bases",
+    },
+    { text: "Prompts", icon: <PromptsIcon />, path: "/admin/prompts" },
+    { text: "Plugins", icon: <ExtensionIcon />, path: "/admin/plugins" },
+    { text: "Plugin Feeds", icon: <ScheduleIcon />, path: "/admin/feeds" },
+    {
+      text: "Experiences",
+      icon: <ExperiencesIcon />,
+      path: "/admin/experiences",
+    },
+    {
+      text: "Query Tester",
+      icon: <QueryTesterIcon />,
+      path: "/admin/query-tester",
+    },
+    { text: "LLM Tester", icon: <LLMTesterIcon />, path: "/admin/llm-tester" },
+    { text: "Health Monitor", icon: <HealthIcon />, path: "/admin/health" },
   ];
 
   const systemMenuItems = [
-    { text: 'LLM Providers', icon: <LLMProvidersIcon />, path: '/admin/llm-providers' },
-    { text: 'Branding', icon: <BrandingIcon />, path: '/admin/branding' },
+    {
+      text: "LLM Providers",
+      icon: <LLMProvidersIcon />,
+      path: "/admin/llm-providers",
+    },
+    { text: "Branding", icon: <BrandingIcon />, path: "/admin/branding" },
   ];
 
   const rbacMenuItems = [
-    { text: 'User Management', icon: <UsersIcon />, path: '/admin/users' },
-    { text: 'User Groups', icon: <PeopleIcon />, path: '/admin/user-groups' },
-    { text: 'KB Permissions', icon: <SecurityIcon />, path: '/admin/kb-permissions' },
+    { text: "User Management", icon: <UsersIcon />, path: "/admin/users" },
+    { text: "User Groups", icon: <PeopleIcon />, path: "/admin/user-groups" },
+    {
+      text: "KB Permissions",
+      icon: <SecurityIcon />,
+      path: "/admin/kb-permissions",
+    },
   ];
 
   const isActive = (path) => location.pathname === path;
@@ -97,17 +120,17 @@ const AdminLayout = ({ children }) => {
       <Divider />
 
       {/* Scrollable Menu Content */}
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+      <Box sx={{ flex: 1, overflow: "auto" }}>
         {/* Power User Features */}
         <List>
           <ListItem>
             <Typography
               variant="overline"
               sx={{
-                fontSize: '0.75rem',
-                color: 'primary.main',
+                fontSize: "0.75rem",
+                color: "primary.main",
                 fontWeight: 600,
-                letterSpacing: '0.1em'
+                letterSpacing: "0.1em",
               }}
             >
               KNOWLEDGE MANAGEMENT
@@ -133,10 +156,10 @@ const AdminLayout = ({ children }) => {
             <Typography
               variant="overline"
               sx={{
-                fontSize: '0.75rem',
-                color: 'primary.main',
+                fontSize: "0.75rem",
+                color: "primary.main",
                 fontWeight: 600,
-                letterSpacing: '0.1em'
+                letterSpacing: "0.1em",
               }}
             >
               System Configuration
@@ -158,10 +181,10 @@ const AdminLayout = ({ children }) => {
             <Typography
               variant="overline"
               sx={{
-                fontSize: '0.75rem',
-                color: 'primary.main',
+                fontSize: "0.75rem",
+                color: "primary.main",
                 fontWeight: 600,
-                letterSpacing: '0.1em'
+                letterSpacing: "0.1em",
               }}
             >
               Access Control
@@ -183,22 +206,22 @@ const AdminLayout = ({ children }) => {
       {/* Branding Logo at Bottom - Full Width */}
       <Box
         sx={{
-          mt: 'auto',
+          mt: "auto",
           p: 2,
-          backgroundColor: alpha(primaryMain, 0.00),
+          backgroundColor: alpha(primaryMain, 0.0),
           borderTop: `1px solid ${alpha(primaryMain, 0.1)}`,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center'
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
         }}
       >
         <img
           src={logoUrl}
           alt={appDisplayName}
           style={{
-            height: '60px',
-            width: 'auto',
-            maxWidth: '100%'
+            height: "60px",
+            width: "auto",
+            maxWidth: "100%",
           }}
         />
       </Box>
@@ -206,7 +229,7 @@ const AdminLayout = ({ children }) => {
   );
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: "flex" }}>
       {/* Shared TopBar */}
       <TopBar
         sectionTitle={isMobile ? undefined : "Admin Panel"}
@@ -215,17 +238,19 @@ const AdminLayout = ({ children }) => {
         appBarPosition="fixed"
         fixedOverDrawer
         showAdminLink={false}
-        hamburgerButton={isMobile ? (
-          <IconButton
-            color="inherit"
-            aria-label="open drawer"
-            edge="start"
-            onClick={handleDrawerToggle}
-            sx={{ mr: 1 }}
-          >
-            <MenuIcon />
-          </IconButton>
-        ) : null}
+        hamburgerButton={
+          isMobile ? (
+            <IconButton
+              color="inherit"
+              aria-label="open drawer"
+              edge="start"
+              onClick={handleDrawerToggle}
+              sx={{ mr: 1 }}
+            >
+              <MenuIcon />
+            </IconButton>
+          ) : null
+        }
       />
 
       {/* Desktop Sidebar */}
@@ -234,12 +259,12 @@ const AdminLayout = ({ children }) => {
           sx={{
             width: DRAWER_WIDTH,
             flexShrink: 0,
-            '& .MuiDrawer-paper': {
+            "& .MuiDrawer-paper": {
               width: DRAWER_WIDTH,
-              boxSizing: 'border-box',
-              height: '100vh',
-              display: 'flex',
-              flexDirection: 'column',
+              boxSizing: "border-box",
+              height: "100vh",
+              display: "flex",
+              flexDirection: "column",
             },
           }}
           variant="permanent"
@@ -257,12 +282,12 @@ const AdminLayout = ({ children }) => {
           onClose={handleDrawerToggle}
           ModalProps={{ keepMounted: true }}
           sx={{
-            '& .MuiDrawer-paper': {
+            "& .MuiDrawer-paper": {
               width: DRAWER_WIDTH,
-              boxSizing: 'border-box',
-              height: '100vh',
-              display: 'flex',
-              flexDirection: 'column',
+              boxSizing: "border-box",
+              height: "100vh",
+              display: "flex",
+              flexDirection: "column",
             },
           }}
         >
@@ -275,7 +300,7 @@ const AdminLayout = ({ children }) => {
         component="main"
         sx={{
           flexGrow: 1,
-          bgcolor: 'background.default',
+          bgcolor: "background.default",
           p: { xs: 1.5, sm: 3 },
         }}
       >

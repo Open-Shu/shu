@@ -11,7 +11,7 @@ Tests the enhanced error handling functionality including:
 **Validates: Requirements 4.3, 4.5, 4.6, 4.7, 4.8**
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
@@ -25,8 +25,8 @@ class TestExtractHttpErrorDetails:
     def _create_mock_error(
         self,
         status_code: int,
-        body: Dict[str, Any],
-        headers: Optional[Dict[str, str]] = None,
+        body: dict[str, Any],
+        headers: dict[str, str] | None = None,
     ) -> httpx.HTTPStatusError:
         """Create a mock HTTP status error for testing."""
         mock_response = MagicMock()
@@ -248,7 +248,7 @@ class TestBuildErrorDetails:
 
         # Simulate what _build_error_details does in development
         is_development = True
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "status_code": raw_details.get("status"),
             "error_type": sanitized.error_type,
             "error_code": sanitized.error_code,
@@ -289,7 +289,7 @@ class TestBuildErrorDetails:
 
         # Simulate what _build_error_details does in production
         is_development = False
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "status_code": raw_details.get("status"),
             "error_type": sanitized.error_type,
             "error_code": sanitized.error_code,
@@ -298,9 +298,7 @@ class TestBuildErrorDetails:
 
         if not is_development:
             if raw_details.get("provider_message"):
-                result["provider_message"] = ErrorSanitizer.sanitize_string(
-                    raw_details.get("provider_message")
-                )
+                result["provider_message"] = ErrorSanitizer.sanitize_string(raw_details.get("provider_message"))
             result["model"] = raw_details.get("model")
 
         # Should not include endpoint, request_id, or body in production
@@ -313,10 +311,9 @@ class TestBuildErrorDetails:
         assert result["model"] == "gpt-4"
 
 
-
 class TestRetryState:
     """Tests for RetryState class.
-    
+
     **Feature: open-source-fixes, Property 11: Retry Loop Breaking**
     **Validates: Requirements 5.4, 5.5**
     """
@@ -485,7 +482,7 @@ class TestRetryState:
 
 class TestCapabilityMismatchDetection:
     """Tests for capability mismatch detection.
-    
+
     **Feature: open-source-fixes, Property 10: Vision Capability Mismatch Detection**
     **Validates: Requirements 5.1, 5.2, 5.3**
     """
@@ -570,7 +567,7 @@ class TestCapabilityMismatchDetection:
 
     def test_handles_none_values_in_details(self) -> None:
         """Test that capability mismatch detection handles None values gracefully.
-        
+
         This tests the fix for a bug where details dict contained None values
         instead of empty strings, causing AttributeError when calling .lower().
         """

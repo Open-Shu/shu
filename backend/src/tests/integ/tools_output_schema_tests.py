@@ -1,15 +1,17 @@
 """
 Integration test: output schema validation failure should return HTTP 500 with error=output_validation_error.
 """
+
 from __future__ import annotations
+
 import asyncio
-import os, sys
+import os
 
 # Disable rate limiting to isolate validation behavior
 os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "0")
 
-from shu.models.plugin_registry import PluginDefinition
 from integ.integration_test_runner import run_integration_tests
+from shu.models.plugin_registry import PluginDefinition
 
 
 async def test_output_schema_violation_returns_500(client, db, auth_headers):
@@ -39,5 +41,3 @@ async def test_output_schema_violation_returns_500(client, db, auth_headers):
 
 if __name__ == "__main__":
     asyncio.run(run_integration_tests([test_output_schema_violation_returns_500]))
-
-

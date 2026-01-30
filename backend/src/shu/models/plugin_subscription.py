@@ -1,11 +1,10 @@
-"""
-PluginSubscription model: per-user selection of plugins that may use a given connected account/provider.
+"""PluginSubscription model: per-user selection of plugins that may use a given connected account/provider.
 Used to compute consent scope unions and enforce execution-time authorization (TASK-163).
 """
-from __future__ import annotations
-from typing import Optional
 
-from sqlalchemy import Column, String, Index, UniqueConstraint, ForeignKey
+from __future__ import annotations
+
+from sqlalchemy import Column, ForeignKey, Index, String, UniqueConstraint
 
 from .base import BaseModel
 
@@ -38,4 +37,3 @@ class PluginSubscription(BaseModel):
         ),
         Index("ix_plugin_sub_user_provider", "user_id", "provider_key"),
     )
-

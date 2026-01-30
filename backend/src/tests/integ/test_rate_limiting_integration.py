@@ -16,8 +16,8 @@ def _enable_rate_limiting():
     import EXECUTOR at module load time and hold a direct reference to the
     original object.
     """
-    from shu.plugins.executor import EXECUTOR
     from shu.core.rate_limiting import TokenBucketRateLimiter
+    from shu.plugins.executor import EXECUTOR
 
     # Save original limiters
     old_limiter = EXECUTOR._limiter
@@ -115,4 +115,3 @@ class RateLimitingTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(RateLimitingTestSuite, globals())
-

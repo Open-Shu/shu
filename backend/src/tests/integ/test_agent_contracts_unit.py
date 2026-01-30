@@ -5,19 +5,18 @@ Unit-style contract tests for Agent MVP core contracts.
 - SequentialRunner sequencing (plugin order and LLM step marker)
 - Orchestrator prompt composition uses only successful plugin summaries
 """
-import sys
-import os
+
 import asyncio
-from typing import List, Callable
+import sys
+from collections.abc import Callable
 
 from integ.base_unit_test import BaseUnitTestSuite
-
+from shu.agent.orchestrator import MorningBriefingOrchestrator
 
 # --- Test helpers (dummy tools) ---
 from shu.agent.plugins.base import PluginInput, PluginResult
-from shu.agent.workflow.runner import SequentialRunner, Step
 from shu.agent.plugins.registry import registry as plugin_registry
-from shu.agent.orchestrator import MorningBriefingOrchestrator
+from shu.agent.workflow.runner import SequentialRunner, Step
 
 
 class DummyPluginA:
@@ -43,6 +42,7 @@ class DummyFailPlugin:
 
 # --- Tests ---
 
+
 def test_sequential_runner_contracts_and_order():
     async def _run():
         # Register dummy plugins
@@ -51,15 +51,19 @@ def test_sequential_runner_contracts_and_order():
 
         # Monkeypatch registry to bypass DB enablement for this unit test
         orig_resolve = plugin_registry.resolve_enabled
+
         async def _fake_resolve(db, name, version="v0"):
             return tool_registry.get_registered(name)
+
         tool_registry.resolve_enabled = _fake_resolve
 
         class _FakeAsyncResult:
             def scalars(self):
                 return self
+
             def first(self):
                 return None
+
         class _FakeDB:
             async def execute(self, *args, **kwargs):
                 return _FakeAsyncResult()
@@ -71,7 +75,12 @@ def test_sequential_runner_contracts_and_order():
                 Step(kind="llm", name="synthesize", params={}),
             ]
             runner = SequentialRunner(max_total_seconds=10, max_plugin_calls=4)
-            result = await runner.run(user_id="test_user", agent_key="test_agent", steps=steps, ctx={"messages": [], "db": _FakeDB()})
+            result = await runner.run(
+                user_id="test_user",
+                agent_key="test_agent",
+                steps=steps,
+                ctx={"messages": [], "db": _FakeDB()},
+            )
         finally:
             plugin_registry.resolve_enabled = orig_resolve
 
@@ -120,7 +129,7 @@ def test_orchestrator_compose_prompt_no_data_path():
 
 
 class AgentContractsUnitTestSuite(BaseUnitTestSuite):
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_sequential_runner_contracts_and_order,
             test_orchestrator_compose_prompt_uses_only_success_summaries,
@@ -138,4 +147,3 @@ if __name__ == "__main__":
     suite = AgentContractsUnitTestSuite()
     code = suite.run()
     sys.exit(code)
-

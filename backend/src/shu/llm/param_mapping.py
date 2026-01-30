@@ -1,5 +1,4 @@
-"""
-TASK-003: Parameter Normalization and Mapping Layer
+"""TASK-003: Parameter Normalization and Mapping Layer
 
 This module implements a small, self-contained utility for:
 - Merging model_configurations.parameter_overrides with per-request llm_params
@@ -16,9 +15,10 @@ Key policies (as per EPIC-LLM-PROVIDER-GENERALIZATION and TASK-003):
 This module does not perform any network I/O and does not depend on httpx.
 It is intended to be consumed by UnifiedLLMClient (TASK-004) and admin preview APIs (TASK-007).
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..core.exceptions import ValidationError
 
@@ -37,7 +37,7 @@ _ALLOWED_TYPES = {
 }
 
 
-def _options_values(spec: Dict[str, Any]) -> Optional[list]:
+def _options_values(spec: dict[str, Any]) -> list | None:
     options = spec.get("options")
     if not isinstance(options, list):
         return None
@@ -48,7 +48,7 @@ def _options_values(spec: Dict[str, Any]) -> Optional[list]:
     return vals
 
 
-def _matches_option(value: Any, candidates: Optional[list]) -> bool:
+def _matches_option(value: Any, candidates: list | None) -> bool:
     if candidates is None:
         return True
     for candidate in candidates:
@@ -63,7 +63,7 @@ def _matches_option(value: Any, candidates: Optional[list]) -> bool:
     return False
 
 
-def _validate_single(key: str, value: Any, spec: Dict[str, Any]) -> None:
+def _validate_single(key: str, value: Any, spec: dict[str, Any]) -> None:
     """Validate a single normalized parameter value against mapping spec.
 
     Spec fields honored:
@@ -127,10 +127,10 @@ def _validate_single(key: str, value: Any, spec: Dict[str, Any]) -> None:
 
 
 def build_provider_params(
-    provider_parameter_mapping: Optional[Dict[str, Any]],
-    model_overrides: Optional[Dict[str, Any]],
-    request_params: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
+    provider_parameter_mapping: dict[str, Any] | None,
+    model_overrides: dict[str, Any] | None,
+    request_params: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Merge model_config overrides with per-request params, validate known keys, and return normalized dict.
 
     Precedence: request_params override model_overrides, but when both provide the same key:
@@ -143,7 +143,7 @@ def build_provider_params(
     Unknown keys are allowed and passed through without validation.
     """
     mapping = provider_parameter_mapping or {}
-    normalized: Dict[str, Any] = {}
+    normalized: dict[str, Any] = {}
 
     def _merge_value(existing: Any, incoming: Any) -> Any:
         if existing is None:

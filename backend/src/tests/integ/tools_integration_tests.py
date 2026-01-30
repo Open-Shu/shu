@@ -4,24 +4,33 @@ Integration tests for Tools: registry + loader + executor path.
 This suite avoids external provider calls by using the debug_echo plugin.
 Gmail digest remains for real-world use but is not exercised here.
 """
+
 from __future__ import annotations
+
 import asyncio
-import os, sys
-from typing import Any, Dict
+import os
 
 # Disable rate limiting for this test module to avoid redis dependency
 os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "0")
 
 from sqlalchemy import select
 
-from shu.models.plugin_registry import PluginDefinition
 from integ.integration_test_runner import run_integration_tests
+from shu.models.plugin_registry import PluginDefinition
 
 
 async def test_tools_list_and_get(client, db, auth_headers):
     # Arrange: ensure ToolDefinition exists for debug_echo
     created = False
-    existing = (await db.execute(select(PluginDefinition).where(PluginDefinition.name == "debug_echo", PluginDefinition.version == "1"))).scalars().first()
+    existing = (
+        (
+            await db.execute(
+                select(PluginDefinition).where(PluginDefinition.name == "debug_echo", PluginDefinition.version == "1")
+            )
+        )
+        .scalars()
+        .first()
+    )
     if existing:
         row = existing
         row.enabled = True
@@ -56,7 +65,15 @@ async def test_tools_list_and_get(client, db, auth_headers):
 async def test_tools_execute_echo(client, db, auth_headers):
     # Arrange: ensure ToolDefinition exists for debug_echo
     created = False
-    existing = (await db.execute(select(PluginDefinition).where(PluginDefinition.name == "debug_echo", PluginDefinition.version == "1"))).scalars().first()
+    existing = (
+        (
+            await db.execute(
+                select(PluginDefinition).where(PluginDefinition.name == "debug_echo", PluginDefinition.version == "1")
+            )
+        )
+        .scalars()
+        .first()
+    )
     if existing:
         row = existing
         row.enabled = True
@@ -86,5 +103,3 @@ async def test_tools_execute_echo(client, db, auth_headers):
 
 if __name__ == "__main__":
     asyncio.run(run_integration_tests([test_tools_list_and_get, test_tools_execute_echo]))
-
-

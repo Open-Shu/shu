@@ -1,11 +1,9 @@
-"""
-Database-backed conversation locking utilities.
+"""Database-backed conversation locking utilities.
 
 Locks are stored in Conversation.meta so they persist across workers/devices.
 """
 
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +19,7 @@ async def acquire_conversation_lock(
     db_session: AsyncSession,
     conversation_id: str,
     lock_id: str,
-    owner_user_id: Optional[str] = None,
+    owner_user_id: str | None = None,
 ) -> None:
     """Attempt to acquire a conversation lock; raise if another task holds it."""
     manage_tx = not db_session.in_transaction()
@@ -58,10 +56,8 @@ async def _get_conversation_for_update(
     db_session: AsyncSession,
     conversation_id: str,
     allow_missing: bool = False,
-) -> Optional[Conversation]:
-    stmt = select(Conversation).where(
-        Conversation.id == conversation_id
-    ).with_for_update()
+) -> Conversation | None:
+    stmt = select(Conversation).where(Conversation.id == conversation_id).with_for_update()
     result = await db_session.execute(stmt)
     convo = result.scalar_one_or_none()
     if not convo and not allow_missing:
@@ -69,10 +65,10 @@ async def _get_conversation_for_update(
     return convo
 
 
-def _set_lock_or_raise(convo: Conversation, lock_id: str, owner_user_id: Optional[str]) -> None:
+def _set_lock_or_raise(convo: Conversation, lock_id: str, owner_user_id: str | None) -> None:
     meta = dict(convo.meta or {})
     existing = meta.get(LOCK_META_KEY)
-    now_ts = datetime.now(timezone.utc)
+    now_ts = datetime.now(UTC)
 
     if isinstance(existing, dict):
         acquired_raw = existing.get("acquired_at")
@@ -91,7 +87,7 @@ def _set_lock_or_raise(convo: Conversation, lock_id: str, owner_user_id: Optiona
     meta[LOCK_META_KEY] = {
         "lock_id": lock_id,
         "owner_user_id": owner_user_id,
-        "acquired_at": now_ts.isoformat()
+        "acquired_at": now_ts.isoformat(),
     }
     convo.meta = meta
 

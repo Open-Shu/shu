@@ -1,13 +1,14 @@
-"""
-Minimal Tool Schedule persistence for Tools v1.
+"""Minimal Tool Schedule persistence for Tools v1.
 
 Supports fixed-interval schedules (cron can be added later).
 """
+
 from __future__ import annotations
-from sqlalchemy import Column, String, JSON, Boolean, Integer, Index
+
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import JSON, Boolean, Column, Index, Integer, String
 from sqlalchemy.dialects.postgresql import TIMESTAMP
-from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from .base import BaseModel
 
@@ -32,18 +33,14 @@ class PluginFeed(BaseModel):
     next_run_at = Column(TIMESTAMP(timezone=True), nullable=True)
     last_run_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
-    __table_args__ = (
-        Index("ix_plugin_feed_enabled_next", "enabled", "next_run_at"),
-    )
+    __table_args__ = (Index("ix_plugin_feed_enabled_next", "enabled", "next_run_at"),)
 
     @staticmethod
     def now_utc() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def schedule_next(self) -> None:
         self.last_run_at = self.now_utc()
         # If interval invalid, default to 3600s
         interval = self.interval_seconds or 3600
         self.next_run_at = self.last_run_at + timedelta(seconds=max(1, int(interval)))
-
-

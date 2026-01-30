@@ -60,11 +60,15 @@ httpx==0.28.1  # For HTTP client in integration tests
 # HTTP client
 requests==2.32.4  # For HTTP requests in tests and utilities
 
-# Development tools
-# black==25.1.0
-# isort==6.0.1
-# flake8==7.3.0
-# mypy==1.16.1
+# Development tools - Linting and formatting
+ruff==0.8.4  # Fast Python linter and formatter (replaces black, isort, flake8)
+mypy==1.13.0  # Static type checker
+pre-commit==4.0.1  # Git hook framework for automated checks
+bandit==1.8.0  # Security linter for Python
+
+# Testing and coverage
+coverage[toml]==7.6.9  # Code coverage measurement
+pytest-cov==6.0.0  # Pytest plugin for coverage
 
 # Utilities
 python-dotenv==1.1.1
