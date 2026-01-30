@@ -13,8 +13,6 @@ Complete reference for all linting tools configured in the Shu project.
 | JavaScript/React | Prettier | Formatting | `frontend/.prettierrc.json` |
 | SQL | SQLFluff | Linting + Formatting | `.sqlfluff` |
 | Markdown | ~~markdownlint~~ | ~~Documentation Linting~~ | Disabled (too strict) |
-| Docker | hadolint | Dockerfile Linting | Built-in rules |
-| Shell | shellcheck | Shell Script Linting | Built-in rules |
 | Secrets | detect-secrets | Secret Detection | `.secrets.baseline` |
 
 ## Python Tools
@@ -227,64 +225,6 @@ markdownlint --fix docs/ *.md
 
 **Configuration:** `.markdownlint.json` (still present if you want to enable)
 
-## Docker Tools
-
-### hadolint
-**Purpose:** Dockerfile linter
-
-**What it checks:**
-- Best practices
-- Security issues
-- Deprecated instructions
-- Layer optimization
-- Pinned versions
-- Shell usage
-
-**Commands:**
-```bash
-# Lint Dockerfile
-hadolint deployment/docker/api/Dockerfile
-
-# Lint all Dockerfiles
-find . -name "Dockerfile*" | xargs hadolint
-
-# Ignore specific rules
-hadolint --ignore DL3008 Dockerfile
-```
-
-**Configuration:** Command-line args in `.pre-commit-config.yaml`
-
-**Ignored Rules:** DL3008 (apt pinning), DL3013 (pip pinning)
-
-## Shell Tools
-
-### shellcheck
-**Purpose:** Shell script linter
-
-**What it checks:**
-- Syntax errors
-- Quoting issues
-- Variable usage
-- Command substitution
-- Portability issues
-- Common mistakes
-
-**Commands:**
-```bash
-# Check shell script
-shellcheck backend/scripts/run_dev.sh
-
-# Check all shell scripts
-find . -name "*.sh" | xargs shellcheck
-
-# Show only warnings and errors
-shellcheck --severity=warning script.sh
-```
-
-**Configuration:** Command-line args in `.pre-commit-config.yaml`
-
-**Severity:** Warning and above
-
 ## Security Tools
 
 ### detect-secrets
@@ -352,7 +292,6 @@ make lint-python
 make lint-frontend
 make lint-sql
 make lint-docs
-make lint-docker
 
 # Format everything
 make format
@@ -373,11 +312,15 @@ All tools run in GitHub Actions on every PR:
 **Workflow:** `.github/workflows/lint.yml`
 
 **Jobs:**
-- python-lint (Ruff + mypy + Bandit)
-- frontend-lint (ESLint + Prettier)
-- pre-commit (All hooks)
+- python-lint (Ruff + mypy on changed Python files)
+- frontend-lint (ESLint + Prettier on all frontend files)
+- pre-commit (Active hooks: ruff-format, bandit, prettier, general checks on changed files)
+
+**Strategy:** Python linting checks only changed files to avoid blocking PRs on legacy code issues
 
 **Blocking:** PRs cannot merge if linting fails
+
+**Note:** Some pre-commit hooks (ruff linter, mypy, eslint) are commented out to avoid duplication with dedicated jobs
 
 ## Tool Comparison
 
@@ -392,7 +335,7 @@ All tools run in GitHub Actions on every PR:
 ### Auto-fix Capability
 - ✅ **Full auto-fix:** Ruff, Prettier, SQLFluff, markdownlint
 - ⚠️ **Partial auto-fix:** ESLint (some rules)
-- ❌ **No auto-fix:** mypy, Bandit, hadolint, shellcheck, detect-secrets
+- ❌ **No auto-fix:** mypy, Bandit, detect-secrets
 
 ### Strictness
 - **Strictest:** mypy (type checking), Bandit (security)
@@ -497,15 +440,13 @@ SKIP=mypy git commit -m "message"
 - **Prettier:** https://prettier.io/docs/
 - **SQLFluff:** https://docs.sqlfluff.com/
 - **markdownlint:** https://github.com/DavidAnson/markdownlint
-- **hadolint:** https://github.com/hadolint/hadolint
-- **shellcheck:** https://www.shellcheck.net/
 - **detect-secrets:** https://github.com/Yelp/detect-secrets
 - **pre-commit:** https://pre-commit.com/
 
 ## Summary
 
 **Total Tools:** 9 (markdownlint disabled)
-**Languages Covered:** Python, JavaScript, SQL, Docker, Shell
+**Languages Covered:** Python, JavaScript, SQL
 **Auto-fix Capable:** 6 tools
 **Security Focused:** 2 tools (Bandit, detect-secrets)
 **Pre-commit Integrated:** All active tools

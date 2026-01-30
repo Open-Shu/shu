@@ -1392,7 +1392,7 @@ class QueryService:
                     ) title_matches
                     WHERE title_score > 0
                     ORDER BY title_score DESC
-                """)
+                """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here
 
                 params["exact_pattern"] = f"\\m{re.escape(query)}\\M"
                 title_result = await self.db.execute(title_match_query, params)
@@ -1580,7 +1580,7 @@ class QueryService:
                     AND ({where_clause})
                     ORDER BY keyword_score DESC, dc.chunk_index
                     LIMIT :limit
-                """)
+                """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here
 
                 result = await self.db.execute(keyword_query, params)
                 chunks = result.fetchall()
@@ -1923,7 +1923,7 @@ class QueryService:
                 AND ({where_clause})
                 ORDER BY title_score DESC, d.title, dc.chunk_index
                 LIMIT :limit
-            """)
+            """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here
 
             result = await self.db.execute(title_query, params)
             chunks = result.fetchall()

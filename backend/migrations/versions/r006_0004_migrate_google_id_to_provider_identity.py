@@ -15,10 +15,11 @@ Idempotency guarantees:
              Only restores values for users that don't already have google_id set.
 """
 
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy import text
 import uuid
+
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy import text
 
 from migrations.helpers import (
     column_exists,
@@ -34,7 +35,7 @@ depends_on = None
 
 def upgrade() -> None:
     """Migrate google_id to ProviderIdentity and drop column.
-    
+
     Idempotent: Safe to run multiple times.
     - If google_id column doesn't exist, does nothing.
     - If ProviderIdentity already exists for a user, skips that user.
@@ -50,8 +51,8 @@ def upgrade() -> None:
     # Migrate google_id values to ProviderIdentity
     users_with_google_id = conn.execute(
         text("""
-            SELECT id, google_id, email, name, picture_url 
-            FROM users 
+            SELECT id, google_id, email, name, picture_url
+            FROM users
             WHERE google_id IS NOT NULL
         """)
     ).fetchall()
@@ -61,18 +62,18 @@ def upgrade() -> None:
         # Check by user_id + provider_key + account_id (unique constraint)
         existing = conn.execute(
             text("""
-                SELECT id FROM provider_identities 
-                WHERE user_id = :user_id 
-                AND provider_key = 'google' 
+                SELECT id FROM provider_identities
+                WHERE user_id = :user_id
+                AND provider_key = 'google'
                 AND account_id = :account_id
             """),
-            {"user_id": user.id, "account_id": user.google_id}
+            {"user_id": user.id, "account_id": user.google_id},
         ).fetchone()
 
         if not existing:
             conn.execute(
                 text("""
-                    INSERT INTO provider_identities 
+                    INSERT INTO provider_identities
                     (id, user_id, provider_key, account_id, primary_email, display_name, avatar_url, created_at, updated_at)
                     VALUES (:id, :user_id, 'google', :account_id, :email, :name, :avatar_url, NOW(), NOW())
                 """),
@@ -83,7 +84,7 @@ def upgrade() -> None:
                     "email": user.email,
                     "name": user.name,
                     "avatar_url": user.picture_url,
-                }
+                },
             )
 
     # Drop index if it exists (idempotent)
@@ -96,7 +97,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Restore google_id column and migrate data back from ProviderIdentity.
-    
+
     Idempotent: Safe to run multiple times.
     - If google_id column already exists, skips column creation.
     - Only updates users where google_id is NULL (doesn't overwrite existing values).
@@ -108,10 +109,7 @@ def downgrade() -> None:
 
     # Add google_id column back if it doesn't exist (idempotent)
     if not column_exists(inspector, "users", "google_id"):
-        op.add_column(
-            "users",
-            sa.Column("google_id", sa.String(), nullable=True)
-        )
+        op.add_column("users", sa.Column("google_id", sa.String(), nullable=True))
         # Re-inspect after adding column
         inspector = sa.inspect(conn)
 
@@ -119,7 +117,7 @@ def downgrade() -> None:
     # Only restore for users where google_id is currently NULL (idempotent)
     google_identities = conn.execute(
         text("""
-            SELECT pi.id as identity_id, pi.user_id, pi.account_id 
+            SELECT pi.id as identity_id, pi.user_id, pi.account_id
             FROM provider_identities pi
             JOIN users u ON u.id = pi.user_id
             WHERE pi.provider_key = 'google'
@@ -131,12 +129,12 @@ def downgrade() -> None:
     for identity in google_identities:
         conn.execute(
             text("""
-                UPDATE users 
-                SET google_id = :google_id 
+                UPDATE users
+                SET google_id = :google_id
                 WHERE id = :user_id
                 AND google_id IS NULL
             """),
-            {"user_id": identity.user_id, "google_id": identity.account_id}
+            {"user_id": identity.user_id, "google_id": identity.account_id},
         )
         restored_identity_ids.append(identity.identity_id)
 
@@ -149,8 +147,8 @@ def downgrade() -> None:
     for identity_id in restored_identity_ids:
         conn.execute(
             text("""
-                DELETE FROM provider_identities 
+                DELETE FROM provider_identities
                 WHERE id = :id
             """),
-            {"id": identity_id}
+            {"id": identity_id},
         )

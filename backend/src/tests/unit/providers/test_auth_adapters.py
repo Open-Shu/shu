@@ -7,9 +7,10 @@ Tests cover:
 - Error handling for network failures
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
+import pytest
 
 
 class TestGoogleAuthAdapterGetUserInfo:
@@ -28,6 +29,7 @@ class TestGoogleAuthAdapterGetUserInfo:
     def google_adapter(self, mock_auth_capability):
         """Create a GoogleAuthAdapter instance with mocked dependencies."""
         from shu.providers.google.auth_adapter import GoogleAuthAdapter
+
         return GoogleAuthAdapter(mock_auth_capability)
 
     @pytest.mark.asyncio
@@ -40,7 +42,7 @@ class TestGoogleAuthAdapterGetUserInfo:
             "email": "test@example.com",
             "name": "Test User",
             "picture": "https://example.com/photo.jpg",
-            "aud": "test-google-client-id"
+            "aud": "test-google-client-id",
         }
 
         with patch("httpx.AsyncClient") as mock_client_class:
@@ -94,7 +96,7 @@ class TestGoogleAuthAdapterGetUserInfo:
             "sub": "google-user-123",
             "email": "test@example.com",
             "name": "Test User",
-            "aud": "wrong-client-id"  # Doesn't match test-google-client-id
+            "aud": "wrong-client-id",  # Doesn't match test-google-client-id
         }
 
         with patch("httpx.AsyncClient") as mock_client_class:
@@ -127,7 +129,7 @@ class TestGoogleAuthAdapterGetUserInfo:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "sub": "google-user-123",
-            "aud": "test-google-client-id"
+            "aud": "test-google-client-id",
             # Missing email
         }
 
@@ -149,7 +151,7 @@ class TestGoogleAuthAdapterGetUserInfo:
         mock_response.json.return_value = {
             "sub": "google-user-123",
             "email": "testuser@example.com",
-            "aud": "test-google-client-id"
+            "aud": "test-google-client-id",
             # No name provided
         }
 
@@ -173,7 +175,7 @@ class TestGoogleAuthAdapterGetUserInfo:
             "sub": "google-user-123",
             "email": "test@example.com",
             "name": "Test User",
-            "aud": "test-google-client-id"
+            "aud": "test-google-client-id",
         }
 
         mock_db = AsyncMock()
@@ -208,6 +210,7 @@ class TestMicrosoftAuthAdapterGetUserInfo:
     def microsoft_adapter(self, mock_auth_capability):
         """Create a MicrosoftAuthAdapter instance with mocked dependencies."""
         from shu.providers.microsoft.auth_adapter import MicrosoftAuthAdapter
+
         return MicrosoftAuthAdapter(mock_auth_capability)
 
     @pytest.mark.asyncio
@@ -218,7 +221,7 @@ class TestMicrosoftAuthAdapterGetUserInfo:
         mock_response.json.return_value = {
             "id": "microsoft-user-456",
             "mail": "test@example.com",
-            "displayName": "Test User"
+            "displayName": "Test User",
         }
 
         with patch("httpx.AsyncClient") as mock_client_class:
@@ -244,7 +247,7 @@ class TestMicrosoftAuthAdapterGetUserInfo:
         mock_response.json.return_value = {
             "id": "microsoft-user-456",
             "userPrincipalName": "test@example.onmicrosoft.com",
-            "displayName": "Test User"
+            "displayName": "Test User",
         }
 
         with patch("httpx.AsyncClient") as mock_client_class:
@@ -324,7 +327,7 @@ class TestMicrosoftAuthAdapterGetUserInfo:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "id": "microsoft-user-456",
-            "mail": "testuser@example.com"
+            "mail": "testuser@example.com",
             # No displayName provided
         }
 

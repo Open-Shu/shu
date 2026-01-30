@@ -80,8 +80,8 @@ class RetryState:
                 body = ""
             error_str = f"{error_str}:status={status_code}:body={body[:200]}"
 
-        # Compute hash
-        return hashlib.md5(error_str.encode()).hexdigest()
+        # Compute hash, we need this hashing to be fast, not secure
+        return hashlib.md5(error_str.encode()).hexdigest()  # noqa: S324 # nosec
 
     def record_error(self, error: Exception) -> None:
         """Record an error attempt and track identical errors.

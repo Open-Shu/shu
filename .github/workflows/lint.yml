@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git diff
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,13 +28,32 @@ jobs:
           pip install ruff mypy
           pip install -r requirements.txt
 
-      - name: Run Ruff linter
-        run: |
-          ruff check backend/ --output-format=github
+      - name: Get changed Python files
+        id: changed-py-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            **/*.py
+          files_ignore: |
+            tests/**
+            backend/migrations/**
 
-      - name: Run Ruff formatter check
+      - name: Run Ruff linter on changed files
+        if: steps.changed-py-files.outputs.any_changed == 'true'
         run: |
-          ruff format --check backend/
+          echo "Running Ruff on changed files..."
+          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff check --output-format=github
+
+      - name: Run Ruff formatter check on changed files
+        if: steps.changed-py-files.outputs.any_changed == 'true'
+        run: |
+          echo "Checking Ruff formatting on changed files..."
+          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff format --check
+
+      - name: Skip if no Python files changed
+        if: steps.changed-py-files.outputs.any_changed == 'false'
+        run: |
+          echo "✅ No Python files changed, skipping linting"
 
       - name: Run mypy type checker
         run: |
@@ -71,6 +92,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git diff
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -91,8 +114,20 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
 
-      - name: Run pre-commit on all files
-        run: pre-commit run --all-files --show-diff-on-failure
+      - name: Get all changed files
+        id: changed-files-all
+        uses: tj-actions/changed-files@v44
+
+      - name: Run pre-commit on changed files
+        if: steps.changed-files-all.outputs.any_changed == 'true'
+        run: |
+          echo "Running pre-commit on changed files..."
+          echo "${{ steps.changed-files-all.outputs.all_changed_files }}" | xargs pre-commit run --files --show-diff-on-failure
+
+      - name: Skip if no files changed
+        if: steps.changed-files-all.outputs.any_changed == 'false'
+        run: |
+          echo "✅ No files changed, skipping pre-commit hooks"
 
   lint-summary:
     name: Lint Summary

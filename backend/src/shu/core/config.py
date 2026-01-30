@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # API configuration
     api_v1_prefix: str = "/api/v1"
-    api_host: str = Field("0.0.0.0", alias="SHU_API_HOST")
+    api_host: str = Field("127.0.0.1", alias="SHU_API_HOST")
     api_port: int = Field(8000, alias="SHU_API_PORT")
     environment: str = Field("development", alias="SHU_ENVIRONMENT")
     reload: bool = Field(False, alias="SHU_RELOAD")

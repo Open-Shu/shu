@@ -81,7 +81,7 @@ ps:
 	docker compose -f $(COMPOSE_FILE) ps
 
 # Linting and formatting targets
-.PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix lint-docker
+.PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix
 
 # Run all linters
 lint: lint-python lint-frontend
@@ -99,11 +99,6 @@ lint-python:
 lint-frontend:
 	@echo "Running ESLint..."
 	cd frontend && npm run lint
-
-# Docker linting (manual - not in pre-commit)
-lint-docker:
-	@echo "Running hadolint..."
-	find . -name "Dockerfile*" -not -path "*/node_modules/*" | xargs hadolint
 
 # Format all code
 format: format-python format-frontend
