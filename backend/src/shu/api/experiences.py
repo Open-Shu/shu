@@ -316,6 +316,7 @@ async def delete_experience(
     "/{experience_id}/run",
     summary="Execute experience",
     description="Execute an experience and stream results via SSE.",
+    response_model=None,
 )
 async def run_experience(
     experience_id: str = Path(..., description="Experience ID"),
@@ -399,6 +400,7 @@ async def run_experience(
     "/{experience_id}/export",
     summary="Export experience as YAML",
     description="Export an experience configuration as a downloadable YAML file with placeholders for user-specific values.",
+    response_model=None,
 )
 async def export_experience(
     experience_id: str = Path(..., description="Experience ID"),
