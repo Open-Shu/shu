@@ -78,8 +78,6 @@ ignore = [
     "D100",     # Missing docstring in public module
     "D104",     # Missing docstring in public package
     "D107",     # Missing docstring in __init__
-    "ANN101",   # Missing type annotation for self
-    "ANN102",   # Missing type annotation for cls
     "ANN401",   # Dynamically typed expressions (Any)
     "S101",     # Use of assert (allowed in tests)
 ]
@@ -104,6 +102,8 @@ max-branches = 12
 "backend/src/tests/**/*.py" = ["ARG", "PLR2004", "S", "D", "ANN"]
 # Migrations don't need docstrings or type hints
 "backend/migrations/**/*.py" = ["D", "ANN"]
+# FastAPI routes use Query/Depends in defaults (B008 is a false positive for functions like `Depends`)
+"backend/src/shu/api/*.py" = ["B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["shu"]

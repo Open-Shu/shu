@@ -8,10 +8,9 @@ repos:
     rev: v0.8.4
     hooks:
       # Run the linter
-      # TODO: comment back in with a later commit
-      # - id: ruff
-      #   args: [--fix]
-      #   types_or: [python, pyi]
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
       # Run the formatter
       - id: ruff-format
         types_or: [python, pyi]
@@ -26,33 +25,39 @@ repos:
         exclude: ^(tests/|backend/migrations/)
 
   # Python: Type checking with mypy
-  # TODO: comment back in with a later commit
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.13.0
-  #   hooks:
-  #     - id: mypy
-  #       additional_dependencies: [
-  #         types-requests,
-  #         types-PyYAML,
-  #         types-redis,
-  #         types-python-jose,
-  #       ]
-  #       args: [--config-file=pyproject.toml]
-  #       exclude: ^(tests/|migrations/versions/)
+  # NOTE: Using --follow-imports=silent to only report errors in changed files,
+  # not in imported modules. This allows type checking new code without fixing
+  # the entire codebase.
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-requests
+          - types-PyYAML
+          - types-redis
+          - types-python-jose
+          - "sqlalchemy[mypy]"
+          - fastapi
+          - pydantic
+        args:
+          - --config-file=pyproject.toml
+          - --follow-imports=silent
+          - --show-error-codes
+        exclude: ^(tests/|migrations/versions/)
 
   # Frontend: ESLint
-  # TODO: comment back in with a later commit
-  # - repo: https://github.com/pre-commit/mirrors-eslint
-  #   rev: v9.17.0
-  #   hooks:
-  #     - id: eslint
-  #       files: \.(js|jsx|ts|tsx)$
-  #       args: [--fix, --max-warnings=0]
-  #       additional_dependencies:
-  #         - eslint@8.57.0
-  #         - eslint-plugin-react@7.33.2
-  #         - eslint-plugin-react-hooks@4.6.0
-  #       exclude: ^(?!frontend/)
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.17.0
+    hooks:
+      - id: eslint
+        files: \.(js|jsx|ts|tsx)$
+        args: [--fix, --max-warnings=0]
+        additional_dependencies:
+          - eslint@8.57.0
+          - eslint-plugin-react@7.33.2
+          - eslint-plugin-react-hooks@4.6.0
+        exclude: ^(?!frontend/)
 
   # Frontend: Prettier
   - repo: https://github.com/pre-commit/mirrors-prettier
