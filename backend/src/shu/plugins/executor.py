@@ -687,6 +687,8 @@ class Executor:
                     return result
                 except HTTPException:
                     raise
+                except Exception as e:  # noqa: BLE001
+                    # Map host.http failures to a structured error using HttpRequestFailed properties
                 except Exception as e:
                     # Map host.http failures to a structured provider_error so callers get clear surfaces
                     if isinstance(e, HttpRequestFailed):
@@ -707,12 +709,17 @@ class Executor:
                         details = {
                             "status_code": e.status_code,
                             "url": e.url,
-                            "provider_message": prov_msg,
+                            "provider_message": e.provider_message,
+                            "is_retryable": e.is_retryable,
                         }
+                        if e.provider_error_code:
+                            details["provider_error_code"] = e.provider_error_code
+                        if e.retry_after_seconds is not None:
+                            details["retry_after_seconds"] = e.retry_after_seconds
                         return PluginResult.err(
-                            message=f"Provider HTTP error ({e.status_code})",
-                            code="provider_error",
-                            details=details,
+                            message=f"Provider HTTP error ({e.status_code}): {e.provider_message}" if e.provider_message else f"Provider HTTP error ({e.status_code})",
+                            code=e.error_category,
+                            details=details
                         )
                     logger.exception("Plugin '%s' failed: %s", plugin.name, e)
                     return PluginResult.err(message=str(e), code="plugin_execute_error")

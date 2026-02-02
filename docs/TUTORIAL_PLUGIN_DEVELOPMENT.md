@@ -236,6 +236,7 @@ Users configure their secrets via the Plugin Subscriptions page (/settings/conne
 1) HTTP (host.http)
 - Use host.http.fetch(method, url, headers=..., params=..., json=...)
 - Policy: certain direct client imports are blocked; always use host.http
+- **Error handling**: On HTTP 4xx/5xx, `host.http.fetch()` raises `HttpRequestFailed`. See "Error Handling" section below.
 
 2) Identity (host.identity)
 - host.identity.user_email is available if your app user has an email
@@ -370,6 +371,70 @@ The loader enforces security policies at sync time:
     }
 - Enqueue due runs (e.g., via cron or a K8s job):
   - POST /api/v1/plugins/admin/feeds/run-due
+
+### Error Handling (5 minutes)
+
+**The simple case: let errors bubble up**
+
+When `host.http.fetch()` encounters an HTTP 4xx or 5xx response, it raises `HttpRequestFailed`. In most cases, you don't need to catch this - the executor automatically converts it to a structured `PluginResult.err()` with:
+- Semantic error code (`auth_error`, `forbidden`, `rate_limited`, `server_error`, etc.)
+- Provider message extracted from the response body
+- Retry information when available
+
+```python
+async def execute(self, params, context, host):
+    # No try/catch needed for standard error handling
+    token, _ = await host.auth.resolve_token_and_target("google")
+    resp = await host.http.fetch("GET", "https://api.example.com/data",
+                                  headers={"Authorization": f"Bearer {token}"})
+    return PluginResult.ok({"items": resp["body"]["items"]})
+    # If the API returns 401, 403, 429, 5xx, etc., the executor handles it automatically
+```
+
+**When to catch HttpRequestFailed**
+
+Only catch `HttpRequestFailed` when you need custom handling:
+- 404 means "create new" instead of "error"
+- 403 on one resource shouldn't stop processing others
+- You want to add context-specific error messages
+
+```python
+from shu.plugins.host.exceptions import HttpRequestFailed
+
+async def _fetch_item(self, host, token, item_id):
+    try:
+        resp = await host.http.fetch("GET", f"https://api.example.com/items/{item_id}",
+                                      headers={"Authorization": f"Bearer {token}"})
+        return resp["body"]
+    except HttpRequestFailed as e:
+        if e.error_category == "not_found":
+            return None  # Item doesn't exist, that's OK
+        if e.error_category == "forbidden":
+            # Log and skip, don't fail the whole operation
+            return None
+        raise  # Re-raise for auth_error, rate_limited, server_error, etc.
+```
+
+**HttpRequestFailed properties**
+
+The exception provides semantic properties so you don't need to parse status codes:
+- `e.error_category`: `auth_error` (401), `forbidden` (403), `not_found` (404), `gone` (410), `rate_limited` (429), `server_error` (5xx), `client_error` (other 4xx)
+- `e.is_retryable`: True for 429 and 5xx
+- `e.retry_after_seconds`: From Retry-After header if present
+- `e.provider_message`: Best-effort extraction from response body
+- `e.provider_error_code`: Provider-specific error code if available (e.g., Microsoft Graph's `ErrorCode`)
+
+**Error categories and their meaning**
+
+| Category | HTTP Status | Typical Cause | Plugin Action |
+|----------|-------------|---------------|---------------|
+| `auth_error` | 401 | Token expired/invalid | Let bubble up; user needs to reconnect |
+| `forbidden` | 403 | Missing permissions | Let bubble up or skip resource |
+| `not_found` | 404 | Resource deleted | Handle gracefully if expected |
+| `gone` | 410 | Delta token expired | Reset cursor and retry |
+| `rate_limited` | 429 | Too many requests | Let bubble up; executor reports retry info |
+| `server_error` | 5xx | Provider issue | Let bubble up; is_retryable=True |
+| `client_error` | 4xx | Bad request | Check your parameters |
 
 ### Security and guardrails
 - Capability enforcement: host only exposes what you declare. Access to undeclared host.* raises an error.

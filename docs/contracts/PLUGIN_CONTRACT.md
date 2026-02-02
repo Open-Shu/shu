@@ -181,11 +181,23 @@ Guidance: diagnostics should be reserved for non-error, developer-facing details
 - cache.get/set(key, value, ttl?)
 - identity.lookup(kind, value)  // e.g., kind="google_directory"; recommended but optional
 - secrets.get(name)
-- http.fetch(request, retries/backoff)
+- http.fetch(request, retries/backoff) - raises `HttpRequestFailed` on 4xx/5xx
 - rate.limit(bucket, cost)
 - scheduler.enqueue(task, run_at)  // only if background capability is granted
 - storage.put/get(reference)
 Note: Plugins may ignore capabilities and implement equivalents internally. Host cannot enforce centralized policy if the plugin bypasses capabilities; use RBAC and sandboxing accordingly.
+
+### HTTP Error Handling
+When `host.http.fetch()` receives an HTTP 4xx or 5xx response, it raises `HttpRequestFailed`. The exception provides semantic properties:
+- `error_category`: `auth_error` (401), `forbidden` (403), `not_found` (404), `gone` (410), `rate_limited` (429), `server_error` (5xx), `client_error` (other 4xx)
+- `is_retryable`: True for 429 and 5xx
+- `retry_after_seconds`: From Retry-After header if present
+- `provider_message`: Best-effort extraction from response body
+- `provider_error_code`: Provider-specific error code if available
+
+**Default behavior**: If a plugin lets `HttpRequestFailed` bubble up, the executor converts it to `PluginResult.err()` with the semantic `error_category` as the code.
+
+**Custom handling**: Plugins should only catch `HttpRequestFailed` when they need non-default behavior (e.g., treating 404 as "create new" or skipping forbidden resources).
 
 
 ## Plugin Independence Policy
