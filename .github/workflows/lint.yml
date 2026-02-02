@@ -28,10 +28,28 @@ jobs:
           pip install ruff mypy
           pip install -r requirements.txt
 
+      - name: Detect base branch
+        id: base-branch
+        run: |
+          # In PR context, use the PR base branch
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_BRANCH="${{ github.base_ref }}"
+            echo "Using PR base branch: $BASE_BRANCH"
+          # In push context, use main or master
+          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            BASE_BRANCH="main"
+            echo "Using main branch"
+          else
+            BASE_BRANCH="master"
+            echo "Using master branch"
+          fi
+          echo "base=$BASE_BRANCH" >> $GITHUB_OUTPUT
+
       - name: Get changed Python files
         id: changed-py-files
         uses: tj-actions/changed-files@v44
         with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
           files: |
             **/*.py
           files_ignore: |
@@ -41,6 +59,7 @@ jobs:
       - name: Run Ruff linter on changed files
         if: steps.changed-py-files.outputs.any_changed == 'true'
         run: |
+          echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
           echo "Running Ruff on changed files..."
           echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff check --output-format=github
 
@@ -59,7 +78,7 @@ jobs:
         if: steps.changed-py-files.outputs.any_changed == 'true'
         run: |
           echo "Running mypy on changed files..."
-          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs mypy --follow-imports=silent --show-error-codes
+          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs mypy --follow-imports=silent --show-error-codes --no-error-summary
 
   frontend-lint:
     name: Frontend Linting (ESLint + Prettier)
@@ -81,10 +100,28 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Detect base branch
+        id: base-branch
+        run: |
+          # In PR context, use the PR base branch
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_BRANCH="${{ github.base_ref }}"
+            echo "Using PR base branch: $BASE_BRANCH"
+          # In push context, use main or master
+          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            BASE_BRANCH="main"
+            echo "Using main branch"
+          else
+            BASE_BRANCH="master"
+            echo "Using master branch"
+          fi
+          echo "base=$BASE_BRANCH" >> $GITHUB_OUTPUT
+
       - name: Get changed frontend files
         id: changed-frontend-files
         uses: tj-actions/changed-files@v44
         with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
           files: |
             frontend/**/*.{js,jsx,ts,tsx,json,css,md}
 
@@ -92,6 +129,7 @@ jobs:
         if: steps.changed-frontend-files.outputs.any_changed == 'true'
         working-directory: frontend
         run: |
+          echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
           echo "Running ESLint on changed files..."
           FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
           # Remove 'frontend/' prefix from paths since we're in frontend directory
@@ -141,13 +179,33 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
 
+      - name: Detect base branch
+        id: base-branch
+        run: |
+          # In PR context, use the PR base branch
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_BRANCH="${{ github.base_ref }}"
+            echo "Using PR base branch: $BASE_BRANCH"
+          # In push context, use main or master
+          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            BASE_BRANCH="main"
+            echo "Using main branch"
+          else
+            BASE_BRANCH="master"
+            echo "Using master branch"
+          fi
+          echo "base=$BASE_BRANCH" >> $GITHUB_OUTPUT
+
       - name: Get all changed files
         id: changed-files-all
         uses: tj-actions/changed-files@v44
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
 
       - name: Run pre-commit on changed files
         if: steps.changed-files-all.outputs.any_changed == 'true'
         run: |
+          echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
           echo "Running pre-commit on changed files..."
           pre-commit run --files ${{ steps.changed-files-all.outputs.all_changed_files }} --show-diff-on-failure
 

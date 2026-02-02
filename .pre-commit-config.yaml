@@ -28,6 +28,7 @@ repos:
   # NOTE: Using --follow-imports=silent to only report errors in changed files,
   # not in imported modules. This allows type checking new code without fixing
   # the entire codebase.
+  # ADDITIONAL NOTE: Using --no-error-summary to reduce noise in pre-commit output
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.13.0
     hooks:
@@ -44,7 +45,8 @@ repos:
           - --config-file=pyproject.toml
           - --follow-imports=silent
           - --show-error-codes
-        exclude: ^(tests/|migrations/versions/)
+          - --no-error-summary
+        exclude: ^(tests/|migrations/versions/|backend/src/tests/)
 
   # Frontend: ESLint
   - repo: https://github.com/pre-commit/mirrors-eslint
