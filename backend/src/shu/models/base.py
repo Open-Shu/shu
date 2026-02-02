@@ -7,10 +7,10 @@ for all database models.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, String
+from sqlalchemy import String
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.exc import MissingGreenlet
-from sqlalchemy.orm import declarative_mixin
+from sqlalchemy.orm import Mapped, declarative_mixin, mapped_column
 
 # Import Base from the database module to avoid duplicate declarations
 from ..core.database import Base
@@ -20,8 +20,10 @@ from ..core.database import Base
 class TimestampMixin:
     """Mixin for adding timestamp columns to models."""
 
-    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
-    updated_at = Column(
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
@@ -33,7 +35,7 @@ class TimestampMixin:
 class UUIDMixin:
     """Mixin for adding UUID primary key to models."""
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
 
 
 class BaseModel(Base, TimestampMixin, UUIDMixin):
@@ -45,7 +47,7 @@ class BaseModel(Base, TimestampMixin, UUIDMixin):
         """Convert model to dictionary."""
         # Use ORM mapper attributes to respect attribute keys when column names differ
         result = {}
-        for attr in self.__mapper__.column_attrs:
+        for attr in self.__mapper__.column_attrs:  # type: ignore[attr-defined]
             try:
                 result[attr.key] = getattr(self, attr.key)
             except MissingGreenlet:

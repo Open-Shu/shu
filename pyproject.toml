@@ -122,6 +122,9 @@ warn_unused_ignores = true
 warn_no_return = true
 strict_equality = true
 
+# Enable SQLAlchemy plugin for proper Column type inference
+plugins = ["sqlalchemy.ext.mypy.plugin"]
+
 # Exclude directories
 exclude = [
     "^.venv/",

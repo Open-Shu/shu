@@ -103,9 +103,7 @@ async def create_experience(
 
     try:
         service = ExperienceService(db)
-        result = await service.create_experience(
-            experience_data, created_by=str(current_user.id), current_user=current_user
-        )
+        result = await service.create_experience(experience_data, created_by=current_user.id, current_user=current_user)
 
         logger.info(
             "API: Created experience",
@@ -147,7 +145,7 @@ async def get_my_results(
 
     try:
         service = ExperienceService(db)
-        result = await service.get_user_results(user_id=str(current_user.id), offset=offset, limit=limit)
+        result = await service.get_user_results(user_id=current_user.id, offset=offset, limit=limit)
 
         return ShuResponse.success(result.model_dump())
 
@@ -179,7 +177,7 @@ async def get_run(
         service = ExperienceService(db)
         is_admin = current_user.can_manage_users()
 
-        result = await service.get_run(run_id=run_id, user_id=str(current_user.id), is_admin=is_admin)
+        result = await service.get_run(run_id=run_id, user_id=current_user.id, is_admin=is_admin)
 
         if not result:
             return ShuResponse.error(
@@ -214,9 +212,7 @@ async def get_experience(
         service = ExperienceService(db)
         is_admin = current_user.can_manage_users()
 
-        result = await service.get_experience(
-            experience_id=experience_id, user_id=str(current_user.id), is_admin=is_admin
-        )
+        result = await service.get_experience(experience_id=experience_id, user_id=current_user.id, is_admin=is_admin)
 
         if not result:
             return ShuResponse.error(
@@ -340,9 +336,7 @@ async def run_experience(
     service = ExperienceService(db)
     is_admin = current_user.can_manage_users()
 
-    experience = await service.get_experience(
-        experience_id=experience_id, user_id=str(current_user.id), is_admin=is_admin
-    )
+    experience = await service.get_experience(experience_id=experience_id, user_id=current_user.id, is_admin=is_admin)
 
     if not experience:
         return ShuResponse.error(
@@ -420,7 +414,7 @@ async def export_experience(
 
         # Get the experience with visibility check
         experience = await service.get_experience(
-            experience_id=experience_id, user_id=str(current_user.id), is_admin=is_admin
+            experience_id=experience_id, user_id=current_user.id, is_admin=is_admin
         )
 
         if not experience:
