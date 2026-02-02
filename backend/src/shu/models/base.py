@@ -47,7 +47,7 @@ class BaseModel(Base, TimestampMixin, UUIDMixin):
         """Convert model to dictionary."""
         # Use ORM mapper attributes to respect attribute keys when column names differ
         result = {}
-        for attr in self.__mapper__.column_attrs:  # type: ignore[attr-defined]
+        for attr in self.__mapper__.column_attrs:  # type: ignore[attr-defined] # SQLAlchemy adds __mapper__
             try:
                 result[attr.key] = getattr(self, attr.key)
             except MissingGreenlet:
