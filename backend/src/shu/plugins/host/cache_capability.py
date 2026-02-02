@@ -69,7 +69,7 @@ class CacheCapability(ImmutableCapabilityMixin):
         plugin_name: str,
         user_id: str,
         backend: CacheBackend | None = None,
-    ):
+    ) -> None:
         """Initialize the cache capability.
 
         Args:

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class AttachmentCleanupService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.settings = get_settings_instance()
 
@@ -26,7 +26,9 @@ class AttachmentCleanupService:
         """
         now = datetime.now(UTC)
         # Primary criterion: expires_at <= now
-        stmt = select(Attachment).where(Attachment.expires_at != None, Attachment.expires_at <= now).limit(batch_size)
+        stmt = (
+            select(Attachment).where(Attachment.expires_at is not None, Attachment.expires_at <= now).limit(batch_size)
+        )
         result = await self.db.execute(stmt)
         attachments = list(result.scalars().all())
         deleted = 0
@@ -51,7 +53,7 @@ async def start_attachment_cleanup_scheduler():
     settings = get_settings_instance()
     interval = getattr(settings, "chat_attachment_cleanup_interval_seconds", 6 * 3600)
 
-    async def _runner():
+    async def _runner() -> None:
         while True:
             try:
                 db = await get_db_session()

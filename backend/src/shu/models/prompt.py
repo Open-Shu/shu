@@ -56,15 +56,15 @@ class Prompt(BaseModel):
     def __repr__(self) -> str:
         return f"<Prompt(id={self.id}, name='{self.name}', entity_type='{self.entity_type}')>"
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this prompt."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this prompt."""
         self.is_active = False
 
-    def increment_version(self):
+    def increment_version(self) -> None:
         """Increment the version number."""
         self.version += 1
 
@@ -97,11 +97,11 @@ class PromptAssignment(Base, UUIDMixin):
     def __repr__(self) -> str:
         return f"<PromptAssignment(prompt_id={self.prompt_id}, entity_id={self.entity_id})>"
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this assignment."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this assignment."""
         self.is_active = False
 

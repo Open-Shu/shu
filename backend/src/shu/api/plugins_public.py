@@ -1,5 +1,5 @@
 """Plugins API (public): list/get/execute
-Preserves original paths under /plugins
+Preserves original paths under /plugins.
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ async def execute_plugin(
         from ..plugins.host.auth_capability import AuthCapability
         from ..services.plugin_identity import resolve_auth_requirements
 
-        provider, mode_eff, subject, scopes = resolve_auth_requirements(plugin, body.params or {})
+        provider, mode_eff, _subject, scopes = resolve_auth_requirements(plugin, body.params or {})
         if provider and str(mode_eff or "").lower() == "user":
             # Execution-time subscription enforcement (TASK-163)
             try:

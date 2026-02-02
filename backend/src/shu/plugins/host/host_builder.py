@@ -73,7 +73,7 @@ class Host:
         "storage",
     )
 
-    def __init__(self, declared_caps: list[str] | None = None):
+    def __init__(self, declared_caps: list[str] | None = None) -> None:
         object.__setattr__(self, "_declared_caps", set(declared_caps or []))
         object.__setattr__(self, "_frozen", False)
         # Initialize capability slots to None

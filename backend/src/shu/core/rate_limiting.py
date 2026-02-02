@@ -111,7 +111,7 @@ class TokenBucketRateLimiter:
         namespace: str = "rl",
         capacity: int = 60,
         refill_per_second: float = 1.0,
-    ):
+    ) -> None:
         """Initialize rate limiter.
 
         Args:
@@ -262,7 +262,7 @@ class RateLimitService:
     All rate limiting uses fixed-window algorithm via CacheBackend.
     """
 
-    def __init__(self, settings: Any | None = None):
+    def __init__(self, settings: Any | None = None) -> None:
         """Initialize rate limit service.
 
         Args:

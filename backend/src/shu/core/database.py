@@ -213,7 +213,7 @@ async def check_db_connection() -> bool:
 class DatabaseManager:
     """Database manager for handling connections and transactions."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.engine = get_async_engine()
         self.SessionLocal = get_async_session_local()
 

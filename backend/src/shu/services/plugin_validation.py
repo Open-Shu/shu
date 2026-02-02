@@ -45,7 +45,7 @@ async def enforce_output_limit(
     """Enforce response payload size limit. On limit breach:
     - mark execution FAILED with output_too_large
     - commit exec record
-    - raise HTTPException 413 with envelope-aligned error
+    - raise HTTPException 413 with envelope-aligned error.
     """
     if not isinstance(max_bytes, int) or max_bytes <= 0:
         return

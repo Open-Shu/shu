@@ -1,4 +1,4 @@
-"""Role-Based Access Control for Shu API"""
+"""Role-Based Access Control for Shu API."""
 
 import logging
 
@@ -17,9 +17,9 @@ security = HTTPBearer()
 
 
 class RBACController:
-    """Role-Based Access Control for Shu API endpoints"""
+    """Role-Based Access Control for Shu API endpoints."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.jwt_manager = JWTManager()
 
     async def get_current_user(
@@ -27,7 +27,7 @@ class RBACController:
         credentials: HTTPAuthorizationCredentials = Depends(security),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        """Get current authenticated user from JWT token"""
+        """Get current authenticated user from JWT token."""
         token = credentials.credentials
 
         # Verify and decode the token
@@ -56,7 +56,7 @@ class RBACController:
         return user
 
     def require_role(self, required_role: UserRole):
-        """Decorator factory to require specific role for endpoint access"""
+        """Decorator factory to require specific role for endpoint access."""
 
         async def role_checker(
             credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -114,7 +114,7 @@ class RBACController:
                 and_(
                     KnowledgeBasePermission.knowledge_base_id == kb_id,
                     KnowledgeBasePermission.user_id == user.id,
-                    KnowledgeBasePermission.is_active == True,
+                    KnowledgeBasePermission.is_active,
                 )
             )
         )
@@ -129,7 +129,7 @@ class RBACController:
         # Get all active groups the user belongs to
         user_groups_result = await db.execute(
             select(UserGroupMembership.group_id).where(
-                and_(UserGroupMembership.user_id == user.id, UserGroupMembership.is_active == True)
+                and_(UserGroupMembership.user_id == user.id, UserGroupMembership.is_active)
             )
         )
         user_group_ids = [row[0] for row in user_groups_result.fetchall()]
@@ -141,7 +141,7 @@ class RBACController:
                     and_(
                         KnowledgeBasePermission.knowledge_base_id == kb_id,
                         KnowledgeBasePermission.group_id.in_(user_group_ids),
-                        KnowledgeBasePermission.is_active == True,
+                        KnowledgeBasePermission.is_active,
                     )
                 )
             )
@@ -195,7 +195,7 @@ class RBACController:
                 and_(
                     KnowledgeBasePermission.knowledge_base_id == kb_id,
                     KnowledgeBasePermission.user_id == user.id,
-                    KnowledgeBasePermission.is_active == True,
+                    KnowledgeBasePermission.is_active,
                 )
             )
         )
@@ -207,7 +207,7 @@ class RBACController:
         # Check for group-based permissions
         user_groups_result = await db.execute(
             select(UserGroupMembership.group_id).where(
-                and_(UserGroupMembership.user_id == user.id, UserGroupMembership.is_active == True)
+                and_(UserGroupMembership.user_id == user.id, UserGroupMembership.is_active)
             )
         )
         user_group_ids = [row[0] for row in user_groups_result.fetchall()]
@@ -218,7 +218,7 @@ class RBACController:
                     and_(
                         KnowledgeBasePermission.knowledge_base_id == kb_id,
                         KnowledgeBasePermission.group_id.in_(user_group_ids),
-                        KnowledgeBasePermission.is_active == True,
+                        KnowledgeBasePermission.is_active,
                     )
                 )
             )
@@ -358,7 +358,7 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 
 
 async def require_admin(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    """Require admin role for endpoint access - standalone dependency function"""
+    """Require admin role for endpoint access - standalone dependency function."""
     current_user = await get_current_user(request, db)
     if not current_user.can_manage_users():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
@@ -366,7 +366,7 @@ async def require_admin(request: Request, db: AsyncSession = Depends(get_db)) ->
 
 
 async def require_power_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    """Require power user or admin role - standalone dependency function"""
+    """Require power user or admin role - standalone dependency function."""
     current_user = await get_current_user(request, db)
     if not current_user.has_role(UserRole.POWER_USER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Power user access required")
@@ -374,7 +374,7 @@ async def require_power_user(request: Request, db: AsyncSession = Depends(get_db
 
 
 async def require_regular_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    """Require regular user or higher role - standalone dependency function"""
+    """Require regular user or higher role - standalone dependency function."""
     current_user = await get_current_user(request, db)
     if not current_user.has_role(UserRole.REGULAR_USER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Regular user access required")

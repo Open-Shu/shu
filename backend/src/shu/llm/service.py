@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class LLMService:
     """Service for managing LLM providers and operations."""
 
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession) -> None:
         self.db = db_session
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
@@ -47,7 +47,7 @@ class LLMService:
         """Get all active LLM providers."""
         stmt = (
             select(LLMProvider)
-            .where(LLMProvider.is_active == True)
+            .where(LLMProvider.is_active)
             .options(selectinload(LLMProvider.models), selectinload(LLMProvider.provider_definition))
             .order_by(LLMProvider.name)
         )
@@ -181,7 +181,7 @@ class LLMService:
 
     async def get_available_models(self, provider_id: str | None = None) -> list[LLMModel]:
         """Get available LLM models, optionally filtered by provider."""
-        stmt = select(LLMModel).where(LLMModel.is_active == True)
+        stmt = select(LLMModel).where(LLMModel.is_active)
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -193,7 +193,7 @@ class LLMService:
 
     async def get_model_by_name(self, model_name: str, provider_id: str | None = None) -> LLMModel | None:
         """Get LLM model by name, optionally filtered by provider."""
-        stmt = select(LLMModel).where(and_(LLMModel.model_name == model_name, LLMModel.is_active == True))
+        stmt = select(LLMModel).where(and_(LLMModel.model_name == model_name, LLMModel.is_active))
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -276,7 +276,7 @@ class LLMService:
             logger.error(f"Model discovery failed for provider {provider_id}: {e}")
             raise LLMProviderError(f"Failed to discover models: {e!s}")
 
-    async def sync_provider_models(self, provider_id: str, selected_models: list[str] = None) -> list[LLMModel]:
+    async def sync_provider_models(self, provider_id: str, selected_models: list[str] | None = None) -> list[LLMModel]:
         """Sync discovered models with database, enabling only selected models.
 
         Args:

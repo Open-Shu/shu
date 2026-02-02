@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class PluginRegistry:
-    def __init__(self):
+    def __init__(self) -> None:
         self._loader = PluginLoader()
         self._manifest: dict[str, PluginRecord] = {}
         self._cache: dict[str, Plugin] = {}
@@ -42,7 +42,7 @@ class PluginRegistry:
         - Creates a row if missing (enabled=False by default)
         - Updates input_schema/output_schema if provided by plugin
         - Purges DB rows for plugins no longer present on disk
-        - Does not flip enabled state automatically
+        - Does not flip enabled state automatically.
         """
         created = 0
         updated = 0

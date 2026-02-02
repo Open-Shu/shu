@@ -547,7 +547,7 @@ def get_settings_instance() -> Settings:
 
 class ConfigurationManager:
     """Centralized configuration manager that handles the priority cascade:
-    User Preferences → Model Config → KB Config → Global Defaults
+    User Preferences → Model Config → KB Config → Global Defaults.
 
     This replaces hardcoded values throughout the codebase and ensures
     consistent configuration resolution following the established hierarchy.
@@ -556,7 +556,7 @@ class ConfigurationManager:
     and loose coupling. Use get_config_manager() dependency in FastAPI endpoints.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     # RAG Configuration Resolution

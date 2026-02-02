@@ -1,6 +1,6 @@
 """Plugins loader: discovers local plugins under plugins/* directories with a manifest.
 - Each plugin folder should provide a manifest.py with PLUGIN_MANIFEST dict:
-  {"name": str, "version": str, "module": "plugins.pkg.plugin:PluginClass"}
+  {"name": str, "version": str, "module": "plugins.pkg.plugin:PluginClass"}.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class PluginRecord:
 
 
 class PluginLoader:
-    def __init__(self, *, plugins_dir: Path | None = None):
+    def __init__(self, *, plugins_dir: Path | None = None) -> None:
         # Resolve repo root from this file. Our layout is: <repo>/backend/src/shu/plugins/loader.py
         # So parents are: [0]=plugins, [1]=shu, [2]=src, [3]=backend, [4]=<repo>
         loader_path = Path(__file__).resolve()

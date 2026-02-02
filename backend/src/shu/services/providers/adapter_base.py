@@ -154,7 +154,7 @@ class BaseProviderAdapter:
 
     """
 
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         self.provider = context.provider
         self.conversation_owner_id = context.conversation_owner_id
         self.settings = get_settings_instance()
@@ -310,7 +310,7 @@ class BaseProviderAdapter:
         cached_tokens: int,
         reasoning_tokens: int,
         total_tokens: int,
-    ):
+    ) -> None:
         usage_dict = self._get_usage(
             input_tokens,
             output_tokens,
@@ -411,7 +411,7 @@ class BaseProviderAdapter:
         return {}
 
     # PROVIDER HANDLERS
-    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         raise NotImplementedError("Function handle_provider_event is not implemented.")
 
     async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:

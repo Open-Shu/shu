@@ -63,8 +63,8 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
 
             # Validate required scopes if provided
             try:
-                req = set([str(s) for s in (required_scopes or []) if s])
-                granted = set([str(s) for s in (getattr(row, "scopes", None) or []) if s])
+                req = {str(s) for s in (required_scopes or []) if s}
+                granted = {str(s) for s in (getattr(row, "scopes", None) or []) if s}
                 if req and not req.issubset(granted):
                     return None
             except Exception:

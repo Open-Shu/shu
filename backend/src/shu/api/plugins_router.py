@@ -1,5 +1,5 @@
 """Plugins API aggregator: includes public, admin, feeds, executions, and secrets sub-routers
-All paths remain under /plugins
+All paths remain under /plugins.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""RBAC (Role-Based Access Control) Schemas
+"""RBAC (Role-Based Access Control) Schemas.
 
 This module contains Pydantic schemas for RBAC operations including
 user groups, permissions, and access control management.

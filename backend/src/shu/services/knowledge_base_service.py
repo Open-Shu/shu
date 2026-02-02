@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 class KnowledgeBaseService:
     """Service for managing knowledge bases."""
 
-    def __init__(self, db: AsyncSession, config_manager=None):
+    def __init__(self, db: AsyncSession, config_manager=None) -> None:
         self.db = db
         # Use dependency injection for ConfigurationManager
         if config_manager is None:
@@ -398,12 +398,12 @@ class KnowledgeBaseService:
 
             # Get sync enabled count
             sync_enabled_result = await self.db.execute(
-                select(func.count(KnowledgeBase.id)).where(KnowledgeBase.sync_enabled == True)
+                select(func.count(KnowledgeBase.id)).where(KnowledgeBase.sync_enabled)
             )
             sync_enabled_count = sync_enabled_result.scalar() or 0
 
             # Mock other statistics for now
-            stats = {
+            return {
                 "total_knowledge_bases": total_kbs,
                 "active_knowledge_bases": active_kbs,
                 "total_documents": 0,  # Would need to count from documents table
@@ -412,8 +412,6 @@ class KnowledgeBaseService:
                 "source_type_breakdown": {},  # Would need to analyze documents
                 "status_breakdown": {"active": active_kbs, "inactive": total_kbs - active_kbs},
             }
-
-            return stats
 
         except Exception as e:
             logger.error(f"Failed to get knowledge base statistics: {e}", exc_info=True)
@@ -478,7 +476,7 @@ class KnowledgeBaseService:
         kb_id: str,
         limit: int = 50,
         offset: int = 0,
-        search_query: str = None,
+        search_query: str | None = None,
         filter_by: str = "all",
     ) -> tuple[list[Document], int]:
         """Get documents for a knowledge base with pagination.

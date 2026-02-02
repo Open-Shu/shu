@@ -1,4 +1,4 @@
-"""Shu - FastAPI Application
+"""Shu - FastAPI Application.
 
 This module creates and configures the FastAPI application for Shu.
 """
@@ -65,7 +65,7 @@ class StripAPITrailingSlashMiddleware(BaseHTTPMiddleware):
     so both '/foo' and '/foo/' resolve to the same handler without redirects.
     """
 
-    def __init__(self, app, api_prefix: str):
+    def __init__(self, app, api_prefix: str) -> None:
         super().__init__(app)
         self.api_prefix = api_prefix.rstrip("/")
 
@@ -277,7 +277,7 @@ async def lifespan(app: FastAPI):
             worker = Worker(backend, config, job_handler=process_job)
 
             # Start worker in background task
-            async def run_inline_worker():
+            async def run_inline_worker() -> None:
                 try:
                     await worker.run()
                 except Exception as e:
@@ -713,7 +713,7 @@ def setup_routes(app: FastAPI) -> None:
             side_call_router.prefix,
         ]
         base = settings.api_v1_prefix.rstrip("/")
-        app.state.api_root_paths = set(base + p for p in router_prefixes)
+        app.state.api_root_paths = {base + p for p in router_prefixes}
         logger.info("Registered API router roots", extra={"api_root_paths": list(app.state.api_root_paths)})
     except Exception as e:
         logger.warning(f"Failed to compute API root paths: {e}")

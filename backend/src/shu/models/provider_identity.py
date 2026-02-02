@@ -52,6 +52,4 @@ class ProviderIdentity(BaseModel):
     )
 
     def to_public_dict(self) -> dict[str, Any]:
-        d = self.to_dict()
-        # Nothing secret here, return as-is
-        return d
+        return self.to_dict()

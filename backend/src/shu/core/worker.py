@@ -167,7 +167,7 @@ class Worker:
         backend: QueueBackend,
         config: WorkerConfig,
         job_handler: Callable[[Job], Awaitable[None]],
-    ):
+    ) -> None:
         """Initialize the worker.
 
         Args:

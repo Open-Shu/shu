@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 class ExperienceService:
     """Service for managing experiences and their execution."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         # Create sandboxed Jinja2 environment for template validation
         self._jinja_env = SandboxedEnvironment(
@@ -615,7 +615,7 @@ class ExperienceService:
         if step_data.step_type == StepType.PLUGIN and step_data.plugin_name:
             required_scopes = await self.compute_required_scopes_for_step(step_data.plugin_name, step_data.plugin_op)
 
-        step = ExperienceStep(
+        return ExperienceStep(
             id=str(uuid.uuid4()),
             experience_id=experience_id,
             order=step_data.order,
@@ -629,8 +629,6 @@ class ExperienceService:
             condition_template=step_data.condition_template,
             required_scopes=required_scopes,
         )
-
-        return step
 
     # =========================================================================
     # Run History
@@ -669,7 +667,7 @@ class ExperienceService:
         )
 
         # Fetch user info for all runs
-        user_ids = list(set(run.user_id for run in runs if run.user_id))
+        user_ids = list({run.user_id for run in runs if run.user_id})
         users_by_id = await self._fetch_users_by_ids(user_ids)
 
         items = [self._run_to_response(run, users_by_id.get(run.user_id)) for run in runs]
@@ -822,7 +820,7 @@ class ExperienceService:
     # Export Functionality
     # =========================================================================
 
-    def generate_safe_file_name(self, experience: ExperienceResponse):
+    def generate_safe_file_name(self, experience: ExperienceResponse) -> str:
         # Create filename based on experience name
         safe_name = "".join(c for c in experience.name if c.isalnum() or c in (" ", "-", "_")).rstrip()
         safe_name = "-".join(word for word in safe_name.split() if word)  # Handle multiple spaces

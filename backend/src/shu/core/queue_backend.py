@@ -61,7 +61,7 @@ class QueueError(Exception):
         self,
         message: str,
         details: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.message = message
         self.details = details or {}
         super().__init__(self.message)
@@ -573,7 +573,7 @@ class InMemoryQueueBackend:
 
     """
 
-    def __init__(self, cleanup_interval_seconds: int = 60):
+    def __init__(self, cleanup_interval_seconds: int = 60) -> None:
         """Initialize the in-memory queue backend.
 
         Args:
@@ -1070,7 +1070,7 @@ class RedisQueueBackend:
 
     """
 
-    def __init__(self, redis_client: Any):
+    def __init__(self, redis_client: Any) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -1536,8 +1536,7 @@ class RedisQueueBackend:
             await self._restore_expired_jobs(queue_name)
             await self._move_scheduled_jobs(queue_name)
 
-            length = await self._client.llen(queue_key)
-            return length
+            return await self._client.llen(queue_key)
 
         except Exception as e:
             logger.error(

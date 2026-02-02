@@ -41,7 +41,7 @@ class SideCallResult:
         cost: Decimal | None = None,
         response_time_ms: int | None = None,
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.content = content
         self.success = success
         self.error_message = error_message
@@ -54,7 +54,7 @@ class SideCallResult:
 class SideCallService:
     """Service for managing optimized LLM side-calls."""
 
-    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager) -> None:
         self.db = db
         self.config_manager = config_manager
         self.llm_service = LLMService(db)

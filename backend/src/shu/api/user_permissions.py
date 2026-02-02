@@ -119,7 +119,7 @@ async def get_user_kb_permissions(
             .where(
                 and_(
                     KnowledgeBasePermission.user_id == user_id,
-                    KnowledgeBasePermission.is_active == True,
+                    KnowledgeBasePermission.is_active,
                 )
             )
         )
@@ -128,7 +128,7 @@ async def get_user_kb_permissions(
         # Get group-based permissions
         user_groups_result = await db.execute(
             select(UserGroupMembership.group_id).where(
-                and_(UserGroupMembership.user_id == user_id, UserGroupMembership.is_active == True)
+                and_(UserGroupMembership.user_id == user_id, UserGroupMembership.is_active)
             )
         )
         user_group_ids = [row[0] for row in user_groups_result.fetchall()]
@@ -141,7 +141,7 @@ async def get_user_kb_permissions(
                 .where(
                     and_(
                         KnowledgeBasePermission.group_id.in_(user_group_ids),
-                        KnowledgeBasePermission.is_active == True,
+                        KnowledgeBasePermission.is_active,
                     )
                 )
             )
@@ -236,7 +236,7 @@ async def get_user_group_memberships(
         # Get user's group memberships
         memberships_result = await db.execute(
             select(UserGroupMembership).where(
-                and_(UserGroupMembership.user_id == user_id, UserGroupMembership.is_active == True)
+                and_(UserGroupMembership.user_id == user_id, UserGroupMembership.is_active)
             )
         )
         memberships = memberships_result.scalars().all()

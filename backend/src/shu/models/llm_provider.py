@@ -56,7 +56,7 @@ class LLMProvider(BaseModel):
         supports_vision: bool | None = None,
         config: dict[str, Any] | None = None,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(*args, config=config, **kwargs)
 
         cfg = self._config_dict()
@@ -70,7 +70,7 @@ class LLMProvider(BaseModel):
         if not isinstance(capabilities, dict):
             capabilities = {}
 
-        def _set_capability(key: str, value: bool | None, label: str):
+        def _set_capability(key: str, value: bool | None, label: str) -> None:
             nonlocal updated, capabilities
             if value is None:
                 return

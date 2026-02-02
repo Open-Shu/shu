@@ -87,7 +87,7 @@ class Experience(BaseModel):
     parent_version = relationship("Experience", remote_side="Experience.id")
     creator = relationship("User", foreign_keys=[created_by])
 
-    def schedule_next(self, user_timezone: str = None) -> None:
+    def schedule_next(self, user_timezone: str | None = None) -> None:
         """Compute and set the next_run_at based on trigger_type and trigger_config.
 
         Args:

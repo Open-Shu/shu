@@ -1,4 +1,4 @@
-"""RBAC Service Layer
+"""RBAC Service Layer.
 
 This module provides service layer functionality for managing RBAC operations
 including user groups, permissions, and access control.
@@ -35,28 +35,28 @@ class RBACServiceError(ShuException):
 class GroupNotFoundError(RBACServiceError):
     """Raised when a user group is not found."""
 
-    def __init__(self, group_id: str):
+    def __init__(self, group_id: str) -> None:
         super().__init__(f"User group '{group_id}' not found", "GROUP_NOT_FOUND")
 
 
 class PermissionNotFoundError(RBACServiceError):
     """Raised when a permission is not found."""
 
-    def __init__(self, permission_id: str):
+    def __init__(self, permission_id: str) -> None:
         super().__init__(f"Permission '{permission_id}' not found", "PERMISSION_NOT_FOUND")
 
 
 class DuplicateGroupError(RBACServiceError):
     """Raised when trying to create a group with duplicate name."""
 
-    def __init__(self, group_name: str):
+    def __init__(self, group_name: str) -> None:
         super().__init__(f"Group with name '{group_name}' already exists", "DUPLICATE_GROUP")
 
 
 class DuplicatePermissionError(RBACServiceError):
     """Raised when trying to create duplicate permission."""
 
-    def __init__(self, target_type: str, target_id: str, kb_id: str):
+    def __init__(self, target_type: str, target_id: str, kb_id: str) -> None:
         super().__init__(
             f"Permission already exists for {target_type} '{target_id}' on KB '{kb_id}'",
             "DUPLICATE_PERMISSION",
@@ -66,7 +66,7 @@ class DuplicatePermissionError(RBACServiceError):
 class RBACService:
     """Service for managing RBAC operations."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     # User Group Management
@@ -109,12 +109,12 @@ class RBACService:
         # Build base query
         base_query = select(UserGroup)
         if active_only:
-            base_query = base_query.where(UserGroup.is_active == True)
+            base_query = base_query.where(UserGroup.is_active)
 
         # Get total count with a separate, simpler query
         count_query = select(func.count(UserGroup.id))
         if active_only:
-            count_query = count_query.where(UserGroup.is_active == True)
+            count_query = count_query.where(UserGroup.is_active)
 
         count_result = await self.db.execute(count_query)
         total_count = count_result.scalar()
@@ -239,7 +239,7 @@ class RBACService:
                     and_(
                         UserGroupMembership.user_id == user_id,
                         UserGroupMembership.group_id == group_id,
-                        UserGroupMembership.is_active == True,
+                        UserGroupMembership.is_active,
                     )
                 )
             )
@@ -271,7 +271,7 @@ class RBACService:
         result = await self.db.execute(
             select(UserGroupMembership)
             .options(selectinload(UserGroupMembership.user))
-            .where(and_(UserGroupMembership.group_id == group_id, UserGroupMembership.is_active == True))
+            .where(and_(UserGroupMembership.group_id == group_id, UserGroupMembership.is_active))
         )
         return list(result.scalars().all())
 
@@ -376,7 +376,7 @@ class RBACService:
             .where(
                 and_(
                     KnowledgeBasePermission.knowledge_base_id == kb_id,
-                    KnowledgeBasePermission.is_active == True,
+                    KnowledgeBasePermission.is_active,
                 )
             )
         )

@@ -89,7 +89,7 @@ class _DenyImportsFinder(MetaPathFinder):
             frame = frame.f_back
         return False
 
-    def find_spec(self, fullname, path, target=None):  # type: ignore[override]
+    def find_spec(self, fullname, path, target=None) -> None:  # type: ignore[override]
         # Block exact and submodule imports under denylisted packages
         name = str(fullname)
 
@@ -100,9 +100,8 @@ class _DenyImportsFinder(MetaPathFinder):
 
         # Block shu.* imports only from plugin code, not from trusted host code
         for p in self.deny_from_plugins:
-            if name == p or name.startswith(p + "."):
-                if not self._is_called_from_trusted_code():
-                    raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
+            if (name == p or name.startswith(p + ".")) and not self._is_called_from_trusted_code():
+                raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
 
 
 class _DenyHttpImportsCtx:
@@ -114,7 +113,7 @@ class _DenyHttpImportsCtx:
     blocked regardless of caller.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._finder: _DenyImportsFinder | None = None
         self._orig_import_module = None
 
@@ -162,9 +161,8 @@ class _DenyHttpImportsCtx:
 
         # Deny shu.* only from plugin code
         for p in _DenyImportsFinder.deny_from_plugins:
-            if n == p or n.startswith(p + "."):
-                if not _DenyHttpImportsCtx._is_called_from_trusted_code():
-                    return True
+            if (n == p or n.startswith(p + ".")) and not _DenyHttpImportsCtx._is_called_from_trusted_code():
+                return True
 
         return False
 
@@ -209,7 +207,7 @@ class _DenyHttpImportsCtx:
 
 
 class Executor:
-    def __init__(self, settings: Any | None = None):
+    def __init__(self, settings: Any | None = None) -> None:
         """Initialize executor rate limiters from configuration.
 
         If rate limiting is enabled in settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")

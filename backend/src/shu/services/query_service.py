@@ -413,7 +413,7 @@ def measure_execution_time(func):
 class QueryService:
     """Service for querying documents and performing search operations."""
 
-    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager) -> None:
         self.db = db
         self.config_manager = config_manager
 

@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 class CompletionsAdapter(BaseProviderAdapter):
     """Base adapter for providers implementing OpenAI-style /v1/chat/completions."""
 
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         super().__init__(context)
         self.latest_usage_event = None
         self._stream_content: list[str] = []
@@ -78,7 +78,7 @@ class CompletionsAdapter(BaseProviderAdapter):
 
         return ToolCallInstructions(plugin_name=plugin_name, operation=op, args_dict=args_dict)
 
-    def _merge_tool_call_deltas(self, function_call: dict[str, Any]):
+    def _merge_tool_call_deltas(self, function_call: dict[str, Any]) -> None:
         index = function_call.get("index")
         function = function_call.get("function", {})
 
@@ -103,7 +103,7 @@ class CompletionsAdapter(BaseProviderAdapter):
             metadata={"tool_calls": messages},
         )
 
-    def _extract_usage(self, path: str, chunk):
+    def _extract_usage(self, path: str, chunk) -> None:
         usage = jmespath.search(path, chunk) or {}
         if not usage:
             return
@@ -152,7 +152,7 @@ class CompletionsAdapter(BaseProviderAdapter):
 
         return parts
 
-    def get_finish_reason_path(self):
+    def get_finish_reason_path(self) -> str:
         return "(object == 'chat.completion' || object == 'chat.completion.chunk') && choices[*].finish_reason | [0]"
 
     async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
@@ -167,13 +167,14 @@ class CompletionsAdapter(BaseProviderAdapter):
             self.latest_usage_event = chunk
 
         finish_reason = jmespath.search(self.get_finish_reason_path(), chunk)
-        if finish_reason in set(["stop", "length"]):
+        if finish_reason in {"stop", "length"}:
             self._stream_finished = finish_reason
 
         function_calls = jmespath.search("object == 'chat.completion.chunk' && choices[*].delta.tool_calls | []", chunk)
         if function_calls:
             for function_call in function_calls:
                 self._merge_tool_call_deltas(function_call)
+        return None
 
     async def finalize_provider_events(self) -> list[ProviderEventResult]:
         final_text = "".join(self._stream_content)
@@ -210,7 +211,7 @@ class CompletionsAdapter(BaseProviderAdapter):
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=[self._transform_function_messages(function_call_messages)] + result_messages,
+                additional_messages=[self._transform_function_messages(function_call_messages), *result_messages],
                 content="",
             ),
             final_event,
@@ -245,14 +246,11 @@ class CompletionsAdapter(BaseProviderAdapter):
             for call, tool_call in zip(function_call_messages, tool_calls, strict=False)
         ]
 
-        additional_messages = [self._transform_function_messages(function_call_messages)] + result_messages
+        additional_messages = [self._transform_function_messages(function_call_messages), *result_messages]
         return [
-            ProviderToolCallEventResult(
-                tool_calls=tool_calls,
-                additional_messages=additional_messages,
-                content="",
-            )
-        ] + final_messages
+            ProviderToolCallEventResult(tool_calls=tool_calls, additional_messages=additional_messages, content=""),
+            *final_messages,
+        ]
 
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         res: list[dict[str, Any]] = []

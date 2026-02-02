@@ -152,7 +152,7 @@ class LLMResponse:
         provider: str,
         usage: dict[str, int],
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.content = content
         self.model = model
         self.provider = provider
@@ -181,7 +181,7 @@ class UnifiedLLMClient:
         provider: LLMProvider,
         conversation_owner_id: str | None = None,
         settings: Any | None = None,
-    ):
+    ) -> None:
         self.provider = provider
         self.conversation_owner_id = conversation_owner_id
         self.db_session = db_session
@@ -268,10 +268,7 @@ class UnifiedLLMClient:
         Connect/write/pool use the caller-provided timeout (or fall back to global defaults).
         """
         base_timeout = request_timeout or self._llm_timeout
-        if stream:
-            read_timeout = max(request_timeout or 0.0, self._llm_stream_read_timeout)
-        else:
-            read_timeout = base_timeout
+        read_timeout = max(request_timeout or 0.0, self._llm_stream_read_timeout) if stream else base_timeout
 
         return httpx.Timeout(
             connect=base_timeout,
@@ -993,7 +990,7 @@ class UnifiedLLMClient:
 
         return gen()
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
 

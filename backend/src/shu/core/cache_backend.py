@@ -56,7 +56,7 @@ class CacheError(Exception):
         self,
         message: str,
         details: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.message = message
         self.details = details or {}
         super().__init__(self.message)
@@ -355,7 +355,7 @@ class InMemoryCacheBackend:
 
     """
 
-    def __init__(self, cleanup_interval_seconds: int = 60):
+    def __init__(self, cleanup_interval_seconds: int = 60) -> None:
         """Initialize the in-memory cache.
 
         Args:
@@ -711,7 +711,7 @@ class RedisCacheBackend:
 
     """
 
-    def __init__(self, redis_client: Any):
+    def __init__(self, redis_client: Any) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -742,8 +742,7 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
-            result = await self._client.get(key)
-            return result
+            return await self._client.get(key)
         except Exception as e:
             logger.error(f"Redis GET failed for key '{key}': {e}")
             raise CacheConnectionError(
@@ -1173,7 +1172,7 @@ def get_cache_backend_dependency() -> CacheBackend:
     # The actual backend selection happens based on settings
     from .config import get_settings_instance
 
-    settings = get_settings_instance()
+    get_settings_instance()
 
     # For synchronous dependency injection, we can't await Redis connection
     # So we check if we already have a cached backend

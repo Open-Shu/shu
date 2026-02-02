@@ -353,7 +353,7 @@ async def discover_provider_models(
 @router.post("/providers/{provider_id}/sync-models")
 async def sync_provider_models(
     provider_id: str,
-    selected_models: list[str] = None,
+    selected_models: list[str] | None = None,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

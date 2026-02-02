@@ -23,7 +23,7 @@ class CursorCapability(ImmutableCapabilityMixin):
     _schedule_id: str | None
     _storage: StorageCapability
 
-    def __init__(self, *, plugin_name: str, user_id: str, schedule_id: str | None = None):
+    def __init__(self, *, plugin_name: str, user_id: str, schedule_id: str | None = None) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_schedule_id", str(schedule_id) if schedule_id else None)

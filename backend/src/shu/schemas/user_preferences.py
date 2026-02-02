@@ -85,9 +85,8 @@ class UserPreferencesUpdate(BaseModel):
     @classmethod
     def validate_theme(cls, v: str | None) -> str | None:
         """Validate theme options."""
-        if v is not None:
-            if v not in VALID_THEMES:
-                raise ValueError(f"Theme must be one of: {VALID_THEMES}")
+        if v is not None and v not in VALID_THEMES:
+            raise ValueError(f"Theme must be one of: {VALID_THEMES}")
         return v
 
 

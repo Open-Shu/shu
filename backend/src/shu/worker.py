@@ -86,7 +86,7 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
     return workload_types
 
 
-async def process_job(job):
+async def process_job(job) -> None:
     """Process a job based on its workload type and payload.
 
     Routes jobs to appropriate handlers based on the queue name (workload type).

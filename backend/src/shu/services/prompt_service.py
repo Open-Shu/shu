@@ -54,7 +54,7 @@ class PromptAlreadyExistsError(ConflictError):
 class PromptService:
     """Service for managing prompts and their assignments."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def create_prompt(self, prompt_data: PromptCreate) -> PromptResponse:
@@ -208,7 +208,7 @@ class PromptService:
             stmt = stmt.join(PromptAssignment).where(
                 and_(
                     PromptAssignment.entity_id == params.entity_id,
-                    PromptAssignment.is_active == True,
+                    PromptAssignment.is_active,
                 )
             )
 
@@ -325,7 +325,7 @@ class PromptService:
         )
 
         if active_only:
-            stmt = stmt.where(and_(Prompt.is_active == True, PromptAssignment.is_active == True))
+            stmt = stmt.where(and_(Prompt.is_active, PromptAssignment.is_active))
 
         result = await self.db.execute(stmt)
         prompts = result.scalars().all()
@@ -344,7 +344,7 @@ class PromptService:
         total_prompts = total_prompts_result.scalar()
 
         # Active prompts
-        active_prompts_result = await self.db.execute(select(func.count(Prompt.id)).where(Prompt.is_active == True))
+        active_prompts_result = await self.db.execute(select(func.count(Prompt.id)).where(Prompt.is_active))
         active_prompts = active_prompts_result.scalar()
 
         # Total assignments
@@ -353,7 +353,7 @@ class PromptService:
 
         # Active assignments
         active_assignments_result = await self.db.execute(
-            select(func.count(PromptAssignment.id)).where(PromptAssignment.is_active == True)
+            select(func.count(PromptAssignment.id)).where(PromptAssignment.is_active)
         )
         active_assignments = active_assignments_result.scalar()
 
@@ -480,7 +480,7 @@ class PromptService:
                 .where(
                     and_(
                         ModelConfigurationKBPrompt.model_configuration_id == model_config_id,
-                        ModelConfigurationKBPrompt.is_active == True,
+                        ModelConfigurationKBPrompt.is_active,
                     )
                 )
             )

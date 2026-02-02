@@ -44,7 +44,7 @@ class HttpCapability(ImmutableCapabilityMixin):
     _allowlist: list[str] | None
     _default_timeout: float
 
-    def __init__(self, *, plugin_name: str, user_id: str):
+    def __init__(self, *, plugin_name: str, user_id: str) -> None:
         s = get_settings_instance()
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)

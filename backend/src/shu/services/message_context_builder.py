@@ -170,7 +170,6 @@ class MessageContextBuilder:
             if not rows:
                 return [ChatMessage.from_message(m, []) for m in messages]
 
-            msg_by_id = {m.id: m for m in messages if getattr(m, "id", None)}
             msg_to_atts: dict[str, list[Any]] = {}
             for msg_id, att in rows:
                 if msg_id:
@@ -279,7 +278,7 @@ class MessageContextBuilder:
                 rag_rewrite_mode=rag_rewrite_mode,
             )
 
-        rewritten_query, rewrite_diagnostics, query_results = await execute_rag_queries(
+        _rewritten_query, rewrite_diagnostics, query_results = await execute_rag_queries(
             db_session=self.db_session,
             config_manager=self.config_manager,
             query_service=self.query_service,
@@ -439,7 +438,6 @@ class MessageContextBuilder:
             return "", []
 
         context_format = rag_config.get("context_format", "detailed")
-        include_references = rag_config.get("include_references", True)
 
         context_parts = []
         source_metadata = []

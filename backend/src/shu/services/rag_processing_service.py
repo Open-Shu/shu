@@ -19,7 +19,7 @@ class RAGServiceManager:
     Replaces the problematic singleton pattern with proper lifecycle management.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._instances: dict[str, dict] = {}  # key -> {instance, last_used, created_at}
         self._executor: ThreadPoolExecutor | None = None
         self._cache_ttl = 3600  # 1 hour TTL for unused instances
@@ -146,7 +146,7 @@ class RAGProcessingService:
     No longer uses singleton pattern - managed by RAGServiceManager.
     """
 
-    def __init__(self, embedding_model: str, device: str, executor: ThreadPoolExecutor):
+    def __init__(self, embedding_model: str, device: str, executor: ThreadPoolExecutor) -> None:
         """Initialize RAGProcessingService with specified model and device."""
         settings = get_settings_instance()
 

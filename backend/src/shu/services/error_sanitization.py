@@ -371,10 +371,7 @@ class ErrorSanitizer:
         suggestions = list(guidance.get("suggestions", []))
 
         # Always sanitize the provider message
-        if provider_message:
-            message = cls.sanitize_string(provider_message)
-        else:
-            message = default_message
+        message = cls.sanitize_string(provider_message) if provider_message else default_message
 
         # No details dict in any environment for security
         details: dict[str, Any] | None = None

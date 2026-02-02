@@ -25,7 +25,7 @@ class ConfigCache:
     - Prompt templates: config:prompt:{template_name}
     """
 
-    def __init__(self, cache_backend: CacheBackend | None = None):
+    def __init__(self, cache_backend: CacheBackend | None = None) -> None:
         """Initialize ConfigCache with optional CacheBackend dependency injection.
 
         Args:
@@ -77,7 +77,7 @@ class ConfigCache:
             logger.warning(f"Failed to get RAG config from cache for {kb_id}: {e}")
             return None
 
-    async def set_rag_config(self, kb_id: str, config: dict[str, Any]):
+    async def set_rag_config(self, kb_id: str, config: dict[str, Any]) -> None:
         """Cache RAG configuration.
 
         Args:
@@ -122,7 +122,7 @@ class ConfigCache:
             logger.warning(f"Failed to get prompt template from cache for {template_name}: {e}")
             return None
 
-    async def set_prompt_template(self, template_name: str, template: dict[str, Any]):
+    async def set_prompt_template(self, template_name: str, template: dict[str, Any]) -> None:
         """Cache prompt template.
 
         Args:
@@ -141,14 +141,14 @@ class ConfigCache:
         except Exception as e:
             logger.warning(f"Failed to cache prompt template for {template_name}: {e}")
 
-    async def clear_all(self):
+    async def clear_all(self) -> None:
         """Clear all cached data.
 
         Note: This only clears data with our namespace prefixes.
         Other cache data is not affected.
         """
         try:
-            backend = await self._get_backend()
+            await self._get_backend()
 
             # Since CacheBackend doesn't have a pattern-based delete,
             # we'll need to track keys or implement a different approach

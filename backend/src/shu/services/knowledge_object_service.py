@@ -27,7 +27,7 @@ def _coerce_datetime(value: Any) -> datetime | None:
     Accepts:
     - datetime: returned as-is (add UTC tzinfo if naive)
     - date: converted to datetime at midnight UTC
-    - str: ISO 8601; supports trailing 'Z'
+    - str: ISO 8601; supports trailing 'Z'.
     """
     if value is None:
         return None
@@ -234,6 +234,5 @@ async def delete_kos_by_external_ids(
         await db.commit()
         deleted_total += len(doc_ids)
         # Any ids not present considered failed (not found)
-        remaining = set(chunk) - set([])  # we don't map back source_id here cheaply
         # We skip populating failed for performance; could enhance if required
     return {"deleted_count": deleted_total, "failed": failed}

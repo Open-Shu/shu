@@ -5,7 +5,7 @@ class EgressDenied(Exception):
 class CapabilityDenied(Exception):
     """Raised when a plugin tries to access a host capability it did not declare."""
 
-    def __init__(self, capability: str):
+    def __init__(self, capability: str) -> None:
         super().__init__(f"Host capability '{capability}' not declared in plugin manifest")
 
 
@@ -20,7 +20,7 @@ class HttpRequestFailed(Exception):
 
     """
 
-    def __init__(self, status_code: int, url: str, body: object = None, headers: dict | None = None):
+    def __init__(self, status_code: int, url: str, body: object = None, headers: dict | None = None) -> None:
         self.status_code = int(status_code)
         self.url = str(url)
         self.body = body

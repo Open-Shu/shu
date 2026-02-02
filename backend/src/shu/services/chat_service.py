@@ -73,7 +73,7 @@ class ModelExecutionInputs:
 class ChatService:
     """Service for managing chat conversations and messages."""
 
-    def __init__(self, db_session: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(self, db_session: AsyncSession, config_manager: ConfigurationManager) -> None:
         self.db_session = db_session
         self.config_manager = config_manager
         self.llm_service = LLMService(db_session)
@@ -561,7 +561,7 @@ class ChatService:
         )
 
         if not include_inactive:
-            stmt = stmt.where(Conversation.is_active == True)
+            stmt = stmt.where(Conversation.is_active)
 
         result = await self.db_session.execute(stmt)
         return result.scalar_one_or_none()
@@ -600,7 +600,7 @@ class ChatService:
         )
 
         if not include_inactive:
-            stmt = stmt.where(Conversation.is_active == True)
+            stmt = stmt.where(Conversation.is_active)
 
         if summary_terms:
             stmt = stmt.where(Conversation.summary_text.isnot(None))
@@ -1066,15 +1066,13 @@ class ChatService:
             logger.warning("Failed to record LLM usage: %s", usage_error)
 
         # Create error message
-        error_message = await self.add_message(
+        return await self.add_message(
             conversation_id=conversation_id,
             role="assistant",
             content=f"I apologize, but I encountered an error: {e!s}",
             model_id=model.id,
             metadata={"error": e.details if isinstance(e, ShuException) else str(e)},
         )
-
-        return error_message
 
     async def regenerate_message(
         self,

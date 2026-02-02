@@ -17,7 +17,9 @@ try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
     # Fallback for development without pgvector
-    Vector = lambda dim: Text
+    def Vector(dim):
+        return Text
+
 
 from .base import BaseModel
 
@@ -393,7 +395,7 @@ class DocumentChunk(BaseModel):
         end_char: int | None = None,
     ) -> "DocumentChunk":
         """Create a document chunk from text content."""
-        chunk = cls(
+        return cls(
             document_id=document_id,
             knowledge_base_id=knowledge_base_id,
             chunk_index=chunk_index,
@@ -403,7 +405,6 @@ class DocumentChunk(BaseModel):
             start_char=start_char,
             end_char=end_char,
         )
-        return chunk
 
 
 class DocumentQuery(BaseModel):

@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 
 
 class AnthropicAdapter(BaseProviderAdapter):
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         super().__init__(context)
         self._latest_usage_event: dict[str, Any] | None = None
         self._stream_content: list[str] = []
@@ -590,7 +590,7 @@ class AnthropicAdapter(BaseProviderAdapter):
     def get_model_information_path(self) -> str:
         return "data[*].{id: id, name: id}"
 
-    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         content_delta = jmespath.search("type=='content_block_delta' && delta.text", chunk)
         if content_delta:
             self._stream_content.append(content_delta)
@@ -619,6 +619,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         if stop_reason == "end_turn":
             final_text = "".join(self._stream_content)
             return ProviderFinalEventResult(content=final_text, metadata={"usage": self.usage})
+        return None
 
     async def finalize_provider_events(self) -> list[ProviderEventResult]:
         if not self._stream_tool_calls:

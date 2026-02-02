@@ -134,11 +134,11 @@ class ModelConfiguration(BaseModel):
         """Get list of knowledge base IDs attached to this configuration."""
         return [kb.id for kb in self.knowledge_bases]
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this model configuration."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this model configuration."""
         self.is_active = False
 

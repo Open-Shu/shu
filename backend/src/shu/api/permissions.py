@@ -98,7 +98,6 @@ async def grant_kb_permission(
             granter_name=granter_name,
         )
 
-        target_type = "user" if permission.user_id else "group"
         return ShuResponse.created(data=response_data.model_dump())
 
     except RBACServiceError as e:

@@ -370,7 +370,7 @@ class EnsembleStreamingHelper:
 
         conversation_owner_id = await self._get_conversation_owner(conversation_id)
 
-        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs"):
+        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs") -> None:
             """Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
 
             Parameters

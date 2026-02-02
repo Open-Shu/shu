@@ -89,7 +89,7 @@ class ExperienceExecutor:
         db: AsyncSession,
         config_manager: ConfigurationManager,
         model_config_service: ModelConfigurationService | None = None,
-    ):
+    ) -> None:
         self.db = db
         self.config_manager = config_manager
         self.settings = get_settings_instance()

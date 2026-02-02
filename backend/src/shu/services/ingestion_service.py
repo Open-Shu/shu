@@ -104,7 +104,7 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
 
     semaphore = _get_profiling_semaphore()
 
-    async def _run_profiling():
+    async def _run_profiling() -> None:
         async with semaphore:
             try:
                 from ..core.config import get_config_manager

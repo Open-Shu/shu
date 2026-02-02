@@ -7,6 +7,7 @@ from shu.core.logging import get_logger
 from ..adapter_base import (
     ProviderCapabilities,
     ProviderContentDeltaEventResult,
+    ProviderEventResult,
     ProviderInformation,
     register_adapter,
 )
@@ -56,10 +57,10 @@ class PerplexityAdapter(CompletionsAdapter):
     def get_authorization_header(self) -> dict[str, Any]:
         return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
 
-    def get_finish_reason_path(self):
+    def get_finish_reason_path(self) -> str:
         return "object == 'chat.completion.done' && choices[*].finish_reason | [0]"
 
-    async def handle_provider_event(self, chunk):
+    async def handle_provider_event(self, chunk) -> ProviderEventResult | None:
         self.citations = jmespath.search("object == 'chat.completion.done' && citations", chunk)
         return await super().handle_provider_event(chunk)
 

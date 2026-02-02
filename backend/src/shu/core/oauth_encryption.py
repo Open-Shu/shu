@@ -1,4 +1,4 @@
-"""OAuth Token Encryption Service
+"""OAuth Token Encryption Service.
 
 Provides secure encryption/decryption for OAuth tokens stored in the database.
 Uses Fernet symmetric encryption for secure token storage.
@@ -22,7 +22,7 @@ class OAuthEncryptionError(Exception):
 class OAuthEncryptionService:
     """Service for encrypting and decrypting OAuth tokens."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the encryption service with the configured key."""
         settings = get_settings_instance()
 

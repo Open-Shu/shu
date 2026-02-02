@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 class PluginsSchedulerService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.settings = get_settings_instance()
 
@@ -56,7 +56,7 @@ class PluginsSchedulerService:
         self, *, limit: int | None = None, fallback_user_id: str | None = None
     ) -> dict[str, int]:
         """Atomically claim due schedules and enqueue executions.
-        Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j}
+        Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j}.
         """
         now = datetime.now(UTC)
         # Claim due schedules with row-level locks to avoid duplicates across workers
@@ -65,7 +65,7 @@ class PluginsSchedulerService:
             .where(
                 and_(
                     PluginFeed.enabled == True,  # noqa: E712
-                    or_(PluginFeed.next_run_at == None, PluginFeed.next_run_at <= now),
+                    or_(PluginFeed.next_run_at is None, PluginFeed.next_run_at <= now),
                 )
             )
             .with_for_update(skip_locked=True)
@@ -188,7 +188,7 @@ class PluginsSchedulerService:
         self, *, limit: int = 10, schedule_id: str | None = None, execution_id: str | None = None
     ) -> dict[str, int]:
         """Claim up to limit pending executions and run them sequentially.
-        Returns: {"attempted": n, "ran": m, "failed_owner_required": x, "skipped_disabled": y}
+        Returns: {"attempted": n, "ran": m, "failed_owner_required": x, "skipped_disabled": y}.
         """
         # Cleanup: mark stale RUNNING executions as failed to unblock schedules
         stale_cleaned = 0
@@ -395,16 +395,15 @@ class PluginsSchedulerService:
                 if (
                     getattr(self.settings, "plugin_exec_output_max_bytes", 0)
                     and self.settings.plugin_exec_output_max_bytes > 0
-                ):
-                    if payload_size > self.settings.plugin_exec_output_max_bytes:
-                        rec.completed_at = datetime.now(UTC)
-                        rec.status = PluginExecutionStatus.FAILED
-                        rec.error = (
-                            f"output exceeds max bytes ({payload_size} > {self.settings.plugin_exec_output_max_bytes})"
-                        )
-                        rec.result = {"status": "error", "error": "output_too_large"}
-                        await self.db.commit()
-                        continue
+                ) and payload_size > self.settings.plugin_exec_output_max_bytes:
+                    rec.completed_at = datetime.now(UTC)
+                    rec.status = PluginExecutionStatus.FAILED
+                    rec.error = (
+                        f"output exceeds max bytes ({payload_size} > {self.settings.plugin_exec_output_max_bytes})"
+                    )
+                    rec.result = {"status": "error", "error": "output_too_large"}
+                    await self.db.commit()
+                    continue
 
                 rec.result = payload
                 rec.completed_at = datetime.now(UTC)
@@ -537,7 +536,7 @@ async def start_plugins_scheduler():
         ),
     )
 
-    async def _runner():
+    async def _runner() -> None:
         while True:
             try:
                 db = await get_db_session()

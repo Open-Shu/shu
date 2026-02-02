@@ -1,7 +1,7 @@
 """HostAuthService: extracts business logic from host_auth API endpoints.
 - Compute consent scope unions from plugin manifests honoring subscriptions
 - CRUD helpers for PluginSubscription with validation against PluginDefinition
-- Read helpers for listing subscriptions
+- Read helpers for listing subscriptions.
 
 This keeps API controllers thin and maintains provider-agnostic behavior.
 """
