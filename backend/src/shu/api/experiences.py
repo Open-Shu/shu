@@ -68,7 +68,7 @@ async def list_experiences(
         is_admin = current_user.can_manage_users()
 
         result = await service.list_experiences(
-            user_id=str(current_user.id),
+            user_id=current_user.id,
             is_admin=is_admin,
             offset=offset,
             limit=limit,
@@ -477,7 +477,7 @@ async def list_experience_runs(
 
         result = await service.list_runs(
             experience_id=experience_id,
-            user_id=str(current_user.id),
+            user_id=current_user.id,
             is_admin=is_admin,
             offset=offset,
             limit=limit,
