@@ -142,53 +142,47 @@ class OutlookCalendarPlugin:
             response = await host.http.fetch(
                 method=method, url=url, headers=headers, params=params or {}, json=body
             )
-
-            status_code = response.get("status_code") or response.get("status")
-
-            if status_code == 401:
-                provider_msg = response.get("error", {}).get("message", "")
-                details = {"http_status": 401}
-                if provider_msg:
-                    details["provider_message"] = provider_msg
-                raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed. Please reconnect your Microsoft account.|{json.dumps(details)}")
-            elif status_code == 403:
-                provider_msg = response.get("error", {}).get("message", "")
-                details = {"http_status": 403}
-                if provider_msg:
-                    details["provider_message"] = provider_msg
-                raise Exception(f"insufficient_permissions:Insufficient permissions. Required scope: Calendars.Read|{json.dumps(details)}")
-            elif status_code == 410:
-                provider_msg = response.get("error", {}).get("message", "")
-                details = {"http_status": 410}
-                if provider_msg:
-                    details["provider_message"] = provider_msg
-                raise Exception(f"delta_token_expired:Delta sync token expired. Will perform full sync.|{json.dumps(details)}")
-            elif status_code == 429:
-                provider_msg = response.get("error", {}).get("message", "")
-                details = {"http_status": 429}
-                if provider_msg:
-                    details["provider_message"] = provider_msg
-                raise Exception(f"rate_limit_exceeded:Rate limit exceeded. Please try again later.|{json.dumps(details)}")
-            elif status_code and status_code >= 500:
-                error_msg = response.get("error", {}).get("message", "Unknown server error")
-                details = {"http_status": status_code, "provider_message": error_msg}
-                raise Exception(f"server_error:Microsoft Graph API error: {status_code} - {error_msg}|{json.dumps(details)}")
-            elif status_code and status_code >= 400:
-                error_msg = response.get("error", {}).get("message", "Unknown error")
-                details = {"http_status": status_code, "provider_message": error_msg}
-                raise Exception(f"api_error:Microsoft Graph API error: {status_code} - {error_msg}|{json.dumps(details)}")
-
+            # If fetch succeeded, return the response
             return response
 
         except Exception as e:
-            error_str = str(e)
-            if ":" in error_str and error_str.split(":")[0] in [
-                "auth_missing_or_insufficient_scopes", "insufficient_permissions",
-                "delta_token_expired", "rate_limit_exceeded", "server_error", "api_error"
-            ]:
-                raise
-            details = {"exception_type": type(e).__name__}
-            raise Exception(f"network_error:Network error communicating with Microsoft Graph API: {error_str}|{json.dumps(details)}")
+            # Catch HttpRequestFailed and extract detailed error
+            if hasattr(e, 'status_code') and hasattr(e, 'body'):
+                status_code = getattr(e, 'status_code')  # type: ignore
+                body_obj = getattr(e, 'body')  # type: ignore
+
+                # Extract Graph API error message
+                if isinstance(body_obj, dict):
+                    error_obj = body_obj.get("error", {})
+                    error_msg = error_obj.get("message", str(body_obj))
+                    graph_code = error_obj.get("code", "api_error")
+                else:
+                    error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
+                    graph_code = "api_error"
+
+                details = {
+                    "http_status": status_code,
+                    "graph_error_code": graph_code,
+                    "url": url
+                }
+
+                # Map to appropriate error code
+                if status_code == 401:
+                    raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
+                elif status_code == 403:
+                    raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
+                elif status_code == 410:
+                    raise Exception(f"delta_token_expired:Delta sync token expired: {error_msg}|{json.dumps(details)}")
+                elif status_code == 429:
+                    raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
+                elif status_code >= 500:
+                    raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
+                else:
+                    raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
+            else:
+                # Not HttpRequestFailed, treat as network error
+                details = {"exception_type": type(e).__name__, "message": str(e)}
+                raise Exception(f"network_error:Network error: {str(e)}|{json.dumps(details)}")
 
     async def _fetch_all_pages(self, host: Any, access_token: str, initial_url: str,
                                 max_results: Optional[int] = None) -> tuple[List[Dict[str, Any]], Optional[str]]:
@@ -205,40 +199,43 @@ class OutlookCalendarPlugin:
 
             try:
                 response = await host.http.fetch(method="GET", url=next_url, headers=headers)
-                status_code = response.get("status_code") or response.get("status")
-
-                if status_code and status_code >= 400:
-                    body = response.get("body", {})
-                    provider_msg = body.get("error", {}).get("message", "") if isinstance(body, dict) else str(body)[:200]
-
-                    if status_code == 401:
-                        raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed|{json.dumps({'http_status': 401, 'provider_message': provider_msg})}")
-                    elif status_code == 403:
-                        raise Exception(f"insufficient_permissions:Insufficient permissions|{json.dumps({'http_status': 403, 'provider_message': provider_msg})}")
-                    elif status_code == 410:
-                        raise Exception(f"delta_token_expired:Delta sync token expired|{json.dumps({'http_status': 410, 'provider_message': provider_msg})}")
-                    elif status_code == 429:
-                        raise Exception(f"rate_limit_exceeded:Rate limit exceeded|{json.dumps({'http_status': 429, 'provider_message': provider_msg})}")
-                    else:
-                        raise Exception(f"api_error:API error: {status_code}|{json.dumps({'http_status': status_code, 'provider_message': provider_msg})}")
-
             except Exception as e:
+                # Extract detailed error from HttpRequestFailed exception
                 if hasattr(e, 'status_code') and hasattr(e, 'body'):
-                    status_code = e.status_code
-                    body = e.body
-                    provider_msg = body.get("error", {}).get("message", "") if isinstance(body, dict) else str(body)[:200]
+                    status_code = getattr(e, 'status_code')  # type: ignore
+                    body_obj = getattr(e, 'body')  # type: ignore
 
-                    if status_code == 410:
-                        raise Exception(f"delta_token_expired:Delta sync token expired|{json.dumps({'http_status': 410, 'provider_message': provider_msg})}")
-                    raise Exception(f"api_error:API error: {status_code}|{json.dumps({'http_status': status_code, 'provider_message': provider_msg})}")
+                    # Extract Graph API error message
+                    if isinstance(body_obj, dict):
+                        error_obj = body_obj.get("error", {})
+                        error_msg = error_obj.get("message", str(body_obj))
+                        graph_code = error_obj.get("code", "api_error")
+                    else:
+                        error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
+                        graph_code = "api_error"
 
-                error_str = str(e)
-                if ":" in error_str and error_str.split(":")[0] in [
-                    "auth_missing_or_insufficient_scopes", "insufficient_permissions",
-                    "delta_token_expired", "rate_limit_exceeded", "server_error", "api_error"
-                ]:
+                    details = {
+                        "http_status": status_code,
+                        "graph_error_code": graph_code,
+                        "url": next_url
+                    }
+
+                    # Map to appropriate error code
+                    if status_code == 401:
+                        raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
+                    elif status_code == 403:
+                        raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
+                    elif status_code == 410:
+                        raise Exception(f"delta_token_expired:Delta sync token expired: {error_msg}|{json.dumps(details)}")
+                    elif status_code == 429:
+                        raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
+                    elif status_code >= 500:
+                        raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
+                    else:
+                        raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
+                else:
+                    # Re-raise if not HttpRequestFailed
                     raise
-                raise Exception(f"network_error:Network error: {error_str}|{json.dumps({'exception_type': type(e).__name__})}")
 
             body = response.get("body", {})
             if isinstance(body, dict):
