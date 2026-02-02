@@ -75,6 +75,7 @@ class UserGroup(BaseModel):
     permissions = relationship("KnowledgeBasePermission", back_populates="group", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UserGroup(id='{self.id}', name='{self.name}', active={self.is_active})>"
 
 
@@ -105,6 +106,7 @@ class UserGroupMembership(RBACBaseModel):
     __table_args__ = (UniqueConstraint("user_id", "group_id", name="uq_user_group_membership"),)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UserGroupMembership(user_id='{self.user_id}', group_id='{self.group_id}', role='{self.role}')>"
 
 
@@ -170,5 +172,6 @@ class KnowledgeBasePermission(RBACBaseModel):
         return datetime.now(UTC) > self.expires_at
 
     def __repr__(self) -> str:
+        """Represent as string."""
         target = f"user:{self.user_id}" if self.user_id else f"group:{self.group_id}"
         return f"<KnowledgeBasePermission(kb='{self.knowledge_base_id}', target='{target}', level='{self.permission_level}')>"

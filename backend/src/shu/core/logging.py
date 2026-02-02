@@ -411,7 +411,7 @@ class LoggerMixin:
 
 
 def log_function_call(func):
-    """Decorator to log function calls at DEBUG level."""
+    """Log function calls at DEBUG level decorator."""
 
     def wrapper(*args, **kwargs):
         logger = get_logger(func.__module__)
@@ -442,7 +442,7 @@ def log_function_call(func):
 
 
 def log_async_function_call(func):
-    """Decorator to log async function calls at DEBUG level."""
+    """Log async function calls at DEBUG level decorator."""
 
     async def wrapper(*args, **kwargs):
         logger = get_logger(func.__module__)

@@ -64,6 +64,7 @@ class User(BaseModel):
     )
 
     def __repr__(self) -> str:
+        """Represent user as string."""
         return f"<User(email='{self.email}', role='{self.role}')>"
 
     @property

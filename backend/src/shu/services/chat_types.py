@@ -38,7 +38,7 @@ class ChatMessage:
         attachments: list[Attachment] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "ChatMessage":
-        """Convenience constructor with sensible defaults."""
+        """Create a ChatMessage object with sensible defaults."""
         return cls(
             id=id,
             role=role,

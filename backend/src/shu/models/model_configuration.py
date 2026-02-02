@@ -89,6 +89,7 @@ class ModelConfiguration(BaseModel):
     functionalities = Column(JSON, nullable=True)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ModelConfiguration(id={self.id}, name='{self.name}', provider='{self.llm_provider_id}')>"
 
     @property

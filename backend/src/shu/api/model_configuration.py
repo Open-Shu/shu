@@ -188,12 +188,7 @@ async def list_model_configurations(
             effective_include_relationships = False  # regular users should not see relationships
 
         # Handle is_active parameter (overrides active_only)
-        if is_active is not None:
-            # When is_active is specified, use it directly
-            effective_active_only = is_active
-        else:
-            # Fall back to active_only parameter
-            effective_active_only = active_only
+        effective_active_only = is_active if is_active is not None else active_only
 
         result = await service.list_model_configurations(
             page=page,

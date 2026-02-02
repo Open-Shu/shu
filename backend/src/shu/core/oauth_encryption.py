@@ -133,7 +133,7 @@ def get_oauth_encryption_service() -> OAuthEncryptionService:
 
 
 def encrypt_oauth_token(token: str) -> str:
-    """Convenience function to encrypt an OAuth token.
+    """Encrypt an OAuth token convenience function.
 
     Args:
         token: The plaintext OAuth token
@@ -147,7 +147,7 @@ def encrypt_oauth_token(token: str) -> str:
 
 
 def decrypt_oauth_token(encrypted_token: str) -> str:
-    """Convenience function to decrypt an OAuth token.
+    """Decrypt an OAuth token convenience function.
 
     Args:
         encrypted_token: The encrypted token

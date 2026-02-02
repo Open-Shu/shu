@@ -49,6 +49,7 @@ class UserPreferences(BaseModel):
     user = relationship("User", back_populates="preferences")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UserPreferences(user_id={self.user_id}, memory_depth={self.memory_depth})>"
 
     @property

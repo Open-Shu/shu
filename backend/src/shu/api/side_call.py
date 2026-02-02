@@ -38,7 +38,7 @@ def get_side_call_service(
 
 
 def _build_config_response(model_config, message: str) -> SideCallConfigResponse:
-    """Helper function to build a consistent config response."""
+    """Build a consistent config response."""
     if not model_config:
         return SideCallConfigResponse(configured=False, side_call_model_config=None, message=message)
 
@@ -200,7 +200,7 @@ async def generate_conversation_summary(
         db=db,
         config_manager=config_manager,
         action_name="generate_summary",
-        executor=lambda svc, conv, timeout_ms, user_id, fallback: svc.generate_summary(
+        executor=lambda svc, conv, timeout_ms, user_id, _: svc.generate_summary(
             conv,
             timeout_ms=timeout_ms,
             current_user_id=user_id,

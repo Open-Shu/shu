@@ -174,6 +174,7 @@ class Experience(BaseModel):
             self.next_run_at = None
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Experience(id={self.id}, name='{self.name}', visibility='{self.visibility}')>"
 
 
@@ -220,6 +221,7 @@ class ExperienceStep(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ExperienceStep(id={self.id}, step_key='{self.step_key}', type='{self.step_type}')>"
 
 
@@ -277,6 +279,7 @@ class ExperienceRun(BaseModel):
     previous_run = relationship("ExperienceRun", remote_side="ExperienceRun.id")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ExperienceRun(id={self.id}, experience_id='{self.experience_id}', status='{self.status}')>"
 
 

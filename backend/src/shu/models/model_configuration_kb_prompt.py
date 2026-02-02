@@ -63,6 +63,7 @@ class ModelConfigurationKBPrompt(BaseModel):
     )
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ModelConfigurationKBPrompt(model_config={self.model_configuration_id}, kb={self.knowledge_base_id}, prompt={self.prompt_id})>"
 
     def activate(self) -> None:

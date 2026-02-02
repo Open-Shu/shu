@@ -33,4 +33,5 @@ class AgentMemory(BaseModel):
     user = relationship("User", backref="agent_memory_entries")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<AgentMemory(user_id={self.user_id}, agent_key={self.agent_key}, key={self.key})>"

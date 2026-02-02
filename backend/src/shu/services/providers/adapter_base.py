@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,7 +79,7 @@ class ProviderCapabilities:
         return {k: v for k, v in capabilities.items() if v.get("value")}
 
     @classmethod
-    def from_request_dict(cls, request_dict):
+    def from_request_dict(cls, request_dict) -> Self:
         return ProviderCapabilities(
             streaming=request_dict.get("streaming", {}).get("value", False),
             tools=request_dict.get("tools", {}).get("value", False),

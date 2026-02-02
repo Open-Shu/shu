@@ -138,7 +138,7 @@ class ProfileParser:
 
     @staticmethod
     def create_failed_chunk_result(chunk: ChunkData, error: str) -> ChunkProfileResult:
-        """Factory method for creating failed chunk results.
+        """Create failed chunk results.
 
         Args:
             chunk: The chunk that failed profiling

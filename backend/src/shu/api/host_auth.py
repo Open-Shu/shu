@@ -3,31 +3,28 @@
 Currently supports minimal status for Google (Gmail) user credentials.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+import requests
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user
 from ..core.logging import get_logger
+from ..core.oauth_encryption import OAuthEncryptionError
 from ..core.response import ShuResponse
 from ..models.provider_credential import ProviderCredential
 from ..models.provider_identity import ProviderIdentity
+from ..plugins.host.auth_capability import AuthCapability
+from ..providers.registry import get_auth_adapter
 from .dependencies import get_db
 
 logger = get_logger(__name__)
-
-from datetime import UTC, datetime, timedelta
-
-import requests
-from fastapi import HTTPException, status
-from pydantic import BaseModel
-
-from ..core.oauth_encryption import OAuthEncryptionError
-from ..plugins.host.auth_capability import AuthCapability
-from ..providers.registry import get_auth_adapter
 
 router = APIRouter(prefix="/host/auth", tags=["host-auth"])
 
@@ -293,8 +290,9 @@ class ExchangeRequest(BaseModel):
     scopes: list[str] | None = None
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
 @router.post("/exchange")
-async def host_auth_exchange(
+async def host_auth_exchange(  # noqa: PLR0912, PLR0915
     body: ExchangeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -685,9 +683,6 @@ async def host_auth_google_delegation_check(
     except Exception as e:
         logger.error(f"Delegation check failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Delegation check failed")
-
-
-from fastapi.responses import HTMLResponse
 
 
 @router.get("/callback")

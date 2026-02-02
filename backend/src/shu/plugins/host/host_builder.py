@@ -95,17 +95,20 @@ class Host:
         object.__setattr__(self, "_frozen", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
+        """Set attribute on object."""
         if getattr(self, "_frozen", False):
             raise AttributeError("Host attributes are immutable after construction")
         object.__setattr__(self, name, value)
 
     def __delattr__(self, name: str) -> None:
+        """Delete attribute on object."""
         raise AttributeError("Host attributes cannot be deleted")
 
     # Capability names that require declaration before access
     _CAP_NAMES = frozenset(("http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr"))
 
     def __getattribute__(self, name: str) -> Any:
+        """Get attribute on object."""
         # For capability attributes, check if declared before returning
         if name in Host._CAP_NAMES:
             declared = object.__getattribute__(self, "_declared_caps")

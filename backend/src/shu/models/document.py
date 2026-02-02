@@ -134,6 +134,7 @@ class Document(BaseModel):
     projects = relationship("DocumentProject", back_populates="document", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Document(id={self.id}, title='{self.title}', kb_id='{self.knowledge_base_id}')>"
 
     def to_dict(self) -> dict[str, Any]:
@@ -292,6 +293,7 @@ class DocumentChunk(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<DocumentChunk(id={self.id}, doc_id='{self.document_id}', chunk_index={self.chunk_index})>"
 
     def to_dict(self) -> dict[str, Any]:
@@ -447,6 +449,7 @@ class DocumentQuery(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         if self.query_text:
             preview = self.query_text[:50] + "..." if len(self.query_text) > 50 else self.query_text
         else:
@@ -565,6 +568,7 @@ class DocumentParticipant(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<DocumentParticipant(id={self.id}, entity='{self.entity_name}', role='{self.role}')>"
 
     def to_dict(self) -> dict[str, Any]:
@@ -638,6 +642,7 @@ class DocumentProject(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<DocumentProject(id={self.id}, project='{self.project_name}')>"
 
     def to_dict(self) -> dict[str, Any]:

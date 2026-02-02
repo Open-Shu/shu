@@ -186,7 +186,7 @@ class Worker:
         self._queue_index: int = 0  # Round-robin index for fair queue polling
 
     def _setup_signal_handlers(self) -> None:
-        """Setup graceful shutdown on SIGTERM and SIGINT.
+        """Set up graceful shutdown on SIGTERM and SIGINT.
 
         When a shutdown signal is received, the worker stops accepting
         new jobs and finishes the current job before exiting.

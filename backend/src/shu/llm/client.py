@@ -1007,4 +1007,5 @@ class UnifiedLLMClient:
         return str(content)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UnifiedLLMClient(provider='{self.provider.name}', type='{self.provider.provider_type}')>"

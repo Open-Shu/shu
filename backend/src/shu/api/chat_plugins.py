@@ -17,7 +17,9 @@ from ..auth.models import User
 from ..auth.rbac import get_current_user
 from ..core.response import ShuResponse
 from ..models.plugin_registry import PluginDefinition
+from ..plugins.base import Plugin
 from ..plugins.executor import EXECUTOR
+from ..plugins.loader import PluginRecord
 from ..plugins.registry import REGISTRY
 from ..schemas.envelope import SuccessResponse
 from ..services.plugin_identity import (
@@ -52,6 +54,36 @@ class ChatPluginExecuteRequest(BaseModel):
     agent_key: str | None = None
 
 
+def get_chat_ops(rec: PluginRecord) -> list:
+    try:
+        return list(getattr(rec, "chat_callable_ops", []) or [])
+    except Exception:
+        return []
+
+
+async def get_plugin_and_schema(name: str, db: AsyncSession) -> tuple[Plugin | None, dict[str, Any] | None]:
+    plugin = None
+    try:
+        plugin = await REGISTRY.resolve(name, db)
+    except Exception:
+        pass
+
+    schema = None
+    try:
+        schema = plugin.get_schema()
+    except Exception:
+        pass
+
+    return plugin, schema
+
+
+def get_enum_labels(schema: dict[str, Any] | None) -> dict[str, str]:
+    try:
+        return ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get("enum_labels")
+    except Exception:
+        return None
+
+
 @router.get("", response_model=SuccessResponse[ChatPluginListResponse])
 async def list_chat_plugins(
     db: AsyncSession = Depends(get_db),
@@ -75,33 +107,19 @@ async def list_chat_plugins(
     for name, rec in (manifest or {}).items():
         if name not in enabled:
             continue
-        chat_ops = []
-        try:
-            chat_ops = list(getattr(rec, "chat_callable_ops", []) or [])
-        except Exception:
-            chat_ops = []
+
+        chat_ops = get_chat_ops(rec)
         if not chat_ops:
             continue
+
         # Load plugin to get schema and optional labels/help
-        try:
-            plugin = await REGISTRY.resolve(name, db)
-        except Exception:
-            plugin = None
+        plugin, schema = await get_plugin_and_schema(name, db)
         if not plugin:
             continue
-        schema = None
-        try:
-            schema = plugin.get_schema()
-        except Exception:
-            schema = None
+
         # Derive enum labels/help for title/description when available
-        enum_labels = None
-        try:
-            enum_labels = ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get(
-                "enum_labels"
-            )
-        except Exception:
-            enum_labels = None
+        enum_labels = get_enum_labels(schema)
+
         for op in chat_ops:
             title = None
             description = None

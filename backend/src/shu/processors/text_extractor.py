@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import easyocr
+
 from ..core.config import ConfigurationManager, get_config_manager
 from ..core.logging import get_logger
 
@@ -78,7 +80,7 @@ class TextExtractor:
         self._current_sync_job_id = None
 
     @classmethod
-    async def get_ocr_instance(cls):
+    async def get_ocr_instance(cls) -> easyocr.Reader | None:
         """Get OCR instance with fallback chain: EasyOCR → Tesseract."""
         # Set SSL certificate path to fix EasyOCR download issues
         import os
@@ -89,8 +91,6 @@ class TextExtractor:
 
         try:
             # Try EasyOCR first (better quality than Tesseract)
-            import easyocr
-
             logger.info("Initializing EasyOCR")
             return easyocr.Reader(["en"])
         except Exception as e:

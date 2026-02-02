@@ -386,7 +386,7 @@ COMPREHENSIVE_STOP_WORDS = {
 
 
 def measure_execution_time(func):
-    """Decorator to measure execution time of async methods.
+    """Measure execution time of async methods decorator.
 
     This decorator automatically measures the execution time of the decorated method
     and adds it to the response if the response is a dictionary or has an execution_time attribute.

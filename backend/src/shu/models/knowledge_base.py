@@ -90,6 +90,7 @@ class KnowledgeBase(BaseModel):
     permissions = relationship("KnowledgeBasePermission", back_populates="knowledge_base", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<KnowledgeBase(id={self.id}, name='{self.name}')>"
 
     def to_dict(self) -> dict[str, Any]:

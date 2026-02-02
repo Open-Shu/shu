@@ -81,8 +81,8 @@ async def list_plugins(
             output_schema = getattr(r, "output_schema", None) if r is not None else None
             version = getattr(r, "version", None) or getattr(rec, "version", None)
             enabled = bool(getattr(r, "enabled", False))
-        except Exception:
-            continue
+        except Exception as e:
+            logger.warning("Failed to process plugin manifest entry %s: %s", name, e)
         out.append(
             PluginInfoResponse(
                 name=name,
@@ -145,8 +145,9 @@ async def get_plugin(
     )
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
 @router.post("/{name}/execute")
-async def execute_plugin(
+async def execute_plugin(  # noqa: PLR0912, PLR0915
     name: str,
     body: PluginExecuteRequest,
     db: AsyncSession = Depends(get_db),

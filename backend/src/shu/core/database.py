@@ -6,6 +6,7 @@ and utilities for database operations.
 
 import os
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -71,7 +72,7 @@ def get_settings():
 
 
 def get_async_engine():
-    global _async_engine
+    global _async_engine  # noqa: PLW0603 # This is currently working, so we'll leave it as is
     if _async_engine is None:
         try:
             database_url = get_database_url()
@@ -115,7 +116,7 @@ def get_async_engine():
 
 
 def get_async_session_local():
-    global _AsyncSessionLocal
+    global _AsyncSessionLocal  # noqa: PLW0603 # This is currently working, so we'll leave it as is
     if _AsyncSessionLocal is None:
         try:
             engine = get_async_engine()
@@ -221,7 +222,7 @@ class DatabaseManager:
         """Get a new database session."""
         return self.SessionLocal()
 
-    async def execute_transaction(self, func, *args, **kwargs):
+    async def execute_transaction(self, func, *args: Any, **kwargs: Any):
         """Execute a function within a database transaction."""
         db = self.get_session()
         try:
@@ -235,7 +236,7 @@ class DatabaseManager:
         finally:
             await db.close()
 
-    async def execute_async_transaction(self, func, *args, **kwargs):
+    async def execute_async_transaction(self, func, *args: Any, **kwargs: Any):
         """Execute an async function within a database transaction."""
         db = self.get_session()
         try:
@@ -275,19 +276,21 @@ class DatabaseManager:
 _db_manager = None
 
 
-def get_db_manager():
+def get_db_manager() -> DatabaseManager | None:
     """Get or create the database manager instance."""
-    global _db_manager
+    global _db_manager  # noqa: PLW0603 # This is currently working, so we'll leave it as is
     if _db_manager is None:
         _db_manager = DatabaseManager()
     return _db_manager
 
 
 class _DatabaseManagerProxy:
-    def __getattr__(self, name):
+    def __getattr__(self, name):  # noqa: ANN204 # not sure what this returns
+        """Get attribute handler."""
         return getattr(get_db_manager(), name)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any):  # noqa: ANN204 # not sure what this returns
+        """Call handler."""
         return get_db_manager()(*args, **kwargs)
 
 

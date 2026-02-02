@@ -28,6 +28,7 @@ class ProviderTypeDefinition(BaseModel):
     providers = relationship("LLMProvider", back_populates="provider_definition", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return (
             f"<ProviderTypeDefinition key={self.key} name={self.display_name} "
             f"adapter={self.provider_adapter_name} active={self.is_active}>"

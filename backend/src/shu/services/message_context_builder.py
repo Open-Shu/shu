@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +53,7 @@ class MessageContextBuilder:
         self.diagnostics_target = diagnostics_target
 
     @classmethod
-    def init(cls, db_session: AsyncSession, config_manager: ConfigurationManager, diagnostics_target: Any):
+    def init(cls, db_session: AsyncSession, config_manager: ConfigurationManager, diagnostics_target: Any) -> Self:
         llm_service = LLMService(db_session)
         side_call_service = SideCallService(db_session, config_manager)
         return MessageContextBuilder(

@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +62,7 @@ class ProviderResponseEvent:
         model_configuration: dict[str, Any],
         model_display_name: str,
         model_name: str,
-    ):
+    ) -> Self:
         return ProviderResponseEvent(
             type=event.type,
             variant_index=variant_index,
@@ -139,7 +139,7 @@ class EnsembleStreamingHelper:
         return provider_and_model_support_tools and chat_plugins_enabled
 
     async def _get_conversation_owner(self, conversation_id):
-        """Fetches the owner user ID for a conversation by its ID.
+        """Fetch the owner user ID for a conversation by its ID.
 
         Parameters
         ----------
@@ -293,7 +293,7 @@ class EnsembleStreamingHelper:
             return_as_stream=True,  # We always stream to our frontends
             tools_enabled=tools_enabled,
         ):
-            stream_event: ProviderEventResult = stream_event
+            stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
             logger.debug("EVENT %s", stream_event)
             if isinstance(stream_event, ProviderToolCallEventResult) and tools_enabled:
                 followup_messages = stream_event.additional_messages

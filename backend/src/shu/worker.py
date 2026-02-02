@@ -78,7 +78,7 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
             workload_types.add(workload_type)
         except KeyError as err:
             valid_types = [wt.name for wt in WorkloadType]
-            raise ValueError(f"Invalid workload type: {name}. " f"Valid types are: {', '.join(valid_types)}") from err
+            raise ValueError(f"Invalid workload type: {name}. Valid types are: {', '.join(valid_types)}") from err
 
     if not workload_types:
         raise ValueError("At least one workload type must be specified")
@@ -215,7 +215,7 @@ async def run_worker(
 
 
 def main() -> None:
-    """Main entrypoint for the worker process."""
+    """Start worker process."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Shu dedicated worker process",

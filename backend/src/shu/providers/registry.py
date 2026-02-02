@@ -8,7 +8,7 @@ from .microsoft.auth_adapter import MicrosoftAuthAdapter  # type: ignore
 
 
 def get_auth_adapter(provider: str, auth_capability) -> BaseAuthAdapter:
-    """Factory for provider auth adapters.
+    """Retrieve provider auth adapters factory.
 
     The adapter is constructed with the calling AuthCapability to reuse its helpers
     (HTTP, settings, encryption, caches) and to keep state localized.

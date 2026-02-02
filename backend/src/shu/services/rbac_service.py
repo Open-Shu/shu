@@ -407,7 +407,7 @@ class RBACService:
         )
 
     async def _get_user(self, user_id: str) -> User:
-        """Helper method to get a user by ID."""
+        """Get a user by ID helper function."""
         result = await self.db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if not user:

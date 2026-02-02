@@ -66,6 +66,7 @@ class PluginStorage(BaseModel):
     user = relationship("User", backref="plugin_storage_entries")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return (
             f"<PluginStorage(scope={self.scope}, user_id={self.user_id}, "
             f"plugin={self.plugin_name}, ns={self.namespace}, key={self.key})>"

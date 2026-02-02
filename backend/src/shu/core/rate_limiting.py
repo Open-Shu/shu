@@ -54,7 +54,7 @@ class RateLimitResult:
     reset_seconds: int = 0
 
     def to_headers(self) -> dict[str, str]:
-        """Builds HTTP rate limit headers representing the current rate limit state.
+        """Build HTTP rate limit headers representing the current rate limit state.
 
         Includes `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`; adds `Retry-After` when the request was denied.
 

@@ -270,7 +270,7 @@ async def admin_run_schedule_now(
             # Best-effort immediate run; if it fails, scheduler will pick it up
             pass
 
-    asyncio.create_task(_run_in_background())
+    asyncio.create_task(_run_in_background())  # noqa: RUF006 # We run this in the background, currently no way to store
 
     # Return the execution record immediately (status will be PENDING)
     await db.refresh(exec_rec)

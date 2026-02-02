@@ -56,7 +56,7 @@ class RBACController:
         return user
 
     def require_role(self, required_role: UserRole):
-        """Decorator factory to require specific role for endpoint access."""
+        """Require specific role for endpoint access decorator."""
 
         async def role_checker(
             credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -120,10 +120,8 @@ class RBACController:
         )
         direct_permission = direct_permission_result.scalar_one_or_none()
 
-        if direct_permission:
-            # Check if permission has expired
-            if not direct_permission.is_expired():
-                return True
+        if direct_permission and not direct_permission.is_expired():
+            return True
 
         # Check for group-based permissions
         # Get all active groups the user belongs to

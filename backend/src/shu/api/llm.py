@@ -151,7 +151,7 @@ class LLMModelResponse(BaseModel):
 
 # Helper function to convert database model to response model
 def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LLMProviderResponse:
-    """Builds an LLMProviderResponse from a LLMProvider database model.
+    """Build a LLMProviderResponse from a LLMProvider database model.
 
     Parameters
     ----------
