@@ -216,3 +216,71 @@ class CacheCapability(ImmutableCapabilityMixin):
                     "error": str(e),
                 },
             )
+
+    async def set_safe(self, key: str, value: Any, ttl_seconds: int = 300) -> bool:
+        """Store a value in the cache, returning success status.
+
+        This is similar to set() but returns a boolean indicating success.
+        On error, logs a warning and returns False instead of silently failing.
+
+        Args:
+            key: The cache key (will be namespaced automatically).
+            value: The value to store (must be JSON-serializable).
+            ttl_seconds: Time-to-live in seconds. Default is 300 (5 minutes).
+
+        Returns:
+            True if the value was stored successfully, False on any error.
+
+        Example:
+            success = await cache.set_safe("user_prefs", {"theme": "dark"})
+            if not success:
+                host.log.warning("Failed to cache user preferences")
+        """
+        namespaced_key = self._make_namespaced_key(key)
+        try:
+            backend = await self._get_backend()
+            serialized = json.dumps(value, default=str)
+            await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
+            return True
+        except Exception as e:
+            logger.warning(
+                f"CacheCapability.set_safe failed for key '{key}': {e}",
+                extra={
+                    "plugin_name": self._plugin_name,
+                    "user_id": self._user_id,
+                    "key": key,
+                    "error": str(e),
+                }
+            )
+            return False
+
+    async def delete_safe(self, key: str) -> bool:
+        """Delete a value from the cache, returning success status.
+
+        This is similar to delete() but returns a boolean indicating success.
+
+        Args:
+            key: The cache key (will be namespaced automatically).
+
+        Returns:
+            True if the value was deleted successfully, False on any error.
+
+        Example:
+            success = await cache.delete_safe("user_prefs")
+        """
+        namespaced_key = self._make_namespaced_key(key)
+        try:
+            backend = await self._get_backend()
+            await backend.delete(namespaced_key)
+            return True
+        except Exception as e:
+            logger.warning(
+                f"CacheCapability.delete_safe failed for key '{key}': {e}",
+                extra={
+                    "plugin_name": self._plugin_name,
+                    "user_id": self._user_id,
+                    "key": key,
+                    "error": str(e),
+                }
+            )
+            return False

@@ -75,27 +75,6 @@ def _create_mock_event(
     return event
 
 
-def _create_mock_graph_response(
-    events: List[Dict[str, Any]],
-    next_link: str = None,
-    delta_link: str = None,
-    status_code: int = 200
-) -> Dict[str, Any]:
-    """Create a mock Graph API response."""
-    response = {
-        "status_code": status_code,
-        "body": {"value": events}
-    }
-    
-    if next_link:
-        response["body"]["@odata.nextLink"] = next_link
-    
-    if delta_link:
-        response["body"]["@odata.deltaLink"] = delta_link
-    
-    return response
-
-
 def _create_mock_cancelled_event(event_id: str) -> Dict[str, Any]:
     """Create a mock cancelled event for delta sync."""
     return {
@@ -106,94 +85,13 @@ def _create_mock_cancelled_event(event_id: str) -> Dict[str, Any]:
 
 
 # ============================================================================
-# Mock Host Capabilities
+# Mock Host (shared module)
 # ============================================================================
 
-class MockHostAuth:
-    """Mock host.auth capability."""
-    
-    def __init__(self, access_token: str = "mock_access_token"):
-        self.access_token = access_token
-    
-    async def resolve_token_and_target(self, provider: str):
-        """Mock token resolution."""
-        if provider == "microsoft":
-            return {"access_token": self.access_token, "token_type": "Bearer", "expires_in": 3600}
-        return None
+from integ.helpers.mock_host import MockHost, create_mock_graph_response
 
-
-class MockHostHttp:
-    """Mock host.http capability."""
-    
-    def __init__(self):
-        self.requests = []
-        self.responses = {}
-        self.default_response = None
-    
-    def set_response(self, url_pattern: str, response: Dict[str, Any]):
-        """Set a mock response for a URL pattern."""
-        self.responses[url_pattern] = response
-    
-    def set_default_response(self, response: Dict[str, Any]):
-        """Set a default response for all requests."""
-        self.default_response = response
-    
-    async def fetch(self, method: str, url: str, headers: Dict[str, Any] = None,
-                   params: Dict[str, Any] = None, json: Dict[str, Any] = None):
-        """Mock HTTP fetch."""
-        self.requests.append({"method": method, "url": url, "headers": headers, "params": params, "json": json})
-        
-        for pattern, response in self.responses.items():
-            if pattern in url:
-                return response
-        
-        if self.default_response:
-            return self.default_response
-        
-        return _create_mock_graph_response([])
-
-
-class MockHostKb:
-    """Mock host.kb capability."""
-
-    def __init__(self):
-        self.ingested_texts = []
-        self.deleted_kos = []
-
-    async def ingest_text(self, kb_id: str, title: str, content: str, source_id: str,
-                         source_url: str = None, attributes: Dict[str, Any] = None):
-        """Mock text ingestion."""
-        self.ingested_texts.append({
-            "kb_id": kb_id, "title": title, "content": content, "source_id": source_id,
-            "source_url": source_url, "attributes": attributes
-        })
-
-    async def delete_ko(self, external_id: str):
-        """Mock KO deletion."""
-        self.deleted_kos.append(external_id)
-
-
-class MockHostCursor:
-    """Mock host.cursor capability."""
-
-    def __init__(self):
-        self.cursors = {}
-
-    async def get(self, kb_id: str):
-        return self.cursors.get(kb_id)
-
-    async def set(self, kb_id: str, cursor_data: Any):
-        self.cursors[kb_id] = cursor_data
-
-
-class MockHost:
-    """Mock host capabilities object."""
-
-    def __init__(self, access_token: str = "mock_access_token"):
-        self.auth = MockHostAuth(access_token)
-        self.http = MockHostHttp()
-        self.kb = MockHostKb()
-        self.cursor = MockHostCursor()
+# Local alias for backward compatibility in tests
+_create_mock_graph_response = create_mock_graph_response
 
 
 # ============================================================================
@@ -249,11 +147,9 @@ async def test_list_operation_auth_failure(client, db, auth_headers):
     from plugins.shu_outlook_calendar.plugin import OutlookCalendarPlugin
 
     plugin = OutlookCalendarPlugin()
-    mock_host = MockHost()
+    mock_host = MockHost(auth_should_fail=True)
 
-    mock_host.http.set_default_response({"status_code": 401, "body": {"error": {"message": "Unauthorized"}}})
-
-    logger.info("=== EXPECTED TEST OUTPUT: 401 authentication error is expected ===")
+    logger.info("=== EXPECTED TEST OUTPUT: Auth resolution failure is expected ===")
 
     params = {"op": "list"}
     result = await plugin.execute(params, None, mock_host)

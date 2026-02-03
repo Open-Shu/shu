@@ -13,6 +13,11 @@ from .kb_capability import KbCapability
 from .ocr_capability import OcrCapability
 from .secrets_capability import SecretsCapability
 from .storage_capability import StorageCapability
+from .cursor_capability import CursorCapability
+from .cache_capability import CacheCapability
+from .ocr_capability import OcrCapability
+from .log_capability import LogCapability
+from .utils_capability import UtilsCapability
 
 
 @dataclass
@@ -57,37 +62,18 @@ class Host:
 
     Security: This class is immutable after construction to prevent plugins
     from replacing capabilities with malicious versions or adding undeclared ones.
+
+    Note: 'log' and 'utils' capabilities are always available and do not require
+    declaration. This encourages proper logging over silent exception swallowing.
     """
 
-    __slots__ = (
-        "_declared_caps",
-        "_frozen",
-        "auth",
-        "cache",
-        "cursor",
-        "http",
-        "identity",
-        "kb",
-        "ocr",
-        "secrets",
-        "storage",
-    )
+    __slots__ = ("_declared_caps", "_frozen", "http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr", "log", "utils")
 
     def __init__(self, declared_caps: list[str] | None = None):
         object.__setattr__(self, "_declared_caps", set(declared_caps or []))
         object.__setattr__(self, "_frozen", False)
         # Initialize capability slots to None
-        for cap in (
-            "http",
-            "identity",
-            "auth",
-            "kb",
-            "secrets",
-            "storage",
-            "cursor",
-            "cache",
-            "ocr",
-        ):
+        for cap in ("http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr", "log", "utils"):
             object.__setattr__(self, cap, None)
 
     def _freeze(self) -> None:
@@ -103,6 +89,7 @@ class Host:
         raise AttributeError("Host attributes cannot be deleted")
 
     # Capability names that require declaration before access
+    # Note: 'log' and 'utils' are NOT in this set - they are always available
     _CAP_NAMES = frozenset(("http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr"))
 
     def __getattribute__(self, name: str) -> Any:
@@ -184,6 +171,11 @@ def make_host(
 
     if "cache" in caps:
         h.cache = CacheCapability(plugin_name=plugin_name, user_id=user_id)
+
+    # Always-available capabilities (no declaration required)
+    # These encourage proper logging and reduce boilerplate
+    h.log = LogCapability(plugin_name=plugin_name, user_id=user_id)
+    h.utils = UtilsCapability(plugin_name=plugin_name, user_id=user_id)
 
     # Freeze the host to prevent plugins from modifying capabilities
     h._freeze()

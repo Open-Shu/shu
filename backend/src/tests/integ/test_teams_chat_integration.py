@@ -95,126 +95,15 @@ def _create_mock_user(
     }
 
 
-def _create_mock_graph_response(
-    items: List[Dict[str, Any]],
-    next_link: str = None,
-    status_code: int = 200
-) -> Dict[str, Any]:
-    """Create a mock Graph API response."""
-    response = {
-        "status_code": status_code,
-        "body": {"value": items}
-    }
-    
-    if next_link:
-        response["body"]["@odata.nextLink"] = next_link
-    
-    return response
-
-
 # ============================================================================
-# Mock Host Capabilities
+# Mock Host (shared module)
 # ============================================================================
 
-class MockHostAuth:
-    """Mock host.auth capability."""
-    
-    def __init__(self, access_token: str = "mock_access_token", should_fail: bool = False):
-        self.access_token = access_token
-        self.should_fail = should_fail
-    
-    async def resolve_token_and_target(self, provider: str):
-        """Mock token resolution."""
-        if self.should_fail:
-            return None, None
-        if provider == "microsoft":
-            return self.access_token, None
-        return None, None
+from integ.helpers.mock_host import MockHost, create_mock_graph_response
 
 
-class MockHostHttp:
-    """Mock host.http capability."""
-
-    def __init__(self):
-        self.requests = []
-        self.responses = {}
-        self.default_response = None
-
-    def set_response(self, url_pattern: str, response: Dict[str, Any]):
-        """Set a mock response for a URL pattern."""
-        self.responses[url_pattern] = response
-
-    def set_default_response(self, response: Dict[str, Any]):
-        """Set a default response for all requests."""
-        self.default_response = response
-
-    async def fetch(self, method: str, url: str, headers: Dict[str, Any] = None,
-                   params: Dict[str, Any] = None, json: Dict[str, Any] = None):
-        """Mock HTTP fetch."""
-        self.requests.append({"method": method, "url": url, "headers": headers, "params": params})
-
-        # Sort patterns by length (longest first) for more specific matching
-        sorted_patterns = sorted(self.responses.keys(), key=len, reverse=True)
-        for pattern in sorted_patterns:
-            if pattern in url:
-                return self.responses[pattern]
-
-        if self.default_response:
-            return self.default_response
-
-        return _create_mock_graph_response([])
-
-
-class MockHostKb:
-    """Mock host.kb capability."""
-
-    def __init__(self):
-        self.ingested_texts = []
-
-    async def ingest_text(self, kb_id: str, title: str, content: str, source_id: str,
-                         source_url: str = None, attributes: Dict[str, Any] = None):
-        """Mock text ingestion."""
-        self.ingested_texts.append({
-            "kb_id": kb_id, "title": title, "content": content, "source_id": source_id,
-            "source_url": source_url, "attributes": attributes
-        })
-
-
-class MockHostCursor:
-    """Mock host.cursor capability."""
-
-    def __init__(self):
-        self.cursors = {}
-
-    async def get(self, kb_id: str):
-        return self.cursors.get(kb_id)
-
-    async def set(self, kb_id: str, cursor_data: Any):
-        self.cursors[kb_id] = cursor_data
-
-
-class MockHostCache:
-    """Mock host.cache capability."""
-
-    def __init__(self):
-        self.cache = {}
-
-    async def get(self, key: str):
-        return self.cache.get(key)
-
-    async def set(self, key: str, value: Any, ttl_seconds: int = None):
-        self.cache[key] = value
-
-
-class MockHost:
-    """Mock host capabilities object."""
-
-    def __init__(self, access_token: str = "mock_access_token", auth_should_fail: bool = False):
-        self.auth = MockHostAuth(access_token, should_fail=auth_should_fail)
-        self.http = MockHostHttp()
-        self.kb = MockHostKb()
-        self.cursor = MockHostCursor()
-        self.cache = MockHostCache()
+# Local alias for backward compatibility in tests
+_create_mock_graph_response = create_mock_graph_response
 
 
 # ============================================================================

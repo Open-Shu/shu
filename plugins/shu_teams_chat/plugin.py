@@ -129,48 +129,22 @@ class TeamsChatPlugin:
 
     async def _graph_request(self, host: Any, access_token: str, method: str, url: str,
                               params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Make a Microsoft Graph API request with error handling."""
+        """Make a Microsoft Graph API request.
+
+        HttpRequestFailed exceptions bubble up to the executor which converts them
+        to structured PluginResult.err() with semantic error_category.
+        """
         if not url.startswith("http"):
             url = f"https://graph.microsoft.com/v1.0{url}"
-        
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
 
-        try:
-            response = await host.http.fetch(method=method, url=url, headers=headers, params=params or {})
-            body = response.get("body", {})
-            return body if isinstance(body, dict) else {}
-        except Exception as e:
-            # Handle HttpRequestFailed with detailed error extraction
-            if hasattr(e, 'status_code') and hasattr(e, 'body'):
-                status_code = getattr(e, 'status_code')
-                body_obj = getattr(e, 'body')
-                
-                if isinstance(body_obj, dict):
-                    error_obj = body_obj.get("error", {})
-                    error_msg = error_obj.get("message", str(body_obj))
-                    graph_code = error_obj.get("code", "api_error")
-                else:
-                    error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
-                    graph_code = "api_error"
-
-                details = {"http_status": status_code, "graph_error_code": graph_code, "url": url}
-
-                if status_code == 401:
-                    raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
-                elif status_code == 403:
-                    raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
-                elif status_code == 429:
-                    raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
-                elif status_code >= 500:
-                    raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                else:
-                    raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-            else:
-                details = {"exception_type": type(e).__name__, "message": str(e)}
-                raise Exception(f"network_error:Network error: {str(e)}|{json.dumps(details)}")
+        response = await host.http.fetch(method=method, url=url, headers=headers, params=params or {})
+        body = response.get("body", {})
+        return body if isinstance(body, dict) else {}
 
     async def _list_chats(self, host: Any, access_token: str, max_chats: int) -> List[Dict[str, Any]]:
         """List user's chats (1:1 and group chats)."""
@@ -210,10 +184,11 @@ class TeamsChatPlugin:
         - $filter must be used with $orderby on the same property
 
         We use lastModifiedDateTime gt for incremental sync since createdDateTime gt is not supported.
+
+        HttpRequestFailed (403/404 for inaccessible chats) is caught by map_safe at call site.
         """
         messages: List[Dict[str, Any]] = []
         next_link: Optional[str] = None
-        # Filter messages modified after since_ts (createdDateTime only supports lt, not gt)
         filter_param = f"lastModifiedDateTime gt {since_ts}"
         url = f"/me/chats/{chat_id}/messages"
 
@@ -224,19 +199,12 @@ class TeamsChatPlugin:
                 "$orderby": "lastModifiedDateTime desc"
             }
 
-            try:
-                if next_link:
-                    data = await self._graph_request(host, access_token, "GET", next_link)
-                else:
-                    data = await self._graph_request(host, access_token, "GET", url, params)
-            except Exception as e:
-                # Some chats may not be accessible; skip and continue
-                if "403" in str(e) or "404" in str(e):
-                    break
-                raise
+            if next_link:
+                data = await self._graph_request(host, access_token, "GET", next_link)
+            else:
+                data = await self._graph_request(host, access_token, "GET", url, params)
 
             for msg in data.get("value", []):
-                # Skip system messages
                 msg_type = msg.get("messageType", "")
                 if msg_type != "message":
                     continue
@@ -250,7 +218,11 @@ class TeamsChatPlugin:
 
     async def _resolve_sender(self, host: Any, access_token: str,
                                from_obj: Dict[str, Any]) -> Dict[str, Any]:
-        """Resolve sender information with caching."""
+        """Resolve sender information with caching.
+
+        Uses safe methods (set_safe, fetch_or_none) to avoid try/except
+        boilerplate for expected failures (missing permissions, etc).
+        """
         user_info = from_obj.get("user", {})
         user_id = user_info.get("id")
         display_name = user_info.get("displayName")
@@ -265,39 +237,33 @@ class TeamsChatPlugin:
         if not user_id:
             return profile
 
-        # Check cache first
+        # Check cache first (cache.get already returns None on error)
         cache = getattr(host, "cache", None)
         cache_key = f"teams_user:{user_id}"
 
         if cache:
-            try:
-                cached = await cache.get(cache_key)
-                if cached:
-                    return cached
-            except Exception:
-                pass
+            cached = await cache.get(cache_key)
+            if cached:
+                return cached
 
-        # Try to get user profile from Graph API
-        try:
-            user_data = await self._graph_request(
-                host, access_token, "GET", f"/users/{user_id}",
-                params={"$select": "id,displayName,mail,userPrincipalName"}
-            )
-            profile = {
-                "id": user_data.get("id") or user_id,
-                "displayName": user_data.get("displayName") or display_name,
-                "email": user_data.get("mail") or user_data.get("userPrincipalName")
-            }
-        except Exception:
-            # User lookup failed (permissions, deleted user, etc.) - use fallback
-            pass
+        # Try to get user profile from Graph API (404/403 returns None)
+        url = f"https://graph.microsoft.com/v1.0/users/{user_id}"
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+        user_data = await host.http.fetch_or_none(
+            "GET", url, headers=headers, params={"$select": "id,displayName,mail,userPrincipalName"}
+        )
+        if user_data:
+            body = user_data.get("body", {})
+            if isinstance(body, dict):
+                profile = {
+                    "id": body.get("id") or user_id,
+                    "displayName": body.get("displayName") or display_name,
+                    "email": body.get("mail") or body.get("userPrincipalName")
+                }
 
-        # Cache result for 6 hours
+        # Cache result for 6 hours (set_safe returns bool, doesn't raise)
         if cache:
-            try:
-                await cache.set(cache_key, profile, ttl_seconds=6 * 3600)
-            except Exception:
-                pass
+            await cache.set_safe(cache_key, profile, ttl_seconds=6 * 3600)
 
         return profile
 
@@ -308,39 +274,34 @@ class TeamsChatPlugin:
     async def _execute_list(self, host: Any, params: Dict[str, Any], access_token: str,
                              since_hours: int, max_chats: int,
                              max_messages_per_chat: int) -> _Result:
-        """Execute list operation - fetch recent messages from chats."""
+        """Execute list operation - fetch recent messages from chats.
+
+        HttpRequestFailed from _list_chats bubbles up; executor converts to
+        structured PluginResult.err() with semantic error_category (auth_error, etc).
+        Individual chat message failures are handled gracefully with map_safe.
+        """
         since_ts = self._window(since_hours)
 
-        # Get list of chats
-        try:
-            chats = await self._list_chats(host, access_token, max_chats)
-        except Exception as e:
-            error_str = str(e)
-            if "auth_missing" in error_str or "401" in error_str:
-                return _Result.err(
-                    "Authentication failed. Please reconnect your Microsoft account.",
-                    code="auth_error"
-                )
-            return _Result.err(f"Failed to list chats: {error_str}", code="api_error")
+        # Get list of chats (HttpRequestFailed bubbles to executor)
+        chats = await self._list_chats(host, access_token, max_chats)
 
-        # Fetch messages from each chat
-        all_messages: List[Dict[str, Any]] = []
-        chats_processed = 0
-
-        for chat in chats:
+        # Fetch messages from each chat using map_safe for graceful failure handling
+        async def fetch_chat_messages(chat: Dict[str, Any]) -> List[Dict[str, Any]]:
             chat_id = chat.get("id")
             if not chat_id:
-                continue
+                return []
+            return await self._list_chat_messages(host, access_token, chat_id, since_ts, max_messages_per_chat)
 
-            try:
-                messages = await self._list_chat_messages(
-                    host, access_token, chat_id, since_ts, max_messages_per_chat
-                )
-            except Exception:
-                # Skip chats that fail (permissions, etc.)
-                continue
+        chat_results, errors = await host.utils.map_safe(chats, fetch_chat_messages)
+        if errors:
+            host.log.warning(f"Failed to fetch messages from {len(errors)} chats")
 
-            chats_processed += 1
+        # Process results - zip chat_results with chats for context
+        all_messages: List[Dict[str, Any]] = []
+        chats_processed = len(chat_results)
+        for i, messages in enumerate(chat_results):
+            chat = chats[i] if i < len(chats) else {}
+            chat_id = chat.get("id")
 
             for msg in messages:
                 # Resolve sender
@@ -354,7 +315,6 @@ class TeamsChatPlugin:
 
                 # Strip HTML if needed (basic)
                 if content_type == "html":
-                    # Simple HTML stripping - remove tags
                     import re
                     content = re.sub(r'<[^>]+>', '', content)
 
@@ -387,57 +347,51 @@ class TeamsChatPlugin:
     async def _execute_ingest(self, host: Any, params: Dict[str, Any], access_token: str,
                                kb_id: str, since_hours: int, max_chats: int,
                                max_messages_per_chat: int) -> _Result:
-        """Execute ingest operation - save messages to knowledge base."""
+        """Execute ingest operation - save messages to knowledge base.
+
+        HttpRequestFailed from _list_chats bubbles up; executor converts to
+        structured PluginResult.err() with semantic error_category.
+        Uses safe methods for cursor operations and map_safe for batch processing.
+        """
         if not hasattr(host, "kb"):
             return _Result.err("kb capability not available. Add 'kb' to manifest capabilities.")
 
-        # Check for cursor (timestamp watermark)
+        # Check for cursor (get() returns None on any error and logs)
         reset_cursor = bool(params.get("reset_cursor"))
         last_ts: Optional[str] = None
 
         if hasattr(host, "cursor") and not reset_cursor:
-            try:
-                cursor_data = await host.cursor.get(kb_id)
-                if isinstance(cursor_data, str):
-                    last_ts = cursor_data
-                elif isinstance(cursor_data, dict):
-                    last_ts = cursor_data.get("last_ts")
-            except Exception:
-                pass
+            cursor_data = await host.cursor.get(kb_id)
+            if isinstance(cursor_data, str):
+                last_ts = cursor_data
+            elif isinstance(cursor_data, dict):
+                last_ts = cursor_data.get("last_ts")
 
         # Use cursor timestamp or fall back to since_hours window
         since_ts = last_ts or self._window(since_hours)
 
-        # Get list of chats
-        try:
-            chats = await self._list_chats(host, access_token, max_chats)
-        except Exception as e:
-            error_str = str(e)
-            if "auth_missing" in error_str or "401" in error_str:
-                return _Result.err(
-                    "Authentication failed. Please reconnect your Microsoft account.",
-                    code="auth_error"
-                )
-            return _Result.err(f"Failed to list chats: {error_str}", code="api_error")
+        # Get list of chats (HttpRequestFailed bubbles to executor)
+        chats = await self._list_chats(host, access_token, max_chats)
 
-        # Fetch and ingest messages from each chat
-        upserts = 0
-        chats_processed = 0
-        newest_ts = last_ts
-
-        for chat in chats:
+        # Fetch messages from each chat using map_safe
+        async def fetch_chat_messages(chat: Dict[str, Any]) -> tuple:
             chat_id = chat.get("id")
             if not chat_id:
-                continue
+                return (chat, [])
+            messages = await self._list_chat_messages(host, access_token, chat_id, since_ts, max_messages_per_chat)
+            return (chat, messages)
 
-            try:
-                messages = await self._list_chat_messages(
-                    host, access_token, chat_id, since_ts, max_messages_per_chat
-                )
-            except Exception:
-                continue
+        chat_results, errors = await host.utils.map_safe(chats, fetch_chat_messages)
+        if errors:
+            host.log.warning(f"Failed to fetch messages from {len(errors)} chats")
 
-            chats_processed += 1
+        # Ingest messages from all successful chats
+        upserts = 0
+        chats_processed = len(chat_results)
+        newest_ts = last_ts
+
+        for chat, messages in chat_results:
+            chat_id = chat.get("id")
 
             for msg in messages:
                 msg_id = msg.get("id")
@@ -495,12 +449,9 @@ class TeamsChatPlugin:
                 if created_dt and (not newest_ts or created_dt > newest_ts):
                     newest_ts = created_dt
 
-        # Update cursor with newest timestamp
+        # Update cursor with newest timestamp (set_safe logs on error but doesn't raise)
         if hasattr(host, "cursor") and newest_ts:
-            try:
-                await host.cursor.set(kb_id, newest_ts)
-            except Exception:
-                pass
+            await host.cursor.set_safe(kb_id, newest_ts)
 
         return _Result.ok({
             "count": upserts,

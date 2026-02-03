@@ -35,23 +35,6 @@ class OutlookCalendarPlugin:
             parts.append(f"{key}={encoded_value}")
         return "&".join(parts)
 
-    def _parse_exception_details(self, exception: Exception) -> tuple[str, str, Optional[Dict[str, Any]]]:
-        """Parse exception into error code, message, and details."""
-        error_str = str(exception)
-        if "|" in error_str:
-            code_msg, details_json = error_str.split("|", 1)
-            try:
-                details = json.loads(details_json)
-            except Exception:
-                details = None
-        else:
-            code_msg = error_str
-            details = None
-        if ":" in code_msg:
-            code, message = code_msg.split(":", 1)
-            return code.strip(), message.strip(), details
-        return "execution_error", code_msg, details
-
     def _window(self, since_hours: int, time_min: Optional[str], time_max: Optional[str]) -> tuple[str, str]:
         """Compute symmetric time window (past + future) for calendar events."""
         if time_min and time_max:
@@ -128,65 +111,31 @@ class OutlookCalendarPlugin:
             "additionalProperties": True,
         }
 
-    # Placeholder methods to be implemented
     async def _graph_api_request(self, host: Any, access_token: str, endpoint: str,
                                   method: str = "GET", params: Optional[Dict[str, Any]] = None,
                                   body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Make a request to Microsoft Graph API with error handling."""
+        """Make a request to Microsoft Graph API.
+
+        HttpRequestFailed exceptions bubble up to the executor which converts them
+        to structured PluginResult.err() with semantic error_category.
+        """
         base_url = "https://graph.microsoft.com/v1.0"
         url = f"{base_url}{endpoint}"
 
         headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-        try:
-            response = await host.http.fetch(
-                method=method, url=url, headers=headers, params=params or {}, json=body
-            )
-            # If fetch succeeded, return the response
-            return response
-
-        except Exception as e:
-            # Catch HttpRequestFailed and extract detailed error
-            if hasattr(e, 'status_code') and hasattr(e, 'body'):
-                status_code = getattr(e, 'status_code')  # type: ignore
-                body_obj = getattr(e, 'body')  # type: ignore
-
-                # Extract Graph API error message
-                if isinstance(body_obj, dict):
-                    error_obj = body_obj.get("error", {})
-                    error_msg = error_obj.get("message", str(body_obj))
-                    graph_code = error_obj.get("code", "api_error")
-                else:
-                    error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
-                    graph_code = "api_error"
-
-                details = {
-                    "http_status": status_code,
-                    "graph_error_code": graph_code,
-                    "url": url
-                }
-
-                # Map to appropriate error code
-                if status_code == 401:
-                    raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
-                elif status_code == 403:
-                    raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
-                elif status_code == 410:
-                    raise Exception(f"delta_token_expired:Delta sync token expired: {error_msg}|{json.dumps(details)}")
-                elif status_code == 429:
-                    raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
-                elif status_code >= 500:
-                    raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                else:
-                    raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-            else:
-                # Not HttpRequestFailed, treat as network error
-                details = {"exception_type": type(e).__name__, "message": str(e)}
-                raise Exception(f"network_error:Network error: {str(e)}|{json.dumps(details)}")
+        response = await host.http.fetch(
+            method=method, url=url, headers=headers, params=params or {}, json=body
+        )
+        return response
 
     async def _fetch_all_pages(self, host: Any, access_token: str, initial_url: str,
                                 max_results: Optional[int] = None) -> tuple[List[Dict[str, Any]], Optional[str]]:
-        """Fetch all pages from a paginated Graph API response. Returns (items, delta_link)."""
+        """Fetch all pages from a paginated Graph API response. Returns (items, delta_link).
+
+        HttpRequestFailed exceptions bubble up to the caller. For delta sync,
+        caller should check error_category == 'gone' for expired delta tokens.
+        """
         all_items = []
         next_url = initial_url
         delta_link = None
@@ -197,45 +146,7 @@ class OutlookCalendarPlugin:
         while next_url:
             headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-            try:
-                response = await host.http.fetch(method="GET", url=next_url, headers=headers)
-            except Exception as e:
-                # Extract detailed error from HttpRequestFailed exception
-                if hasattr(e, 'status_code') and hasattr(e, 'body'):
-                    status_code = getattr(e, 'status_code')  # type: ignore
-                    body_obj = getattr(e, 'body')  # type: ignore
-
-                    # Extract Graph API error message
-                    if isinstance(body_obj, dict):
-                        error_obj = body_obj.get("error", {})
-                        error_msg = error_obj.get("message", str(body_obj))
-                        graph_code = error_obj.get("code", "api_error")
-                    else:
-                        error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
-                        graph_code = "api_error"
-
-                    details = {
-                        "http_status": status_code,
-                        "graph_error_code": graph_code,
-                        "url": next_url
-                    }
-
-                    # Map to appropriate error code
-                    if status_code == 401:
-                        raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
-                    elif status_code == 403:
-                        raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
-                    elif status_code == 410:
-                        raise Exception(f"delta_token_expired:Delta sync token expired: {error_msg}|{json.dumps(details)}")
-                    elif status_code == 429:
-                        raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
-                    elif status_code >= 500:
-                        raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                    else:
-                        raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                else:
-                    # Re-raise if not HttpRequestFailed
-                    raise
+            response = await host.http.fetch(method="GET", url=next_url, headers=headers)
 
             body = response.get("body", {})
             if isinstance(body, dict):
@@ -254,7 +165,11 @@ class OutlookCalendarPlugin:
         return all_items, delta_link
 
     async def _execute_list(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
-        """Execute list operation to fetch calendar events using calendarView endpoint."""
+        """Execute list operation to fetch calendar events using calendarView endpoint.
+
+        HttpRequestFailed exceptions bubble up to the executor which converts them
+        to structured PluginResult.err() with semantic error_category.
+        """
         since_hours = params.get("since_hours", 48)
         time_min = params.get("time_min")
         time_max = params.get("time_max")
@@ -276,37 +191,30 @@ class OutlookCalendarPlugin:
         query_string = self._build_odata_query_string(query_params)
         endpoint = f"/me/calendarView?{query_string}"
 
-        try:
-            events, _ = await self._fetch_all_pages(host, access_token, endpoint, max_results)
+        events, _ = await self._fetch_all_pages(host, access_token, endpoint, max_results)
 
-            # Transform events to normalized format
-            normalized_events = []
-            for ev in events:
-                normalized_events.append({
-                    "id": ev.get("id"),
-                    "subject": ev.get("subject"),
-                    "start": ev.get("start", {}),
-                    "end": ev.get("end", {}),
-                    "location": ev.get("location", {}).get("displayName"),
-                    "bodyPreview": ev.get("bodyPreview"),
-                    "attendees": [a.get("emailAddress", {}).get("address") for a in ev.get("attendees", []) if a.get("emailAddress")],
-                    "organizer": ev.get("organizer", {}).get("emailAddress", {}).get("address"),
-                    "isCancelled": ev.get("isCancelled", False),
-                    "webLink": ev.get("webLink"),
-                    "onlineMeetingUrl": (ev.get("onlineMeeting") or {}).get("joinUrl")
-                })
-
-            return _Result.ok({
-                "events": normalized_events,
-                "count": len(normalized_events),
-                "window": {"since": tmin, "until": tmax, "hours": since_hours}
+        # Transform events to normalized format
+        normalized_events = []
+        for ev in events:
+            normalized_events.append({
+                "id": ev.get("id"),
+                "subject": ev.get("subject"),
+                "start": ev.get("start", {}),
+                "end": ev.get("end", {}),
+                "location": ev.get("location", {}).get("displayName"),
+                "bodyPreview": ev.get("bodyPreview"),
+                "attendees": [a.get("emailAddress", {}).get("address") for a in ev.get("attendees", []) if a.get("emailAddress")],
+                "organizer": ev.get("organizer", {}).get("emailAddress", {}).get("address"),
+                "isCancelled": ev.get("isCancelled", False),
+                "webLink": ev.get("webLink"),
+                "onlineMeetingUrl": (ev.get("onlineMeeting") or {}).get("joinUrl")
             })
 
-        except Exception as e:
-            code, message, details = self._parse_exception_details(e)
-            if details:
-                return _Result.err(message, code=code, details=details)
-            return _Result.err(message, code=code)
+        return _Result.ok({
+            "events": normalized_events,
+            "count": len(normalized_events),
+            "window": {"since": tmin, "until": tmax, "hours": since_hours}
+        })
 
     async def _execute_ingest(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
         """Execute ingest operation to add events to knowledge base with delta sync support."""
@@ -323,17 +231,14 @@ class OutlookCalendarPlugin:
         max_results = params.get("max_results", 50)
         reset_cursor = params.get("reset_cursor", False)
 
-        # Try to get existing delta cursor
+        # Try to get existing delta cursor using safe method
         cursor_data = None
         use_delta_sync = False
 
         if hasattr(host, "cursor") and not reset_cursor:
-            try:
-                cursor_data = await host.cursor.get(kb_id)
-                if cursor_data:
-                    use_delta_sync = True
-            except Exception:
-                pass
+            cursor_data = await host.cursor.get(kb_id)
+            if cursor_data:
+                use_delta_sync = True
 
         upserts = 0
         deleted = 0
@@ -374,72 +279,63 @@ class OutlookCalendarPlugin:
                 },
             )
 
-        try:
-            if use_delta_sync and cursor_data:
-                # Use delta endpoint for incremental sync
-                delta_url = cursor_data if isinstance(cursor_data, str) else cursor_data.get("delta_link")
+        if use_delta_sync and cursor_data:
+            # Use delta endpoint for incremental sync
+            delta_url = cursor_data if isinstance(cursor_data, str) else cursor_data.get("delta_link")
 
-                if delta_url:
-                    try:
-                        events, delta_link = await self._fetch_all_pages(host, access_token, delta_url, max_results)
-
-                        for ev in events:
-                            if ev.get("isCancelled") or ev.get("@removed"):
-                                try:
-                                    await host.kb.delete_ko(external_id=ev.get("id"))
-                                    deleted += 1
-                                except Exception:
-                                    pass
-                            else:
-                                await _upsert_event(ev)
-                                upserts += 1
-
-                    except Exception as e:
-                        if "delta_token_expired" in str(e):
-                            use_delta_sync = False
-                            cursor_data = None
-                        else:
-                            raise
-
-            if not use_delta_sync or not cursor_data:
-                # Initial full sync with time window
-                tmin, tmax = self._window(since_hours, time_min, time_max)
-
-                query_params = {
-                    "$select": "id,subject,start,end,location,body,bodyPreview,attendees,organizer,isCancelled,webLink,onlineMeeting",
-                    "startDateTime": tmin,
-                    "endDateTime": tmax
-                }
-                query_string = self._build_odata_query_string(query_params)
-                endpoint = f"/me/calendarView/delta?{query_string}"
-
-                events, delta_link = await self._fetch_all_pages(host, access_token, endpoint, max_results)
-
-                for ev in events:
-                    if ev.get("isCancelled") or ev.get("@removed"):
-                        try:
-                            await host.kb.delete_ko(external_id=ev.get("id"))
-                            deleted += 1
-                        except Exception:
-                            pass
-                    else:
-                        await _upsert_event(ev)
-                        upserts += 1
-
-            # Store delta link for next sync
-            if hasattr(host, "cursor") and delta_link:
+            if delta_url:
                 try:
-                    await host.cursor.set(kb_id, delta_link)
-                except Exception:
-                    pass
+                    events, delta_link = await self._fetch_all_pages(host, access_token, delta_url, max_results)
 
-            return _Result.ok({"count": upserts, "deleted": deleted, "next_sync_token": delta_link})
+                    for ev in events:
+                        if ev.get("isCancelled") or ev.get("@removed"):
+                            try:
+                                await host.kb.delete_ko(external_id=ev.get("id"))
+                                deleted += 1
+                            except Exception as del_err:
+                                host.log.warning(f"Failed to delete cancelled event {ev.get('id')}: {del_err}")
+                        else:
+                            await _upsert_event(ev)
+                            upserts += 1
 
-        except Exception as e:
-            code, message, details = self._parse_exception_details(e)
-            if details:
-                return _Result.err(message, code=code, details=details)
-            return _Result.err(message, code=code)
+                except Exception as e:
+                    # Check for HTTP 410 (delta token expired) using error_category
+                    if hasattr(e, 'error_category') and e.error_category == 'gone':
+                        use_delta_sync = False
+                        cursor_data = None
+                    else:
+                        raise
+
+        if not use_delta_sync or not cursor_data:
+            # Initial full sync with time window
+            tmin, tmax = self._window(since_hours, time_min, time_max)
+
+            query_params = {
+                "$select": "id,subject,start,end,location,body,bodyPreview,attendees,organizer,isCancelled,webLink,onlineMeeting",
+                "startDateTime": tmin,
+                "endDateTime": tmax
+            }
+            query_string = self._build_odata_query_string(query_params)
+            endpoint = f"/me/calendarView/delta?{query_string}"
+
+            events, delta_link = await self._fetch_all_pages(host, access_token, endpoint, max_results)
+
+            for ev in events:
+                if ev.get("isCancelled") or ev.get("@removed"):
+                    try:
+                        await host.kb.delete_ko(external_id=ev.get("id"))
+                        deleted += 1
+                    except Exception as del_err:
+                        host.log.warning(f"Failed to delete cancelled event {ev.get('id')}: {del_err}")
+                else:
+                    await _upsert_event(ev)
+                    upserts += 1
+
+        # Store delta link for next sync using safe method
+        if hasattr(host, "cursor") and delta_link:
+            await host.cursor.set_safe(kb_id, delta_link)
+
+        return _Result.ok({"count": upserts, "deleted": deleted, "next_sync_token": delta_link})
 
     async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> _Result:
         """Execute plugin operation (list or ingest)."""

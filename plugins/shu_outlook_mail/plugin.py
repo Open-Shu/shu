@@ -52,39 +52,6 @@ class OutlookMailPlugin:
             parts.append(f"{key}={encoded_value}")
         return "&".join(parts)
 
-    def _parse_exception_details(self, exception: Exception) -> tuple[str, str, Optional[Dict[str, Any]]]:
-        """
-        Parse exception into error code, message, and details.
-        
-        Expected format: "error_code:message|details_json"
-        
-        Args:
-            exception: Exception to parse
-            
-        Returns:
-            Tuple of (error_code, message, details_dict)
-        """
-        error_str = str(exception)
-        
-        # Check if error has details (format: "code:message|details_json")
-        if "|" in error_str:
-            code_msg, details_json = error_str.split("|", 1)
-            try:
-                import json
-                details = json.loads(details_json)
-            except Exception:
-                details = None
-        else:
-            code_msg = error_str
-            details = None
-        
-        # Parse code and message (format: "code:message")
-        if ":" in code_msg:
-            code, message = code_msg.split(":", 1)
-            return code.strip(), message.strip(), details
-        else:
-            return "execution_error", code_msg, details
-
     def get_schema(self) -> Optional[Dict[str, Any]]:
         """Return JSON schema for plugin parameters."""
         return {
@@ -276,18 +243,11 @@ class OutlookMailPlugin:
                 "No Microsoft access token available. Connect OAuth or configure host.auth.",
                 code="auth_missing_or_insufficient_scopes"
             )
-        
-        # Extract access token from resolved auth data
-        # resolve_token_and_target returns either:
-        # - A tuple (token, target) from the real implementation
-        # - A dict {"access_token": ...} from test mocks
-        if isinstance(auth_result, tuple):
-            access_token = auth_result[0] if auth_result else None
-        elif isinstance(auth_result, dict):
-            access_token = auth_result.get("access_token")
-        else:
-            access_token = None
-            
+
+        # resolve_token_and_target returns Tuple[Optional[str], Optional[str]]
+        # First element is the access token string, second is the target
+        access_token = auth_result[0] if isinstance(auth_result, tuple) else None
+
         if not access_token:
             return _Result.err(
                 "No Microsoft access token available. Connect OAuth or configure host.auth.",
@@ -295,19 +255,16 @@ class OutlookMailPlugin:
             )
         
         # Route to appropriate operation handler
-        try:
-            if op == "list":
-                return await self._execute_list(params, context, host, access_token)
-            elif op == "digest":
-                return await self._execute_digest(params, context, host, access_token)
-            elif op == "ingest":
-                return await self._execute_ingest(params, context, host, access_token)
-        except Exception as e:
-            return _Result.err(
-                f"Unexpected error during {op} operation: {str(e)}",
-                code="execution_error",
-                details={"exception_type": type(e).__name__}
-            )
+        # HttpRequestFailed exceptions bubble up to the executor which converts them
+        # to structured PluginResult.err() with semantic error_category.
+        if op == "list":
+            return await self._execute_list(params, context, host, access_token)
+        elif op == "digest":
+            return await self._execute_digest(params, context, host, access_token)
+        elif op == "ingest":
+            return await self._execute_ingest(params, context, host, access_token)
+
+        return _Result.err(f"Unsupported operation: {op}", code="unsupported_operation")
     
     async def _graph_api_request(
         self,
@@ -318,84 +275,28 @@ class OutlookMailPlugin:
         params: Optional[Dict[str, Any]] = None,
         body: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Make a request to Microsoft Graph API with error handling and pagination support.
-        
-        Args:
-            host: Host capabilities object providing http.fetch()
-            access_token: OAuth access token for Authorization header
-            endpoint: API endpoint path (e.g., "/me/mailFolders/inbox/messages")
-            method: HTTP method (GET, POST, etc.)
-            params: Optional query parameters
-            body: Optional request body for POST/PATCH requests
-            
-        Returns:
-            Dict containing the API response data
-            
-        Raises:
-            Exception: For API errors with appropriate error codes mapped.
-                      Format: "error_code:message|details_json"
-                      where details_json is optional JSON-encoded error details
+        """Make a request to Microsoft Graph API.
+
+        HttpRequestFailed exceptions bubble up to the caller. The caller can check
+        error_category for semantic handling (e.g., 'gone' for expired delta tokens,
+        'auth_error' for 401, 'rate_limited' for 429).
         """
         base_url = "https://graph.microsoft.com/v1.0"
         url = f"{base_url}{endpoint}"
-        
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        
-        try:
-            response = await host.http.fetch(
-                method=method,
-                url=url,
-                headers=headers,
-                params=params or {},
-                json=body
-            )
-            # If fetch succeeded, return the response
-            return response
 
-        except Exception as e:
-            # Catch HttpRequestFailed and extract detailed error
-            if hasattr(e, 'status_code') and hasattr(e, 'body'):
-                status_code = getattr(e, 'status_code')  # type: ignore
-                body_obj = getattr(e, 'body')  # type: ignore
-
-                # Extract Graph API error message
-                if isinstance(body_obj, dict):
-                    error_obj = body_obj.get("error", {})
-                    error_msg = error_obj.get("message", str(body_obj))
-                    graph_code = error_obj.get("code", "api_error")
-                else:
-                    error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
-                    graph_code = "api_error"
-
-                import json
-                details = {
-                    "http_status": status_code,
-                    "graph_error_code": graph_code,
-                    "url": url
-                }
-
-                # Map to appropriate error code
-                if status_code == 401:
-                    raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
-                elif status_code == 403:
-                    raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
-                elif status_code == 410:
-                    raise Exception(f"delta_token_expired:Delta sync token expired: {error_msg}|{json.dumps(details)}")
-                elif status_code == 429:
-                    raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
-                elif status_code >= 500:
-                    raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                else:
-                    raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-            else:
-                # Not HttpRequestFailed, treat as network error
-                import json
-                details = {"exception_type": type(e).__name__, "message": str(e)}
-                raise Exception(f"network_error:Network error: {str(e)}|{json.dumps(details)}")
+        response = await host.http.fetch(
+            method=method,
+            url=url,
+            headers=headers,
+            params=params or {},
+            json=body
+        )
+        return response
     
     async def _fetch_all_pages(
         self,
@@ -435,55 +336,17 @@ class OutlookMailPlugin:
                     endpoint = next_url
                 
                 # Make request directly with full URL
+                # HttpRequestFailed exceptions bubble up - caller can check error_category
                 headers = {
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json"
                 }
-                
-                try:
-                    response = await host.http.fetch(
-                        method="GET",
-                        url=next_url,
-                        headers=headers
-                    )
-                except Exception as e:
-                    # Extract detailed error from HttpRequestFailed exception
-                    if hasattr(e, 'status_code') and hasattr(e, 'body'):
-                        status_code = getattr(e, 'status_code')  # type: ignore
-                        body_obj = getattr(e, 'body')  # type: ignore
 
-                        # Extract Graph API error message
-                        if isinstance(body_obj, dict):
-                            error_obj = body_obj.get("error", {})
-                            error_msg = error_obj.get("message", str(body_obj))
-                            graph_code = error_obj.get("code", "api_error")
-                        else:
-                            error_msg = str(body_obj)[:500] if body_obj else "Unknown error"
-                            graph_code = "api_error"
-
-                        import json
-                        details = {
-                            "http_status": status_code,
-                            "graph_error_code": graph_code,
-                            "url": next_url
-                        }
-
-                        # Map to appropriate error code
-                        if status_code == 401:
-                            raise Exception(f"auth_missing_or_insufficient_scopes:Authentication failed: {error_msg}|{json.dumps(details)}")
-                        elif status_code == 403:
-                            raise Exception(f"insufficient_permissions:Insufficient permissions: {error_msg}|{json.dumps(details)}")
-                        elif status_code == 410:
-                            raise Exception(f"delta_token_expired:Delta sync token expired: {error_msg}|{json.dumps(details)}")
-                        elif status_code == 429:
-                            raise Exception(f"rate_limit_exceeded:Rate limit exceeded: {error_msg}|{json.dumps(details)}")
-                        elif status_code >= 500:
-                            raise Exception(f"server_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                        else:
-                            raise Exception(f"api_error:Microsoft Graph API error (HTTP {status_code}): {error_msg}|{json.dumps(details)}")
-                    else:
-                        # Re-raise if not HttpRequestFailed
-                        raise
+                response = await host.http.fetch(
+                    method="GET",
+                    url=next_url,
+                    headers=headers
+                )
             else:
                 # First request with endpoint path
                 response = await self._graph_api_request(
@@ -574,49 +437,41 @@ class OutlookMailPlugin:
         if filter_parts:
             odata_params["$filter"] = " and ".join(filter_parts)
         
-        try:
-            # Fetch messages from Graph API
-            endpoint = "/me/mailFolders/inbox/messages"
-            
-            if debug_mode:
-                diagnostics.append(f"Fetching from endpoint: {endpoint}")
-            
-            # Build full URL with properly URL-encoded query parameters
-            query_string = self._build_odata_query_string(odata_params)
-            full_endpoint = f"{endpoint}?{query_string}"
-            
-            # Fetch all pages up to max_results
-            messages = await self._fetch_all_pages(
-                host=host,
-                access_token=access_token,
-                initial_url=full_endpoint,
-                max_results=max_results
-            )
-            
-            if debug_mode:
-                diagnostics.append(f"Retrieved {len(messages)} messages")
-            
-            # Build result data
-            result_data = {
-                "messages": messages,
-                "count": len(messages),
-                "note": f"Retrieved {len(messages)} messages from the last {since_hours} hours"
-            }
-            
-            # Include diagnostics if debug mode enabled
-            if debug_mode and diagnostics:
-                result_data["diagnostics"] = diagnostics
-            
-            # Return successful result
-            return _Result.ok(result_data)
-            
-        except Exception as e:
-            # Parse error code, message, and details from exception
-            code, message, details = self._parse_exception_details(e)
-            if details:
-                return _Result.err(message, code=code, details=details)
-            else:
-                return _Result.err(message, code=code)
+        # Fetch messages from Graph API
+        # HttpRequestFailed exceptions bubble up to the executor.
+        endpoint = "/me/mailFolders/inbox/messages"
+
+        if debug_mode:
+            diagnostics.append(f"Fetching from endpoint: {endpoint}")
+
+        # Build full URL with properly URL-encoded query parameters
+        query_string = self._build_odata_query_string(odata_params)
+        full_endpoint = f"{endpoint}?{query_string}"
+
+        # Fetch all pages up to max_results
+        messages = await self._fetch_all_pages(
+            host=host,
+            access_token=access_token,
+            initial_url=full_endpoint,
+            max_results=max_results
+        )
+
+        if debug_mode:
+            diagnostics.append(f"Retrieved {len(messages)} messages")
+
+        # Build result data
+        result_data = {
+            "messages": messages,
+            "count": len(messages),
+            "note": f"Retrieved {len(messages)} messages from the last {since_hours} hours"
+        }
+
+        # Include diagnostics if debug mode enabled
+        if debug_mode and diagnostics:
+            result_data["diagnostics"] = diagnostics
+
+        # Return successful result
+        return _Result.ok(result_data)
     
     async def _execute_digest(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
         """
@@ -679,141 +534,125 @@ class OutlookMailPlugin:
         if filter_parts:
             odata_params["$filter"] = " and ".join(filter_parts)
         
-        try:
-            # Fetch messages from Graph API (reuse list operation logic)
-            endpoint = "/me/mailFolders/inbox/messages"
-            
-            if debug_mode:
-                diagnostics.append(f"Fetching from endpoint: {endpoint}")
-            
-            # Build full URL with properly URL-encoded query parameters
-            query_string = self._build_odata_query_string(odata_params)
-            full_endpoint = f"{endpoint}?{query_string}"
-            
-            # Fetch all pages up to max_results
-            messages = await self._fetch_all_pages(
-                host=host,
-                access_token=access_token,
-                initial_url=full_endpoint,
-                max_results=max_results
-            )
-            
-            if debug_mode:
-                diagnostics.append(f"Retrieved {len(messages)} messages for digest analysis")
-            
-            # Analyze messages to identify top senders with counts
-            sender_counts = {}
-            recent_subjects = []
-            
-            for message in messages:
-                # Extract sender email address
-                from_field = message.get("from", {})
-                email_address = from_field.get("emailAddress", {})
-                sender_email = email_address.get("address", "")
-                sender_name = email_address.get("name", "")
-                
-                if sender_email:
-                    # Count messages per sender
-                    if sender_email not in sender_counts:
-                        sender_counts[sender_email] = {
-                            "email": sender_email,
-                            "name": sender_name,
-                            "count": 0
-                        }
-                    sender_counts[sender_email]["count"] += 1
-                
-                # Extract subject for recent subjects list (up to 20)
-                subject = message.get("subject")
-                if subject and len(recent_subjects) < 20:
-                    recent_subjects.append(subject)
-            
-            # Sort senders by count descending and limit to top 10
-            top_senders = sorted(
-                sender_counts.values(),
-                key=lambda x: x["count"],
-                reverse=True
-            )[:10]
-            
-            if debug_mode:
-                diagnostics.append(f"Analyzed {len(sender_counts)} unique senders")
-            
-            # Calculate window metadata
-            window = {
-                "since": since_time.isoformat(),
-                "until": now.isoformat(),
-                "hours": since_hours
-            }
-            
-            # Create digest content summary
-            total_count = len(messages)
-            content_lines = [
-                f"Summary of {total_count} messages from {len(sender_counts)} senders",
-                f"Time window: {since_hours} hours (from {since_time.strftime('%Y-%m-%d %H:%M:%S')} to {now.strftime('%Y-%m-%d %H:%M:%S')} UTC)",
-                "",
-                "Top Senders:"
-            ]
-            
-            for sender in top_senders:
-                content_lines.append(f"  - {sender['name']} <{sender['email']}>: {sender['count']} messages")
-            
-            if recent_subjects:
-                content_lines.append("")
-                content_lines.append("Recent Subjects:")
-                for subject in recent_subjects[:10]:  # Show first 10 in content
-                    content_lines.append(f"  - {subject}")
-            
-            content = "\n".join(content_lines)
-            
-            # Create Knowledge Object with type "email_digest"
-            ko = {
-                "type": "email_digest",
-                "title": f"Outlook Inbox Digest ({now.strftime('%b %d, %Y')})",
-                "content": content,
-                "attributes": {
-                    "total_count": total_count,
-                    "top_senders": top_senders,
-                    "recent_subjects": recent_subjects,
-                    "window": window
-                },
-                "source_id": f"outlook_mail_digest_{kb_id}_{now.strftime('%Y%m%d%H%M%S')}" if kb_id else f"outlook_mail_digest_{now.strftime('%Y%m%d%H%M%S')}",
-                "external_id": f"outlook_mail_digest_{kb_id}_{now.strftime('%Y%m%d%H%M%S')}" if kb_id else f"outlook_mail_digest_{now.strftime('%Y%m%d%H%M%S')}"
-            }
-            
-            # Write digest KO to kb_id using host.kb if kb_id is provided
-            if kb_id:
-                try:
-                    # Write the digest KO to the knowledge base
-                    await host.kb.write_ko(kb_id=kb_id, ko=ko)
-                    if debug_mode:
-                        diagnostics.append(f"Wrote digest KO to knowledge base: {kb_id}")
-                except Exception as e:
-                    return _Result.err(
-                        f"Failed to write digest to knowledge base: {str(e)}",
-                        code="kb_write_error",
-                        details={"kb_id": kb_id, "exception_type": type(e).__name__}
-                    )
-            
-            # Build result data
-            result_data = {
-                "ko": ko,
-                "count": total_count,
+        # Fetch messages from Graph API (reuse list operation logic)
+        # HttpRequestFailed exceptions bubble up to the executor.
+        endpoint = "/me/mailFolders/inbox/messages"
+
+        if debug_mode:
+            diagnostics.append(f"Fetching from endpoint: {endpoint}")
+
+        # Build full URL with properly URL-encoded query parameters
+        query_string = self._build_odata_query_string(odata_params)
+        full_endpoint = f"{endpoint}?{query_string}"
+
+        # Fetch all pages up to max_results
+        messages = await self._fetch_all_pages(
+            host=host,
+            access_token=access_token,
+            initial_url=full_endpoint,
+            max_results=max_results
+        )
+
+        if debug_mode:
+            diagnostics.append(f"Retrieved {len(messages)} messages for digest analysis")
+
+        # Analyze messages to identify top senders with counts
+        sender_counts = {}
+        recent_subjects = []
+
+        for message in messages:
+            # Extract sender email address
+            from_field = message.get("from", {})
+            email_address = from_field.get("emailAddress", {})
+            sender_email = email_address.get("address", "")
+            sender_name = email_address.get("name", "")
+
+            if sender_email:
+                # Count messages per sender
+                if sender_email not in sender_counts:
+                    sender_counts[sender_email] = {
+                        "email": sender_email,
+                        "name": sender_name,
+                        "count": 0
+                    }
+                sender_counts[sender_email]["count"] += 1
+
+            # Extract subject for recent subjects list (up to 20)
+            subject = message.get("subject")
+            if subject and len(recent_subjects) < 20:
+                recent_subjects.append(subject)
+
+        # Sort senders by count descending and limit to top 10
+        top_senders = sorted(
+            sender_counts.values(),
+            key=lambda x: x["count"],
+            reverse=True
+        )[:10]
+
+        if debug_mode:
+            diagnostics.append(f"Analyzed {len(sender_counts)} unique senders")
+
+        # Calculate window metadata
+        window = {
+            "since": since_time.isoformat(),
+            "until": now.isoformat(),
+            "hours": since_hours
+        }
+
+        # Create digest content summary
+        total_count = len(messages)
+        content_lines = [
+            f"Summary of {total_count} messages from {len(sender_counts)} senders",
+            f"Time window: {since_hours} hours (from {since_time.strftime('%Y-%m-%d %H:%M:%S')} to {now.strftime('%Y-%m-%d %H:%M:%S')} UTC)",
+            "",
+            "Top Senders:"
+        ]
+
+        for sender in top_senders:
+            content_lines.append(f"  - {sender['name']} <{sender['email']}>: {sender['count']} messages")
+
+        if recent_subjects:
+            content_lines.append("")
+            content_lines.append("Recent Subjects:")
+            for subject in recent_subjects[:10]:  # Show first 10 in content
+                content_lines.append(f"  - {subject}")
+
+        content = "\n".join(content_lines)
+
+        # Create Knowledge Object with type "email_digest"
+        ko = {
+            "type": "email_digest",
+            "title": f"Outlook Inbox Digest ({now.strftime('%b %d, %Y')})",
+            "content": content,
+            "attributes": {
+                "total_count": total_count,
+                "top_senders": top_senders,
+                "recent_subjects": recent_subjects,
                 "window": window
-            }
-            
-            # Include diagnostics if debug mode enabled
-            if debug_mode and diagnostics:
-                result_data["diagnostics"] = diagnostics
-            
-            # Return ko object, count, and window in result
-            return _Result.ok(result_data)
-            
-        except Exception as e:
-            # Parse error code, message, and details from exception
-            code, message, details = self._parse_exception_details(e)
-            if details:
-                return _Result.err(message, code=code, details=details)
-            else:
-                return _Result.err(message, code=code)
+            },
+            "source_id": f"outlook_mail_digest_{kb_id}_{now.strftime('%Y%m%d%H%M%S')}" if kb_id else f"outlook_mail_digest_{now.strftime('%Y%m%d%H%M%S')}",
+            "external_id": f"outlook_mail_digest_{kb_id}_{now.strftime('%Y%m%d%H%M%S')}" if kb_id else f"outlook_mail_digest_{now.strftime('%Y%m%d%H%M%S')}"
+        }
+
+        # Write digest KO to kb_id using host.kb if kb_id is provided
+        if kb_id:
+            await host.kb.upsert_knowledge_object(knowledge_base_id=kb_id, ko=ko)
+            if debug_mode:
+                diagnostics.append(f"Wrote digest KO to knowledge base: {kb_id}")
+
+        # Build result data
+        result_data = {
+            "ko": ko,
+            "count": total_count,
+            "window": window
+        }
+
+        # Include diagnostics if debug mode enabled
+        if debug_mode and diagnostics:
+            result_data["diagnostics"] = diagnostics
+
+        # Return ko object, count, and window in result
+        return _Result.ok(result_data)
     
     async def _execute_ingest(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
         """
@@ -886,298 +725,287 @@ class OutlookMailPlugin:
         now = datetime.now(timezone.utc)
         since_time = now - timedelta(hours=since_hours)
         
-        try:
-            messages = []
-            delta_link = None
-            
-            if use_delta_sync and cursor_data:
-                # Use delta endpoint for incremental sync
+        messages = []
+        delta_link = None
+
+        # Track ingestion count, deletion count, and skips
+        ingestion_count = 0
+        deleted_count = 0
+        skips = []
+
+        if use_delta_sync and cursor_data:
+            # Use delta endpoint for incremental sync
+            # The cursor_data should contain the delta link URL
+            delta_url = cursor_data if isinstance(cursor_data, str) else cursor_data.get("delta_link")
+
+            if delta_url:
                 try:
-                    # The cursor_data should contain the delta link URL
-                    delta_url = cursor_data if isinstance(cursor_data, str) else cursor_data.get("delta_link")
-                    
-                    if delta_url:
-                        # Fetch delta changes
-                        headers = {
-                            "Authorization": f"Bearer {access_token}",
-                            "Content-Type": "application/json"
-                        }
-                        
-                        response = await host.http.fetch(
-                            method="GET",
-                            url=delta_url,
-                            headers=headers
-                        )
-                        
-                        # Check for errors
-                        status_code = response.get("status_code") or response.get("status")
-                        
-                        if status_code == 410:
-                            # Delta token expired - fall back to full sync
-                            if debug_mode:
-                                diagnostics.append("Delta token expired (410), falling back to full sync")
-                            use_delta_sync = False
-                            # Reset cursor
-                            if hasattr(host, "cursor"):
-                                try:
-                                    await host.cursor.delete(kb_id)
-                                except Exception:
-                                    pass
-                        elif status_code and status_code >= 400:
-                            # Other error - fall back to full sync
-                            use_delta_sync = False
-                        else:
-                            # Success - extract messages and delta link from response body
-                            body = response.get("body", {})
-                            if isinstance(body, dict):
-                                messages = body.get("value", [])
-                                delta_link = body.get("@odata.deltaLink")
-                            else:
-                                messages = []
-                                delta_link = None
-                    else:
-                        # No valid delta URL - fall back to full sync
-                        use_delta_sync = False
-                        
-                except Exception as e:
-                    # Delta sync failed - fall back to full sync
-                    # Log diagnostic message
-                    use_delta_sync = False
-            
-            # If not using delta sync, perform full list-based sync
-            if not use_delta_sync:
-                # Build OData query parameters (same as list operation)
-                odata_params = {
-                    "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview",
-                    "$orderby": "receivedDateTime desc",
-                    "$top": str(max_results)
-                }
-                
-                # Build $filter parameter for time-based filtering
-                filter_parts = []
-                
-                # Add time filter
-                since_iso = since_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-                filter_parts.append(f"receivedDateTime ge {since_iso}")
-                
-                # Add custom query filter if provided
-                if query_filter:
-                    filter_parts.append(f"({query_filter})")
-                
-                # Combine filters with AND
-                if filter_parts:
-                    odata_params["$filter"] = " and ".join(filter_parts)
-                
-                # Fetch messages from Graph API (reuse list operation logic)
-                endpoint = "/me/mailFolders/inbox/messages"
-                
-                # Build full URL with properly URL-encoded query parameters
-                query_string = self._build_odata_query_string(odata_params)
-                full_endpoint = f"{endpoint}?{query_string}"
-                
-                # Fetch all pages up to max_results
-                messages = await self._fetch_all_pages(
-                    host=host,
-                    access_token=access_token,
-                    initial_url=full_endpoint,
-                    max_results=max_results
-                )
-                
-                # For initial sync, we need to get the delta link for future syncs
-                # Make a delta query to get the initial delta token
-                try:
-                    delta_endpoint = "/me/mailFolders/inbox/messages/delta"
-                    delta_params = {
-                        "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview"
+                    # Fetch delta changes
+                    headers = {
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json"
                     }
-                    
-                    # Add the same filters to delta query
-                    if filter_parts:
-                        delta_params["$filter"] = " and ".join(filter_parts)
-                    
-                    # Build delta URL with properly URL-encoded query parameters
-                    delta_query_string = self._build_odata_query_string(delta_params)
-                    delta_full_endpoint = f"{delta_endpoint}?{delta_query_string}"
-                    
-                    # Fetch delta to get initial token
-                    delta_response = await self._graph_api_request(
-                        host=host,
-                        access_token=access_token,
-                        endpoint=delta_full_endpoint
+
+                    response = await host.http.fetch(
+                        method="GET",
+                        url=delta_url,
+                        headers=headers
                     )
-                    
-                    # Extract delta link for next sync from response body
-                    delta_body = delta_response.get("body", {})
-                    if isinstance(delta_body, dict):
-                        delta_link = delta_body.get("@odata.deltaLink")
+
+                    # Success - extract messages and delta link from response body
+                    body = response.get("body", {})
+                    if isinstance(body, dict):
+                        messages = body.get("value", [])
+                        delta_link = body.get("@odata.deltaLink")
                     else:
+                        messages = []
                         delta_link = None
-                    
-                except Exception:
-                    # If we can't get delta link, that's okay - we'll do full sync next time
-                    pass
-            
-            # Track ingestion count, deletion count, and skips
-            ingestion_count = 0
-            deleted_count = 0
-            skips = []
-            
-            # Process delta response: handle messageAdded and messageDeleted events
-            for message in messages:
-                # Check if this is a messageDeleted event (has @removed field)
-                if "@removed" in message:
-                    # For messageDeleted: call host.kb.delete_ko(external_id=message_id)
-                    message_id = message.get("id")
-                    if message_id:
-                        try:
-                            await host.kb.delete_ko(external_id=message_id)
-                            deleted_count += 1
-                        except Exception as e:
-                            # Track failed deletion in skips array
-                            error_str = str(e)
-                            skips.append({
-                                "item_id": message_id,
-                                "reason": f"Failed to delete message: {error_str}",
-                                "code": "deletion_failed"
-                            })
-                    continue
-                
-                # For messageAdded: ingest new messages
-                message_id = message.get("id")
-                if not message_id:
-                    skips.append({
-                        "item_id": "unknown",
-                        "reason": "Message missing id field",
-                        "code": "missing_id"
-                    })
-                    continue
-                
-                try:
-                    # Fetch full message content including body field
-                    full_message = await self._graph_api_request(
-                        host=host,
-                        access_token=access_token,
-                        endpoint=f"/me/messages/{message_id}",
-                        params={
-                            "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,body"
-                        }
-                    )
-                    
-                    # Extract email fields
-                    subject = full_message.get("subject") or "(no subject)"
-                    
-                    # Extract sender
-                    from_field = full_message.get("from", {})
-                    sender_email_obj = from_field.get("emailAddress", {})
-                    sender_name = sender_email_obj.get("name", "")
-                    sender_address = sender_email_obj.get("address", "")
-                    sender = f"{sender_name} <{sender_address}>" if sender_name else sender_address
-                    
-                    # Extract recipients (to/cc/bcc)
-                    def extract_recipients(recipient_list: List[Dict[str, Any]]) -> List[str]:
-                        """Extract email addresses from recipient list."""
-                        result = []
-                        for recipient in recipient_list or []:
-                            email_obj = recipient.get("emailAddress", {})
-                            name = email_obj.get("name", "")
-                            address = email_obj.get("address", "")
-                            if address:
-                                result.append(f"{name} <{address}>" if name else address)
-                        return result
-                    
-                    to_recipients = extract_recipients(full_message.get("toRecipients", []))
-                    cc_recipients = extract_recipients(full_message.get("ccRecipients", []))
-                    bcc_recipients = extract_recipients(full_message.get("bccRecipients", []))
-                    
-                    recipients = {
-                        "to": to_recipients,
-                        "cc": cc_recipients,
-                        "bcc": bcc_recipients
-                    }
-                    
-                    # Extract date
-                    date = full_message.get("receivedDateTime")
-                    
-                    # Extract body text from body.content field
-                    body_obj = full_message.get("body", {})
-                    body_content = body_obj.get("content", "")
-                    body_type = body_obj.get("contentType", "text")
-                    
-                    # If body is HTML, we'll pass it as body_text for now
-                    # The kb capability will handle text extraction if needed
-                    body_text = body_content or full_message.get("bodyPreview", "")
-                    
-                    # Call host.kb.ingest_email() with extracted fields
-                    await host.kb.ingest_email(
-                        kb_id,
-                        subject=subject,
-                        sender=sender,
-                        recipients=recipients,
-                        date=date,
-                        message_id=message_id,
-                        thread_id=None,  # Outlook doesn't have thread_id in the same way
-                        body_text=body_text,
-                        body_html=body_content if body_type.lower() == "html" else None,
-                        labels=None,  # Outlook uses categories, not labels
-                        source_url=None,
-                        attributes={
-                            "extraction_metadata": {
-                                "body_type": body_type,
-                                "received_datetime": date
-                            }
-                        }
-                    )
-                    
-                    ingestion_count += 1
-                    
+
                 except Exception as e:
-                    # Track failed ingestion in skips array
-                    error_str = str(e)
-                    skips.append({
-                        "item_id": message_id,
-                        "reason": f"Failed to ingest message: {error_str}",
-                        "code": "ingestion_failed"
-                    })
-                    continue
-            
-            # Store delta token via host.cursor.set(kb_id, delta_token) after successful processing
-            if delta_link and hasattr(host, "cursor"):
-                try:
-                    await host.cursor.set(kb_id, delta_link)
-                    if debug_mode:
-                        diagnostics.append("Stored delta token for next sync")
-                except Exception as e:
-                    # Cursor update is best-effort - log but don't fail the operation
-                    if debug_mode:
-                        diagnostics.append(f"Failed to store delta token: {str(e)}")
-            
-            if debug_mode:
-                diagnostics.append(f"Ingestion complete: {ingestion_count} ingested, {deleted_count} deleted, {len(skips)} skipped")
-            
-            # Return count and deleted count in result
-            result_data = {
-                "count": ingestion_count,
-                "deleted": deleted_count
+                    # Check for HTTP 410 (delta token expired) using error_category
+                    if hasattr(e, 'error_category') and e.error_category == 'gone':
+                        if debug_mode:
+                            diagnostics.append("Delta token expired (410), falling back to full sync")
+                        use_delta_sync = False
+                        # Reset cursor (best-effort)
+                        if hasattr(host, "cursor"):
+                            await host.cursor.delete_safe(kb_id)
+                    else:
+                        # Other HTTP errors bubble up to the executor
+                        raise
+            else:
+                # No valid delta URL - fall back to full sync
+                use_delta_sync = False
+        
+        # If not using delta sync, perform full list-based sync
+        # This runs when: no cursor exists, cursor retrieval failed, or delta token expired
+        if not use_delta_sync:
+            # Build OData query parameters (same as list operation)
+            odata_params = {
+                "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview",
+                "$orderby": "receivedDateTime desc",
+                "$top": str(max_results)
             }
             
-            # Include history_id (delta token) if available
-            if delta_link:
-                result_data["history_id"] = delta_link
+            # Build $filter parameter for time-based filtering
+            filter_parts = []
             
-            # Include skips array if there were any failures
-            if skips:
-                result_data["skips"] = skips
+            # Add time filter
+            since_iso = since_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            filter_parts.append(f"receivedDateTime ge {since_iso}")
             
-            # Include diagnostics if debug mode enabled
-            if debug_mode and diagnostics:
-                result_data["diagnostics"] = diagnostics
+            # Add custom query filter if provided
+            if query_filter:
+                filter_parts.append(f"({query_filter})")
             
-            return _Result.ok(result_data)
+            # Combine filters with AND
+            if filter_parts:
+                odata_params["$filter"] = " and ".join(filter_parts)
             
-        except Exception as e:
-            # Parse error code, message, and details from exception
-            code, message, details = self._parse_exception_details(e)
-            if details:
-                return _Result.err(message, code=code, details=details)
-            else:
-                return _Result.err(message, code=code)
+            # Fetch messages from Graph API (reuse list operation logic)
+            endpoint = "/me/mailFolders/inbox/messages"
+            
+            # Build full URL with properly URL-encoded query parameters
+            query_string = self._build_odata_query_string(odata_params)
+            full_endpoint = f"{endpoint}?{query_string}"
+            
+            # Fetch all pages up to max_results
+            messages = await self._fetch_all_pages(
+                host=host,
+                access_token=access_token,
+                initial_url=full_endpoint,
+                max_results=max_results
+            )
+            
+            if debug_mode:
+                diagnostics.append(f"Full sync fetched {len(messages)} messages")
+            
+            # For initial sync, we need to get the delta link for future syncs
+            # Make a delta query to get the initial delta token
+            try:
+                delta_endpoint = "/me/mailFolders/inbox/messages/delta"
+                delta_params = {
+                    "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview"
+                }
+                
+                # Add the same filters to delta query
+                if filter_parts:
+                    delta_params["$filter"] = " and ".join(filter_parts)
+                
+                # Build delta URL with properly URL-encoded query parameters
+                delta_query_string = self._build_odata_query_string(delta_params)
+                delta_full_endpoint = f"{delta_endpoint}?{delta_query_string}"
+                
+                # Fetch delta to get initial token
+                delta_response = await self._graph_api_request(
+                    host=host,
+                    access_token=access_token,
+                    endpoint=delta_full_endpoint
+                )
+                
+                # Extract delta link for next sync from response body
+                delta_body = delta_response.get("body", {})
+                if isinstance(delta_body, dict):
+                    delta_link = delta_body.get("@odata.deltaLink")
+                else:
+                    delta_link = None
+                
+            except Exception:
+                # If we can't get delta link, that's okay - we'll do full sync next time
+                pass
+
+        # Process messages: handle messageAdded and messageDeleted events
+        # This runs for both delta sync and full sync
+        for message in messages:
+            # Check if this is a messageDeleted event (has @removed field)
+            if "@removed" in message:
+                # For messageDeleted: call host.kb.delete_ko(external_id=message_id)
+                message_id = message.get("id")
+                if message_id:
+                    try:
+                        await host.kb.delete_ko(external_id=message_id)
+                        deleted_count += 1
+                    except Exception as e:
+                        # Track failed deletion in skips array
+                        error_str = str(e)
+                        skips.append({
+                            "item_id": message_id,
+                            "reason": f"Failed to delete message: {error_str}",
+                            "code": "deletion_failed"
+                        })
+                continue
+            
+            # For messageAdded: ingest new messages
+            message_id = message.get("id")
+            if not message_id:
+                skips.append({
+                    "item_id": "unknown",
+                    "reason": "Message missing id field",
+                    "code": "missing_id"
+                })
+                continue
+            
+            try:
+                # Fetch full message content including body field
+                response = await self._graph_api_request(
+                    host=host,
+                    access_token=access_token,
+                    endpoint=f"/me/messages/{message_id}",
+                    params={
+                        "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,body"
+                    }
+                )
+
+                # Extract message from response body
+                # _graph_api_request returns {"status_code": ..., "body": ...}
+                full_message = response.get("body", {}) if isinstance(response.get("body"), dict) else response
+
+                # Extract email fields
+                subject = full_message.get("subject") or "(no subject)"
+                
+                # Extract sender
+                from_field = full_message.get("from", {})
+                sender_email_obj = from_field.get("emailAddress", {})
+                sender_name = sender_email_obj.get("name", "")
+                sender_address = sender_email_obj.get("address", "")
+                sender = f"{sender_name} <{sender_address}>" if sender_name else sender_address
+                
+                # Extract recipients (to/cc/bcc)
+                def extract_recipients(recipient_list: List[Dict[str, Any]]) -> List[str]:
+                    """Extract email addresses from recipient list."""
+                    result = []
+                    for recipient in recipient_list or []:
+                        email_obj = recipient.get("emailAddress", {})
+                        name = email_obj.get("name", "")
+                        address = email_obj.get("address", "")
+                        if address:
+                            result.append(f"{name} <{address}>" if name else address)
+                    return result
+                
+                to_recipients = extract_recipients(full_message.get("toRecipients", []))
+                cc_recipients = extract_recipients(full_message.get("ccRecipients", []))
+                bcc_recipients = extract_recipients(full_message.get("bccRecipients", []))
+                
+                recipients = {
+                    "to": to_recipients,
+                    "cc": cc_recipients,
+                    "bcc": bcc_recipients
+                }
+                
+                # Extract date
+                date = full_message.get("receivedDateTime")
+                
+                # Extract body text from body.content field
+                body_obj = full_message.get("body", {})
+                body_content = body_obj.get("content", "")
+                body_type = body_obj.get("contentType", "text")
+                
+                # If body is HTML, we'll pass it as body_text for now
+                # The kb capability will handle text extraction if needed
+                body_text = body_content or full_message.get("bodyPreview", "")
+                
+                # Call host.kb.ingest_email() with extracted fields
+                await host.kb.ingest_email(
+                    kb_id,
+                    subject=subject,
+                    sender=sender,
+                    recipients=recipients,
+                    date=date,
+                    message_id=message_id,
+                    thread_id=None,  # Outlook doesn't have thread_id in the same way
+                    body_text=body_text,
+                    body_html=body_content if body_type.lower() == "html" else None,
+                    labels=None,  # Outlook uses categories, not labels
+                    source_url=None,
+                    attributes={
+                        "extraction_metadata": {
+                            "body_type": body_type,
+                            "received_datetime": date
+                        }
+                    }
+                )
+                
+                ingestion_count += 1
+                
+            except Exception as e:
+                # Track failed ingestion in skips array
+                error_str = str(e)
+                skips.append({
+                    "item_id": message_id,
+                    "reason": f"Failed to ingest message: {error_str}",
+                    "code": "ingestion_failed"
+                })
+                continue
+        
+        # Store delta token via host.cursor.set_safe() after successful processing
+        # set_safe returns bool and doesn't raise on failure
+        if delta_link and hasattr(host, "cursor"):
+            cursor_saved = await host.cursor.set_safe(kb_id, delta_link)
+            if debug_mode:
+                if cursor_saved:
+                    diagnostics.append("Stored delta token for next sync")
+                else:
+                    diagnostics.append("Failed to store delta token (non-fatal)")
+
+        if debug_mode:
+            diagnostics.append(f"Ingestion complete: {ingestion_count} ingested, {deleted_count} deleted, {len(skips)} skipped")
+
+        # Return count and deleted count in result
+        result_data = {
+            "count": ingestion_count,
+            "deleted": deleted_count
+        }
+
+        # Include history_id (delta token) if available
+        if delta_link:
+            result_data["history_id"] = delta_link
+
+        # Include skips array if there were any failures
+        if skips:
+            result_data["skips"] = skips
+
+        # Include diagnostics if debug mode enabled
+        if debug_mode and diagnostics:
+            result_data["diagnostics"] = diagnostics
+
+        return _Result.ok(result_data)
