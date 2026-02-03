@@ -1,12 +1,10 @@
 """Unit tests for tokenization utilities."""
 
-import pytest
-
 from shu.utils.tokenization import (
+    chars_to_tokens_estimate,
     estimate_tokens,
     estimate_tokens_for_chunks,
     tokens_to_chars_estimate,
-    chars_to_tokens_estimate,
 )
 
 
@@ -33,10 +31,10 @@ class TestEstimateTokens:
         """Longer text should scale appropriately."""
         short_text = "Hello"
         long_text = "Hello " * 100  # 100 repetitions
-        
+
         short_tokens = estimate_tokens(short_text)
         long_tokens = estimate_tokens(long_text)
-        
+
         # Long text should have significantly more tokens
         assert long_tokens > short_tokens * 50
 
@@ -139,7 +137,7 @@ class TestProfilingUseCases:
         # Simulate ~3000 token document (typical small doc)
         small_doc = "word " * 2300  # ~3000 tokens with tiktoken
         tokens = estimate_tokens(small_doc)
-        
+
         threshold = 4000  # Default profiling threshold
         assert tokens < threshold, "Small doc should be under threshold"
 
@@ -148,7 +146,6 @@ class TestProfilingUseCases:
         # Simulate ~6000 token document (requires chunk-agg)
         large_doc = "word " * 4600  # ~6000 tokens with tiktoken
         tokens = estimate_tokens(large_doc)
-        
+
         threshold = 4000  # Default profiling threshold
         assert tokens > threshold, "Large doc should exceed threshold"
-

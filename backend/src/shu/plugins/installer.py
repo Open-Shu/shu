@@ -1,19 +1,18 @@
-"""
-Plugin installer/validator utilities for package upload (.zip/.tgz).
+"""Plugin installer/validator utilities for package upload (.zip/.tgz).
 
 Scope: minimal validator for current manifest.py contract used by loader.
 Security: path traversal guard; admin-only endpoints should call these helpers.
 """
+
 from __future__ import annotations
-import io
-import os
-import tarfile
-import zipfile
-import tempfile
-import shutil
-from pathlib import Path
-from typing import Dict, Tuple, Optional, List
+
 import importlib.util
+import io
+import shutil
+import tarfile
+import tempfile
+import zipfile
+from pathlib import Path
 
 
 class InstallError(Exception):
@@ -83,7 +82,7 @@ def _find_plugin_root(extract_dir: Path) -> Path:
     raise InstallError("package must contain a single top-level plugin directory with manifest.py")
 
 
-def _load_manifest(plugin_root: Path) -> Dict:
+def _load_manifest(plugin_root: Path) -> dict:
     manifest_py = plugin_root / "manifest.py"
     if not manifest_py.exists():
         raise InstallError("manifest.py not found in plugin package")
@@ -103,9 +102,8 @@ def _load_manifest(plugin_root: Path) -> Dict:
     return m
 
 
-def validate_and_extract(archive_bytes: bytes) -> Tuple[Path, Path, Dict, List[str]]:
-    """
-    Extract upload to temp dir and return (temp_dir, plugin_root, manifest, warnings)
+def validate_and_extract(archive_bytes: bytes) -> tuple[Path, Path, dict, list[str]]:
+    """Extract upload to temp dir and return (temp_dir, plugin_root, manifest, warnings)
     Caller must cleanup temp_dir when done.
     """
     temp_dir = Path(tempfile.mkdtemp(prefix="shu_plugin_upload_"))
@@ -113,7 +111,7 @@ def validate_and_extract(archive_bytes: bytes) -> Tuple[Path, Path, Dict, List[s
     extract_dir.mkdir(parents=True, exist_ok=True)
 
     # Try ZIP first
-    warnings: List[str] = []
+    warnings: list[str] = []
     try:
         with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
             _safe_extract_zip(zf, extract_dir)
@@ -133,14 +131,15 @@ def validate_and_extract(archive_bytes: bytes) -> Tuple[Path, Path, Dict, List[s
     entry = manifest.get("module", "")
     folder = plugin_root.name
     if isinstance(entry, str) and not entry.startswith(f"plugins.{folder}."):
-        warnings.append(f"manifest.module '{entry}' does not start with 'plugins.{folder}.'; import may fail after install")
+        warnings.append(
+            f"manifest.module '{entry}' does not start with 'plugins.{folder}.'; import may fail after install"
+        )
 
     return temp_dir, plugin_root, manifest, warnings
 
 
 def install_plugin(plugin_root: Path, plugins_root: Path, *, force: bool = False) -> Path:
-    """
-    Move the extracted plugin folder into plugins_root/<plugin_name>.
+    """Move the extracted plugin folder into plugins_root/<plugin_name>.
     Returns final install path.
     """
     if not plugin_root.is_dir():
@@ -155,4 +154,3 @@ def install_plugin(plugin_root: Path, plugins_root: Path, *, force: bool = False
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(plugin_root), str(dest))
     return dest
-

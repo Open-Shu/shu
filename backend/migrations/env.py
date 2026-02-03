@@ -1,10 +1,9 @@
-from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-from alembic import context
-import os
 import sys
+from logging.config import fileConfig
 from pathlib import Path
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 # Add the src directory to the path so we can import our models
 project_root = Path(__file__).parent.parent
@@ -25,6 +24,7 @@ def get_target_metadata():
     """Get target metadata lazily to avoid Settings validation issues."""
     # Import the models and database configuration only when needed
     from shu.core.database import Base
+
     return Base.metadata
 
 
@@ -41,23 +41,27 @@ def get_database_url():
     alembic_url = config.get_main_option("sqlalchemy.url")
     if alembic_url:
         return alembic_url
-    
+
     # Fall back to the Settings class for normal operation
     try:
         from shu.core.config import get_settings_instance
+
         settings = get_settings_instance()
         database_url = settings.database_url
-    except Exception as e:
+    except Exception:
         # If Settings fails, try to get from environment directly
         import os
-        database_url = os.getenv('SHU_DATABASE_URL')
+
+        database_url = os.getenv("SHU_DATABASE_URL")
         if not database_url:
-            raise RuntimeError("Could not determine database URL. Please set SHU_DATABASE_URL environment variable or configure Alembic directly.")
-    
+            raise RuntimeError(
+                "Could not determine database URL. Please set SHU_DATABASE_URL environment variable or configure Alembic directly."
+            )
+
     # Convert async URL to sync URL for Alembic
     if database_url.startswith("postgresql+asyncpg://"):
         database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-    
+
     return database_url
 
 
@@ -118,4 +122,4 @@ def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online() 
+    run_migrations_online()

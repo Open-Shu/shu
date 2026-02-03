@@ -1,5 +1,4 @@
-"""
-Knowledge Object (KO) write adapter over existing Knowledge Base (KB).
+"""Knowledge Object (KO) write adapter over existing Knowledge Base (KB).
 
 Implementation Status: Partial (write path implemented)
 Limitations/Known Issues:
@@ -10,20 +9,20 @@ Security Vulnerabilities:
 
 See TASK-112 for the plan and acceptance criteria.
 """
+
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
 import hashlib
-from datetime import datetime, date, timezone
+from datetime import UTC, date, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..knowledge.ko import KnowledgeObject, deterministic_ko_id
 from ..services.document_service import DocumentService
-from ..services.knowledge_base_service import KnowledgeBaseService
 
 
-def _coerce_datetime(value: Any) -> Optional[datetime]:
+def _coerce_datetime(value: Any) -> datetime | None:
     """Coerce various timestamp representations to timezone-aware datetime.
     Accepts:
     - datetime: returned as-is (add UTC tzinfo if naive)
@@ -33,9 +32,9 @@ def _coerce_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
     if isinstance(value, str):
         s = value.strip()
         try:
@@ -43,11 +42,10 @@ def _coerce_datetime(value: Any) -> Optional[datetime]:
             if s.endswith("Z"):
                 s = s[:-1] + "+00:00"
             dt = datetime.fromisoformat(s)
-            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
         except Exception:
             return None
     return None
-
 
 
 def _choose_source_type(ko: KnowledgeObject) -> str:
@@ -106,6 +104,7 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
     # Create or update Document metadata/content
     if existing is None:
         from ..schemas.document import DocumentCreate
+
         doc_create = DocumentCreate(
             knowledge_base_id=knowledge_base_id,
             title=title,
@@ -128,7 +127,9 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
         created = await document_service.create_document(doc_create)
         # Re-fetch the ORM object to get ID
         from sqlalchemy import select
+
         from ..models.document import Document
+
         res = await db.execute(select(Document).where(Document.id == created.id))
         document = res.scalar_one()
     else:
@@ -161,13 +162,16 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
     return ko.id
 
 
-
-async def delete_ko_by_external_id(db: AsyncSession, *, kb_id: str, external_id: str, plugin_name: str) -> Dict[str, Any]:
+async def delete_ko_by_external_id(
+    db: AsyncSession, *, kb_id: str, external_id: str, plugin_name: str
+) -> dict[str, Any]:
     """Delete a single KO (Document) by (kb_id, source_type=plugin:<name>, source_id).
     Returns {deleted: bool, ko_id?: str}.
     """
-    from sqlalchemy import select, and_, delete as sqla_delete
+    from sqlalchemy import and_, select
+
     from ..models.document import Document
+
     # Find matching document
     res = await db.execute(
         select(Document).where(
@@ -187,11 +191,20 @@ async def delete_ko_by_external_id(db: AsyncSession, *, kb_id: str, external_id:
     return {"deleted": True, "ko_id": doc_id}
 
 
-async def delete_kos_by_external_ids(db: AsyncSession, *, kb_id: str, external_ids: list[str], plugin_name: str, chunk_size: int = 500) -> Dict[str, Any]:
+async def delete_kos_by_external_ids(
+    db: AsyncSession,
+    *,
+    kb_id: str,
+    external_ids: list[str],
+    plugin_name: str,
+    chunk_size: int = 500,
+) -> dict[str, Any]:
     """Delete multiple KOs by external_ids under a plugin source_type in a KB.
     Returns {deleted_count, failed}.
     """
-    from sqlalchemy import select, and_, delete as sqla_delete
+    from sqlalchemy import and_, select
+    from sqlalchemy import delete as sqla_delete
+
     from ..models.document import Document
 
     ids = list(external_ids or [])
@@ -202,7 +215,7 @@ async def delete_kos_by_external_ids(db: AsyncSession, *, kb_id: str, external_i
     failed: list[str] = []
     # Chunk to avoid parameter bloat
     for i in range(0, len(ids), max(1, int(chunk_size))):
-        chunk = ids[i:i + max(1, int(chunk_size))]
+        chunk = ids[i : i + max(1, int(chunk_size))]
         # Select ids first for logging/robustness
         to_del_rows = await db.execute(
             select(Document.id).where(

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Checkbox,
@@ -10,7 +10,7 @@ import {
   FormGroup,
   Typography,
   Box,
-} from '@mui/material';
+} from "@mui/material";
 
 const EnsembleModeDialog = ({
   open,
@@ -20,8 +20,13 @@ const EnsembleModeDialog = ({
   selectedIds,
   currentModelConfigId,
 }) => {
-  const safeSelectedIds = useMemo(() => Array.isArray(selectedIds) ? selectedIds : [], [selectedIds]);
-  const [pendingSelection, setPendingSelection] = useState(() => new Set(safeSelectedIds));
+  const safeSelectedIds = useMemo(
+    () => (Array.isArray(selectedIds) ? selectedIds : []),
+    [selectedIds],
+  );
+  const [pendingSelection, setPendingSelection] = useState(
+    () => new Set(safeSelectedIds),
+  );
 
   useEffect(() => {
     setPendingSelection(new Set(safeSelectedIds));
@@ -45,7 +50,9 @@ const EnsembleModeDialog = ({
 
   const handleApply = () => {
     // Filter out the current model ID before saving - backend includes it automatically
-    const idsToSave = Array.from(pendingSelection).filter(id => id !== currentModelConfigId);
+    const idsToSave = Array.from(pendingSelection).filter(
+      (id) => id !== currentModelConfigId,
+    );
     onSave(idsToSave);
   };
 
@@ -54,7 +61,9 @@ const EnsembleModeDialog = ({
   };
 
   // Count only additional models (not the current one)
-  const additionalSelectionCount = Array.from(pendingSelection).filter(id => id !== currentModelConfigId).length;
+  const additionalSelectionCount = Array.from(pendingSelection).filter(
+    (id) => id !== currentModelConfigId,
+  ).length;
   const hasSelection = additionalSelectionCount > 0;
 
   return (
@@ -66,9 +75,10 @@ const EnsembleModeDialog = ({
             No additional model configurations are available.
           </Typography>
         ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Select one or more model configurations to run alongside the conversation&apos;s primary model.
+              Select one or more model configurations to run alongside the
+              conversation&apos;s primary model.
             </Typography>
             <FormGroup>
               {availableModelConfigs.map((config) => {
@@ -79,22 +89,27 @@ const EnsembleModeDialog = ({
                     disabled={isCurrentModel}
                     control={
                       <Checkbox
-                        checked={isCurrentModel || pendingSelection.has(config.id)}
+                        checked={
+                          isCurrentModel || pendingSelection.has(config.id)
+                        }
                         onChange={() => handleToggle(config.id)}
                         disabled={isCurrentModel}
                       />
                     }
                     label={
-                      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                      <Box sx={{ display: "flex", flexDirection: "column" }}>
                         <Typography
                           variant="body2"
-                          sx={isCurrentModel ? { fontStyle: 'italic' } : undefined}
+                          sx={
+                            isCurrentModel ? { fontStyle: "italic" } : undefined
+                          }
                         >
                           {config.name}
-                          {isCurrentModel && ' (current)'}
+                          {isCurrentModel && " (current)"}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {(config.llm_provider?.name || 'Provider')} • {config.model_name}
+                          {config.llm_provider?.name || "Provider"} •{" "}
+                          {config.model_name}
                         </Typography>
                       </Box>
                     }

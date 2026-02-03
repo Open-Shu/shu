@@ -1,24 +1,25 @@
-"""
-Knowledge Base Service for Shu RAG Backend.
+"""Knowledge Base Service for Shu RAG Backend.
 
 This module provides business logic for managing knowledge bases,
 including CRUD operations, statistics, and configuration management.
 """
 
-from typing import List, Optional, Dict, Any, Tuple
-from typing_extensions import Doc
+from typing import Any
+
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import defer
 
-from ..models.knowledge_base import KnowledgeBase
-from ..models.document import Document, DocumentChunk
-from ..schemas.knowledge_base import RAGConfig, RAGConfigResponse
 from ..core.exceptions import (
-    KnowledgeBaseNotFoundError, ValidationError, KnowledgeBaseAlreadyExistsError,
-    ShuException
+    KnowledgeBaseAlreadyExistsError,
+    KnowledgeBaseNotFoundError,
+    ShuException,
+    ValidationError,
 )
 from ..core.logging import get_logger
+from ..models.document import Document, DocumentChunk
+from ..models.knowledge_base import KnowledgeBase
+from ..schemas.knowledge_base import RAGConfig, RAGConfigResponse
 
 logger = get_logger(__name__)
 
@@ -31,11 +32,12 @@ class KnowledgeBaseService:
         # Use dependency injection for ConfigurationManager
         if config_manager is None:
             from ..core.config import get_config_manager
+
             config_manager = get_config_manager()
         self._config_manager = config_manager
 
     @property
-    def DEFAULT_RAG_CONFIG(self) -> Dict[str, Any]:
+    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:
         """Get default RAG configuration from ConfigurationManager."""
         return self._config_manager.get_rag_config_dict()
 
@@ -45,46 +47,46 @@ class KnowledgeBaseService:
             "include_references": True,
             "reference_format": "markdown",
             "context_format": "detailed",
-            "prompt_template": "academic"
+            "prompt_template": "academic",
         },
         "business": {
             "include_references": True,
             "reference_format": "markdown",
             "context_format": "detailed",
-            "prompt_template": "business"
+            "prompt_template": "business",
         },
         "technical": {
             "include_references": True,
             "reference_format": "markdown",
             "context_format": "detailed",
-            "prompt_template": "technical"
+            "prompt_template": "technical",
         },
         "custom": {
             "include_references": True,
             "reference_format": "markdown",
             "context_format": "detailed",
-            "prompt_template": "custom"
-        }
+            "prompt_template": "custom",
+        },
     }
 
-    async def get_default_templates(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Get default templates for different use cases.
+    async def get_default_templates(self) -> dict[str, dict[str, Any]]:
+        """Get default templates for different use cases.
 
         Returns:
             Dictionary of default templates
+
         """
         return self.DEFAULT_TEMPLATES.copy()
 
     async def get_rag_config(self, kb_id: str) -> RAGConfigResponse:
-        """
-        Get RAG configuration for a knowledge base.
+        """Get RAG configuration for a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
 
         Returns:
             RAGConfigResponse with configuration settings
+
         """
         try:
             knowledge_base = await self.get_knowledge_base(kb_id)
@@ -112,16 +114,15 @@ class KnowledgeBaseService:
                 fetch_full_documents=rag_config["fetch_full_documents"],
                 full_doc_max_docs=rag_config["full_doc_max_docs"],
                 full_doc_token_cap=rag_config["full_doc_token_cap"],
-                version=rag_config["version"]
+                version=rag_config["version"],
             )
 
         except Exception as e:
             logger.error(f"Failed to get RAG config for knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to get RAG configuration: {str(e)}", "RAG_CONFIG_GET_ERROR")
+            raise ShuException(f"Failed to get RAG configuration: {e!s}", "RAG_CONFIG_GET_ERROR")
 
     async def update_rag_config(self, kb_id: str, rag_config: RAGConfig) -> RAGConfigResponse:
-        """
-        Update RAG configuration for a knowledge base.
+        """Update RAG configuration for a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
@@ -129,6 +130,7 @@ class KnowledgeBaseService:
 
         Returns:
             Updated RAGConfigResponse
+
         """
         try:
             knowledge_base = await self.get_knowledge_base(kb_id)
@@ -152,7 +154,7 @@ class KnowledgeBaseService:
                 "fetch_full_documents": rag_config.fetch_full_documents,
                 "full_doc_max_docs": rag_config.full_doc_max_docs,
                 "full_doc_token_cap": rag_config.full_doc_token_cap,
-                "version": "1.0"
+                "version": "1.0",
             }
 
             knowledge_base.update_rag_config(config_dict)
@@ -163,8 +165,9 @@ class KnowledgeBaseService:
 
             # Clear any cached RAG configuration for this knowledge base
             from ..core.cache import get_config_cache
+
             cache = get_config_cache()
-            if hasattr(cache, '_rag_configs') and kb_id in cache._rag_configs:
+            if hasattr(cache, "_rag_configs") and kb_id in cache._rag_configs:
                 del cache._rag_configs[kb_id]
                 logger.debug(f"Cleared cached RAG config for KB {kb_id}")
 
@@ -191,29 +194,28 @@ class KnowledgeBaseService:
                 fetch_full_documents=saved_config["fetch_full_documents"],
                 full_doc_max_docs=saved_config["full_doc_max_docs"],
                 full_doc_token_cap=saved_config["full_doc_token_cap"],
-                version=saved_config["version"]
+                version=saved_config["version"],
             )
 
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to update RAG config for knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to update RAG configuration: {str(e)}", "RAG_CONFIG_UPDATE_ERROR")
+            raise ShuException(f"Failed to update RAG configuration: {e!s}", "RAG_CONFIG_UPDATE_ERROR")
 
-    async def get_knowledge_base_stats(self, kb_id: str) -> Dict[str, Any]:
-        """
-        Get statistics for a specific knowledge base.
+    async def get_knowledge_base_stats(self, kb_id: str) -> dict[str, Any]:
+        """Get statistics for a specific knowledge base.
 
         Args:
             kb_id: Knowledge base ID
 
         Returns:
             Dictionary with document and chunk counts
+
         """
         try:
             # Get document count
             doc_count_result = await self.db.execute(
-                select(func.count(Document.id))
-                .where(Document.knowledge_base_id == kb_id)
+                select(func.count(Document.id)).where(Document.knowledge_base_id == kb_id)
             )
             document_count = doc_count_result.scalar() or 0
 
@@ -225,26 +227,16 @@ class KnowledgeBaseService:
             )
             total_chunks = chunk_count_result.scalar() or 0
 
-            return {
-                "document_count": document_count,
-                "total_chunks": total_chunks
-            }
+            return {"document_count": document_count, "total_chunks": total_chunks}
 
         except Exception as e:
             logger.error(f"Failed to get stats for knowledge base '{kb_id}': {e}", exc_info=True)
-            return {
-                "document_count": 0,
-                "total_chunks": 0
-            }
+            return {"document_count": 0, "total_chunks": 0}
 
     async def list_knowledge_bases(
-        self,
-        limit: int = 50,
-        offset: int = 0,
-        search: Optional[str] = None
-    ) -> Tuple[List[KnowledgeBase], int]:
-        """
-        List knowledge bases with optional filtering and pagination.
+        self, limit: int = 50, offset: int = 0, search: str | None = None
+    ) -> tuple[list[KnowledgeBase], int]:
+        """List knowledge bases with optional filtering and pagination.
 
         Args:
             limit: Maximum number of knowledge bases to return
@@ -253,6 +245,7 @@ class KnowledgeBaseService:
 
         Returns:
             Tuple of (knowledge_bases, total_count)
+
         """
         try:
             query = select(KnowledgeBase)
@@ -273,29 +266,29 @@ class KnowledgeBaseService:
 
         except Exception as e:
             logger.error(f"Failed to list knowledge bases: {e}", exc_info=True)
-            raise ShuException(f"Failed to list knowledge bases: {str(e)}", "KNOWLEDGE_BASE_LIST_ERROR")
+            raise ShuException(f"Failed to list knowledge bases: {e!s}", "KNOWLEDGE_BASE_LIST_ERROR")
 
-    async def get_knowledge_base(self, kb_id: str) -> Optional[KnowledgeBase]:
-        """
-        Get a knowledge base by ID.
+    async def get_knowledge_base(self, kb_id: str) -> KnowledgeBase | None:
+        """Get a knowledge base by ID.
 
         Args:
             kb_id: Knowledge base ID
 
         Returns:
             KnowledgeBase or None if not found
+
         """
         try:
             from ..utils import KnowledgeBaseVerifier
+
             return await KnowledgeBaseVerifier.get_optional(self.db, kb_id)
 
         except Exception as e:
             logger.error(f"Failed to get knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to get knowledge base: {str(e)}", "KNOWLEDGE_BASE_GET_ERROR")
+            raise ShuException(f"Failed to get knowledge base: {e!s}", "KNOWLEDGE_BASE_GET_ERROR")
 
-    async def create_knowledge_base(self, kb_data, owner_id: Optional[str] = None) -> KnowledgeBase:
-        """
-        Create a new knowledge base.
+    async def create_knowledge_base(self, kb_data, owner_id: str | None = None) -> KnowledgeBase:
+        """Create a new knowledge base.
 
         Args:
             kb_data: Knowledge base data (KnowledgeBaseCreate Pydantic model)
@@ -303,19 +296,18 @@ class KnowledgeBaseService:
 
         Returns:
             Created KnowledgeBase
+
         """
         try:
             # Check if knowledge base with same name already exists
-            existing_result = await self.db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.name == kb_data.name)
-            )
+            existing_result = await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.name == kb_data.name))
             if existing_result.scalar_one_or_none():
                 raise KnowledgeBaseAlreadyExistsError(kb_data.name)
 
             # Create new knowledge base from Pydantic model
             kb_dict = kb_data.model_dump()
             if owner_id:
-                kb_dict['owner_id'] = owner_id
+                kb_dict["owner_id"] = owner_id
             knowledge_base = KnowledgeBase(**kb_dict)
             self.db.add(knowledge_base)
             await self.db.commit()
@@ -327,11 +319,10 @@ class KnowledgeBaseService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)
-            raise ShuException(f"Failed to create knowledge base: {str(e)}", "KNOWLEDGE_BASE_CREATE_ERROR")
+            raise ShuException(f"Failed to create knowledge base: {e!s}", "KNOWLEDGE_BASE_CREATE_ERROR")
 
     async def update_knowledge_base(self, kb_id: str, update_data) -> KnowledgeBase:
-        """
-        Update an existing knowledge base.
+        """Update an existing knowledge base.
 
         Args:
             kb_id: Knowledge base ID
@@ -339,6 +330,7 @@ class KnowledgeBaseService:
 
         Returns:
             Updated KnowledgeBase
+
         """
         try:
             knowledge_base = await self.get_knowledge_base(kb_id)
@@ -360,14 +352,14 @@ class KnowledgeBaseService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to update knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to update knowledge base: {str(e)}", "KNOWLEDGE_BASE_UPDATE_ERROR")
+            raise ShuException(f"Failed to update knowledge base: {e!s}", "KNOWLEDGE_BASE_UPDATE_ERROR")
 
     async def delete_knowledge_base(self, kb_id: str) -> None:
-        """
-        Delete a knowledge base.
+        """Delete a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
+
         """
         try:
             knowledge_base = await self.get_knowledge_base(kb_id)
@@ -384,14 +376,14 @@ class KnowledgeBaseService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to delete knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to delete knowledge base: {str(e)}", "KNOWLEDGE_BASE_DELETE_ERROR")
+            raise ShuException(f"Failed to delete knowledge base: {e!s}", "KNOWLEDGE_BASE_DELETE_ERROR")
 
-    async def get_overall_knowledge_base_stats(self) -> Dict[str, Any]:
-        """
-        Get overall statistics for all knowledge bases.
+    async def get_overall_knowledge_base_stats(self) -> dict[str, Any]:
+        """Get overall statistics for all knowledge bases.
 
         Returns:
             Dictionary with overall statistics
+
         """
         try:
             # Get total knowledge bases
@@ -400,15 +392,13 @@ class KnowledgeBaseService:
 
             # Get active knowledge bases
             active_result = await self.db.execute(
-                select(func.count(KnowledgeBase.id))
-                .where(KnowledgeBase.status == "active")
+                select(func.count(KnowledgeBase.id)).where(KnowledgeBase.status == "active")
             )
             active_kbs = active_result.scalar() or 0
 
             # Get sync enabled count
             sync_enabled_result = await self.db.execute(
-                select(func.count(KnowledgeBase.id))
-                .where(KnowledgeBase.sync_enabled == True)
+                select(func.count(KnowledgeBase.id)).where(KnowledgeBase.sync_enabled == True)
             )
             sync_enabled_count = sync_enabled_result.scalar() or 0
 
@@ -417,30 +407,27 @@ class KnowledgeBaseService:
                 "total_knowledge_bases": total_kbs,
                 "active_knowledge_bases": active_kbs,
                 "total_documents": 0,  # Would need to count from documents table
-                "total_chunks": 0,     # Would need to count from chunks table
+                "total_chunks": 0,  # Would need to count from chunks table
                 "sync_enabled_count": sync_enabled_count,
                 "source_type_breakdown": {},  # Would need to analyze documents
-                "status_breakdown": {
-                    "active": active_kbs,
-                    "inactive": total_kbs - active_kbs
-                }
+                "status_breakdown": {"active": active_kbs, "inactive": total_kbs - active_kbs},
             }
 
             return stats
 
         except Exception as e:
             logger.error(f"Failed to get knowledge base statistics: {e}", exc_info=True)
-            raise ShuException(f"Failed to get knowledge base statistics: {str(e)}", "KNOWLEDGE_BASE_STATS_ERROR")
+            raise ShuException(f"Failed to get knowledge base statistics: {e!s}", "KNOWLEDGE_BASE_STATS_ERROR")
 
     async def enable_sync(self, kb_id: str) -> KnowledgeBase:
-        """
-        Enable sync for a knowledge base.
+        """Enable sync for a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
 
         Returns:
             Updated KnowledgeBase
+
         """
         try:
             knowledge_base = await self.get_knowledge_base(kb_id)
@@ -457,17 +444,17 @@ class KnowledgeBaseService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to enable sync for knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to enable sync: {str(e)}", "KNOWLEDGE_BASE_SYNC_ENABLE_ERROR")
+            raise ShuException(f"Failed to enable sync: {e!s}", "KNOWLEDGE_BASE_SYNC_ENABLE_ERROR")
 
     async def disable_sync(self, kb_id: str) -> KnowledgeBase:
-        """
-        Disable sync for a knowledge base.
+        """Disable sync for a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
 
         Returns:
             Updated KnowledgeBase
+
         """
         try:
             knowledge_base = await self.get_knowledge_base(kb_id)
@@ -484,7 +471,7 @@ class KnowledgeBaseService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to disable sync for knowledge base '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to disable sync: {str(e)}", "KNOWLEDGE_BASE_SYNC_DISABLE_ERROR")
+            raise ShuException(f"Failed to disable sync: {e!s}", "KNOWLEDGE_BASE_SYNC_DISABLE_ERROR")
 
     async def get_documents(
         self,
@@ -493,9 +480,8 @@ class KnowledgeBaseService:
         offset: int = 0,
         search_query: str = None,
         filter_by: str = "all",
-    ) -> Tuple[List[Document], int]:
-        """
-        Get documents for a knowledge base with pagination.
+    ) -> tuple[list[Document], int]:
+        """Get documents for a knowledge base with pagination.
 
         Args:
             kb_id: Knowledge base ID
@@ -504,6 +490,7 @@ class KnowledgeBaseService:
 
         Returns:
             Tuple of (documents, total_count)
+
         """
         try:
             document_filter_condition = self.get_document_filter_condition(kb_id, search_query, filter_by)
@@ -516,11 +503,11 @@ class KnowledgeBaseService:
             # Get documents with pagination (exclude content field)
             query = (
                 select(Document)
-                    .options(defer(Document.content))
-                    .where(document_filter_condition)
-                    .order_by(Document.created_at.desc())
-                    .offset(offset)
-                    .limit(limit)
+                .options(defer(Document.content))
+                .where(document_filter_condition)
+                .order_by(Document.created_at.desc())
+                .offset(offset)
+                .limit(limit)
             )
 
             result = await self.db.execute(query)
@@ -531,7 +518,7 @@ class KnowledgeBaseService:
 
         except Exception as e:
             logger.error(f"Failed to get documents for knowledge base {kb_id}: {e}")
-            raise ShuException(f"Failed to get documents: {str(e)}", "DOCUMENT_LIST_ERROR")
+            raise ShuException(f"Failed to get documents: {e!s}", "DOCUMENT_LIST_ERROR")
 
     def get_document_filter_condition(self, kb_id, search_query, filter_by):
         conditions = [Document.knowledge_base_id == kb_id]
@@ -562,9 +549,8 @@ class KnowledgeBaseService:
 
         return and_(*conditions)
 
-    async def get_document(self, kb_id: str, document_id: str) -> Optional[Document]:
-        """
-        Get a specific document from a knowledge base.
+    async def get_document(self, kb_id: str, document_id: str) -> Document | None:
+        """Get a specific document from a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
@@ -572,12 +558,10 @@ class KnowledgeBaseService:
 
         Returns:
             Document instance or None if not found
+
         """
         try:
-            query = select(Document).where(
-                Document.knowledge_base_id == kb_id,
-                Document.id == document_id
-            )
+            query = select(Document).where(Document.knowledge_base_id == kb_id, Document.id == document_id)
 
             result = await self.db.execute(query)
             document = result.scalar_one_or_none()
@@ -591,11 +575,10 @@ class KnowledgeBaseService:
 
         except Exception as e:
             logger.error(f"Failed to get document {document_id} from KB {kb_id}: {e}")
-            raise ShuException(f"Failed to get document: {str(e)}")
+            raise ShuException(f"Failed to get document: {e!s}")
 
     async def get_knowledge_base_summary(self, kb_id: str):
-        """
-        Build a high-level summary for a knowledge base including distinct source types
+        """Build a high-level summary for a knowledge base including distinct source types
         and aggregate document/chunk counts.
         """
         try:
@@ -608,9 +591,7 @@ class KnowledgeBaseService:
 
             # Distinct source types for this KB
             result = await self.db.execute(
-                select(Document.source_type)
-                .where(Document.knowledge_base_id == kb_id)
-                .distinct()
+                select(Document.source_type).where(Document.knowledge_base_id == kb_id).distinct()
             )
             source_types = [row[0] for row in result.fetchall() if row[0] is not None]
 
@@ -627,9 +608,9 @@ class KnowledgeBaseService:
             }
         except Exception as e:
             logger.error(f"Failed to build knowledge base summary for '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to get knowledge base summary: {str(e)}", "KNOWLEDGE_BASE_SUMMARY_ERROR")
+            raise ShuException(f"Failed to get knowledge base summary: {e!s}", "KNOWLEDGE_BASE_SUMMARY_ERROR")
 
-    async def get_knowledge_base_source_types(self, kb_id: str) -> List[str]:
+    async def get_knowledge_base_source_types(self, kb_id: str) -> list[str]:
         """Return distinct source types present in this knowledge base's documents."""
         try:
             # Ensure KB exists
@@ -638,18 +619,15 @@ class KnowledgeBaseService:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
             result = await self.db.execute(
-                select(Document.source_type)
-                .where(Document.knowledge_base_id == kb_id)
-                .distinct()
+                select(Document.source_type).where(Document.knowledge_base_id == kb_id).distinct()
             )
             return [row[0] for row in result.fetchall() if row[0] is not None]
         except Exception as e:
             logger.error(f"Failed to get source types for KB '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to get source types: {str(e)}", "KNOWLEDGE_BASE_SOURCE_TYPES_ERROR")
+            raise ShuException(f"Failed to get source types: {e!s}", "KNOWLEDGE_BASE_SOURCE_TYPES_ERROR")
 
-    async def validate_knowledge_base_config(self, kb_id: str) -> Dict[str, Any]:
-        """
-        Validate the knowledge base configuration and return errors/warnings.
+    async def validate_knowledge_base_config(self, kb_id: str) -> dict[str, Any]:
+        """Validate the knowledge base configuration and return errors/warnings.
         This performs lightweight schema/range checks; it does not perform I/O validation.
         """
         try:
@@ -658,8 +636,8 @@ class KnowledgeBaseService:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
             cfg = kb.get_rag_config()
-            errors: List[str] = []
-            warnings: List[str] = []
+            errors: list[str] = []
+            warnings: list[str] = []
 
             # Range validations
             thr = cfg.get("search_threshold")
@@ -694,9 +672,9 @@ class KnowledgeBaseService:
             raise
         except Exception as e:
             logger.error(f"Failed to validate KB config for '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to validate configuration: {str(e)}", "KNOWLEDGE_BASE_VALIDATE_ERROR")
+            raise ShuException(f"Failed to validate configuration: {e!s}", "KNOWLEDGE_BASE_VALIDATE_ERROR")
 
-    async def set_knowledge_base_status(self, kb_id: str, new_status: Dict[str, Any]) -> KnowledgeBase:
+    async def set_knowledge_base_status(self, kb_id: str, new_status: dict[str, Any]) -> KnowledgeBase:
         """Update the status field on a knowledge base with basic validation."""
         try:
             kb = await self.get_knowledge_base(kb_id)
@@ -719,5 +697,4 @@ class KnowledgeBaseService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to set status for KB '{kb_id}': {e}", exc_info=True)
-            raise ShuException(f"Failed to set knowledge base status: {str(e)}", "KNOWLEDGE_BASE_SET_STATUS_ERROR")
-
+            raise ShuException(f"Failed to set knowledge base status: {e!s}", "KNOWLEDGE_BASE_SET_STATUS_ERROR")

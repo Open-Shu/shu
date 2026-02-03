@@ -1,59 +1,62 @@
-"""
-Shu - FastAPI Application
+"""Shu - FastAPI Application
 
 This module creates and configures the FastAPI application for Shu.
 """
 
 import asyncio
-import time
-import uuid
 import traceback
-import sys
+import uuid
 from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from .api.auth import router as auth_router
+from .api.branding import router as branding_router
+from .api.chat import router as chat_router
+from .api.chat_plugins import router as chat_plugins_router
+from .api.config import router as config_router
+from .api.experiences import router as experiences_router
+from .api.groups import router as groups_router
+from .api.health import router as health_router
+from .api.host_auth import public_router as host_auth_public_router
+from .api.host_auth import router as host_auth_router
+from .api.knowledge_bases import router as knowledge_bases_router
+from .api.llm import router as llm_router
+from .api.model_configuration import router as model_configuration_router
+from .api.permissions import router as permissions_router
+from .api.plugins_router import router as plugins_router
+from .api.prompts import router as prompts_router
+from .api.query import router as query_router
+from .api.resources import router as resources_router
+from .api.side_call import router as side_call_router
+from .api.system import router as system_router
+from .api.user_permissions import router as user_permissions_router
+from .api.user_preferences import router as user_preferences_router
 from .core.config import get_settings_instance
 from .core.database import init_db
 from .core.exceptions import ShuException
-from .core.logging import get_logger, setup_logging
-from .core.middleware import RequestIDMiddleware, TimingMiddleware, AuthenticationMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware
 from .core.http_client import close_http_client
-from .api.auth import router as auth_router
-from .api.config import router as config_router
-from .api.health import router as health_router
-from .api.knowledge_bases import router as knowledge_bases_router
-from .api.resources import router as resources_router
-
-from .api.prompts import router as prompts_router
-from .api.query import router as query_router
-from .api.llm import router as llm_router
-from .api.model_configuration import router as model_configuration_router
-from .api.chat import router as chat_router
-from .api.chat_plugins import router as chat_plugins_router
-from .api.user_preferences import router as user_preferences_router
-from .api.host_auth import router as host_auth_router, public_router as host_auth_public_router
-
-from .api.groups import router as groups_router
-from .api.permissions import router as permissions_router
-from .api.user_permissions import router as user_permissions_router
-from .api.plugins_router import router as plugins_router
-from .api.branding import router as branding_router
-from .api.side_call import router as side_call_router
-from .api.system import router as system_router
-from .api.experiences import router as experiences_router
-
+from .core.logging import get_logger, setup_logging
+from .core.middleware import (
+    AuthenticationMiddleware,
+    RateLimitMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+    TimingMiddleware,
+)
 from .plugins.request_limits import RequestSizeLimitMiddleware
 
 logger = get_logger(__name__)
 settings = get_settings_instance()
+
 
 class StripAPITrailingSlashMiddleware(BaseHTTPMiddleware):
     """Normalize API paths to avoid 307 redirects while preserving headers.
@@ -61,6 +64,7 @@ class StripAPITrailingSlashMiddleware(BaseHTTPMiddleware):
     Rule: For all API paths, remove a trailing slash (except the exact API prefix),
     so both '/foo' and '/foo/' resolve to the same handler without redirects.
     """
+
     def __init__(self, app, api_prefix: str):
         super().__init__(app)
         self.api_prefix = api_prefix.rstrip("/")
@@ -80,13 +84,12 @@ class StripAPITrailingSlashMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-
 def generate_error_id() -> str:
     """Generate a unique error ID for tracking."""
     return f"ERR-{uuid.uuid4().hex[:8].upper()}"
 
 
-def get_request_context(request: Request) -> Dict[str, Any]:
+def get_request_context(request: Request) -> dict[str, Any]:
     """Extract relevant context from request for error logging."""
     return {
         "method": request.method,
@@ -109,14 +112,8 @@ def get_request_context(request: Request) -> Dict[str, Any]:
     }
 
 
-def log_exception_details(
-    exc: Exception,
-    request: Request,
-    error_id: str,
-    include_traceback: bool = False
-) -> None:
+def log_exception_details(exc: Exception, request: Request, error_id: str, include_traceback: bool = False) -> None:
     """Log detailed exception information."""
-
     # Get request context
     request_context = get_request_context(request)
 
@@ -134,10 +131,9 @@ def log_exception_details(
         exception_details["stack_trace"] = traceback.format_stack()
 
     # Add exception attributes if available
-    if hasattr(exc, '__dict__'):
+    if hasattr(exc, "__dict__"):
         exception_details["exception_attributes"] = {
-            k: str(v) for k, v in exc.__dict__.items()
-            if not k.startswith('_') and k not in ['args']
+            k: str(v) for k, v in exc.__dict__.items() if not k.startswith("_") and k not in ["args"]
         }
 
     # Log with appropriate level
@@ -165,16 +161,17 @@ async def lifespan(app: FastAPI):
 
         # Log database configuration
         from .core.database import get_database_url
+
         db_url = get_database_url()
         # Mask password in URL for security
-        if '@' in db_url:
+        if "@" in db_url:
             # Extract host and database name from URL
-            parts = db_url.split('@')
+            parts = db_url.split("@")
             if len(parts) == 2:
-                host_db = parts[1].split('/')
+                host_db = parts[1].split("/")
                 if len(host_db) >= 2:
                     host_port = host_db[0]
-                    database_name = host_db[1].split('?')[0]  # Remove query params
+                    database_name = host_db[1].split("?")[0]  # Remove query params
                     logger.info(f"Using database: {database_name} on {host_port}")
                 else:
                     logger.info(f"Using database URL: {db_url.split('@')[1] if '@' in db_url else 'URL format'}")
@@ -188,6 +185,7 @@ async def lifespan(app: FastAPI):
             if settings.db_release:
                 from .core.database import get_async_session_local
                 from .services.system_status import check_db_release
+
                 session_maker = get_async_session_local()
                 async with session_maker() as session:
                     rc = await check_db_release(session, settings.db_release)
@@ -216,6 +214,7 @@ async def lifespan(app: FastAPI):
     # Preload the default embedding model to avoid lazy loading
     try:
         from .services.rag_processing_service import RAGProcessingService
+
         logger.info("Preloading default embedding model...")
         RAGProcessingService.get_instance(settings.default_embedding_model)
         logger.info("Default embedding model preloaded successfully")
@@ -226,6 +225,7 @@ async def lifespan(app: FastAPI):
     # Start attachments TTL cleanup scheduler
     try:
         from .services.attachment_cleanup import start_attachment_cleanup_scheduler
+
         app.state.attachments_cleanup_task = await start_attachment_cleanup_scheduler()
         logger.info("Attachment cleanup scheduler started")
     except Exception as e:
@@ -235,6 +235,7 @@ async def lifespan(app: FastAPI):
     try:
         if getattr(settings, "plugins_scheduler_enabled", True):
             from .services.plugins_scheduler_service import start_plugins_scheduler
+
             app.state.plugins_scheduler_task = await start_plugins_scheduler()
             logger.info("Plugin Feeds scheduler started")
         else:
@@ -246,6 +247,7 @@ async def lifespan(app: FastAPI):
     try:
         if getattr(settings, "experiences_scheduler_enabled", True):
             from .services.experiences_scheduler_service import start_experiences_scheduler
+
             app.state.experiences_scheduler_task = await start_experiences_scheduler()
             logger.info("Experiences scheduler started")
         else:
@@ -256,31 +258,31 @@ async def lifespan(app: FastAPI):
     # Start inline workers if worker_mode is "inline"
     try:
         if settings.worker_mode == "inline":
+            from .core.queue_backend import get_queue_backend
             from .core.worker import Worker, WorkerConfig
             from .core.workload_routing import WorkloadType
-            from .core.queue_backend import get_queue_backend
             from .worker import process_job
-            
+
             # Get queue backend
             backend = await get_queue_backend()
-            
+
             # Configure worker to consume all workload types
             config = WorkerConfig(
                 workload_types=set(WorkloadType),
                 poll_interval=settings.worker_poll_interval,
                 shutdown_timeout=settings.worker_shutdown_timeout,
             )
-            
+
             # Create worker
             worker = Worker(backend, config, job_handler=process_job)
-            
+
             # Start worker in background task
             async def run_inline_worker():
                 try:
                     await worker.run()
                 except Exception as e:
                     logger.error(f"Inline worker error: {e}", exc_info=True)
-            
+
             app.state.inline_worker_task = asyncio.create_task(run_inline_worker())
             logger.info("Inline worker started (consuming all workload types)")
         else:
@@ -291,8 +293,9 @@ async def lifespan(app: FastAPI):
     # Plugins v1: optional auto-sync from plugins to DB registry
     try:
         if getattr(settings, "plugins_auto_sync", False):
-            from .plugins.registry import REGISTRY
             from .core.database import get_async_session_local
+            from .plugins.registry import REGISTRY
+
             session_maker = get_async_session_local()
             async with session_maker() as session:
                 stats = await REGISTRY.sync(session)
@@ -306,21 +309,21 @@ async def lifespan(app: FastAPI):
 
     # Cancel and await background schedulers for clean shutdown
     task_attrs = [
-        ('attachments_cleanup', 'attachments_cleanup_task'),
-        ('plugins_scheduler', 'plugins_scheduler_task'),
-        ('experiences_scheduler', 'experiences_scheduler_task'),
-        ('inline_worker', 'inline_worker_task'),
+        ("attachments_cleanup", "attachments_cleanup_task"),
+        ("plugins_scheduler", "plugins_scheduler_task"),
+        ("experiences_scheduler", "experiences_scheduler_task"),
+        ("inline_worker", "inline_worker_task"),
     ]
     tasks_to_cancel = []
     for name, attr in task_attrs:
         task = getattr(app.state, attr, None)
         if task and not task.done():
             tasks_to_cancel.append((name, task))
-    
+
     # Cancel all tasks
     for name, task in tasks_to_cancel:
         task.cancel()
-    
+
     # Wait for all tasks to complete cancellation
     if tasks_to_cancel:
         for name, task in tasks_to_cancel:
@@ -337,6 +340,7 @@ async def lifespan(app: FastAPI):
     # Clean up all OCR processes (PaddleOCR subprocesses)
     try:
         from .processors.text_extractor import TextExtractor
+
         TextExtractor.cleanup_ocr_processes()  # Clean up all OCR processes
         logger.info("OCR processes cleaned up")
     except Exception as e:
@@ -345,6 +349,7 @@ async def lifespan(app: FastAPI):
     # Clean up RAG service instances and thread pools
     try:
         from .services.rag_processing_service import clear_rag_service_cache
+
         clear_rag_service_cache()
         logger.info("RAG service cache cleared")
     except Exception as e:
@@ -370,7 +375,6 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-
     app = FastAPI(
         title=settings.app_name,
         description="Shu RAG API",
@@ -390,6 +394,7 @@ def create_app() -> FastAPI:
 
     # Custom ReDoc route using self-hosted JS (avoids CDN tracking prevention issues)
     if settings.debug:
+
         @app.get("/redoc", include_in_schema=False)
         async def redoc_html() -> HTMLResponse:
             return HTMLResponse(
@@ -424,12 +429,10 @@ def create_app() -> FastAPI:
 
 
 def setup_middleware(app: FastAPI) -> None:
-    """
-    Register and configure middleware for the FastAPI application.
-    
+    """Register and configure middleware for the FastAPI application.
+
     Sets up request ID, timing, authentication, security headers, API trailing-slash normalization, CORS, a scoped request-size limit for plugin endpoints, trusted-host validation (enforced only in non-debug when `SHU_ALLOWED_HOSTS` is set), and conditionally enables rate limiting based on settings. Middleware ordering is preserved; rate limiting is added after authentication so it can apply user-aware limits.
     """
-
     settings = get_settings_instance()
 
     # Request ID middleware (custom)
@@ -470,7 +473,9 @@ def setup_middleware(app: FastAPI) -> None:
     if not settings.debug and getattr(settings, "allowed_hosts", None) and settings.allowed_hosts != ["*"]:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
     elif not settings.debug:
-        logger.warning("TrustedHostMiddleware not enforcing host validation; set SHU_ALLOWED_HOSTS for non-dev deployments")
+        logger.warning(
+            "TrustedHostMiddleware not enforcing host validation; set SHU_ALLOWED_HOSTS for non-dev deployments"
+        )
 
     # Rate limiting middleware (applied after authentication to have user context)
     if settings.enable_api_rate_limiting:
@@ -482,43 +487,48 @@ def setup_middleware(app: FastAPI) -> None:
 
 
 def setup_exception_handlers(app: FastAPI) -> None:
-    """
-    Register custom exception handlers on the FastAPI application.
-    
+    """Register custom exception handlers on the FastAPI application.
+
     Adds handlers for ShuException, HTTPException, and Exception that log errors with contextual request information,
     generate error IDs for server-side errors, and return structured JSON error responses. In development or debug modes
     handlers include additional diagnostic details such as traceback and request info.
-    
-    Parameters:
-        app (FastAPI): The FastAPI application instance to configure.
-    """
 
+    Parameters
+    ----------
+        app (FastAPI): The FastAPI application instance to configure.
+
+    """
     settings = get_settings_instance()
 
     @app.exception_handler(ShuException)
     async def shu_exception_handler(request: Request, exc: ShuException):
         """Handle custom Shu exceptions with enhanced logging."""
-
         # Generate error ID for tracking (for 5xx errors)
         error_id = generate_error_id() if exc.status_code >= 500 else None
 
         # Log server errors (5xx) with context
         if exc.status_code >= 500:
-            logger.error("Shu server error", extra={
-                "error_id": error_id,
-                "error_code": exc.error_code,
-                "error_message": exc.message,
-                "details": exc.details,
-                "request_context": get_request_context(request),
-            })
+            logger.error(
+                "Shu server error",
+                extra={
+                    "error_id": error_id,
+                    "error_code": exc.error_code,
+                    "error_message": exc.message,
+                    "details": exc.details,
+                    "request_context": get_request_context(request),
+                },
+            )
         elif exc.status_code >= 400:
             # Log client errors (4xx) with basic info
-            logger.warning("Shu client error", extra={
-                "error_code": exc.error_code,
-                "error_message": exc.message,
-                "details": exc.details,
-                "request_context": get_request_context(request),
-            })
+            logger.warning(
+                "Shu client error",
+                extra={
+                    "error_code": exc.error_code,
+                    "error_message": exc.message,
+                    "details": exc.details,
+                    "request_context": get_request_context(request),
+                },
+            )
 
         # Prepare response
         error_response = {
@@ -541,7 +551,6 @@ def setup_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle HTTP exceptions with enhanced logging."""
-
         # Generate error ID for tracking (for 5xx errors)
         error_id = generate_error_id() if exc.status_code >= 500 else None
 
@@ -550,11 +559,14 @@ def setup_exception_handlers(app: FastAPI) -> None:
             log_exception_details(exc, request, error_id, include_traceback=settings.debug)
         elif exc.status_code >= 400:
             # Log client errors (4xx) with basic info
-            logger.warning("HTTP client error", extra={
-                "status_code": exc.status_code,
-                "detail": exc.detail,
-                "request_context": get_request_context(request),
-            })
+            logger.warning(
+                "HTTP client error",
+                extra={
+                    "status_code": exc.status_code,
+                    "detail": exc.detail,
+                    "request_context": get_request_context(request),
+                },
+            )
 
         # Prepare response
         error_response = {
@@ -578,16 +590,11 @@ def setup_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle general exceptions with enhanced logging and development mode support."""
-
         # Generate unique error ID for tracking
         error_id = generate_error_id()
 
         # Determine if we should include full traceback details
-        include_traceback = (
-            settings.debug or
-            settings.environment == "development" or
-            settings.log_level == "DEBUG"
-        )
+        include_traceback = settings.debug or settings.environment == "development" or settings.log_level == "DEBUG"
 
         # Log detailed exception information
         log_exception_details(exc, request, error_id, include_traceback)
@@ -607,17 +614,19 @@ def setup_exception_handlers(app: FastAPI) -> None:
             error_response["error"]["details"] = {
                 "exception_type": type(exc).__name__,
                 "exception_message": str(exc),
-                "traceback": traceback.format_exc().split('\n'),
+                "traceback": traceback.format_exc().split("\n"),
                 "request_info": {
                     "method": request.method,
                     "path": request.url.path,
                     "query_params": dict(request.query_params),
-                }
+                },
             }
 
             # Add a development warning
             error_response["error"]["development_mode"] = True
-            error_response["error"]["warning"] = "Detailed error information included for development. This will be hidden in production."
+            error_response["error"]["warning"] = (
+                "Detailed error information included for development. This will be hidden in production."
+            )
 
         return JSONResponse(
             status_code=500,
@@ -627,7 +636,6 @@ def setup_exception_handlers(app: FastAPI) -> None:
 
 def setup_routes(app: FastAPI) -> None:
     """Configure application routes."""
-
     settings = get_settings_instance()
 
     # Authentication routes
@@ -639,7 +647,6 @@ def setup_routes(app: FastAPI) -> None:
     # Health check routes (comprehensive)
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(system_router, prefix=settings.api_v1_prefix)
-
 
     # API routes
     app.include_router(knowledge_bases_router, prefix=settings.api_v1_prefix)
@@ -670,7 +677,6 @@ def setup_routes(app: FastAPI) -> None:
     app.include_router(user_preferences_router, prefix=settings.api_v1_prefix)
     app.include_router(branding_router, prefix=settings.api_v1_prefix)
 
-
     # RBAC management routes
     app.include_router(groups_router, prefix=settings.api_v1_prefix)
     app.include_router(permissions_router, prefix=settings.api_v1_prefix)
@@ -678,7 +684,7 @@ def setup_routes(app: FastAPI) -> None:
 
     # Experience Platform routes
     app.include_router(experiences_router, prefix=settings.api_v1_prefix)
-    
+
     # Side-call routes
     app.include_router(side_call_router, prefix=settings.api_v1_prefix)
 
@@ -689,7 +695,6 @@ def setup_routes(app: FastAPI) -> None:
             config_router.prefix,
             health_router.prefix,
             system_router.prefix,
-
             knowledge_bases_router.prefix,
             resources_router.prefix,
             prompts_router.prefix,
@@ -733,9 +738,7 @@ def custom_openapi():
     )
 
     # Add custom schema extensions
-    openapi_schema["info"]["x-logo"] = {
-        "url": "https://example.com/logo.png"
-    }
+    openapi_schema["info"]["x-logo"] = {"url": "https://example.com/logo.png"}
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema

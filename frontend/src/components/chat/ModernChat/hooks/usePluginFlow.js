@@ -1,14 +1,14 @@
-import { useState, useMemo, useCallback } from 'react';
-import { useQuery } from 'react-query';
+import { useState, useMemo, useCallback } from "react";
+import { useQuery } from "react-query";
 
-import chatPluginsAPI from '../../../../services/chatPluginsApi';
-import { extractDataFromResponse } from '../../../../services/api';
+import chatPluginsAPI from "../../../../services/chatPluginsApi";
+import { extractDataFromResponse } from "../../../../services/api";
 
 const usePluginFlow = ({ pluginsEnabled }) => {
   const chatPluginsQuery = useQuery(
-    ['chat-plugins', 'list'],
+    ["chat-plugins", "list"],
     () => chatPluginsAPI.list().then(extractDataFromResponse),
-    { enabled: pluginsEnabled }
+    { enabled: pluginsEnabled },
   );
 
   const chatPluginDescriptors = useMemo(() => {
@@ -24,15 +24,17 @@ const usePluginFlow = ({ pluginsEnabled }) => {
 
   const chatPluginsSummaryText = useMemo(() => {
     if (!chatPluginDescriptors.length) {
-      return '';
+      return "";
     }
     return chatPluginDescriptors
       .map((entry) => entry.title || `${entry.name}:${entry.op}`)
-      .join(', ');
+      .join(", ");
   }, [chatPluginDescriptors]);
 
   const showPluginInfoBanner =
-    process.env.NODE_ENV !== 'production' && pluginsEnabled && Boolean(chatPluginsSummaryText);
+    process.env.NODE_ENV !== "production" &&
+    pluginsEnabled &&
+    Boolean(chatPluginsSummaryText);
 
   const [pluginPickerOpen, setPluginPickerOpen] = useState(false);
   const [pluginModalOpen, setPluginModalOpen] = useState(false);

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from .base import ImmutableCapabilityMixin
 from .storage_capability import StorageCapability
 
@@ -17,15 +15,15 @@ class CursorCapability(ImmutableCapabilityMixin):
     plugins from mutating _plugin_name or _user_id to access other plugins' cursors.
     """
 
-    __slots__ = ("_plugin_name", "_user_id", "_schedule_id", "_storage")
+    __slots__ = ("_plugin_name", "_schedule_id", "_storage", "_user_id")
     NAMESPACE = "cursor"
 
     _plugin_name: str
     _user_id: str
-    _schedule_id: Optional[str]
+    _schedule_id: str | None
     _storage: StorageCapability
 
-    def __init__(self, *, plugin_name: str, user_id: str, schedule_id: Optional[str] = None):
+    def __init__(self, *, plugin_name: str, user_id: str, schedule_id: str | None = None):
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_schedule_id", str(schedule_id) if schedule_id else None)
@@ -35,7 +33,7 @@ class CursorCapability(ImmutableCapabilityMixin):
         sid = self._schedule_id
         return f"feed:{sid}:kb:{kb_id}" if sid else f"adhoc:kb:{kb_id}"
 
-    async def get(self, kb_id: str) -> Optional[str]:
+    async def get(self, kb_id: str) -> str | None:
         try:
             val = await self._storage.get(self._key(kb_id), namespace=self.NAMESPACE)
             # Stored as cursor_string or {"value": cursor_string}
@@ -53,4 +51,3 @@ class CursorCapability(ImmutableCapabilityMixin):
 
     async def delete(self, kb_id: str) -> None:
         await self._storage.delete(self._key(kb_id), namespace=self.NAMESPACE)
-

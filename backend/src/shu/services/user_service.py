@@ -1,5 +1,4 @@
-"""
-User Service Module
+"""User Service Module
 
 This module contains the UserService class and related helper functions for user
 management operations. It is separated from the API layer (api/auth.py) to follow
@@ -16,7 +15,7 @@ The UserService handles:
 
 Usage:
     from shu.services.user_service import UserService, get_user_service, create_token_response
-    
+
     # In endpoint with dependency injection:
     async def endpoint(
         user_service: UserService = Depends(get_user_service),
@@ -26,17 +25,17 @@ Usage:
         return create_token_response(user, user_service.jwt_manager)
 """
 
-from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Dict, Any, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import User, UserRole, JWTManager
+from ..auth import JWTManager, User, UserRole
 from ..core.config import get_settings_instance
 from ..models.provider_identity import ProviderIdentity
 
@@ -45,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 def _redact_email(email: str) -> str:
     """Redact email for logging - shows first char + domain hash.
-    
+
     Example: "user@example.com" -> "u***@a1b2c3d4"
     """
     if not email or "@" not in email:
@@ -63,13 +62,13 @@ class UserService:
         self.jwt_manager = JWTManager()
         self.settings = get_settings_instance()
 
-    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> Optional[User]:
+    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User | None:
         """Get user by ID"""
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_all_users(self, db: AsyncSession) -> List[User]:
+    async def get_all_users(self, db: AsyncSession) -> list[User]:
         """Get all users (admin only)"""
         stmt = select(User).order_by(User.is_active.desc(), User.name.asc())
         result = await db.execute(stmt)
@@ -117,15 +116,11 @@ class UserService:
 
     def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
         # Determine user role
-        is_admin_email = email.lower() in [
-            admin_email.lower()
-            for admin_email in self.settings.admin_emails
-        ]
+        is_admin_email = email.lower() in [admin_email.lower() for admin_email in self.settings.admin_emails]
 
         if is_first_user or is_admin_email:
             return UserRole.ADMIN
-        else:
-            return UserRole.REGULAR_USER
+        return UserRole.REGULAR_USER
 
     async def is_first_user(self, db: AsyncSession) -> bool:
         stmt = select(User.id).limit(1)
@@ -135,20 +130,15 @@ class UserService:
     def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
         return is_first_user or user_role == UserRole.ADMIN
 
-    async def get_user_auth_method(self, db: AsyncSession, email: str) -> Optional[str]:
+    async def get_user_auth_method(self, db: AsyncSession, email: str) -> str | None:
         auth_method_result = await db.execute(select(User.auth_method).where(func.lower(User.email) == email.lower()))
         return auth_method_result.scalar_one_or_none()
 
-    async def authenticate_or_create_sso_user(
-        self,
-        provider_info: Dict[str, Any],
-        db: AsyncSession
-    ) -> User:
-        """
-        Authenticate or create a user from SSO provider info.
-        
+    async def authenticate_or_create_sso_user(self, provider_info: dict[str, Any], db: AsyncSession) -> User:
+        """Authenticate or create a user from SSO provider info.
+
         This method is provider-agnostic.
-        
+
         Args:
             provider_info: Normalized provider info with keys:
                 - provider_id: Provider's unique user identifier
@@ -157,19 +147,20 @@ class UserService:
                 - name: User's display name
                 - picture: Avatar URL (optional)
             db: Database session
-            
+
         Returns:
             Authenticated User object
-            
+
         Raises:
             HTTPException: 409 if user exists with password auth
             HTTPException: 400 if user account is inactive
             HTTPException: 201 if new user created but requires activation
+
         """
         email = provider_info["email"]
         provider_id = provider_info["provider_id"]
         provider_key = provider_info["provider_key"]
-        
+
         # Look up existing identity in ProviderIdentity table
         user = await self._get_user_by_identity(provider_key, provider_id, db)
         if not user:
@@ -178,99 +169,89 @@ class UserService:
             if auth_method == "password":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses password authentication. Please use the username & password login flow."
+                    detail="This account uses password authentication. Please use the username & password login flow.",
                 )
-        
+
         if user:
             if not user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User account is inactive. Please contact an administrator for activation."
+                    detail="User account is inactive. Please contact an administrator for activation.",
                 )
-            user.last_login = datetime.now(timezone.utc)
+            user.last_login = datetime.now(UTC)
             # Update avatar if provided and different
             new_picture = provider_info.get("picture")
             if new_picture and new_picture != user.picture_url:
                 user.picture_url = new_picture
             await db.commit()
             return user
-        
+
         # Check if user exists by email (link identity to existing user)
         # Use case-insensitive comparison since providers may return email in different case
         email_stmt = select(User).where(func.lower(User.email) == email.lower())
         email_result = await db.execute(email_stmt)
         existing_user = email_result.scalar_one_or_none()
-        
+
         if existing_user:
             if not existing_user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User account is inactive. Please contact an administrator for activation."
+                    detail="User account is inactive. Please contact an administrator for activation.",
                 )
             await self._ensure_provider_identity(existing_user, provider_info, db)
-            existing_user.last_login = datetime.now(timezone.utc)
+            existing_user.last_login = datetime.now(UTC)
             # Update avatar if provided and different
             new_picture = provider_info.get("picture")
             if new_picture and new_picture != existing_user.picture_url:
                 existing_user.picture_url = new_picture
             await db.commit()
-            logger.info("Linked provider identity to existing user", extra={"provider_key": provider_key, "user_id": existing_user.id})
+            logger.info(
+                "Linked provider identity to existing user",
+                extra={"provider_key": provider_key, "user_id": existing_user.id},
+            )
             return existing_user
-        
+
         # Create new user
         return await self._create_new_sso_user(provider_info, db)
 
-    async def _get_user_by_identity(
-        self,
-        provider_key: str,
-        provider_id: str,
-        db: AsyncSession
-    ) -> User | None:
+    async def _get_user_by_identity(self, provider_key: str, provider_id: str, db: AsyncSession) -> User | None:
         """Get user from ProviderIdentity table using a single JOIN query.
-        
+
         Args:
             provider_key: Provider name ("google" or "microsoft")
             provider_id: Provider's unique user identifier
             db: Database session
-            
+
         Returns:
             User if found via ProviderIdentity, None otherwise
+
         """
-        from sqlalchemy.orm import joinedload
-        
         stmt = (
             select(User)
             .join(ProviderIdentity, ProviderIdentity.user_id == User.id)
-            .where(
-                ProviderIdentity.provider_key == provider_key,
-                ProviderIdentity.account_id == provider_id
-            )
+            .where(ProviderIdentity.provider_key == provider_key, ProviderIdentity.account_id == provider_id)
         )
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
-        
+
         return user
 
-    async def _ensure_provider_identity(
-        self,
-        user: User,
-        provider_info: Dict[str, Any],
-        db: AsyncSession
-    ) -> None:
+    async def _ensure_provider_identity(self, user: User, provider_info: dict[str, Any], db: AsyncSession) -> None:
         """Ensure ProviderIdentity exists for user, create if missing (migration on login).
-        
+
         Handles concurrent inserts gracefully by catching IntegrityError and verifying
         the identity was created by another concurrent request.
-        
+
         Args:
             user: The user to ensure identity for
             provider_info: Normalized provider info dict
             db: Database session
+
         """
         stmt = select(ProviderIdentity).where(
             ProviderIdentity.user_id == user.id,
             ProviderIdentity.provider_key == provider_info["provider_key"],
-            ProviderIdentity.account_id == provider_info["provider_id"]
+            ProviderIdentity.account_id == provider_info["provider_id"],
         )
         result = await db.execute(stmt)
         if not result.scalar_one_or_none():
@@ -285,20 +266,18 @@ class UserService:
                     raise
 
     async def _create_provider_identity(
-        self,
-        user: User,
-        provider_info: Dict[str, Any],
-        db: AsyncSession
+        self, user: User, provider_info: dict[str, Any], db: AsyncSession
     ) -> ProviderIdentity:
         """Create ProviderIdentity linking user to provider.
-        
+
         Args:
             user: The user to link
             provider_info: Normalized provider info dict
             db: Database session
-            
+
         Returns:
             The created ProviderIdentity
+
         """
         identity = ProviderIdentity(
             user_id=user.id,
@@ -312,31 +291,28 @@ class UserService:
         await db.flush()
         return identity
 
-    async def _create_new_sso_user(
-        self,
-        provider_info: Dict[str, Any],
-        db: AsyncSession
-    ) -> User:
+    async def _create_new_sso_user(self, provider_info: dict[str, Any], db: AsyncSession) -> User:
         """Create new user from SSO provider info.
-        
+
         Args:
             provider_info: Normalized provider info dict
             db: Database session
-            
+
         Returns:
             The created User
-            
+
         Raises:
             HTTPException: 201 if user requires activation
             HTTPException: 409 if user with email already exists (race condition)
+
         """
         email = provider_info["email"]
         provider_key = provider_info["provider_key"]
-        
+
         is_first_user = await self.is_first_user(db)
         user_role = self.determine_user_role(email, is_first_user)
         is_active = self.is_active(user_role, is_first_user)
-        
+
         user = User(
             email=email,
             name=provider_info["name"],
@@ -344,19 +320,25 @@ class UserService:
             role=user_role.value,
             auth_method=provider_key,
             is_active=is_active,
-            last_login=datetime.now(timezone.utc) if is_active else None
+            last_login=datetime.now(UTC) if is_active else None,
         )
-        
+
         if user_role == UserRole.ADMIN:
             if is_first_user:
-                logger.info("Creating first user as admin", extra={"provider_key": provider_key, "email_hash": _redact_email(email)})
+                logger.info(
+                    "Creating first user as admin",
+                    extra={"provider_key": provider_key, "email_hash": _redact_email(email)},
+                )
             else:
-                logger.info("Creating admin user from configured list", extra={"provider_key": provider_key, "email_hash": _redact_email(email)})
-        
+                logger.info(
+                    "Creating admin user from configured list",
+                    extra={"provider_key": provider_key, "email_hash": _redact_email(email)},
+                )
+
         try:
             db.add(user)
             await db.flush()  # Get user.id without committing
-            
+
             # Create ProviderIdentity (use _ensure for consistency, though race is unlikely here)
             await self._ensure_provider_identity(user, provider_info, db)
             await db.commit()
@@ -364,28 +346,27 @@ class UserService:
         except IntegrityError as e:
             await db.rollback()
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="User with this email already exists"
+                status_code=status.HTTP_409_CONFLICT, detail="User with this email already exists"
             ) from e
-        
+
         if not is_active:
             # Note: Using HTTPException for 201 is unconventional but allows the service
             # to signal "created but requires activation" without changing the return type.
             # The API layer catches this and returns the appropriate response.
             raise HTTPException(
                 status_code=status.HTTP_201_CREATED,
-                detail="Account was created, but will need to be activated. Please contact an administrator for activation."
+                detail="Account was created, but will need to be activated. Please contact an administrator for activation.",
             )
-        
+
         return user
 
 
 # Dependency provider for UserService
 def get_user_service() -> UserService:
     """Dependency provider for UserService.
-    
+
     Use with FastAPI's Depends() for proper dependency injection:
-    
+
         async def endpoint(
             user_service: UserService = Depends(get_user_service)
         ):
@@ -396,18 +377,19 @@ def get_user_service() -> UserService:
 
 def create_token_response(user: User, jwt_manager: JWTManager):
     """Create JWT token response for authenticated user.
-    
+
     Args:
         user: The authenticated user
         jwt_manager: JWTManager instance for token creation
-        
+
     Returns:
         Dict with access_token, refresh_token, token_type, and user data
-        
+
     Note:
         Returns a dict rather than TokenResponse to avoid circular import with
         api/auth.py where TokenResponse is defined. The endpoint will construct
         the TokenResponse from this dict.
+
     """
     access_token = jwt_manager.create_access_token(user.to_dict())
     refresh_token = jwt_manager.create_refresh_token(user.id)
@@ -415,5 +397,5 @@ def create_token_response(user: User, jwt_manager: JWTManager):
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user": user.to_dict()
+        "user": user.to_dict(),
     }

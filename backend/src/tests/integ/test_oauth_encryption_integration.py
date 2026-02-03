@@ -5,23 +5,17 @@ Tests for the OAuth token encryption functionality to ensure tokens
 are properly encrypted when stored and decrypted when retrieved.
 """
 
-import uuid
-from datetime import datetime, timezone
-from unittest.mock import patch
-
 import sys
+import uuid
 
-from shu.models.provider_credential import ProviderCredential
-from shu.core.oauth_encryption import (
-    OAuthEncryptionService,
-    OAuthEncryptionError,
-    get_oauth_encryption_service,
-    encrypt_oauth_token,
-    decrypt_oauth_token
-)
-import shu.core.oauth_encryption as oe
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.integration_test_runner import run_integration_test_suite
+from shu.core.oauth_encryption import (
+    OAuthEncryptionError,
+    OAuthEncryptionService,
+    decrypt_oauth_token,
+    encrypt_oauth_token,
+)
+from shu.models.provider_credential import ProviderCredential
 
 
 class TestOAuthEncryptionIntegration:
@@ -30,21 +24,17 @@ class TestOAuthEncryptionIntegration:
     @staticmethod
     def _test_tokens():
         """Sample OAuth tokens for testing."""
-        return {
-            "access_token": "ya29.a0AfH6SMBxyz123...",
-            "refresh_token": "1//04abc123def456..."
-        }
+        return {"access_token": "ya29.a0AfH6SMBxyz123...", "refresh_token": "1//04abc123def456..."}
 
     @staticmethod
     def _tokens():
         return TestOAuthEncryptionIntegration._test_tokens()
-    
+
     async def test_oauth_encryption_service_initialization(self):
         """Test that the OAuth encryption service initializes correctly."""
         service = OAuthEncryptionService()
         assert service.fernet is not None
 
-    
     async def test_token_encryption_decryption(self):
         """Test basic token encryption and decryption."""
         service = OAuthEncryptionService()
@@ -64,7 +54,7 @@ class TestOAuthEncryptionIntegration:
 
         decrypted_refresh = service.decrypt_token(encrypted_refresh)
         assert decrypted_refresh == tokens["refresh_token"]
-    
+
     async def test_token_encryption_detection(self):
         """Test that the service can detect encrypted vs plaintext tokens."""
         service = OAuthEncryptionService()
@@ -85,7 +75,7 @@ class TestOAuthEncryptionIntegration:
             user_id=str(uuid.uuid4()),
             provider_key="google",
             scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-            is_active=True
+            is_active=True,
         )
 
         # Test setting and getting access token
@@ -113,7 +103,7 @@ class TestOAuthEncryptionIntegration:
             scopes=["https://www.googleapis.com/auth/gmail.readonly"],
             client_id="test-client-id",
             client_secret="test-client-secret",
-            is_active=True
+            is_active=True,
         )
 
         tokens = self._tokens()
@@ -145,7 +135,7 @@ class TestOAuthEncryptionIntegration:
             access_token_encrypted=tokens["access_token"],  # Plaintext
             refresh_token_encrypted=tokens["refresh_token"],  # Plaintext
             scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-            is_active=True
+            is_active=True,
         )
 
         # Getting tokens should raise OAuthEncryptionError
@@ -171,7 +161,7 @@ class TestOAuthEncryptionIntegration:
 
         decrypted = decrypt_oauth_token(encrypted)
         assert decrypted == tokens["access_token"]
-    
+
     async def test_error_handling(self):
         """Test error handling for invalid tokens and keys."""
         service = OAuthEncryptionService()
@@ -202,10 +192,11 @@ class TestOAuthEncryptionIntegration:
 
 
 # Integration test runner configuration using BaseIntegrationTestSuite pattern
-from typing import List, Callable
+from collections.abc import Callable
+
 
 class OAuthEncryptionIntegrationSuite(BaseIntegrationTestSuite):
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         t = TestOAuthEncryptionIntegration()
         # Wrap methods to call with (client, db, auth_headers) even if unused
         return [
@@ -224,6 +215,7 @@ class OAuthEncryptionIntegrationSuite(BaseIntegrationTestSuite):
 
     def get_suite_description(self) -> str:
         return "Integration tests for OAuth token encryption and credential utilities"
+
 
 if __name__ == "__main__":
     suite = OAuthEncryptionIntegrationSuite()

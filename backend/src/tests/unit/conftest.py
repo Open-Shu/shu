@@ -33,6 +33,7 @@ if str(MIGRATIONS_ROOT) not in sys.path:
 
 import pytest
 
+
 @pytest.fixture
 def mock_settings():
     """Provide a mock Settings object for tests that need custom configuration."""
@@ -53,29 +54,50 @@ def mock_settings():
     mock.oauth_encryption_key = "Ngyzgo3L2B3D_b6MXEffwnS68hPMGS_4YwWRrtNSwQs="
     return mock
 
+
 # Register all SQLAlchemy models to ensure relationship resolution works.
 # This is needed because SQLAlchemy resolves all relationships when any model is instantiated.
 # Import all models directly rather than using registry which may be incomplete.
 try:
     # Core models
+    # User model (required for relationships)
+    from shu.auth.models import User  # noqa: F401
     from shu.models import (  # noqa: F401
-        Base, KnowledgeBase, Prompt, PromptAssignment,
-        Document, DocumentChunk, DocumentQuery, DocumentParticipant, DocumentProject,
-        LLMProvider, LLMModel, LLMUsage, Conversation, Message,
-        ModelConfiguration, ModelConfigurationKBPrompt, UserPreferences,
-        ProviderIdentity, ProviderCredential,
-        UserGroup, UserGroupMembership, KnowledgeBasePermission,
-        PluginDefinition, AgentMemory, PluginStorage,
+        AgentMemory,
+        Base,
+        Conversation,
+        Document,
+        DocumentChunk,
+        DocumentParticipant,
+        DocumentProject,
+        DocumentQuery,
+        KnowledgeBase,
+        KnowledgeBasePermission,
+        LLMModel,
+        LLMProvider,
+        LLMUsage,
+        Message,
+        ModelConfiguration,
+        ModelConfigurationKBPrompt,
+        PluginDefinition,
+        PluginStorage,
+        Prompt,
+        PromptAssignment,
+        ProviderCredential,
+        ProviderIdentity,
         SystemSetting,
+        UserGroup,
+        UserGroupMembership,
+        UserPreferences,
     )
-    # Additional models not in __all__
-    from shu.models.provider_type_definition import ProviderTypeDefinition  # noqa: F401
+    from shu.models.attachment import Attachment, MessageAttachment  # noqa: F401
     from shu.models.plugin_execution import PluginExecution  # noqa: F401
     from shu.models.plugin_feed import PluginFeed  # noqa: F401
     from shu.models.plugin_subscription import PluginSubscription  # noqa: F401
-    from shu.models.attachment import Attachment, MessageAttachment  # noqa: F401
-    # User model (required for relationships)
-    from shu.auth.models import User  # noqa: F401
+
+    # Additional models not in __all__
+    from shu.models.provider_type_definition import ProviderTypeDefinition  # noqa: F401
 except ImportError as e:
     import warnings
+
     warnings.warn(f"Could not import all models for SQLAlchemy registry: {e}")

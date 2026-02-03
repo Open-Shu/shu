@@ -5,20 +5,19 @@ Tests the DB-aware orchestration layer that coordinates profiling,
 manages status transitions, and persists results.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 
-from shu.services.profiling_orchestrator import ProfilingOrchestrator
+import pytest
+
 from shu.schemas.profiling import (
-    ChunkData,
+    CapabilityManifest,
     ChunkProfile,
     ChunkProfileResult,
     DocumentProfile,
     DocumentType,
-    CapabilityManifest,
     ProfilingMode,
 )
+from shu.services.profiling_orchestrator import ProfilingOrchestrator
 
 
 @pytest.fixture
@@ -140,7 +139,7 @@ class TestRunForDocument:
             create_mock_chunk("c2", 1, "More short content"),
         ]
         mock_db.get.return_value = doc
-        
+
         # Mock chunk query
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = chunks
@@ -154,23 +153,29 @@ class TestRunForDocument:
         )
         chunk_results = [
             ChunkProfileResult(
-                chunk_id="c1", chunk_index=0,
+                chunk_id="c1",
+                chunk_index=0,
                 profile=ChunkProfile(summary="Chunk 1", keywords=[], topics=[]),
                 success=True,
             ),
             ChunkProfileResult(
-                chunk_id="c2", chunk_index=1,
+                chunk_id="c2",
+                chunk_index=1,
                 profile=ChunkProfile(summary="Chunk 2", keywords=[], topics=[]),
                 success=True,
             ),
         ]
 
-        with patch.object(orchestrator.profiling_service, 'profile_chunks',
-                         return_value=(chunk_results, 50)) as mock_chunks:
-            with patch.object(orchestrator.profiling_service, 'profile_document',
-                            return_value=(doc_profile, MagicMock(tokens_used=100))) as mock_doc:
+        with patch.object(
+            orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 50)
+        ) as mock_chunks:
+            with patch.object(
+                orchestrator.profiling_service,
+                "profile_document",
+                return_value=(doc_profile, MagicMock(tokens_used=100)),
+            ) as mock_doc:
                 # Use small token count to force full-doc mode
-                with patch('shu.services.profiling_orchestrator.estimate_tokens', return_value=100):
+                with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
                     result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
@@ -200,19 +205,22 @@ class TestRunForDocument:
         )
         chunk_results = [
             ChunkProfileResult(
-                chunk_id=f"c{i}", chunk_index=i,
+                chunk_id=f"c{i}",
+                chunk_index=i,
                 profile=ChunkProfile(summary=f"Summary {i}", keywords=[], topics=[]),
                 success=True,
             )
             for i in range(20)
         ]
 
-        with patch.object(orchestrator.profiling_service, 'profile_chunks',
-                         return_value=(chunk_results, 100)):
-            with patch.object(orchestrator.profiling_service, 'aggregate_chunk_profiles',
-                            return_value=(doc_profile, MagicMock(tokens_used=200))):
+        with patch.object(orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 100)):
+            with patch.object(
+                orchestrator.profiling_service,
+                "aggregate_chunk_profiles",
+                return_value=(doc_profile, MagicMock(tokens_used=200)),
+            ):
                 # Large token count to force aggregation mode
-                with patch('shu.services.profiling_orchestrator.estimate_tokens', return_value=10000):
+                with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=10000):
                     result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
@@ -254,12 +262,14 @@ class TestPersistResults:
         )
         chunk_results = [
             ChunkProfileResult(
-                chunk_id="c1", chunk_index=0,
+                chunk_id="c1",
+                chunk_index=0,
                 profile=ChunkProfile(summary="Sum1", keywords=["k1"], topics=["t1"]),
                 success=True,
             ),
             ChunkProfileResult(
-                chunk_id="c2", chunk_index=1,
+                chunk_id="c2",
+                chunk_index=1,
                 profile=ChunkProfile(summary="Sum2", keywords=["k2"], topics=["t2"]),
                 success=True,
             ),
@@ -287,7 +297,8 @@ class TestPersistResults:
         )
         chunk_results = [
             ChunkProfileResult(
-                chunk_id="c1", chunk_index=0,
+                chunk_id="c1",
+                chunk_index=0,
                 profile=ChunkProfile(summary="", keywords=[], topics=[]),
                 success=False,
                 error="Failed",
@@ -341,4 +352,3 @@ class TestHelperMethods:
 
         status = await orchestrator.get_profiling_status("nonexistent")
         assert status is None
-

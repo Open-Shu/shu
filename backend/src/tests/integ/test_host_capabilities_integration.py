@@ -160,8 +160,7 @@ async def test_plugin_storage_db_isolation(client, db, auth_headers):
     # Verify data is NOT in agent_memory
     am_result = await db.execute(
         text(
-            "SELECT COUNT(*) FROM agent_memory "
-            "WHERE agent_key = 'tool_storage:test_hostcaps' AND key = :key"
+            "SELECT COUNT(*) FROM agent_memory " "WHERE agent_key = 'tool_storage:test_hostcaps' AND key = :key"
         ).bindparams(key=test_key)
     )
     count = am_result.scalar()
@@ -191,8 +190,7 @@ async def test_plugin_storage_db_isolation(client, db, auth_headers):
     # Verify secret is NOT in agent_memory
     am_result = await db.execute(
         text(
-            "SELECT COUNT(*) FROM agent_memory "
-            "WHERE agent_key = 'tool_secret:test_hostcaps' AND key = :key"
+            "SELECT COUNT(*) FROM agent_memory " "WHERE agent_key = 'tool_secret:test_hostcaps' AND key = :key"
         ).bindparams(key=secret_key)
     )
     count = am_result.scalar()
@@ -217,4 +215,3 @@ class HostCapabilitiesTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(HostCapabilitiesTestSuite, globals())
-

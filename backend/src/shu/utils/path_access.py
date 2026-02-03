@@ -1,22 +1,22 @@
-"""
-Dot/bracket path accessor utilities.
+"""Dot/bracket path accessor utilities.
 
 Provides reusable helpers to get/set values in nested dict/list structures using
 paths like "choices[0].message.content". Designed to be small and dependency-free.
 """
-from typing import Any, List, Union, Optional, Dict
+
+from typing import Any
 
 
 class DotPath:
     """Utility for working with dot/bracket paths on JSON-like objects."""
 
     @staticmethod
-    def tokenize(path: str) -> List[Union[str, int]]:
+    def tokenize(path: str) -> list[str | int]:
         """Tokenize a dot/bracket path into keys and indices.
 
         Example: "choices[0].message.content" -> ["choices", 0, "message", "content"]
         """
-        tokens: List[Union[str, int]] = []
+        tokens: list[str | int] = []
         buf = ""
         i = 0
         while i < len(path):
@@ -48,7 +48,7 @@ class DotPath:
         return tokens
 
     @staticmethod
-    def get(obj: Any, path: Optional[str], default: Any = None) -> Any:
+    def get(obj: Any, path: str | None, default: Any = None) -> Any:
         """Retrieve a nested value using dot/bracket path.
 
         If the path is None or empty, returns the object itself.
@@ -70,15 +70,14 @@ class DotPath:
                         return default
                 else:
                     return default
+            elif isinstance(cur, dict) and t in cur:
+                cur = cur[t]
             else:
-                if isinstance(cur, dict) and t in cur:
-                    cur = cur[t]
-                else:
-                    return default
+                return default
         return cur
 
     @staticmethod
-    def set(obj: Dict[str, Any], path: str, value: Any) -> None:
+    def set(obj: dict[str, Any], path: str, value: Any) -> None:
         """Set a value into a dict using dot/bracket path; creates containers as needed.
 
         - Dicts are created for key steps when missing
@@ -115,4 +114,3 @@ class DotPath:
                     if t not in cur or not isinstance(cur[t], (dict, list)):
                         cur[t] = [] if isinstance(nxt, int) else {}
                     cur = cur[t]
-

@@ -9,55 +9,47 @@ These tests cover the enhanced hybrid search system including:
 """
 
 import sys
-import os
-import json
-from typing import List, Callable, Dict, Any
-from sqlalchemy import text
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
-
 
 # Test Data
 KB_DATA = {
     "name": "test_hybrid_search_kb",
     "description": "Knowledge base for hybrid search testing",
-    "sync_enabled": True
+    "sync_enabled": True,
 }
 
 
 async def test_hybrid_search_stop_words_only(client, db, auth_headers):
     """Test hybrid search with stop words only query."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
-    
+
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_stop_words_kb_{unique_id}"
-    
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
     # Test with stop words only
     stop_word_queries = ["hi", "to", "out", "the", "and", "a", "an", "is", "are"]
-    
+
     for query in stop_word_queries:
-        search_data = {
-            "query": query,
-            "search_type": "hybrid",
-            "limit": 5
-        }
-        
-        response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                    json=search_data,
-                                    headers=auth_headers)
-        
+        search_data = {"query": query, "search_type": "hybrid", "limit": 5}
+
+        response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
+
         # Should succeed without 500 errors
-        assert response.status_code in [200, 404], f"Stop word query '{query}' should not cause 500 error"
-        
+        assert response.status_code in [
+            200,
+            404,
+        ], f"Stop word query '{query}' should not cause 500 error"
+
         if response.status_code == 200:
             data = extract_data(response)
             # Should return similarity results only (no keyword results due to stop words)
@@ -68,15 +60,14 @@ async def test_hybrid_search_stop_words_only(client, db, auth_headers):
 async def test_hybrid_search_mixed_stop_words(client, db, auth_headers):
     """Test hybrid search with mixed stop words and meaningful terms."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
-    
+
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_mixed_kb_{unique_id}"
-    
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
@@ -85,22 +76,19 @@ async def test_hybrid_search_mixed_stop_words(client, db, auth_headers):
         "the safety profile of MXB-22",
         "what is the effectiveness",
         "how does the system work",
-        "where are the documents located"
+        "where are the documents located",
     ]
-    
+
     for query in mixed_queries:
-        search_data = {
-            "query": query,
-            "search_type": "hybrid",
-            "limit": 8
-        }
-        
-        response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                    json=search_data,
-                                    headers=auth_headers)
+        search_data = {"query": query, "search_type": "hybrid", "limit": 8}
+
+        response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
 
         # Should succeed and filter stop words properly
-        assert response.status_code in [200, 404], f"Mixed query '{query}' should succeed, got {response.status_code}: {response.text}"
+        assert response.status_code in [
+            200,
+            404,
+        ], f"Mixed query '{query}' should succeed, got {response.status_code}: {response.text}"
 
         if response.status_code == 200:
             response_json = response.json()
@@ -109,21 +97,23 @@ async def test_hybrid_search_mixed_stop_words(client, db, auth_headers):
             assert "results" in data, f"Data missing 'results' key: {data}"
             # When there are no documents, hybrid search may return similarity results
             # This is acceptable behavior as long as the search succeeds
-            assert data["query_type"] in ["hybrid", "similarity"], f"Expected query_type 'hybrid' or 'similarity', got: {data.get('query_type')}"
+            assert data["query_type"] in [
+                "hybrid",
+                "similarity",
+            ], f"Expected query_type 'hybrid' or 'similarity', got: {data.get('query_type')}"
 
 
 async def test_hybrid_search_combines_results(client, db, auth_headers):
     """Test that hybrid search properly combines keyword and similarity results."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
-    
+
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_combine_kb_{unique_id}"
-    
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
@@ -131,20 +121,21 @@ async def test_hybrid_search_combines_results(client, db, auth_headers):
     search_data = {
         "query": "machine learning algorithms neural networks",
         "search_type": "hybrid",
-        "limit": 10
+        "limit": 10,
     }
-    
-    response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                json=search_data,
-                                headers=auth_headers)
-    
+
+    response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
+
     assert response.status_code in [200, 404]
-    
+
     if response.status_code == 200:
         data = extract_data(response)
         assert "results" in data
         # When there are no documents, hybrid search may return similarity results
-        assert data["query_type"] in ["hybrid", "similarity"], f"Expected 'hybrid' or 'similarity', got: {data.get('query_type')}"
+        assert data["query_type"] in [
+            "hybrid",
+            "similarity",
+        ], f"Expected 'hybrid' or 'similarity', got: {data.get('query_type')}"
 
         # Verify response structure includes combined scoring
         if data["results"]:
@@ -157,15 +148,14 @@ async def test_hybrid_search_combines_results(client, db, auth_headers):
 async def test_hybrid_search_keyword_only_results(client, db, auth_headers):
     """Test hybrid search when only keyword matches exist."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
-    
+
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_keyword_only_kb_{unique_id}"
-    
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
@@ -173,34 +163,34 @@ async def test_hybrid_search_keyword_only_results(client, db, auth_headers):
     search_data = {
         "query": "MXB-22 compound synthesis protocol",
         "search_type": "hybrid",
-        "limit": 5
+        "limit": 5,
     }
-    
-    response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                json=search_data,
-                                headers=auth_headers)
-    
+
+    response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
+
     assert response.status_code in [200, 404]
-    
+
     if response.status_code == 200:
         data = extract_data(response)
         # When there are no documents, hybrid search may return similarity results
-        assert data["query_type"] in ["hybrid", "similarity"], f"Expected 'hybrid' or 'similarity', got: {data.get('query_type')}"
+        assert data["query_type"] in [
+            "hybrid",
+            "similarity",
+        ], f"Expected 'hybrid' or 'similarity', got: {data.get('query_type')}"
         # Results should be properly formatted even if only from one search type
 
 
 async def test_hybrid_search_similarity_only_results(client, db, auth_headers):
     """Test hybrid search when only similarity matches exist."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_similarity_only_kb_{unique_id}"
 
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
@@ -208,34 +198,34 @@ async def test_hybrid_search_similarity_only_results(client, db, auth_headers):
     search_data = {
         "query": "artificial intelligence deep learning concepts",
         "search_type": "hybrid",
-        "limit": 5
+        "limit": 5,
     }
 
-    response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                json=search_data,
-                                headers=auth_headers)
+    response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
 
     assert response.status_code in [200, 404]
 
     if response.status_code == 200:
         data = extract_data(response)
         # When there are no documents, hybrid search may return similarity results
-        assert data["query_type"] in ["hybrid", "similarity"], f"Expected 'hybrid' or 'similarity', got: {data.get('query_type')}"
+        assert data["query_type"] in [
+            "hybrid",
+            "similarity",
+        ], f"Expected 'hybrid' or 'similarity', got: {data.get('query_type')}"
         # Should handle similarity-only results gracefully
 
 
 async def test_hybrid_search_handles_mixed_formats(client, db, auth_headers):
     """Test that hybrid search handles both Pydantic objects and dictionaries from sub-searches."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_formats_kb_{unique_id}"
 
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
@@ -243,15 +233,16 @@ async def test_hybrid_search_handles_mixed_formats(client, db, auth_headers):
     search_data = {
         "query": "research document analysis methodology",
         "search_type": "hybrid",
-        "limit": 10
+        "limit": 10,
     }
 
-    response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                json=search_data,
-                                headers=auth_headers)
+    response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
 
     # Should not get KeyError or AttributeError exceptions
-    assert response.status_code in [200, 404], "Hybrid search should handle mixed formats without exceptions"
+    assert response.status_code in [
+        200,
+        404,
+    ], "Hybrid search should handle mixed formats without exceptions"
 
     if response.status_code == 200:
         data = extract_data(response)
@@ -267,31 +258,25 @@ async def test_hybrid_search_handles_mixed_formats(client, db, auth_headers):
 async def test_hybrid_search_performance(client, db, auth_headers):
     """Test hybrid search performance with stop word queries."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_performance_kb_{unique_id}"
 
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
     # Test stop word query performance (should be very fast)
-    search_data = {
-        "query": "the and or but",
-        "search_type": "hybrid",
-        "limit": 5
-    }
+    search_data = {"query": "the and or but", "search_type": "hybrid", "limit": 5}
 
     import time
+
     start_time = time.time()
 
-    response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                json=search_data,
-                                headers=auth_headers)
+    response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
 
     end_time = time.time()
     response_time = end_time - start_time
@@ -304,15 +289,14 @@ async def test_hybrid_search_performance(client, db, auth_headers):
 async def test_hybrid_search_cross_search_consistency(client, db, auth_headers):
     """Test consistency of stop word handling across search types."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     # Create knowledge base
     kb_data = KB_DATA.copy()
     kb_data["name"] = f"test_hybrid_consistency_kb_{unique_id}"
 
-    kb_response = await client.post("/api/v1/knowledge-bases",
-                                   json=kb_data,
-                                   headers=auth_headers)
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
@@ -320,33 +304,27 @@ async def test_hybrid_search_cross_search_consistency(client, db, auth_headers):
     stop_word_query = "the and or"
 
     # Test keyword search
-    keyword_response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                        json={
-                                            "query": stop_word_query,
-                                            "search_type": "keyword",
-                                            "limit": 5
-                                        },
-                                        headers=auth_headers)
+    keyword_response = await client.post(
+        f"/api/v1/query/{kb_id}/search",
+        json={"query": stop_word_query, "search_type": "keyword", "limit": 5},
+        headers=auth_headers,
+    )
 
     # Test similarity search via unified endpoint
     similarity_data = {
         "query": stop_word_query,
         "query_type": "similarity",
         "limit": 5,
-        "similarity_threshold": 0.7
+        "similarity_threshold": 0.7,
     }
-    similarity_response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                           json=similarity_data,
-                                           headers=auth_headers)
+    similarity_response = await client.post(f"/api/v1/query/{kb_id}/search", json=similarity_data, headers=auth_headers)
 
     # Test hybrid search
-    hybrid_response = await client.post(f"/api/v1/query/{kb_id}/search",
-                                       json={
-                                           "query": stop_word_query,
-                                           "search_type": "hybrid",
-                                           "limit": 5
-                                       },
-                                       headers=auth_headers)
+    hybrid_response = await client.post(
+        f"/api/v1/query/{kb_id}/search",
+        json={"query": stop_word_query, "search_type": "hybrid", "limit": 5},
+        headers=auth_headers,
+    )
 
     # All should handle stop words consistently
     assert keyword_response.status_code in [200, 404]
@@ -362,8 +340,8 @@ async def test_hybrid_search_cross_search_consistency(client, db, auth_headers):
 
 class HybridSearchIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for hybrid search functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all hybrid search test functions."""
         return [
             test_hybrid_search_stop_words_only,
@@ -375,15 +353,15 @@ class HybridSearchIntegrationTestSuite(BaseIntegrationTestSuite):
             test_hybrid_search_performance,
             test_hybrid_search_cross_search_consistency,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Hybrid Search Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "Integration tests for hybrid search functionality including stop word filtering, result combination, and edge cases"
-    
+
     def get_cli_examples(self) -> str:
         """Return hybrid search specific CLI examples."""
         return """

@@ -4,4 +4,3 @@ PLUGIN_MANIFEST = {
     "module": "plugins.shu_bad_import.plugin:BadImportPlugin",
     "capabilities": [],
 }
-

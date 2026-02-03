@@ -1,5 +1,5 @@
 // Shared helpers for working with the React Query cache shape used by chat
-import { extractDataFromResponse } from '../../../../services/api';
+import { extractDataFromResponse } from "../../../../services/api";
 
 export const getMessagesFromCache = (cache) => {
   const existing = extractDataFromResponse(cache);
@@ -7,7 +7,7 @@ export const getMessagesFromCache = (cache) => {
 };
 
 export const rebuildCache = (cache, messages) => {
-  if (cache && typeof cache === 'object' && 'data' in cache) {
+  if (cache && typeof cache === "object" && "data" in cache) {
     const outer = { ...cache };
     const inner = { ...(outer.data || {}) };
     if (inner.meta) {
@@ -20,7 +20,11 @@ export const rebuildCache = (cache, messages) => {
   return { data: { data: messages } };
 };
 
-export const mergeLatestMessagesIntoCache = (oldData, latestMessages, options = {}) => {
+export const mergeLatestMessagesIntoCache = (
+  oldData,
+  latestMessages,
+  options = {},
+) => {
   const { placeholderId, removePlaceholders = true } = options || {};
   const existing = getMessagesFromCache(oldData);
   let base = Array.isArray(existing) ? existing : [];
@@ -42,6 +46,3 @@ export const mergeLatestMessagesIntoCache = (oldData, latestMessages, options = 
   });
   return rebuildCache(oldData, merged);
 };
-
-
-

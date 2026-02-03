@@ -1,7 +1,6 @@
-from typing import List, Dict, Any
-from unittest.mock import patch, AsyncMock
 import urllib.parse
-import asyncio
+from typing import Any
+from unittest.mock import patch
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
@@ -36,9 +35,9 @@ async def test_exchange_and_refresh_code_using_stub(client, db, auth_headers):
     from shu.plugins.host.auth_capability import AuthCapability
 
     # Stub _post_form to emulate token endpoint for both exchange and refresh
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
 
-    async def _stub_post_form(self, url: str, data: Dict[str, str]) -> Dict[str, Any]:
+    async def _stub_post_form(self, url: str, data: dict[str, str]) -> dict[str, Any]:
         calls.append({"url": url, "data": data.copy()})
         if data.get("grant_type") == "authorization_code":
             return {
@@ -90,4 +89,3 @@ class HostAuthOAuthFlowsSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(HostAuthOAuthFlowsSuite, globals())
-

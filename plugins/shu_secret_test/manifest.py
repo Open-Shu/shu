@@ -11,7 +11,7 @@ PLUGIN_MANIFEST = {
             "secrets": {
                 "api_key": {
                     "allowed_scope": "system_or_user",
-                    "description": "API key for external service validation"
+                    "description": "API key for external service validation",
                 }
             }
         },
@@ -19,7 +19,7 @@ PLUGIN_MANIFEST = {
             "secrets": {
                 "user_token": {
                     "allowed_scope": "user",
-                    "description": "User-specific authentication token"
+                    "description": "User-specific authentication token",
                 }
             }
         },
@@ -27,10 +27,9 @@ PLUGIN_MANIFEST = {
             "secrets": {
                 "system_credential": {
                     "allowed_scope": "system",
-                    "description": "System-wide credential (admin only)"
+                    "description": "System-wide credential (admin only)",
                 }
             }
-        }
-    }
+        },
+    },
 }
-

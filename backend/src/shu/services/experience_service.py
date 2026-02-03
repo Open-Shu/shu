@@ -1,17 +1,17 @@
-"""
-Experience Service for Shu.
+"""Experience Service for Shu.
 
 This service provides business logic for managing experiences,
 including CRUD operations, template validation, and required scopes computation.
 """
 
-from typing import List, Optional, Dict, Any, Tuple, TypeVar, Callable, TYPE_CHECKING
-from datetime import datetime
 import uuid
-import yaml
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Optional
 
+import yaml
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
@@ -28,21 +28,30 @@ import zoneinfo
 from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
-from ..models.experience import Experience, ExperienceStep, ExperienceRun
+from ..core.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.logging import get_logger
+from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
+from ..plugins.loader import PluginLoader
 from ..schemas.experience import (
-    ExperienceCreate, ExperienceUpdate, ExperienceResponse,
-    ExperienceList, ExperienceStepCreate, ExperienceStepResponse,
-    ExperienceRunResponse, ExperienceRunList,
-    ExperienceVisibility, StepType, RunStatus, TriggerType,
-    ExperienceResultSummary, UserExperienceResults
+    ExperienceCreate,
+    ExperienceList,
+    ExperienceResponse,
+    ExperienceResultSummary,
+    ExperienceRunList,
+    ExperienceRunResponse,
+    ExperienceStepCreate,
+    ExperienceStepResponse,
+    ExperienceUpdate,
+    ExperienceVisibility,
+    RunStatus,
+    StepType,
+    TriggerType,
+    UserExperienceResults,
 )
-from ..core.exceptions import NotFoundError, ValidationError, ConflictError
-from ..core.logging import get_logger
 
 logger = get_logger(__name__)
-
 
 
 class ExperienceService:
@@ -56,22 +65,18 @@ class ExperienceService:
             autoescape=False,
         )
         # Lazily-initialized plugin loader (created on first use)
-        self._plugin_loader: Optional['PluginLoader'] = None
+        self._plugin_loader: PluginLoader | None = None
 
-    def _validate_trigger_config(
-        self,
-        trigger_type: TriggerType,
-        trigger_config: Optional[Dict[str, Any]]
-    ) -> None:
-        """
-        Validate trigger configuration for scheduled/cron types.
-        
+    def _validate_trigger_config(self, trigger_type: TriggerType, trigger_config: dict[str, Any] | None) -> None:
+        """Validate trigger configuration for scheduled/cron types.
+
         Args:
             trigger_type: Type of trigger (scheduled, cron, manual)
             trigger_config: Dictionary of trigger settings
-            
+
         Raises:
             ValidationError: If configuration is invalid
+
         """
         if trigger_type == TriggerType.SCHEDULED:
             if not trigger_config or not trigger_config.get("scheduled_at"):
@@ -80,16 +85,16 @@ class ExperienceService:
                 datetime.fromisoformat(trigger_config["scheduled_at"])
             except ValueError:
                 raise ValidationError("Invalid 'scheduled_at' format. Expected ISO 8601 (YYYY-MM-DDTHH:MM:SS)")
-        
+
         elif trigger_type == TriggerType.CRON:
             if not trigger_config or not trigger_config.get("cron"):
                 raise ValidationError("Trigger type 'cron' requires 'cron' expression in trigger_config")
-            
+
             if croniter:
                 try:
                     if not croniter.is_valid(trigger_config["cron"]):
                         raise ValidationError(f"Invalid cron expression: {trigger_config['cron']}")
-                except Exception as e:
+                except Exception:
                     # croniter.is_valid might raise or return False depending on version/input
                     raise ValidationError(f"Invalid cron expression: {trigger_config['cron']}")
             else:
@@ -103,12 +108,9 @@ class ExperienceService:
                 raise ValidationError(f"Invalid timezone: {trigger_config['timezone']}")
 
     async def _validate_model_configuration(
-        self, 
-        model_configuration_id: str, 
-        current_user: Optional['User'] = None
+        self, model_configuration_id: str, current_user: Optional["User"] = None
     ) -> None:
-        """
-        Validate that a model configuration exists and is accessible to the current user.
+        """Validate that a model configuration exists and is accessible to the current user.
 
         Args:
             model_configuration_id: ID of the model configuration to validate
@@ -117,22 +119,22 @@ class ExperienceService:
         Raises:
             NotFoundError: If model configuration is not found
             ValidationError: If user lacks access to the model configuration
+
         """
         try:
             from .model_configuration_service import ModelConfigurationService
+
             model_config_service = ModelConfigurationService(self.db)
             await model_config_service.validate_model_configuration_for_use(
-                model_configuration_id, 
-                current_user=current_user,
-                include_relationships=True
+                model_configuration_id, current_user=current_user, include_relationships=True
             )
         except Exception as e:
             # Re-raise model configuration errors as ValidationError for API consistency
             from ..core.exceptions import ModelConfigurationError
+
             if isinstance(e, ModelConfigurationError):
                 raise ValidationError(str(e))
-            else:
-                raise ValidationError(f"Model configuration validation failed: {str(e)}")
+            raise ValidationError(f"Model configuration validation failed: {e!s}")
 
     # =========================================================================
     # CRUD Operations
@@ -142,10 +144,9 @@ class ExperienceService:
         self,
         experience_data: ExperienceCreate,
         created_by: str,
-        current_user: Optional['User'] = None
+        current_user: Optional["User"] = None,
     ) -> ExperienceResponse:
-        """
-        Create a new experience with steps.
+        """Create a new experience with steps.
 
         Args:
             experience_data: Experience creation data including steps
@@ -158,6 +159,7 @@ class ExperienceService:
         Raises:
             ExperienceValidationError: If validation fails
             ConflictError: If experience with same name already exists
+
         """
         # Check for existing experience with same name
         existing = await self._get_experience_by_name(experience_data.name)
@@ -169,17 +171,11 @@ class ExperienceService:
 
         # Validate model configuration if provided (with user access check)
         if experience_data.model_configuration_id:
-            await self._validate_model_configuration(
-                experience_data.model_configuration_id, 
-                current_user
-            )
+            await self._validate_model_configuration(experience_data.model_configuration_id, current_user)
 
         # Validate templates before creating
         if experience_data.inline_prompt_template:
-            self._validate_template_syntax(
-                experience_data.inline_prompt_template,
-                "inline_prompt_template"
-            )
+            self._validate_template_syntax(experience_data.inline_prompt_template, "inline_prompt_template")
 
         # Validate step configurations
         await self._validate_steps(experience_data.steps)
@@ -211,19 +207,15 @@ class ExperienceService:
             self.db.add(step)
 
         await self.db.commit()
-        await self.db.refresh(experience, ['steps', 'model_configuration', 'prompt'])
+        await self.db.refresh(experience, ["steps", "model_configuration", "prompt"])
 
         logger.info(f"Created experience '{experience.name}' with {len(experience_data.steps)} steps")
         return self._experience_to_response(experience)
 
     async def get_experience(
-        self,
-        experience_id: str,
-        user_id: Optional[str] = None,
-        is_admin: bool = False
-    ) -> Optional[ExperienceResponse]:
-        """
-        Get an experience by ID with visibility check.
+        self, experience_id: str, user_id: str | None = None, is_admin: bool = False
+    ) -> ExperienceResponse | None:
+        """Get an experience by ID with visibility check.
 
         Args:
             experience_id: Experience ID
@@ -232,10 +224,9 @@ class ExperienceService:
 
         Returns:
             Experience if found and visible, None otherwise
+
         """
-        stmt = self._base_experience_query(include_prompt=True).where(
-            Experience.id == experience_id
-        )
+        stmt = self._base_experience_query(include_prompt=True).where(Experience.id == experience_id)
         result = await self.db.execute(stmt)
         experience = result.scalar_one_or_none()
 
@@ -252,10 +243,9 @@ class ExperienceService:
         self,
         experience_id: str,
         update_data: ExperienceUpdate,
-        current_user: Optional['User'] = None
+        current_user: Optional["User"] = None,
     ) -> ExperienceResponse:
-        """
-        Update an existing experience.
+        """Update an existing experience.
 
         Args:
             experience_id: Experience ID
@@ -269,6 +259,7 @@ class ExperienceService:
             NotFoundError: If experience not found
             ConflictError: If name conflicts with existing experience
             ValidationError: If validation fails
+
         """
         experience = await self._get_experience_by_id(experience_id)
         if not experience:
@@ -282,29 +273,23 @@ class ExperienceService:
 
         # Validate templates if being updated
         if update_data.inline_prompt_template:
-            self._validate_template_syntax(
-                update_data.inline_prompt_template,
-                "inline_prompt_template"
-            )
+            self._validate_template_syntax(update_data.inline_prompt_template, "inline_prompt_template")
 
         # Validate model configuration if being updated (with user access check)
         if update_data.model_configuration_id is not None:
             if update_data.model_configuration_id:  # Not empty string or None
-                await self._validate_model_configuration(
-                    update_data.model_configuration_id, 
-                    current_user
-                )
+                await self._validate_model_configuration(update_data.model_configuration_id, current_user)
 
         # Update scalar fields
-        update_dict = update_data.model_dump(exclude_unset=True, exclude={'steps'})
+        update_dict = update_data.model_dump(exclude_unset=True, exclude={"steps"})
         trigger_changed = False
         for field, value in update_dict.items():
-            if field == 'visibility' and value:
-                setattr(experience, field, value.value if hasattr(value, 'value') else value)
-            elif field == 'trigger_type' and value:
-                setattr(experience, field, value.value if hasattr(value, 'value') else value)
+            if field == "visibility" and value:
+                setattr(experience, field, value.value if hasattr(value, "value") else value)
+            elif field == "trigger_type" and value:
+                setattr(experience, field, value.value if hasattr(value, "value") else value)
                 trigger_changed = True
-            elif field == 'trigger_config':
+            elif field == "trigger_config":
                 setattr(experience, field, value)
                 trigger_changed = True
             else:
@@ -314,7 +299,7 @@ class ExperienceService:
         if trigger_changed:
             # Ensure the configuration is valid for the (potentially new) type
             try:
-                # Trigger type in DB is string, convert to Enum for consistency if needed, 
+                # Trigger type in DB is string, convert to Enum for consistency if needed,
                 # but our validator handles the logic based on values.
                 current_type = TriggerType(experience.trigger_type)
                 self._validate_trigger_config(current_type, experience.trigger_config)
@@ -346,7 +331,7 @@ class ExperienceService:
             # Delete existing steps
             for step in experience.steps:
                 await self.db.delete(step)
-            
+
             # Flush deletes before inserting to avoid unique constraint violations
             await self.db.flush()
 
@@ -356,20 +341,20 @@ class ExperienceService:
                 self.db.add(step)
 
         await self.db.commit()
-        await self.db.refresh(experience, ['steps', 'model_configuration', 'prompt'])
+        await self.db.refresh(experience, ["steps", "model_configuration", "prompt"])
 
         logger.info(f"Updated experience '{experience.name}' (ID: {experience_id})")
         return self._experience_to_response(experience)
 
     async def delete_experience(self, experience_id: str) -> bool:
-        """
-        Delete an experience and all its steps and runs.
+        """Delete an experience and all its steps and runs.
 
         Args:
             experience_id: Experience ID
 
         Returns:
             True if deleted, False if not found
+
         """
         experience = await self._get_experience_by_id(experience_id)
         if not experience:
@@ -383,15 +368,14 @@ class ExperienceService:
 
     async def list_experiences(
         self,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         is_admin: bool = False,
-        visibility_filter: Optional[ExperienceVisibility] = None,
-        search: Optional[str] = None,
+        visibility_filter: ExperienceVisibility | None = None,
+        search: str | None = None,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
     ) -> ExperienceList:
-        """
-        List experiences with visibility filtering and pagination.
+        """List experiences with visibility filtering and pagination.
 
         Args:
             user_id: Current user ID
@@ -403,6 +387,7 @@ class ExperienceService:
 
         Returns:
             Paginated list of experiences
+
         """
         # Include prompt to avoid lazy loading in _experience_to_response
         stmt = self._base_experience_query(include_prompt=True)
@@ -420,33 +405,22 @@ class ExperienceService:
         # Apply search filter
         if search:
             search_term = f"%{search}%"
-            stmt = stmt.where(
-                or_(
-                    Experience.name.ilike(search_term),
-                    Experience.description.ilike(search_term)
-                )
-            )
+            stmt = stmt.where(or_(Experience.name.ilike(search_term), Experience.description.ilike(search_term)))
 
         # Execute with pagination
         total, experiences = await self._execute_paginated_query(
-            stmt,
-            order_by=Experience.name,
-            offset=offset,
-            limit=limit
+            stmt, order_by=Experience.name, offset=offset, limit=limit
         )
 
         items = [self._experience_to_response(exp) for exp in experiences]
-        return self._build_paginated_response(
-            ExperienceList, items, total, offset, limit
-        )
+        return self._build_paginated_response(ExperienceList, items, total, offset, limit)
 
     # =========================================================================
     # Template Validation
     # =========================================================================
 
     def _validate_template_syntax(self, template: str, field_name: str) -> None:
-        """
-        Validate Jinja2 template syntax.
+        """Validate Jinja2 template syntax.
 
         Args:
             template: Template string to validate
@@ -454,21 +428,17 @@ class ExperienceService:
 
         Raises:
             ValidationError: If template syntax is invalid
+
         """
         try:
             self._jinja_env.parse(template)
         except TemplateSyntaxError as e:
-            raise ValidationError(
-                f"Invalid Jinja2 template in {field_name}: {e.message} (line {e.lineno})"
-            )
+            raise ValidationError(f"Invalid Jinja2 template in {field_name}: {e.message} (line {e.lineno})")
 
     def validate_template_with_context(
-        self,
-        template: str,
-        mock_context: Optional[Dict[str, Any]] = None
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        Validate a Jinja2 template with a mock context (dry-run).
+        self, template: str, mock_context: dict[str, Any] | None = None
+    ) -> tuple[bool, str | None]:
+        """Validate a Jinja2 template with a mock context (dry-run).
 
         Args:
             template: Template string to validate
@@ -476,6 +446,7 @@ class ExperienceService:
 
         Returns:
             Tuple of (success, error_message)
+
         """
         if mock_context is None:
             mock_context = self._build_validation_context()
@@ -487,13 +458,12 @@ class ExperienceService:
         except TemplateSyntaxError as e:
             return (False, f"Template syntax error: {e.message} (line {e.lineno})")
         except UndefinedError as e:
-            return (False, f"Template variable error: {str(e)}")
+            return (False, f"Template variable error: {e!s}")
         except Exception as e:
-            return (False, f"Template error: {str(e)}")
+            return (False, f"Template error: {e!s}")
 
-    def _build_validation_context(self) -> Dict[str, Any]:
-        """
-        Build a sample context for dry-run template validation.
+    def _build_validation_context(self) -> dict[str, Any]:
+        """Build a sample context for dry-run template validation.
 
         This context simulates the runtime template context shape, allowing
         the service to validate Jinja2 templates without executing an experience.
@@ -502,25 +472,20 @@ class ExperienceService:
             "user": {
                 "id": "mock-user-id",
                 "email": "user@example.com",
-                "display_name": "Mock User"
+                "display_name": "Mock User",
             },
             "input": {},
             "steps": {},
             "previous_run": None,
-            "now": datetime.now()
+            "now": datetime.now(),
         }
 
     # =========================================================================
     # Required Scopes Computation
     # =========================================================================
 
-    async def compute_required_scopes_for_step(
-        self,
-        plugin_name: str,
-        plugin_op: Optional[str] = None
-    ) -> List[str]:
-        """
-        Compute required identity scopes for a plugin step from the plugin manifest.
+    async def compute_required_scopes_for_step(self, plugin_name: str, plugin_op: str | None = None) -> list[str]:
+        """Compute required identity scopes for a plugin step from the plugin manifest.
 
         Args:
             plugin_name: Name of the plugin
@@ -528,8 +493,9 @@ class ExperienceService:
 
         Returns:
             List of required scopes
+
         """
-        scopes: List[str] = []
+        scopes: list[str] = []
 
         try:
             records = self._get_plugin_loader().discover()
@@ -559,31 +525,25 @@ class ExperienceService:
 
         return scopes
 
-    async def compute_all_required_scopes(
-        self,
-        experience_id: str
-    ) -> Dict[str, List[str]]:
-        """
-        Compute required scopes for all steps in an experience.
+    async def compute_all_required_scopes(self, experience_id: str) -> dict[str, list[str]]:
+        """Compute required scopes for all steps in an experience.
 
         Args:
             experience_id: Experience ID
 
         Returns:
             Dict mapping step_key to list of required scopes
+
         """
         experience = await self._get_experience_by_id(experience_id)
         if not experience:
             return {}
 
-        scopes_by_step: Dict[str, List[str]] = {}
+        scopes_by_step: dict[str, list[str]] = {}
 
         for step in experience.steps:
             if step.step_type == StepType.PLUGIN.value and step.plugin_name:
-                scopes = await self.compute_required_scopes_for_step(
-                    step.plugin_name,
-                    step.plugin_op
-                )
+                scopes = await self.compute_required_scopes_for_step(step.plugin_name, step.plugin_op)
                 scopes_by_step[step.step_key] = scopes
 
         return scopes_by_step
@@ -592,41 +552,33 @@ class ExperienceService:
     # Step Validation
     # =========================================================================
 
-    async def _validate_steps(self, steps: List[ExperienceStepCreate]) -> None:
-        """
-        Validate experience steps configuration.
+    async def _validate_steps(self, steps: list[ExperienceStepCreate]) -> None:
+        """Validate experience steps configuration.
 
         Args:
             steps: List of steps to validate
 
         Raises:
             ValidationError: If validation fails
+
         """
         step_keys = set()
 
         for i, step in enumerate(steps):
             # Check for duplicate step keys
             if step.step_key in step_keys:
-                raise ValidationError(
-                    f"Duplicate step key '{step.step_key}' at position {i}"
-                )
+                raise ValidationError(f"Duplicate step key '{step.step_key}' at position {i}")
             step_keys.add(step.step_key)
 
             # Validate step type-specific fields
             if step.step_type == StepType.PLUGIN:
                 if not step.plugin_name:
-                    raise ValidationError(
-                        f"Step '{step.step_key}' requires plugin_name for plugin type"
-                    )
+                    raise ValidationError(f"Step '{step.step_key}' requires plugin_name for plugin type")
                 if not step.plugin_op:
-                    raise ValidationError(
-                        f"Step '{step.step_key}' requires plugin_op for plugin type"
-                    )
+                    raise ValidationError(f"Step '{step.step_key}' requires plugin_op for plugin type")
             elif step.step_type == StepType.KNOWLEDGE_BASE:
                 if not step.knowledge_base_id:
-                    raise ValidationError(
-                        f"Step '{step.step_key}' requires knowledge_base_id for knowledge_base type"
-                    )
+                    raise ValidationError(f"Step '{step.step_key}' requires knowledge_base_id for knowledge_base type")
 
             # Validate templates in params_template
             if step.params_template:
@@ -645,18 +597,10 @@ class ExperienceService:
 
             # Validate KB query template
             if step.kb_query_template:
-                self._validate_template_syntax(
-                    step.kb_query_template,
-                    f"step '{step.step_key}' kb_query_template"
-                )
+                self._validate_template_syntax(step.kb_query_template, f"step '{step.step_key}' kb_query_template")
 
-    async def _create_step(
-        self,
-        experience_id: str,
-        step_data: ExperienceStepCreate
-    ) -> ExperienceStep:
-        """
-        Create an ExperienceStep from step data.
+    async def _create_step(self, experience_id: str, step_data: ExperienceStepCreate) -> ExperienceStep:
+        """Create an ExperienceStep from step data.
 
         Args:
             experience_id: Parent experience ID
@@ -664,14 +608,12 @@ class ExperienceService:
 
         Returns:
             Created ExperienceStep (not yet committed)
+
         """
         # Compute required scopes for plugin steps
         required_scopes = None
         if step_data.step_type == StepType.PLUGIN and step_data.plugin_name:
-            required_scopes = await self.compute_required_scopes_for_step(
-                step_data.plugin_name,
-                step_data.plugin_op
-            )
+            required_scopes = await self.compute_required_scopes_for_step(step_data.plugin_name, step_data.plugin_op)
 
         step = ExperienceStep(
             id=str(uuid.uuid4()),
@@ -697,13 +639,12 @@ class ExperienceService:
     async def list_runs(
         self,
         experience_id: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         is_admin: bool = False,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
     ) -> ExperienceRunList:
-        """
-        List runs for an experience.
+        """List runs for an experience.
 
         Args:
             experience_id: Experience ID
@@ -714,6 +655,7 @@ class ExperienceService:
 
         Returns:
             Paginated list of runs
+
         """
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
@@ -723,10 +665,7 @@ class ExperienceService:
 
         # Execute with pagination
         total, runs = await self._execute_paginated_query(
-            stmt,
-            order_by=ExperienceRun.created_at.desc(),
-            offset=offset,
-            limit=limit
+            stmt, order_by=ExperienceRun.created_at.desc(), offset=offset, limit=limit
         )
 
         # Fetch user info for all runs
@@ -734,43 +673,39 @@ class ExperienceService:
         users_by_id = await self._fetch_users_by_ids(user_ids)
 
         items = [self._run_to_response(run, users_by_id.get(run.user_id)) for run in runs]
-        return self._build_paginated_response(
-            ExperienceRunList, items, total, offset, limit
-        )
+        return self._build_paginated_response(ExperienceRunList, items, total, offset, limit)
 
-    async def _fetch_users_by_ids(self, user_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    async def _fetch_users_by_ids(self, user_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch user info for a list of user IDs.
-        
+
         Args:
             user_ids: List of user IDs to fetch
-            
+
         Returns:
             Dict mapping user_id to user info dict with id, email, display_name
+
         """
         if not user_ids:
             return {}
-        
+
         from ..auth.models import User as UserModel
+
         user_stmt = select(UserModel).where(UserModel.id.in_(user_ids))
         user_result = await self.db.execute(user_stmt)
-        
-        users_by_id: Dict[str, Dict[str, Any]] = {}
+
+        users_by_id: dict[str, dict[str, Any]] = {}
         for user in user_result.scalars().all():
             users_by_id[str(user.id)] = {
                 "id": str(user.id),
                 "email": user.email,
-                "display_name": getattr(user, "display_name", None) or user.email
+                "display_name": getattr(user, "display_name", None) or user.email,
             }
         return users_by_id
 
     async def get_run(
-        self,
-        run_id: str,
-        user_id: Optional[str] = None,
-        is_admin: bool = False
-    ) -> Optional[ExperienceRunResponse]:
-        """
-        Get a specific run by ID.
+        self, run_id: str, user_id: str | None = None, is_admin: bool = False
+    ) -> ExperienceRunResponse | None:
+        """Get a specific run by ID.
 
         Args:
             run_id: Run ID
@@ -779,6 +714,7 @@ class ExperienceService:
 
         Returns:
             Run if found and accessible, None otherwise
+
         """
         stmt = select(ExperienceRun).where(ExperienceRun.id == run_id)
         result = await self.db.execute(stmt)
@@ -793,14 +729,8 @@ class ExperienceService:
 
         return self._run_to_response(run)
 
-    async def get_user_results(
-        self,
-        user_id: str,
-        offset: int = 0,
-        limit: int = 50
-    ) -> UserExperienceResults:
-        """
-        Get user's latest experience results for the dashboard.
+    async def get_user_results(self, user_id: str, offset: int = 0, limit: int = 50) -> UserExperienceResults:
+        """Get user's latest experience results for the dashboard.
 
         Args:
             user_id: User ID
@@ -809,6 +739,7 @@ class ExperienceService:
 
         Returns:
             User's experience results summary
+
         """
         # First, count total matching experiences
         count_stmt = (
@@ -837,26 +768,21 @@ class ExperienceService:
         # using a window function to rank runs by created_at
         experience_ids = [exp.id for exp in experiences]
         latest_runs_stmt = (
-                select(ExperienceRun)
-                .where(
-                    and_(
-                        ExperienceRun.experience_id.in_(experience_ids),
-                        ExperienceRun.user_id == user_id
-                    )
+            select(ExperienceRun)
+            .where(
+                and_(
+                    ExperienceRun.experience_id.in_(experience_ids),
+                    ExperienceRun.user_id == user_id,
                 )
-                .order_by(
-                    ExperienceRun.experience_id,
-                    ExperienceRun.created_at.desc()
-                )
-                .distinct(ExperienceRun.experience_id)
             )
+            .order_by(ExperienceRun.experience_id, ExperienceRun.created_at.desc())
+            .distinct(ExperienceRun.experience_id)
+        )
         runs_result = await self.db.execute(latest_runs_stmt)
         latest_runs = runs_result.scalars().all()
 
         # Build a map of experience_id -> latest_run
-        runs_by_experience: Dict[str, ExperienceRun] = {
-            run.experience_id: run for run in latest_runs
-        }
+        runs_by_experience: dict[str, ExperienceRun] = {run.experience_id: run for run in latest_runs}
 
         summaries = []
         for exp in experiences:
@@ -864,8 +790,8 @@ class ExperienceService:
 
             # Compute required identities and check if user can run
             can_run = True
-            missing_identities: List[str] = []
-            
+            missing_identities: list[str] = []
+
             # TODO: Check user's connected ProviderIdentity records against
             # required_scopes from experience steps. This requires:
             # 1. Aggregating all required_scopes from exp.steps
@@ -886,14 +812,11 @@ class ExperienceService:
                 latest_run_finished_at=latest_run.finished_at if latest_run else None,
                 result_preview=result_preview,
                 can_run=can_run,
-                missing_identities=missing_identities
+                missing_identities=missing_identities,
             )
             summaries.append(summary)
 
-        return UserExperienceResults(
-            experiences=summaries,
-            total=total
-        )
+        return UserExperienceResults(experiences=summaries, total=total)
 
     # =========================================================================
     # Export Functionality
@@ -901,25 +824,25 @@ class ExperienceService:
 
     def generate_safe_file_name(self, experience: ExperienceResponse):
         # Create filename based on experience name
-        safe_name = "".join(c for c in experience.name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_name = '-'.join(word for word in safe_name.split() if word)  # Handle multiple spaces
+        safe_name = "".join(c for c in experience.name if c.isalnum() or c in (" ", "-", "_")).rstrip()
+        safe_name = "-".join(word for word in safe_name.split() if word)  # Handle multiple spaces
         safe_name = safe_name.lower()
-        
+
         # If safe_name is empty after sanitization, use a fallback
         if not safe_name:
-            safe_name = f"experience-{experience.id}" if hasattr(experience, 'id') and experience.id else "experience"
-        
+            safe_name = f"experience-{experience.id}" if hasattr(experience, "id") and experience.id else "experience"
+
         return f"{safe_name}-experience.yaml"
 
-    def export_experience_to_yaml(self, experience: ExperienceResponse) -> Tuple[str, str]:
-        """
-        Export an experience to YAML format with placeholders for user-specific values.
-        
+    def export_experience_to_yaml(self, experience: ExperienceResponse) -> tuple[str, str]:
+        """Export an experience to YAML format with placeholders for user-specific values.
+
         Args:
             experience: Experience response object to export
-            
+
         Returns:
             YAML string with placeholders for sharing
+
         """
         # Build the YAML structure
         yaml_data = {
@@ -932,16 +855,17 @@ class ExperienceService:
             "trigger_type": "{{ trigger_type }}",
             "trigger_config": "{{ trigger_config }}",
             "include_previous_run": experience.include_previous_run,
-            "model_configuration_id": "{{ model_configuration_id }}" if experience.model_configuration_id is not None else None,  # Placeholder for user selection
+            "model_configuration_id": "{{ model_configuration_id }}"
+            if experience.model_configuration_id is not None
+            else None,  # Placeholder for user selection
             "inline_prompt_template": experience.inline_prompt_template,
             "max_run_seconds": "{{ max_run_seconds }}",
             "token_budget": None,  # We need to revisit this, rate limiting is already handled on LLM and plugin level.
-            "steps": []
+            "steps": [],
         }
-        
+
         # Add steps
         for step in sorted(experience.steps, key=lambda s: s.order):
-
             # TODO: To export a KB step, we would need to export the KB. We might tackle that in the future, but not for now.
             if step.step_type == StepType.KNOWLEDGE_BASE:
                 continue
@@ -949,7 +873,7 @@ class ExperienceService:
             step_data = {
                 "step_key": step.step_key,
                 "step_type": step.step_type.value,
-                "order": step.order
+                "order": step.order,
             }
 
             # Add step-type specific fields
@@ -962,12 +886,12 @@ class ExperienceService:
                 step_data["params_template"] = step.params_template
             if step.condition_template:
                 step_data["condition_template"] = step.condition_template
-                
+
             yaml_data["steps"].append(step_data)
-        
+
         # Remove None values to keep YAML clean
         yaml_data = self._remove_none_values(yaml_data)
-        
+
         # Convert to YAML with proper formatting
         yaml_content = yaml.dump(
             yaml_data,
@@ -975,18 +899,22 @@ class ExperienceService:
             allow_unicode=True,
             sort_keys=False,
             indent=2,
-            width=120
+            width=120,
         )
-        
+
         # Fix placeholders by removing quotes around them
         # This ensures trigger_config and max_run_seconds are treated as proper data types
-        yaml_content = yaml_content.replace('"{{ trigger_config }}"', '{{ trigger_config }}').replace("'{{ trigger_config }}'", "{{ trigger_config }}")
-        yaml_content = yaml_content.replace('"{{ max_run_seconds }}"', '{{ max_run_seconds }}').replace("'{{ max_run_seconds }}'", "{{ max_run_seconds }}")
+        yaml_content = yaml_content.replace('"{{ trigger_config }}"', "{{ trigger_config }}").replace(
+            "'{{ trigger_config }}'", "{{ trigger_config }}"
+        )
+        yaml_content = yaml_content.replace('"{{ max_run_seconds }}"', "{{ max_run_seconds }}").replace(
+            "'{{ max_run_seconds }}'", "{{ max_run_seconds }}"
+        )
 
         # Add header comment
         header = f"""# Experience Export: {experience.name}
-# Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-# 
+# Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+#
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
 # - {{ trigger_config }}: The actual trigger value, depending on the schedule type
@@ -996,44 +924,37 @@ class ExperienceService:
 # To import this experience, use the Experience Import wizard in Shu.
 
 """
-        
+
         return header + yaml_content, self.generate_safe_file_name(experience)
 
     def _remove_none_values(self, data: Any) -> Any:
-        """
-        Recursively remove None values from a data structure.
-        
+        """Recursively remove None values from a data structure.
+
         Args:
             data: Data structure to clean
-            
+
         Returns:
             Cleaned data structure
+
         """
         if isinstance(data, dict):
             return {k: self._remove_none_values(v) for k, v in data.items() if v is not None}
-        elif isinstance(data, list):
+        if isinstance(data, list):
             return [self._remove_none_values(item) for item in data if item is not None]
-        else:
-            return data
+        return data
 
     # =========================================================================
     # Private Helpers
     # =========================================================================
 
-    def _get_plugin_loader(self) -> 'PluginLoader':
+    def _get_plugin_loader(self) -> PluginLoader:
         """Get or create the plugin loader instance (lazy initialization)."""
         if self._plugin_loader is None:
-            from ..plugins.loader import PluginLoader
             self._plugin_loader = PluginLoader()
         return self._plugin_loader
 
-    def _base_experience_query(
-        self,
-        include_prompt: bool = False,
-        include_runs: bool = False
-    ):
-        """
-        Build a base query for experiences with common eager loading.
+    def _base_experience_query(self, include_prompt: bool = False, include_runs: bool = False):
+        """Build a base query for experiences with common eager loading.
 
         Args:
             include_prompt: Whether to load the prompt relationship
@@ -1041,6 +962,7 @@ class ExperienceService:
 
         Returns:
             SQLAlchemy select statement with configured options
+
         """
         options = [
             selectinload(Experience.steps),
@@ -1053,15 +975,8 @@ class ExperienceService:
 
         return select(Experience).options(*options)
 
-    async def _execute_paginated_query(
-        self,
-        stmt,
-        order_by,
-        offset: int,
-        limit: int
-    ) -> Tuple[int, List[Any]]:
-        """
-        Execute a query with pagination.
+    async def _execute_paginated_query(self, stmt, order_by, offset: int, limit: int) -> tuple[int, list[Any]]:
+        """Execute a query with pagination.
 
         Args:
             stmt: Base SQLAlchemy select statement
@@ -1071,6 +986,7 @@ class ExperienceService:
 
         Returns:
             Tuple of (total_count, list_of_items)
+
         """
         # Get total count
         count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -1084,16 +1000,8 @@ class ExperienceService:
 
         return total, list(items)
 
-    def _build_paginated_response(
-        self,
-        response_class,
-        items: List[Any],
-        total: int,
-        offset: int,
-        limit: int
-    ):
-        """
-        Build a paginated response object.
+    def _build_paginated_response(self, response_class, items: list[Any], total: int, offset: int, limit: int):
+        """Build a paginated response object.
 
         Args:
             response_class: The Pydantic model class for the list response
@@ -1104,39 +1012,28 @@ class ExperienceService:
 
         Returns:
             Instance of response_class with pagination metadata
+
         """
         pages = (total + limit - 1) // limit if limit > 0 else 1
         page = (offset // limit) + 1 if limit > 0 else 1
 
-        return response_class(
-            items=items,
-            total=total,
-            page=page,
-            per_page=limit,
-            pages=pages
-        )
+        return response_class(items=items, total=total, page=page, per_page=limit, pages=pages)
 
-    async def _get_experience_by_id(self, experience_id: str) -> Optional[Experience]:
+    async def _get_experience_by_id(self, experience_id: str) -> Experience | None:
         """Get experience by ID."""
         stmt = self._base_experience_query().where(Experience.id == experience_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_experience_by_name(self, name: str) -> Optional[Experience]:
+    async def _get_experience_by_name(self, name: str) -> Experience | None:
         """Get experience by name."""
         stmt = select(Experience).where(Experience.name == name)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    def _check_visibility(
-        self,
-        experience: Experience,
-        user_id: Optional[str],
-        is_admin: bool
-    ) -> bool:
-        """
-        Check if user can see the experience based on visibility.
-        
+    def _check_visibility(self, experience: Experience, user_id: str | None, is_admin: bool) -> bool:
+        """Check if user can see the experience based on visibility.
+
         Since only admins can create experiences, draft and admin_only
         experiences are only visible to admins.
         """
@@ -1145,34 +1042,34 @@ class ExperienceService:
         # Non-admins only see published experiences
         return experience.visibility == ExperienceVisibility.PUBLISHED.value
 
-    def _get_last_run_timestamp(self, experience: Experience) -> Optional[datetime]:
-        """
-        Get the last run timestamp for an experience.
-        
+    def _get_last_run_timestamp(self, experience: Experience) -> datetime | None:
+        """Get the last run timestamp for an experience.
+
         Uses SQLAlchemy inspect to check if 'runs' was eagerly loaded,
         avoiding lazy loading in async context which causes greenlet errors.
-        
+
         Returns:
             Last run timestamp if runs are loaded, None otherwise
+
         """
         insp = sa_inspect(experience)
-        if 'runs' not in insp.dict:
+        if "runs" not in insp.dict:
             return None
-        
+
         runs = experience.runs
         if not runs:
             return None
-        
+
         latest = max(runs, key=lambda r: r.created_at, default=None)
         if latest:
             return latest.finished_at or latest.created_at
         return None
 
-    def _serialize_model_configuration(self, model_config: 'ModelConfiguration') -> Dict[str, Any]:
+    def _serialize_model_configuration(self, model_config: "ModelConfiguration") -> dict[str, Any]:
         """Serialize model configuration to dictionary for API response."""
         if not model_config:
             return None
-        
+
         # Only return essential information for display purposes
         # Detailed information is stored in run metadata snapshots
         return {
@@ -1198,7 +1095,7 @@ class ExperienceService:
                 condition_template=step.condition_template,
                 required_scopes=step.required_scopes,
                 created_at=step.created_at,
-                updated_at=step.updated_at
+                updated_at=step.updated_at,
             )
             for step in sorted(experience.steps, key=lambda s: s.order)
         ]
@@ -1226,15 +1123,17 @@ class ExperienceService:
             is_active_version=experience.is_active_version,
             parent_version_id=experience.parent_version_id,
             steps=steps,
-            model_configuration=self._serialize_model_configuration(experience.model_configuration) if experience.model_configuration else None,
+            model_configuration=self._serialize_model_configuration(experience.model_configuration)
+            if experience.model_configuration
+            else None,
             prompt=experience.prompt.to_dict() if experience.prompt else None,
             step_count=len(steps),
             last_run_at=last_run_at,
             created_at=experience.created_at,
-            updated_at=experience.updated_at
+            updated_at=experience.updated_at,
         )
 
-    def _run_to_response(self, run: ExperienceRun, user_info: Optional[Dict[str, Any]] = None) -> ExperienceRunResponse:
+    def _run_to_response(self, run: ExperienceRun, user_info: dict[str, Any] | None = None) -> ExperienceRunResponse:
         """Convert ExperienceRun model to response schema."""
         duration_seconds = None
         if run.started_at and run.finished_at:
@@ -1260,5 +1159,5 @@ class ExperienceService:
             created_at=run.created_at,
             updated_at=run.updated_at,
             user=user_info,
-            duration_seconds=duration_seconds
+            duration_seconds=duration_seconds,
         )

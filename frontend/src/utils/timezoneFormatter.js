@@ -2,9 +2,9 @@
  * Utility functions for formatting dates with timezone information
  */
 
-import { format as dateFnsFormat } from 'date-fns';
-import { formatInTimeZone } from 'date-fns-tz';
-import log from './log';
+import { format as dateFnsFormat } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
+import log from "./log";
 
 /**
  * Safely parse and validate a date, returning a fallback if invalid
@@ -12,12 +12,12 @@ import log from './log';
  * @param {string} fallback - Fallback value if date is invalid (default: '-')
  * @returns {Date|string} Valid Date object or fallback value
  */
-function safeParseDateOrFallback(date, fallback = '-') {
-    const parsed = new Date(date);
-    if (isNaN(parsed.getTime())) {
-        return fallback;
-    }
-    return parsed;
+function safeParseDateOrFallback(date, fallback = "-") {
+  const parsed = new Date(date);
+  if (isNaN(parsed.getTime())) {
+    return fallback;
+  }
+  return parsed;
 }
 
 /**
@@ -27,37 +27,43 @@ function safeParseDateOrFallback(date, fallback = '-') {
  * @param {string} formatStr - date-fns format string (default: 'MMM d, HH:mm:ss')
  * @returns {string} Formatted date with timezone abbreviation
  */
-export function formatDateInTimezone(date, timezone, formatStr = 'MMM d, HH:mm:ss') {
-    if (!date) return '-';
-    
-    try {
-        const dateObj = typeof date === 'string' ? new Date(date) : date;
-        
-        if (isNaN(dateObj.getTime())) {
-            return '-';
-        }
-        
-        // If no timezone specified, use local format
-        if (!timezone || timezone === 'UTC') {
-            return dateFnsFormat(dateObj, formatStr);
-        }
-        
-        // Format in the specified timezone
-        const formatted = formatInTimeZone(dateObj, timezone, formatStr);
-        
-        // Get timezone abbreviation
-        const tzAbbr = getTimezoneAbbreviation(dateObj, timezone);
-        
-        return `${formatted} ${tzAbbr}`;
-    } catch (error) {
-        log.error('Error formatting date in timezone:', error);
-        // Defensive fallback: validate date before formatting
-        const validDateOrFallback = safeParseDateOrFallback(date);
-        if (validDateOrFallback === '-') {
-            return '-';
-        }
-        return dateFnsFormat(validDateOrFallback, formatStr);
+export function formatDateInTimezone(
+  date,
+  timezone,
+  formatStr = "MMM d, HH:mm:ss",
+) {
+  if (!date) {
+    return "-";
+  }
+
+  try {
+    const dateObj = typeof date === "string" ? new Date(date) : date;
+
+    if (isNaN(dateObj.getTime())) {
+      return "-";
     }
+
+    // If no timezone specified, use local format
+    if (!timezone || timezone === "UTC") {
+      return dateFnsFormat(dateObj, formatStr);
+    }
+
+    // Format in the specified timezone
+    const formatted = formatInTimeZone(dateObj, timezone, formatStr);
+
+    // Get timezone abbreviation
+    const tzAbbr = getTimezoneAbbreviation(dateObj, timezone);
+
+    return `${formatted} ${tzAbbr}`;
+  } catch (error) {
+    log.error("Error formatting date in timezone:", error);
+    // Defensive fallback: validate date before formatting
+    const validDateOrFallback = safeParseDateOrFallback(date);
+    if (validDateOrFallback === "-") {
+      return "-";
+    }
+    return dateFnsFormat(validDateOrFallback, formatStr);
+  }
 }
 
 /**
@@ -67,24 +73,24 @@ export function formatDateInTimezone(date, timezone, formatStr = 'MMM d, HH:mm:s
  * @returns {string} Timezone abbreviation (e.g., "EST", "PDT")
  */
 export function getTimezoneAbbreviation(date, timezone) {
-    if (!timezone || timezone === 'UTC') {
-        return 'UTC';
-    }
-    
-    try {
-        const formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone,
-            timeZoneName: 'short'
-        });
-        
-        const parts = formatter.formatToParts(date);
-        const tzPart = parts.find(part => part.type === 'timeZoneName');
-        
-        return tzPart ? tzPart.value : timezone;
-    } catch (error) {
-        log.error('Error getting timezone abbreviation:', error);
-        return timezone;
-    }
+  if (!timezone || timezone === "UTC") {
+    return "UTC";
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "short",
+    });
+
+    const parts = formatter.formatToParts(date);
+    const tzPart = parts.find((part) => part.type === "timeZoneName");
+
+    return tzPart ? tzPart.value : timezone;
+  } catch (error) {
+    log.error("Error getting timezone abbreviation:", error);
+    return timezone;
+  }
 }
 
 /**
@@ -94,30 +100,36 @@ export function getTimezoneAbbreviation(date, timezone) {
  * @returns {string} Formatted date (e.g., "January 14, 2026 at 9:00 AM EST")
  */
 export function formatDateTimeFull(date, timezone) {
-    if (!date) return '-';
-    
-    try {
-        const dateObj = typeof date === 'string' ? new Date(date) : date;
-        
-        if (isNaN(dateObj.getTime())) {
-            return '-';
-        }
-        
-        if (!timezone || timezone === 'UTC') {
-            return dateFnsFormat(dateObj, 'MMMM d, yyyy \'at\' h:mm a');
-        }
-        
-        const formatted = formatInTimeZone(dateObj, timezone, 'MMMM d, yyyy \'at\' h:mm a');
-        const tzAbbr = getTimezoneAbbreviation(dateObj, timezone);
-        
-        return `${formatted} ${tzAbbr}`;
-    } catch (error) {
-        log.error('Error formatting full date time:', error);
-        // Defensive fallback: validate date before formatting
-        const validDateOrFallback = safeParseDateOrFallback(date);
-        if (validDateOrFallback === '-') {
-            return '-';
-        }
-        return dateFnsFormat(validDateOrFallback, 'MMMM d, yyyy \'at\' h:mm a');
+  if (!date) {
+    return "-";
+  }
+
+  try {
+    const dateObj = typeof date === "string" ? new Date(date) : date;
+
+    if (isNaN(dateObj.getTime())) {
+      return "-";
     }
+
+    if (!timezone || timezone === "UTC") {
+      return dateFnsFormat(dateObj, "MMMM d, yyyy 'at' h:mm a");
+    }
+
+    const formatted = formatInTimeZone(
+      dateObj,
+      timezone,
+      "MMMM d, yyyy 'at' h:mm a",
+    );
+    const tzAbbr = getTimezoneAbbreviation(dateObj, timezone);
+
+    return `${formatted} ${tzAbbr}`;
+  } catch (error) {
+    log.error("Error formatting full date time:", error);
+    // Defensive fallback: validate date before formatting
+    const validDateOrFallback = safeParseDateOrFallback(date);
+    if (validDateOrFallback === "-") {
+      return "-";
+    }
+    return dateFnsFormat(validDateOrFallback, "MMMM d, yyyy 'at' h:mm a");
+  }
 }

@@ -1,12 +1,10 @@
-"""
-Profile parsing utilities for document and chunk profiling (SHU-343).
+"""Profile parsing utilities for document and chunk profiling (SHU-343).
 
 Extracted from ProfilingService to adhere to Single Responsibility Principle.
 This module handles JSON parsing and validation of LLM profile responses.
 """
 
 import json
-from typing import List, Optional
 
 import structlog
 
@@ -30,15 +28,15 @@ class ProfileParser:
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
 
-    def parse_document_profile(self, content: str) -> Optional[DocumentProfile]:
-        """
-        Parse LLM response into DocumentProfile.
+    def parse_document_profile(self, content: str) -> DocumentProfile | None:
+        """Parse LLM response into DocumentProfile.
 
         Args:
             content: Raw LLM response content
 
         Returns:
             DocumentProfile if parsing succeeds, None otherwise
+
         """
         try:
             json_str = self.extract_json(content)
@@ -74,11 +72,8 @@ class ProfileParser:
             )
             return None
 
-    def parse_chunk_profiles(
-        self, content: str, chunks: List[ChunkData]
-    ) -> List[ChunkProfileResult]:
-        """
-        Parse LLM response into ChunkProfileResults.
+    def parse_chunk_profiles(self, content: str, chunks: list[ChunkData]) -> list[ChunkProfileResult]:
+        """Parse LLM response into ChunkProfileResults.
 
         Args:
             content: Raw LLM response content
@@ -86,6 +81,7 @@ class ProfileParser:
 
         Returns:
             List of ChunkProfileResult (one per input chunk)
+
         """
         try:
             json_str = self.extract_json(content)
@@ -100,9 +96,9 @@ class ProfileParser:
                 if i < len(data):
                     profile_data = data[i]
                     profile = ChunkProfile(
-                        summary=profile_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
-                        keywords=profile_data.get("keywords", [])[:self.MAX_KEYWORDS],
-                        topics=profile_data.get("topics", [])[:self.MAX_TOPICS],
+                        summary=profile_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
+                        keywords=profile_data.get("keywords", [])[: self.MAX_KEYWORDS],
+                        topics=profile_data.get("topics", [])[: self.MAX_TOPICS],
                     )
                     results.append(
                         ChunkProfileResult(
@@ -118,18 +114,18 @@ class ProfileParser:
             return results
 
         except Exception as e:
-            logger.warning("failed_to_parse_chunk_profiles", error=str(e))
+            logger.warning(f"failed_to_parse_chunk_profiles: {e}")
             return [self.create_failed_chunk_result(c, str(e)) for c in chunks]
 
     def extract_json(self, content: str) -> str:
-        """
-        Extract JSON from LLM response, handling markdown code blocks.
+        """Extract JSON from LLM response, handling markdown code blocks.
 
         Args:
             content: Raw response that may contain markdown
 
         Returns:
             Cleaned JSON string
+
         """
         content = content.strip()
         # Handle ```json ... ``` blocks
@@ -145,8 +141,7 @@ class ProfileParser:
 
     @staticmethod
     def create_failed_chunk_result(chunk: ChunkData, error: str) -> ChunkProfileResult:
-        """
-        Factory method for creating failed chunk results.
+        """Factory method for creating failed chunk results.
 
         Args:
             chunk: The chunk that failed profiling
@@ -154,6 +149,7 @@ class ProfileParser:
 
         Returns:
             ChunkProfileResult with success=False
+
         """
         return ChunkProfileResult(
             chunk_id=chunk.chunk_id,
@@ -162,4 +158,3 @@ class ProfileParser:
             success=False,
             error=error,
         )
-

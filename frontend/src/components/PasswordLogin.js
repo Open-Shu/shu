@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   Button,
   TextField,
@@ -8,36 +8,36 @@ import {
   CircularProgress,
   Paper,
   Container,
-  Divider
-} from '@mui/material';
-import LoginIcon from '@mui/icons-material/Login';
-import GoogleIcon from '@mui/icons-material/Google';
-import api, { extractDataFromResponse } from '../services/api';
-import { useTheme as useAppTheme } from '../contexts/ThemeContext';
-import { getBrandingAppName } from '../utils/constants';
-import { useMicrosoftOAuth } from '../hooks/useMicrosoftOAuth';
+  Divider,
+} from "@mui/material";
+import LoginIcon from "@mui/icons-material/Login";
+import GoogleIcon from "@mui/icons-material/Google";
+import api, { extractDataFromResponse } from "../services/api";
+import { useTheme as useAppTheme } from "../contexts/ThemeContext";
+import { getBrandingAppName } from "../utils/constants";
+import { useMicrosoftOAuth } from "../hooks/useMicrosoftOAuth";
 
 // Microsoft logo - using official asset from Microsoft identity platform branding guidelines
 // https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
 const MicrosoftIcon = () => (
-  <img 
-    src="/ms-symbollockup_mssymbol_19.svg" 
-    alt="" 
-    width="20" 
-    height="20" 
-    style={{ display: 'block' }}
+  <img
+    src="/ms-symbollockup_mssymbol_19.svg"
+    alt=""
+    width="20"
+    height="20"
+    style={{ display: "block" }}
   />
 );
 
-const PasswordLogin = ({ 
-  onSwitchToRegister, 
-  onSwitchToGoogle, 
+const PasswordLogin = ({
+  onSwitchToRegister,
+  onSwitchToGoogle,
   isGoogleSsoEnabled = false,
   isMicrosoftSsoEnabled = false,
 }) => {
   const [formData, setFormData] = useState({
-    email: '',
-    password: ''
+    email: "",
+    password: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -47,42 +47,47 @@ const PasswordLogin = ({
   const logoUrl = branding?.logoUrl;
 
   // Microsoft OAuth hook
-  const { startLogin: startMicrosoftLogin, loading: microsoftLoading } = useMicrosoftOAuth({
-    onSuccess: ({ accessToken, refreshToken }) => {
-      localStorage.setItem('shu_token', accessToken);
-      if (refreshToken) {
-        localStorage.setItem('shu_refresh_token', refreshToken);
-      }
-      window.location.href = '/';
-    },
-    onError: (errorMessage) => {
-      setError(errorMessage);
-    },
-    onPendingActivation: () => {
-      setSuccessMessage(
-        'Your account has been created but requires administrator activation before you can sign in.'
-      );
-    },
-  });
+  const { startLogin: startMicrosoftLogin, loading: microsoftLoading } =
+    useMicrosoftOAuth({
+      onSuccess: ({ accessToken, refreshToken }) => {
+        localStorage.setItem("shu_token", accessToken);
+        if (refreshToken) {
+          localStorage.setItem("shu_refresh_token", refreshToken);
+        }
+        window.location.href = "/";
+      },
+      onError: (errorMessage) => {
+        setError(errorMessage);
+      },
+      onPendingActivation: () => {
+        setSuccessMessage(
+          "Your account has been created but requires administrator activation before you can sign in.",
+        );
+      },
+    });
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     });
-    if (error) setError(null);
-    if (successMessage) setSuccessMessage(null);
+    if (error) {
+      setError(null);
+    }
+    if (successMessage) {
+      setSuccessMessage(null);
+    }
   };
 
   const validateForm = () => {
     if (!formData.email || !formData.password) {
-      setError('Email and password are required');
+      setError("Email and password are required");
       return false;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(formData.email)) {
-      setError('Please enter a valid email address');
+      setError("Please enter a valid email address");
       return false;
     }
 
@@ -91,7 +96,7 @@ const PasswordLogin = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
@@ -101,23 +106,23 @@ const PasswordLogin = ({
     setSuccessMessage(null);
 
     try {
-      const response = await api.post('/auth/login/password', {
+      const response = await api.post("/auth/login/password", {
         email: formData.email,
-        password: formData.password
+        password: formData.password,
       });
 
       const responseData = extractDataFromResponse(response);
       const { access_token, refresh_token } = responseData;
 
-      localStorage.setItem('shu_token', access_token);
-      localStorage.setItem('shu_refresh_token', refresh_token);
+      localStorage.setItem("shu_token", access_token);
+      localStorage.setItem("shu_refresh_token", refresh_token);
 
-      window.location.href = '/';
-
+      window.location.href = "/";
     } catch (err) {
-      const errorMessage = err.response?.data?.error?.message || 
-                          err.response?.data?.detail || 
-                          'Login failed. Please check your credentials.';
+      const errorMessage =
+        err.response?.data?.error?.message ||
+        err.response?.data?.detail ||
+        "Login failed. Please check your credentials.";
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -137,21 +142,21 @@ const PasswordLogin = ({
       <Box
         sx={{
           marginTop: 8,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
         }}
       >
-        <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
-          <Box sx={{ textAlign: 'center', mb: 3 }}>
+        <Paper elevation={3} sx={{ padding: 4, width: "100%" }}>
+          <Box sx={{ textAlign: "center", mb: 3 }}>
             <img
               src={logoUrl}
               alt={appDisplayName}
               style={{
-                height: '60px',
-                width: 'auto',
-                maxWidth: '100%',
-                marginBottom: '1rem',
+                height: "60px",
+                width: "auto",
+                maxWidth: "100%",
+                marginBottom: "1rem",
               }}
             />
             <Typography component="h1" variant="h4" gutterBottom>
@@ -189,7 +194,7 @@ const PasswordLogin = ({
               onChange={handleChange}
               disabled={isAnyLoading}
             />
-            
+
             <TextField
               margin="normal"
               required
@@ -209,11 +214,13 @@ const PasswordLogin = ({
               fullWidth
               variant="contained"
               size="large"
-              startIcon={loading ? <CircularProgress size={20} /> : <LoginIcon />}
+              startIcon={
+                loading ? <CircularProgress size={20} /> : <LoginIcon />
+              }
               disabled={isAnyLoading}
               sx={{ mt: 3, mb: 2, py: 1.5 }}
             >
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? "Signing in..." : "Sign In"}
             </Button>
 
             {isGoogleSsoEnabled && (
@@ -252,17 +259,25 @@ const PasswordLogin = ({
                   fullWidth
                   variant="outlined"
                   size="large"
-                  startIcon={microsoftLoading ? <CircularProgress size={20} /> : <MicrosoftIcon />}
+                  startIcon={
+                    microsoftLoading ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <MicrosoftIcon />
+                    )
+                  }
                   onClick={handleMicrosoftLogin}
                   disabled={isAnyLoading}
                   sx={{ mb: 2, py: 1.5 }}
                 >
-                  {microsoftLoading ? 'Signing in...' : 'Sign in with Microsoft'}
+                  {microsoftLoading
+                    ? "Signing in..."
+                    : "Sign in with Microsoft"}
                 </Button>
               </>
             )}
 
-            <Box sx={{ textAlign: 'center', mt: 2 }}>
+            <Box sx={{ textAlign: "center", mt: 2 }}>
               <Button
                 variant="text"
                 onClick={onSwitchToRegister}
@@ -273,7 +288,11 @@ const PasswordLogin = ({
             </Box>
           </Box>
 
-          <Typography variant="caption" display="block" sx={{ textAlign: 'center', mt: 2 }}>
+          <Typography
+            variant="caption"
+            display="block"
+            sx={{ textAlign: "center", mt: 2 }}
+          >
             Only authorized {appDisplayName} accounts can access this system
           </Typography>
         </Paper>

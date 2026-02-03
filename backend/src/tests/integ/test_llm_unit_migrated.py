@@ -6,23 +6,21 @@ without requiring database connections.
 """
 
 import sys
-import os
-from typing import List, Callable
-from unittest.mock import Mock, AsyncMock
+from collections.abc import Callable
 from datetime import datetime
-
+from unittest.mock import Mock
 
 from integ.base_unit_test import BaseUnitTestSuite
 from shu.api.llm import _provider_to_response
-from shu.models.llm_provider import LLMProvider
-from shu.llm.service import LLMService
 from shu.core.exceptions import LLMProviderError
+from shu.llm.service import LLMService
+from shu.models.llm_provider import LLMProvider
 
 
 def test_provider_with_api_key():
     """
     Verify that converting a provider with an encrypted API key yields a response indicating an API key is present and omits actual key fields.
-    
+
     Asserts that:
     - response.id, response.name, and response.provider_type match the provider.
     - response.has_api_key is True.
@@ -42,17 +40,17 @@ def test_provider_with_api_key():
         rate_limit_rpm=3500,
         rate_limit_tpm=90000,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
-    
+
     response = _provider_to_response(None, provider)
-    
+
     assert response.id == "test-id-1"
     assert response.name == "Test OpenAI"
     assert response.provider_type == "openai"
     assert response.has_api_key is True
-    assert not hasattr(response, 'api_key')
-    assert not hasattr(response, 'api_key_encrypted')
+    assert not hasattr(response, "api_key")
+    assert not hasattr(response, "api_key_encrypted")
 
 
 def test_provider_without_api_key():
@@ -70,17 +68,17 @@ def test_provider_without_api_key():
         rate_limit_rpm=1000,
         rate_limit_tpm=50000,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
-    
+
     response = _provider_to_response(None, provider)
-    
+
     assert response.id == "test-id-2"
     assert response.name == "Test Provider No Key"
     assert response.provider_type == "anthropic"
     assert response.has_api_key is False
-    assert not hasattr(response, 'api_key')
-    assert not hasattr(response, 'api_key_encrypted')
+    assert not hasattr(response, "api_key")
+    assert not hasattr(response, "api_key_encrypted")
 
 
 def test_provider_with_empty_api_key():
@@ -98,11 +96,11 @@ def test_provider_with_empty_api_key():
         rate_limit_rpm=2000,
         rate_limit_tpm=60000,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
-    
+
     response = _provider_to_response(None, provider)
-    
+
     assert response.id == "test-id-3"
     assert response.has_api_key is False
 
@@ -112,15 +110,15 @@ def test_validate_provider_data_valid():
     # Mock database session
     mock_db = Mock()
     service = LLMService(mock_db)
-    
+
     valid_data = {
         "name": "Valid Provider",
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "rate_limit_rpm": 3500,
-        "rate_limit_tpm": 90000
+        "rate_limit_tpm": 90000,
     }
-    
+
     # This should not raise any exceptions
     try:
         # Test the validation logic (this would normally be in a validate method)
@@ -138,26 +136,35 @@ def test_validate_provider_data_invalid():
     # Mock database session
     mock_db = Mock()
     service = LLMService(mock_db)
-    
+
     invalid_data_sets = [
         {"name": "", "provider_type": "openai"},  # Empty name
         {"name": "Test", "provider_type": "invalid"},  # Invalid provider type
-        {"name": "Test", "provider_type": "openai", "api_endpoint": "http://insecure.com"},  # Non-HTTPS
+        {
+            "name": "Test",
+            "provider_type": "openai",
+            "api_endpoint": "http://insecure.com",
+        },  # Non-HTTPS
         {"name": "Test", "provider_type": "openai", "rate_limit_rpm": -1},  # Negative rate limit
     ]
-    
+
     for invalid_data in invalid_data_sets:
         try:
             # Test validation logic
             if "name" in invalid_data and invalid_data["name"].strip() == "":
                 raise ValueError("Name cannot be empty")
-            if "provider_type" in invalid_data and invalid_data["provider_type"] not in ["openai", "anthropic", "azure", "custom"]:
+            if "provider_type" in invalid_data and invalid_data["provider_type"] not in [
+                "openai",
+                "anthropic",
+                "azure",
+                "custom",
+            ]:
                 raise ValueError("Invalid provider type")
             if "api_endpoint" in invalid_data and not invalid_data["api_endpoint"].startswith("https://"):
                 raise ValueError("API endpoint must use HTTPS")
             if "rate_limit_rpm" in invalid_data and invalid_data["rate_limit_rpm"] <= 0:
                 raise ValueError("Rate limit must be positive")
-            
+
             # If we get here, validation didn't catch the invalid data
             assert False, f"Invalid data should have raised exception: {invalid_data}"
         except (ValueError, AssertionError):
@@ -185,11 +192,11 @@ def test_rate_limit_validation():
     # Valid rate limits
     valid_rpm = 3500
     valid_tpm = 90000
-    
+
     assert valid_rpm > 0
     assert valid_tpm > 0
     assert valid_tpm >= valid_rpm  # TPM should generally be higher than RPM
-    
+
     # Invalid rate limits
     invalid_values = [-1, 0, None]
     for invalid in invalid_values:
@@ -203,29 +210,29 @@ def test_endpoint_validation():
     valid_endpoints = [
         "https://api.openai.com/v1",
         "https://api.anthropic.com/v1",
-        "https://custom-endpoint.com/api"
+        "https://custom-endpoint.com/api",
     ]
-    
+
     for endpoint in valid_endpoints:
         assert endpoint.startswith("https://"), f"Endpoint {endpoint} should use HTTPS"
         assert len(endpoint) > 8, f"Endpoint {endpoint} should be more than just https://"
-    
+
     # Invalid endpoints
     invalid_endpoints = [
         "http://insecure.com",  # HTTP instead of HTTPS
         "",  # Empty
         "not-a-url",  # Not a URL
-        "ftp://wrong-protocol.com"  # Wrong protocol
+        "ftp://wrong-protocol.com",  # Wrong protocol
     ]
-    
+
     for endpoint in invalid_endpoints:
         assert not endpoint.startswith("https://"), f"Invalid endpoint {endpoint} should not pass validation"
 
 
 class LLMUnitTestSuite(BaseUnitTestSuite):
     """Unit test suite for LLM functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all LLM unit test functions."""
         return [
             test_provider_with_api_key,
@@ -239,15 +246,15 @@ class LLMUnitTestSuite(BaseUnitTestSuite):
             test_budget_limit_validation,
             test_endpoint_validation,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "LLM Unit Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "Unit tests for LLM business logic, data validation, and response formatting"
-    
+
     def get_cli_examples(self) -> str:
         """Return LLM-specific CLI examples."""
         return """

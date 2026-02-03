@@ -5,4 +5,3 @@ PLUGIN_MANIFEST = {
     # Requires kb to write KOs; identity used to set source.account in KO
     "capabilities": ["kb", "identity"],
 }
-

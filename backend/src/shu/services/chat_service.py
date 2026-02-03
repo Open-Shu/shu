@@ -1,40 +1,44 @@
-"""
-Chat service for Shu RAG Backend.
+"""Chat service for Shu RAG Backend.
 
 Handles conversation management, message processing, and LLM integration.
 """
 
-import json
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Dict, List, Optional, Any, Union, AsyncGenerator, Tuple, Set
-from sqlalchemy import select, and_, desc, asc, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, joinedload
+from typing import Any
 
-from ..models.llm_provider import Conversation, Message, LLMModel
+from sqlalchemy import asc, desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
+
+from ..auth.models import User
+from ..auth.rbac import rbac
+from ..core.config import ConfigurationManager, get_settings_instance
+from ..core.exceptions import (
+    ConversationNotFoundError,
+    LLMProviderError,
+    MessageNotFoundError,
+    ShuException,
+    ValidationError,
+)
+from ..llm.service import LLMService
 from ..models.attachment import Attachment, MessageAttachment
+from ..models.llm_provider import Conversation, LLMModel, LLMProvider, Message
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
-from ..models.llm_provider import LLMProvider
-from ..core.config import ConfigurationManager, get_settings_instance
-from ..core.exceptions import ShuException, ValidationError, LLMProviderError, ConversationNotFoundError, MessageNotFoundError
-from ..llm.service import LLMService
-from ..auth.rbac import rbac
-from ..auth.models import User
 from ..schemas.query import RagRewriteMode
-from ..services.query_service import QueryService
-from ..services.prompt_service import PromptService
-from ..services.context_window_manager import ContextWindowManager
-from ..services.context_preferences_resolver import ContextPreferencesResolver
-from ..services.message_context_builder import MessageContextBuilder
 from ..services.chat_types import ChatContext
+from ..services.context_preferences_resolver import ContextPreferencesResolver
+from ..services.context_window_manager import ContextWindowManager
+from ..services.message_context_builder import MessageContextBuilder
 from ..services.message_utils import serialize_message_for_sse
+from ..services.prompt_service import PromptService
+from ..services.query_service import QueryService
 from ..services.side_call_service import SideCallService
-from .conversation_lock_service import acquire_conversation_lock, release_conversation_lock
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 
 logger = logging.getLogger(__name__)
@@ -47,8 +51,8 @@ class PreparedTurnContext:
 
     conversation: Conversation
     user_message: Message
-    conversation_messages: List[Message]
-    knowledge_base_id: Optional[str]
+    conversation_messages: list[Message]
+    knowledge_base_id: str | None
 
 
 @dataclass
@@ -59,8 +63,8 @@ class ModelExecutionInputs:
     provider_id: str
     model: LLMModel
     context_messages: ChatContext
-    source_metadata: List[Dict]
-    knowledge_base_id: Optional[str]
+    source_metadata: list[dict]
+    knowledge_base_id: str | None
     # Per-provider rate limits
     rate_limit_rpm: int = 60
     rate_limit_tpm: int = 60000
@@ -108,8 +112,8 @@ class ChatService:
         self,
         conversation: Conversation,
         user_message: str,
-        knowledge_base_id: Optional[str],
-        attachment_ids: Optional[List[str]] = None,
+        knowledge_base_id: str | None,
+        attachment_ids: list[str] | None = None,
     ) -> PreparedTurnContext:
         """Insert the user message and assemble shared context for an ensemble turn."""
         user_msg = await self.add_message(
@@ -136,11 +140,10 @@ class ChatService:
     async def _resolve_ensemble_configurations(
         self,
         conversation: Conversation,
-        ensemble_model_configuration_ids: Optional[List[str]],
-        current_user: Optional[User]
-    ) -> List[ModelConfiguration]:
-        """
-        Resolve the model configurations participating in an ensemble turn.
+        ensemble_model_configuration_ids: list[str] | None,
+        current_user: User | None,
+    ) -> list[ModelConfiguration]:
+        """Resolve the model configurations participating in an ensemble turn.
 
         Returns the conversation's active configuration last, prepended by any additional
         configurations requested by the caller (deduplicated). We do this to ensure the main
@@ -149,17 +152,14 @@ class ChatService:
         if not conversation.model_configuration:
             raise LLMProviderError("Conversation is missing a model configuration")
 
-        resolved: List[ModelConfiguration] = []
-        seen: Set[str] = {conversation.model_configuration.id}
+        resolved: list[ModelConfiguration] = []
+        seen: set[str] = {conversation.model_configuration.id}
 
         if ensemble_model_configuration_ids:
             for model_config_id in ensemble_model_configuration_ids:
                 if not model_config_id or model_config_id in seen:
                     continue
-                model_config = await self._load_active_model_configuration(
-                    model_config_id,
-                    current_user=current_user
-                )
+                model_config = await self._load_active_model_configuration(model_config_id, current_user=current_user)
                 resolved.append(model_config)
                 seen.add(model_config.id)
 
@@ -175,24 +175,27 @@ class ChatService:
         model_configuration: ModelConfiguration,
         current_user: User,
         rag_rewrite_mode: RagRewriteMode,
-        recent_messages_limit: Optional[int] = None,
+        recent_messages_limit: int | None = None,
     ) -> ModelExecutionInputs:
-        """
-        Resolve the provider and model for a given model configuration and build the chat context and metadata required to execute that model.
-        
-        Parameters:
+        """Resolve the provider and model for a given model configuration and build the chat context and metadata required to execute that model.
+
+        Parameters
+        ----------
             base_conversation (Conversation): Conversation to use as the execution context.
             turn_context (PreparedTurnContext): Prepared user turn containing the inserted user message and recent conversation messages.
             model_configuration (ModelConfiguration): Model configuration to resolve (contains provider and model references).
             current_user (User): User performing the action, used for access and context resolution.
             rag_rewrite_mode (RagRewriteMode): RAG rewrite mode to apply when constructing the message context.
             recent_messages_limit (Optional[int]): When provided, limits the number of recent messages included in the constructed context.
-        
-        Returns:
+
+        Returns
+        -------
             ModelExecutionInputs: Resolved inputs for executing the model, including provider_id, model, context_messages, source_metadata, knowledge_base_id, and per-provider rate limits (`rate_limit_rpm`, `rate_limit_tpm`). Rate limits are taken from the provider when available and default to 60 RPM and 60000 TPM.
-        
-        Raises:
+
+        Raises
+        ------
             LLMProviderError: If the model configuration is missing a provider or model reference, or if the provider or model is not found or not active.
+
         """
         provider_id = model_configuration.llm_provider_id
         if not provider_id:
@@ -235,9 +238,8 @@ class ChatService:
 
     @staticmethod
     def _build_model_configuration_metadata(
-        model_config: ModelConfiguration,
-        model: Optional[LLMModel] = None
-    ) -> Dict[str, Any]:
+        model_config: ModelConfiguration, model: LLMModel | None = None
+    ) -> dict[str, Any]:
         provider = getattr(model_config, "llm_provider", None)
         provider_snapshot = None
         if provider:
@@ -258,12 +260,12 @@ class ChatService:
         }
 
     @staticmethod
-    def normalize_summary_query(summary_query: Optional[str]) -> List[str]:
+    def normalize_summary_query(summary_query: str | None) -> list[str]:
         """Normalize user-provided summary keyword filters."""
         if not summary_query:
             return []
 
-        normalized: List[str] = []
+        normalized: list[str] = []
         min_token_length = max(settings.conversation_summary_search_min_token_length, 1)
         max_tokens = max(settings.conversation_summary_search_max_tokens, 1)
 
@@ -291,19 +293,13 @@ class ChatService:
             raise LLMProviderError(f"Provider '{provider.name}' is not active")
         return provider
 
-    async def _load_active_model_configuration(
-        self,
-        model_configuration_id: str,
-        current_user: Optional[User] = None
-    ):
+    async def _load_active_model_configuration(self, model_configuration_id: str, current_user: User | None = None):
         """Fetch a model configuration and ensure both it and its provider are active."""
         from .model_configuration_service import ModelConfigurationService
 
         model_config_service = ModelConfigurationService(self.db_session)
         model_config = await model_config_service.get_model_configuration(
-            model_configuration_id,
-            include_relationships=True,
-            current_user=current_user
+            model_configuration_id, include_relationships=True, current_user=current_user
         )
 
         if not model_config:
@@ -311,7 +307,7 @@ class ChatService:
                 message=f"Model configuration with ID '{model_configuration_id}' not found",
                 error_code="MODEL_CONFIGURATION_NOT_FOUND",
                 status_code=404,
-                details={"model_configuration_id": model_configuration_id}
+                details={"model_configuration_id": model_configuration_id},
             )
 
         if not model_config.is_active:
@@ -323,9 +319,8 @@ class ChatService:
         await self._ensure_provider_active(model_config.llm_provider_id)
         return model_config
 
-    async def _resolve_conversation_model(self, conversation: Conversation) -> Tuple[str, LLMModel]:
-        """
-        Resolve the active provider and model to use for a conversation.
+    async def _resolve_conversation_model(self, conversation: Conversation) -> tuple[str, LLMModel]:
+        """Resolve the active provider and model to use for a conversation.
 
         Requires the conversation to be linked to a model configuration.
         """
@@ -339,10 +334,7 @@ class ChatService:
         if not model_name:
             raise LLMProviderError("Model configuration is missing a model name")
 
-        model_record = await self.llm_service.get_model_by_name(
-            model_name,
-            provider_id=model_config.llm_provider_id
-        )
+        model_record = await self.llm_service.get_model_by_name(model_name, provider_id=model_config.llm_provider_id)
 
         if not model_record or not model_record.is_active:
             raise LLMProviderError(
@@ -355,12 +347,11 @@ class ChatService:
         self,
         user_id: str,
         model_configuration_id: str,
-        title: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        current_user: Optional[User] = None
+        title: str | None = None,
+        context: dict[str, Any] | None = None,
+        current_user: User | None = None,
     ) -> Conversation:
-        """
-        Create a new chat conversation using a model configuration.
+        """Create a new chat conversation using a model configuration.
 
         This is the preferred method for creating conversations as it uses
         the Model Configuration abstraction (Base Model + Prompt + Optional KBs).
@@ -377,6 +368,7 @@ class ChatService:
         Raises:
             ValidationError: If user_id or model_configuration_id is invalid
             LLMProviderError: If model configuration is not found or inactive
+
         """
         if not user_id:
             raise ValidationError("User ID is required")
@@ -384,14 +376,11 @@ class ChatService:
         if not model_configuration_id:
             raise ValidationError("Model configuration ID is required")
 
-        model_config = await self._load_active_model_configuration(
-            model_configuration_id,
-            current_user=current_user
-        )
+        model_config = await self._load_active_model_configuration(model_configuration_id, current_user=current_user)
 
         # Generate title if not provided
         if not title:
-            title = f"Chat with {model_config.name} - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+            title = f"Chat with {model_config.name} - {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')}"
 
         conversation = Conversation(
             id=str(uuid.uuid4()),
@@ -411,13 +400,9 @@ class ChatService:
         return conversation
 
     async def create_conversation_from_experience_run(
-        self,
-        run_id: str,
-        user_id: str,
-        title_override: Optional[str] = None
+        self, run_id: str, user_id: str, title_override: str | None = None
     ) -> Conversation:
-        """
-        Create a conversation from an experience run.
+        """Create a conversation from an experience run.
 
         Args:
             run_id: Experience run ID
@@ -429,24 +414,19 @@ class ChatService:
 
         Raises:
             HTTPException: If run not found, access denied, or no result content
+
         """
         from fastapi import HTTPException
+
         from ..models.experience import ExperienceRun
 
         # Fetch experience run with access check
-        stmt = select(ExperienceRun).options(
-            joinedload(ExperienceRun.experience)
-        ).where(
-            ExperienceRun.id == run_id
-        )
+        stmt = select(ExperienceRun).options(joinedload(ExperienceRun.experience)).where(ExperienceRun.id == run_id)
         result = await self.db_session.execute(stmt)
         run = result.unique().scalar_one_or_none()
 
         if not run:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Experience run '{run_id}' not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Experience run '{run_id}' not found")
 
         # Access check: user must own the run or be admin
         if run.user_id != user_id:
@@ -456,29 +436,23 @@ class ChatService:
             user = user_result.scalar_one_or_none()
 
             if not user or not user.can_manage_users():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Experience run '{run_id}' not found"
-                )
+                raise HTTPException(status_code=404, detail=f"Experience run '{run_id}' not found")
 
         # Validate run has result content
         if not run.result_content:
             raise HTTPException(
                 status_code=400,
-                detail="Experience run has no result content to start conversation from"
+                detail="Experience run has no result content to start conversation from",
             )
 
         # Store experience attributes before they might become detached
         # Access the relationship immediately after the query while still in async context
         experience_id = run.experience_id
-        
+
         # Ensure experience is loaded (selectinload should have loaded it)
         if not run.experience:
-            raise HTTPException(
-                status_code=500,
-                detail="Experience data not available for this run"
-            )
-        
+            raise HTTPException(status_code=500, detail="Experience data not available for this run")
+
         experience_name = run.experience.name
         experience_model_config_id = run.experience.model_configuration_id
 
@@ -486,31 +460,23 @@ class ChatService:
         # Priority: run's model config > experience's model config
         # If neither is available, raise an error as conversations require a model configuration
         model_config_id = run.model_configuration_id or experience_model_config_id
-        
+
         if not model_config_id:
             raise HTTPException(
                 status_code=400,
-                detail="Cannot create conversation: neither the experience run nor the experience has a model configuration"
+                detail="Cannot create conversation: neither the experience run nor the experience has a model configuration",
             )
-        
+
         # Validate that the model configuration exists and is active
-        model_config_stmt = select(ModelConfiguration).where(
-            ModelConfiguration.id == model_config_id
-        )
+        model_config_stmt = select(ModelConfiguration).where(ModelConfiguration.id == model_config_id)
         model_config_result = await self.db_session.execute(model_config_stmt)
         model_config = model_config_result.scalar_one_or_none()
-        
+
         if not model_config:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model configuration '{model_config_id}' not found"
-            )
-        
+            raise HTTPException(status_code=400, detail=f"Model configuration '{model_config_id}' not found")
+
         if not model_config.is_active:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model configuration '{model_config.name}' is not active"
-            )
+            raise HTTPException(status_code=400, detail=f"Model configuration '{model_config.name}' is not active")
 
         # Create conversation
         conversation = Conversation(
@@ -525,8 +491,8 @@ class ChatService:
                 "experience_id": experience_id,
                 "experience_name": experience_name,
                 "run_id": run_id,
-                "created_from_experience": True
-            }
+                "created_from_experience": True,
+            },
         )
 
         self.db_session.add(conversation)
@@ -541,21 +507,23 @@ class ChatService:
             message_metadata={
                 "source": "experience_result",
                 "experience_run_id": run_id,
-                "original_model_config_id": model_config_id
-            }
+                "original_model_config_id": model_config_id,
+            },
         )
 
         self.db_session.add(message)
         await self.db_session.commit()
 
         # Reload conversation with all necessary relationships for serialization
-        stmt = select(Conversation).where(
-            Conversation.id == conversation.id
-        ).options(
-            selectinload(Conversation.messages),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases)
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation.id)
+            .options(
+                selectinload(Conversation.messages),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
+            )
         )
         result = await self.db_session.execute(stmt)
         conversation = result.scalar_one()
@@ -566,26 +534,30 @@ class ChatService:
                 "conversation_id": conversation.id,
                 "run_id": run_id,
                 "experience_id": experience_id,
-                "user_id": user_id
-            }
+                "user_id": user_id,
+            },
         )
 
         return conversation
 
-    async def get_conversation_by_id(self, conversation_id: str, include_inactive: bool = False) -> Optional[Conversation]:
+    async def get_conversation_by_id(self, conversation_id: str, include_inactive: bool = False) -> Conversation | None:
         """Get conversation by ID with messages and model configuration.
 
         By default, inactive (soft-deleted) conversations are excluded. Set include_inactive=True
         to fetch regardless of is_active.
         """
-        stmt = select(Conversation).where(
-            Conversation.id == conversation_id
-        ).options(
-            selectinload(Conversation.messages).selectinload(Message.model),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.kb_prompt_assignments).selectinload(ModelConfigurationKBPrompt.prompt)
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(
+                selectinload(Conversation.messages).selectinload(Message.model),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
+                selectinload(Conversation.model_configuration)
+                .selectinload(ModelConfiguration.kb_prompt_assignments)
+                .selectinload(ModelConfigurationKBPrompt.prompt),
+            )
         )
 
         if not include_inactive:
@@ -600,28 +572,31 @@ class ChatService:
         limit: int = 50,
         offset: int = 0,
         include_inactive: bool = False,
-        summary_terms: Optional[List[str]] = None
-    ) -> List[Conversation]:
+        summary_terms: list[str] | None = None,
+    ) -> list[Conversation]:
         """Get conversations for a user.
-        
+
         Conversations are sorted with favorited conversations first, then by most recently updated.
-        
+
         Args:
             user_id: ID of the user whose conversations to retrieve
             limit: Maximum number of conversations to return
             offset: Number of conversations to skip for pagination
             include_inactive: Whether to include inactive conversations
             summary_terms: Optional list of terms to filter by in summary text
-            
+
         Returns:
             List of conversations sorted by is_favorite DESC, updated_at DESC
+
         """
-        stmt = select(Conversation).where(
-            Conversation.user_id == user_id
-        ).options(
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases)
+        stmt = (
+            select(Conversation)
+            .where(Conversation.user_id == user_id)
+            .options(
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
+            )
         )
 
         if not include_inactive:
@@ -633,10 +608,7 @@ class ChatService:
                 stmt = stmt.where(Conversation.summary_text.ilike(f"%{term}%"))
 
         # Sort: favorites first, then by updated_at descending
-        stmt = stmt.order_by(
-            desc(Conversation.is_favorite),
-            desc(Conversation.updated_at)
-        ).limit(limit).offset(offset)
+        stmt = stmt.order_by(desc(Conversation.is_favorite), desc(Conversation.updated_at)).limit(limit).offset(offset)
 
         result = await self.db_session.execute(stmt)
         return result.scalars().all()
@@ -644,26 +616,27 @@ class ChatService:
     async def update_conversation(
         self,
         conversation_id: str,
-        title: Optional[str] = None,
-        is_active: Optional[bool] = None,
-        is_favorite: Optional[bool] = None,
+        title: str | None = None,
+        is_active: bool | None = None,
+        is_favorite: bool | None = None,
         *,
-        meta_updates: Optional[Dict[str, Any]] = None
+        meta_updates: dict[str, Any] | None = None,
     ) -> Conversation:
         """Update conversation details.
-        
+
         Args:
             conversation_id: ID of the conversation to update
             title: New title for the conversation (optional)
             is_active: New active status (optional)
             is_favorite: New favorite status (optional)
             meta_updates: Additional metadata updates (optional)
-            
+
         Returns:
             Updated conversation
-            
+
         Raises:
             ConversationNotFoundError: If conversation doesn't exist
+
         """
         conversation = await self.get_conversation_by_id(conversation_id)
         if not conversation:
@@ -682,14 +655,13 @@ class ChatService:
             current_meta.update(meta_updates)
             conversation.meta = current_meta
 
-        conversation.updated_at = datetime.now(timezone.utc)
+        conversation.updated_at = datetime.now(UTC)
 
         await self.db_session.commit()
         await self.db_session.refresh(conversation)
 
         logger.info(f"Updated conversation '{conversation.title}'")
         return conversation
-
 
     async def delete_conversation(self, conversation_id: str) -> bool:
         """Delete a conversation (soft delete by setting is_active=False)."""
@@ -698,7 +670,7 @@ class ChatService:
             raise ConversationNotFoundError(f"Conversation with ID '{conversation_id}' not found")
 
         conversation.is_active = False
-        conversation.updated_at = datetime.now(timezone.utc)
+        conversation.updated_at = datetime.now(UTC)
 
         await self.db_session.commit()
 
@@ -709,7 +681,7 @@ class ChatService:
         self,
         conversation_id: str,
         message_id: str,
-        attachment_ids: List[str],
+        attachment_ids: list[str],
     ) -> None:
         """Validate and link attachments to a message.
 
@@ -720,6 +692,7 @@ class ChatService:
 
         Raises:
             ValidationError: If any attachment does not belong to the conversation
+
         """
         if not attachment_ids:
             return
@@ -751,15 +724,14 @@ class ChatService:
         conversation_id: str,
         role: str,
         content: str,
-        model_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        parent_message_id: Optional[str] = None,
-        variant_index: Optional[int] = None,
-        message_id: Optional[str] = None,
-        attachment_ids: Optional[List[str]] = None,
+        model_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        parent_message_id: str | None = None,
+        variant_index: int | None = None,
+        message_id: str | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> Message:
-        """
-        Add a message to a conversation.
+        """Add a message to a conversation.
 
         Args:
             conversation_id: ID of the conversation
@@ -774,13 +746,14 @@ class ChatService:
         Raises:
             ConversationNotFoundError: If conversation doesn't exist
             ValidationError: If role or content is invalid
+
         """
-        if role not in ['user', 'assistant', 'system']:
+        if role not in ["user", "assistant", "system"]:
             raise ValidationError(f"Invalid message role: {role}")
 
         if not content or not content.strip():
             raise ValidationError("Message content cannot be empty")
-        
+
         if message_id is None:
             message_id = str(uuid.uuid4())
 
@@ -795,7 +768,7 @@ class ChatService:
             if not model:
                 raise LLMProviderError(f"Model with ID '{model_id}' not found")
 
-        metadata_dict: Dict[str, Any] = dict(metadata or {})
+        metadata_dict: dict[str, Any] = dict(metadata or {})
 
         # Snapshot the conversation's model configuration for assistant messages so that
         # downstream consumers can understand which configuration generated the response.
@@ -842,16 +815,20 @@ class ChatService:
             )
 
         # Update conversation timestamp
-        conversation.updated_at = datetime.now(timezone.utc)
+        conversation.updated_at = datetime.now(UTC)
 
         await self.db_session.commit()
         await self.db_session.refresh(message)
 
         # Eagerly load relationships to avoid MissingGreenlet errors
-        stmt = select(Message).where(Message.id == message.id).options(
-            selectinload(Message.model),
-            selectinload(Message.conversation),
-            selectinload(Message.attachments)
+        stmt = (
+            select(Message)
+            .where(Message.id == message.id)
+            .options(
+                selectinload(Message.model),
+                selectinload(Message.conversation),
+                selectinload(Message.attachments),
+            )
         )
         result = await self.db_session.execute(stmt)
         message_with_relationships = result.scalar_one()
@@ -865,7 +842,7 @@ class ChatService:
         limit: int = 100,
         offset: int = 0,
         order_desc: bool = False,
-    ) -> List[Message]:
+    ) -> list[Message]:
         """Get messages for a conversation.
 
         Also performs a lightweight one-time backfill for message variant lineage on
@@ -876,12 +853,14 @@ class ChatService:
         """
         order_clause = desc(Message.created_at) if order_desc else asc(Message.created_at)
 
-        stmt = select(Message).where(
-            Message.conversation_id == conversation_id
-        ).options(
-            selectinload(Message.model),
-            selectinload(Message.attachments)
-        ).order_by(order_clause).limit(limit).offset(offset)
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .options(selectinload(Message.model), selectinload(Message.attachments))
+            .order_by(order_clause)
+            .limit(limit)
+            .offset(offset)
+        )
 
         result = await self.db_session.execute(stmt)
         messages = result.scalars().all()
@@ -891,23 +870,23 @@ class ChatService:
             dirty = False
 
             # Build assistant variant groups by explicit parent when present, else self-root
-            groups_by_root: Dict[str, List[Message]] = {}
+            groups_by_root: dict[str, list[Message]] = {}
             for msg in messages:
-                if getattr(msg, 'role', None) != 'assistant':
+                if getattr(msg, "role", None) != "assistant":
                     continue
-                root_id = getattr(msg, 'parent_message_id', None) or msg.id
+                root_id = getattr(msg, "parent_message_id", None) or msg.id
                 # Only set parent_message_id when it's missing
-                if getattr(msg, 'parent_message_id', None) is None:
+                if getattr(msg, "parent_message_id", None) is None:
                     msg.parent_message_id = root_id
                     dirty = True
                 groups_by_root.setdefault(root_id, []).append(msg)
 
             # For each group, sort by created_at and backfill missing variant_index
             for root_id, group in groups_by_root.items():
-                sorted_msgs = sorted(group, key=lambda m: getattr(m, 'created_at'))
+                sorted_msgs = sorted(group, key=lambda m: m.created_at)
                 for idx, msg in enumerate(sorted_msgs):
                     # Only update variant_index when missing
-                    if getattr(msg, 'variant_index', None) is None:
+                    if getattr(msg, "variant_index", None) is None:
                         msg.variant_index = idx
                         dirty = True
 
@@ -924,11 +903,9 @@ class ChatService:
         result = await self.db_session.execute(stmt)
         return result.scalar_one()
 
-    async def get_message_by_id(self, message_id: str) -> Optional[Message]:
+    async def get_message_by_id(self, message_id: str) -> Message | None:
         """Get message by ID."""
-        stmt = select(Message).where(
-            Message.id == message_id
-        ).options(selectinload(Message.model))
+        stmt = select(Message).where(Message.id == message_id).options(selectinload(Message.model))
 
         result = await self.db_session.execute(stmt)
         return result.scalar_one_or_none()
@@ -938,15 +915,14 @@ class ChatService:
         conversation_id: str,
         user_message: str,
         current_user,  # User object for access control
-        knowledge_base_id: Optional[str] = None,
+        knowledge_base_id: str | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
-        client_temp_id: Optional[str] = None,
-        ensemble_model_configuration_ids: Optional[List[str]] = None,
-        attachment_ids: Optional[List[str]] = None,
+        client_temp_id: str | None = None,
+        ensemble_model_configuration_ids: list[str] | None = None,
+        attachment_ids: list[str] | None = None,
         force_no_streaming: bool = False,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
-        """
-        Send a message and get LLM response using the conversation model or an ensemble.
+        """Send a message and get LLM response using the conversation model or an ensemble.
 
         Args:
             conversation_id: ID of the conversation
@@ -962,6 +938,7 @@ class ChatService:
         Raises:
             ConversationNotFoundError: If conversation doesn't exist
             LLMProviderError: If LLM provider/model is not available
+
         """
         # lock_id = str(uuid.uuid4())
         # TODO: This is risky for now and causes issues with concurrent operations. We need some more effort to get this to work right.
@@ -977,11 +954,27 @@ class ChatService:
         if not conversation:
             raise ConversationNotFoundError(f"Conversation with ID '{conversation_id}' not found")
 
-        stmt = select(Conversation).where(Conversation.id == conversation_id).options(
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider).selectinload(LLMProvider.models),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.kb_prompt_assignments).selectinload(ModelConfigurationKBPrompt.prompt)
+        model_config_provider_stmt = (
+            selectinload(Conversation.model_configuration)
+            .selectinload(ModelConfiguration.llm_provider)
+            .selectinload(LLMProvider.models)
+        )
+
+        model_config_kb_stmt = (
+            selectinload(Conversation.model_configuration)
+            .selectinload(ModelConfiguration.kb_prompt_assignments)
+            .selectinload(ModelConfigurationKBPrompt.prompt)
+        )
+
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(
+                model_config_provider_stmt,
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
+                model_config_kb_stmt,
+            )
         )
         result = await self.db_session.execute(stmt)
         conversation = result.scalar_one()
@@ -992,7 +985,7 @@ class ChatService:
             if not has_access:
                 raise ShuException(
                     f"Access denied to knowledge base '{knowledge_base_id}'",
-                    "KNOWLEDGE_BASE_ACCESS_DENIED"
+                    "KNOWLEDGE_BASE_ACCESS_DENIED",
                 )
 
         turn_context = await self._prepare_turn_context(
@@ -1020,7 +1013,7 @@ class ChatService:
             current_user=current_user,
         )
 
-        execution_inputs: List[ModelExecutionInputs] = [
+        execution_inputs: list[ModelExecutionInputs] = [
             await self._build_model_execution_inputs(
                 base_conversation=conversation,
                 turn_context=turn_context,
@@ -1048,6 +1041,7 @@ class ChatService:
                 force_no_streaming=force_no_streaming,
             ):
                 yield event
+
         return _gen()
 
         # finally:
@@ -1064,9 +1058,9 @@ class ChatService:
                 request_type="chat",
                 input_tokens=0,
                 output_tokens=0,
-                total_cost=Decimal('0'),
+                total_cost=Decimal("0"),
                 success=False,
-                error_message=str(e)
+                error_message=str(e),
             )
         except Exception as usage_error:
             logger.warning("Failed to record LLM usage: %s", usage_error)
@@ -1075,9 +1069,9 @@ class ChatService:
         error_message = await self.add_message(
             conversation_id=conversation_id,
             role="assistant",
-            content=f"I apologize, but I encountered an error: {str(e)}",
+            content=f"I apologize, but I encountered an error: {e!s}",
             model_id=model.id,
-            metadata={"error": e.details if isinstance(e, ShuException) else str(e)}
+            metadata={"error": e.details if isinstance(e, ShuException) else str(e)},
         )
 
         return error_message
@@ -1086,17 +1080,15 @@ class ChatService:
         self,
         message_id: str,
         current_user,
-        parent_message_id: Optional[str] = None,
+        parent_message_id: str | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
-        """
-        Regenerate an assistant message by rebuilding context up to the preceding user turn.
-        """
+        """Regenerate an assistant message by rebuilding context up to the preceding user turn."""
         # Load target message
         target = await self.get_message_by_id(message_id)
         if not target:
             raise MessageNotFoundError(f"Message with ID '{message_id}' not found")
-        if target.role != 'assistant':
+        if target.role != "assistant":
             raise ValidationError("Only assistant messages can be regenerated")
 
         # Load conversation with ownership check
@@ -1104,15 +1096,32 @@ class ChatService:
         if not conversation:
             raise ConversationNotFoundError(f"Conversation with ID '{target.conversation_id}' not found")
         # Basic RBAC: ensure owner
-        if hasattr(current_user, 'id') and conversation.user_id != current_user.id:
+        if hasattr(current_user, "id") and conversation.user_id != current_user.id:
             raise ShuException("You don't have access to this conversation", "UNAUTHORIZED", status_code=403)
 
         # Reload conversation with full relationships to avoid async lazy loads
-        stmt = select(Conversation).where(Conversation.id == conversation.id).options(
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.llm_provider).selectinload(LLMProvider.models),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
-            selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.kb_prompt_assignments).selectinload(ModelConfigurationKBPrompt.prompt)
+
+        model_config_provider_stmt = (
+            selectinload(Conversation.model_configuration)
+            .selectinload(ModelConfiguration.llm_provider)
+            .selectinload(LLMProvider.models)
+        )
+
+        model_config_kb_stmt = (
+            selectinload(Conversation.model_configuration)
+            .selectinload(ModelConfiguration.kb_prompt_assignments)
+            .selectinload(ModelConfigurationKBPrompt.prompt)
+        )
+
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation.id)
+            .options(
+                model_config_provider_stmt,
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.prompt),
+                selectinload(Conversation.model_configuration).selectinload(ModelConfiguration.knowledge_bases),
+                model_config_kb_stmt,
+            )
         )
         result = await self.db_session.execute(stmt)
         conversation = result.scalar_one()
@@ -1131,7 +1140,7 @@ class ChatService:
         # Find preceding user message index
         preceding_user_idx = None
         for i in range(idx - 1, -1, -1):
-            if all_msgs[i].role == 'user':
+            if all_msgs[i].role == "user":
                 preceding_user_idx = i
                 break
 
@@ -1157,7 +1166,9 @@ class ChatService:
 
         # Use the explicit parent_message_id from the frontend, or fall back to target.id
         root_id = parent_message_id or target.id
-        logger.info(f"REGENERATE DEBUG: message_id={message_id}, parent_message_id={parent_message_id}, target.id={target.id}, root_id={root_id}")
+        logger.info(
+            f"REGENERATE DEBUG: message_id={message_id}, parent_message_id={parent_message_id}, target.id={target.id}, root_id={root_id}"
+        )
 
         execution_inputs = [
             ModelExecutionInputs(
@@ -1177,7 +1188,7 @@ class ChatService:
             parent_message_id_override=root_id,
         )
 
-        async def regen_stream() -> AsyncGenerator[Dict[str, Any], None]:
+        async def regen_stream() -> AsyncGenerator[dict[str, Any], None]:
             async for event in base_stream:
                 if event.type == "final_message":
                     if target.parent_message_id is None:
@@ -1187,7 +1198,7 @@ class ChatService:
 
                     msg_payload = event.content or {}
                     msg_id = msg_payload.get("id")
-                    new_assistant: Optional[Message] = None
+                    new_assistant: Message | None = None
                     if msg_id:
                         new_assistant = await self.get_message_by_id(msg_id)
 
@@ -1218,20 +1229,20 @@ class ChatService:
 
     def _locate_regeneration_indices(
         self,
-        messages: List[Message],
+        messages: list[Message],
         target: Message,
-        parent_message_id: Optional[str],
-    ) -> Tuple[int, Optional[int]]:
-        """
-        Locate the target assistant message and the start of its variant group.
+        parent_message_id: str | None,
+    ) -> tuple[int, int | None]:
+        """Locate the target assistant message and the start of its variant group.
 
         Returns:
             Tuple of (target_index, root_variant_index or None)
+
         """
         root_parent_id = parent_message_id or getattr(target, "parent_message_id", None) or target.id
-        root_turn_idx: Optional[int] = None
-        sibling_candidates: List[Tuple[int, Message]] = []
-        target_idx: Optional[int] = None
+        root_turn_idx: int | None = None
+        sibling_candidates: list[tuple[int, Message]] = []
+        target_idx: int | None = None
 
         for idx, msg in enumerate(messages):
             if msg.id == target.id:
@@ -1257,11 +1268,10 @@ class ChatService:
     async def switch_conversation_model(
         self,
         conversation_id: str,
-        new_model_configuration_id: Optional[str] = None,
-        current_user: Optional[User] = None
+        new_model_configuration_id: str | None = None,
+        current_user: User | None = None,
     ) -> Conversation:
-        """
-        Switch the LLM model for a conversation while preserving context.
+        """Switch the LLM model for a conversation while preserving context.
 
         Args:
             conversation_id: ID of the conversation
@@ -1271,6 +1281,7 @@ class ChatService:
 
         Returns:
             Updated conversation
+
         """
         try:
             conversation = await self.get_conversation_by_id(conversation_id)
@@ -1281,8 +1292,7 @@ class ChatService:
                 raise LLMProviderError("model_configuration_id must be provided when switching models")
 
             model_config = await self._load_active_model_configuration(
-                new_model_configuration_id,
-                current_user=current_user
+                new_model_configuration_id, current_user=current_user
             )
 
             if model_config:
@@ -1293,7 +1303,7 @@ class ChatService:
                 conversation.model_configuration = None
 
             provider_id, model_record = await self._resolve_conversation_model(conversation)
-            conversation.updated_at = datetime.now(timezone.utc)
+            conversation.updated_at = datetime.now(UTC)
 
             await self.db_session.commit()
             updated_conversation = await self.get_conversation_by_id(conversation_id)

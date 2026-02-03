@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   Button,
   Dialog,
@@ -7,7 +7,7 @@ import {
   DialogContentText,
   DialogTitle,
   TextField,
-} from '@mui/material';
+} from "@mui/material";
 
 const RenameConversationDialog = React.memo(function RenameConversationDialog({
   open,
@@ -41,7 +41,7 @@ const RenameConversationDialog = React.memo(function RenameConversationDialog({
           Cancel
         </Button>
         <Button onClick={onConfirm} variant="contained" disabled={isSaving}>
-          {isSaving ? 'Saving...' : 'Save'}
+          {isSaving ? "Saving..." : "Save"}
         </Button>
       </DialogActions>
     </Dialog>

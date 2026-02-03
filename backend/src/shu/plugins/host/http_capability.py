@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
 import urllib.parse
+from typing import Any
 
 from ...core.config import get_settings_instance
 from ...core.http_client import get_http_client
@@ -12,7 +12,7 @@ from .exceptions import EgressDenied, HttpRequestFailed
 logger = logging.getLogger(__name__)
 
 
-def _is_allowed_url(url: str, allowlist: Optional[List[str]]) -> bool:
+def _is_allowed_url(url: str, allowlist: list[str] | None) -> bool:
     if not allowlist:
         return True
     try:
@@ -37,11 +37,11 @@ class HttpCapability(ImmutableCapabilityMixin):
     plugins from mutating _plugin_name or _user_id to bypass audit logging or allowlist checks.
     """
 
-    __slots__ = ("_plugin_name", "_user_id", "_allowlist", "_default_timeout")
+    __slots__ = ("_allowlist", "_default_timeout", "_plugin_name", "_user_id")
 
     _plugin_name: str
     _user_id: str
-    _allowlist: Optional[List[str]]
+    _allowlist: list[str] | None
     _default_timeout: float
 
     def __init__(self, *, plugin_name: str, user_id: str):
@@ -52,9 +52,12 @@ class HttpCapability(ImmutableCapabilityMixin):
         object.__setattr__(self, "_allowlist", getattr(s, "http_egress_allowlist", None))
         object.__setattr__(self, "_default_timeout", float(getattr(s, "http_default_timeout", 30.0)))
 
-    async def fetch(self, method: str, url: str, **kwargs) -> Dict[str, Any]:
+    async def fetch(self, method: str, url: str, **kwargs) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
-            logger.warning("Egress denied by allowlist", extra={"plugin": self._plugin_name, "user_id": self._user_id, "url": url})
+            logger.warning(
+                "Egress denied by allowlist",
+                extra={"plugin": self._plugin_name, "user_id": self._user_id, "url": url},
+            )
             raise EgressDenied(f"URL not allowed by policy: {url}")
         timeout = kwargs.pop("timeout", self._default_timeout)
         headers = kwargs.pop("headers", {}) or {}
@@ -75,13 +78,24 @@ class HttpCapability(ImmutableCapabilityMixin):
             auth = headers.get("Authorization")
             if isinstance(auth, str) and auth.startswith("Bearer "):
                 import hashlib
+
                 auth_hash = hashlib.sha256(auth.split(" ", 1)[1].encode("utf-8")).hexdigest()[:10]
         except Exception:
             auth_hash = None
         # Audit before call
-        logger.info("host.http.fetch", extra={"plugin": self._plugin_name, "user_id": self._user_id, "method": method, "url": log_url, "auth_bearer_hash": auth_hash})
+        logger.info(
+            "host.http.fetch",
+            extra={
+                "plugin": self._plugin_name,
+                "user_id": self._user_id,
+                "method": method,
+                "url": log_url,
+                "auth_bearer_hash": auth_hash,
+            },
+        )
         client = await get_http_client()
         import httpx
+
         resp: httpx.Response = await client.request(method.upper(), url, timeout=timeout, **kwargs)
         content_type = resp.headers.get("content-type", "")
         body: Any
@@ -94,32 +108,61 @@ class HttpCapability(ImmutableCapabilityMixin):
         if status >= 400:
             # Centralize provider HTTP error handling so plugins don't have to
             try:
-                logger.warning("host.http error", extra={"plugin": self._plugin_name, "user_id": self._user_id, "method": method, "url": url, "status": status})
+                logger.warning(
+                    "host.http error",
+                    extra={
+                        "plugin": self._plugin_name,
+                        "user_id": self._user_id,
+                        "method": method,
+                        "url": url,
+                        "status": status,
+                    },
+                )
             except Exception:
                 pass
             raise HttpRequestFailed(status, url, body=body, headers=result["headers"])
         return result
 
-    async def fetch_bytes(self, method: str, url: str, **kwargs) -> Dict[str, Any]:
+    async def fetch_bytes(self, method: str, url: str, **kwargs) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
-            logger.warning("Egress denied by allowlist", extra={"plugin": self._plugin_name, "user_id": self._user_id, "url": url})
+            logger.warning(
+                "Egress denied by allowlist",
+                extra={"plugin": self._plugin_name, "user_id": self._user_id, "url": url},
+            )
             raise EgressDenied(f"URL not allowed by policy: {url}")
         timeout = kwargs.pop("timeout", self._default_timeout)
         headers = kwargs.pop("headers", {}) or {}
         headers.setdefault("User-Agent", f"Shu-Tool/{self._plugin_name}")
         headers.setdefault("X-Shu-User", self._user_id)
         kwargs["headers"] = headers
-        logger.info("host.http.fetch_bytes", extra={"plugin": self._plugin_name, "user_id": self._user_id, "method": method, "url": url})
+        logger.info(
+            "host.http.fetch_bytes",
+            extra={
+                "plugin": self._plugin_name,
+                "user_id": self._user_id,
+                "method": method,
+                "url": url,
+            },
+        )
         client = await get_http_client()
         import httpx
+
         resp: httpx.Response = await client.request(method.upper(), url, timeout=timeout, **kwargs)
         status = int(resp.status_code)
         result = {"status_code": status, "headers": dict(resp.headers), "content": resp.content}
         if status >= 400:
             try:
-                logger.warning("host.http error (bytes)", extra={"plugin": self._plugin_name, "user_id": self._user_id, "method": method, "url": url, "status": status})
+                logger.warning(
+                    "host.http error (bytes)",
+                    extra={
+                        "plugin": self._plugin_name,
+                        "user_id": self._user_id,
+                        "method": method,
+                        "url": url,
+                        "status": status,
+                    },
+                )
             except Exception:
                 pass
             raise HttpRequestFailed(status, url, body=None, headers=result["headers"])
         return result
-

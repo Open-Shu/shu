@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getMessagesFromCache, rebuildCache } from "../utils/chatCache";
 
 const useSideBySideManager = ({
   variantGroups,
@@ -17,9 +17,9 @@ const useSideBySideManager = ({
 
   const debug = useCallback((event, payload = {}) => {
     try {
-      if (localStorage.getItem('chat_debug') === 'sidebyside') {
+      if (localStorage.getItem("chat_debug") === "sidebyside") {
         // eslint-disable-next-line no-console
-        console.debug('[SideBySide]', event, payload);
+        console.debug("[SideBySide]", event, payload);
       }
     } catch (_) {
       /* no-op */
@@ -40,9 +40,12 @@ const useSideBySideManager = ({
 
   const regeneratingParentIds = useMemo(() => {
     const ids = new Set();
-    if (regenerationRequests && typeof regenerationRequests.forEach === 'function') {
+    if (
+      regenerationRequests &&
+      typeof regenerationRequests.forEach === "function"
+    ) {
       regenerationRequests.forEach((entry) => {
-        if (entry?.parentId && entry?.status === 'pending') {
+        if (entry?.parentId && entry?.status === "pending") {
           ids.add(entry.parentId);
         }
       });
@@ -72,7 +75,7 @@ const useSideBySideManager = ({
           }
           delete next[parentId];
           updated = true;
-          debug('removed_parent', { parentId });
+          debug("removed_parent", { parentId });
         }
       });
 
@@ -83,26 +86,29 @@ const useSideBySideManager = ({
           regeneratingParentIds.has(parentId) ||
           regenerationBlockRef.current.has(parentId)
         ) {
-          debug('skip_auto_enable', {
+          debug("skip_auto_enable", {
             parentId,
             reason: !validParents.has(parentId)
-              ? 'invalid_parent'
+              ? "invalid_parent"
               : regeneratingParentIds.has(parentId)
-              ? 'regenerating'
-              : 'regen_block',
+                ? "regenerating"
+                : "regen_block",
           });
           return;
         }
         const variantsForParent = groups[parentId];
-        if (!Array.isArray(variantsForParent) || variantsForParent.length <= 1) {
-          debug('skip_auto_enable', { parentId, reason: 'single_variant' });
+        if (
+          !Array.isArray(variantsForParent) ||
+          variantsForParent.length <= 1
+        ) {
+          debug("skip_auto_enable", { parentId, reason: "single_variant" });
           return;
         }
         if (!next[parentId]) {
           next[parentId] = true;
           autoParents.add(parentId);
           updated = true;
-          debug('auto_enable_stream', { parentId });
+          debug("auto_enable_stream", { parentId });
         }
       });
 
@@ -118,7 +124,7 @@ const useSideBySideManager = ({
     const parentId = pending.parentId;
     const group = variantGroups?.[parentId];
     if (!Array.isArray(group) || group.length <= 1) {
-      debug('pending_auto_skipped', {
+      debug("pending_auto_skipped", {
         parentId,
         groupSize: Array.isArray(group) ? group.length : 0,
       });
@@ -129,36 +135,40 @@ const useSideBySideManager = ({
       if (prev[parentId]) {
         return prev;
       }
-      debug('pending_auto_enable', { parentId });
+      debug("pending_auto_enable", { parentId });
       return { ...prev, [parentId]: true };
     });
   }, [variantGroups, selectedConversationId, debug]);
 
   const toggleSideBySide = useCallback(
     (parentId) => {
-      if (!parentId) return;
+      if (!parentId) {
+        return;
+      }
       autoSideBySideParentsRef.current.delete(parentId);
       setSideBySideMode((prev) => {
         const nextValue = !prev[parentId];
-        debug('manual_toggle', { parentId, value: nextValue });
+        debug("manual_toggle", { parentId, value: nextValue });
         return { ...prev, [parentId]: nextValue };
       });
     },
-    [debug]
+    [debug],
   );
 
   const collapseSideBySideParent = useCallback(
     (parentId) => {
-      if (!parentId) return;
+      if (!parentId) {
+        return;
+      }
       setSideBySideMode((prev) => {
         if (!prev || prev[parentId] === false) {
           return prev;
         }
-        debug('collapse_parent', { parentId });
+        debug("collapse_parent", { parentId });
         return { ...prev, [parentId]: false };
       });
     },
-    [debug]
+    [debug],
   );
 
   const replaceSideBySideParent = useCallback(
@@ -174,11 +184,11 @@ const useSideBySideManager = ({
         const next = { ...prev };
         delete next[oldId];
         next[newId] = value;
-        debug('replace_parent', { oldId, newId, value });
+        debug("replace_parent", { oldId, newId, value });
         return next;
       });
     },
-    [debug]
+    [debug],
   );
 
   const registerRegenerationStart = useCallback(
@@ -189,9 +199,9 @@ const useSideBySideManager = ({
       regenerationBlockRef.current.add(parentId);
       regenerationParentMapRef.current.set(messageId, parentId);
       autoSideBySideParentsRef.current.delete(parentId);
-      debug('regen_block_start', { parentId });
+      debug("regen_block_start", { parentId });
     },
-    [debug]
+    [debug],
   );
 
   const registerRegenerationComplete = useCallback(
@@ -204,16 +214,17 @@ const useSideBySideManager = ({
       const requests = regenerationRequestsRef.current;
       const stillPending =
         requests &&
-        typeof requests.forEach === 'function' &&
+        typeof requests.forEach === "function" &&
         Array.from(requests.values()).some(
-          (entry) => entry?.parentId === parentId && entry?.status === 'pending'
+          (entry) =>
+            entry?.parentId === parentId && entry?.status === "pending",
         );
       if (!stillPending) {
         regenerationBlockRef.current.delete(parentId);
-        debug('regen_block_end', { parentId });
+        debug("regen_block_end", { parentId });
       }
     },
-    [debug]
+    [debug],
   );
 
   const handleToggleReasoning = useCallback(
@@ -221,15 +232,20 @@ const useSideBySideManager = ({
       if (!selectedConversationId) {
         return;
       }
-      queryClient.setQueryData(['conversation-messages', selectedConversationId], (oldData) => {
-        const existing = getMessagesFromCache(oldData);
-        const updated = existing.map((msg) =>
-          msg.id === messageId ? { ...msg, reasoning_collapsed: collapsed } : msg
-        );
-        return rebuildCache(oldData, updated);
-      });
+      queryClient.setQueryData(
+        ["conversation-messages", selectedConversationId],
+        (oldData) => {
+          const existing = getMessagesFromCache(oldData);
+          const updated = existing.map((msg) =>
+            msg.id === messageId
+              ? { ...msg, reasoning_collapsed: collapsed }
+              : msg,
+          );
+          return rebuildCache(oldData, updated);
+        },
+      );
     },
-    [queryClient, selectedConversationId]
+    [queryClient, selectedConversationId],
   );
 
   const sideBySideParents = useMemo(
@@ -237,9 +253,9 @@ const useSideBySideManager = ({
       new Set(
         Object.entries(sideBySideMode)
           .filter(([, enabled]) => Boolean(enabled))
-          .map(([parentId]) => parentId)
+          .map(([parentId]) => parentId),
       ),
-    [sideBySideMode]
+    [sideBySideMode],
   );
 
   return {

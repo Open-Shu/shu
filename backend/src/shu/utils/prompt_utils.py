@@ -1,17 +1,14 @@
-"""
-Prompt utility functions for Shu.
+"""Prompt utility functions for Shu.
 
 This module provides utilities for processing and cleaning prompts,
 including handling reference/citation conflicts between prompts and KB settings.
 """
 
 import re
-from typing import Optional
 
 
 def has_citation_instructions(prompt_content: str) -> bool:
-    """
-    Detect if prompt content contains citation or reference instructions.
+    """Detect if prompt content contains citation or reference instructions.
 
     This function identifies prompts that include their own citation handling,
     which should disable system-level reference generation to avoid duplication.
@@ -21,6 +18,7 @@ def has_citation_instructions(prompt_content: str) -> bool:
 
     Returns:
         True if citation instructions are detected
+
     """
     if not prompt_content:
         return False
@@ -28,27 +26,23 @@ def has_citation_instructions(prompt_content: str) -> bool:
     # Patterns that indicate the prompt handles its own citations
     citation_patterns = [
         # Direct citation instructions
-        r'[Ii]nclude\s+relevant\s+citations?\s*(?:and\s+(?:source\s+)?references?)?\s*(?:in\s+your\s+response)?\.?',
-        r'[Ii]nclude\s+(?:source\s+)?references?\s*(?:and\s+citations?)?\s*(?:in\s+your\s+response)?\.?',
-        r'[Cc]ite\s+(?:your\s+)?sources?\s*(?:appropriately|properly|when\s+available)?\.?',
-        r'[Pp]rovide\s+(?:relevant\s+)?(?:citations?|references?)\s*(?:and\s+(?:sources?|references?))?\.?',
-        r'[Mm]aintain\s+academic\s+rigor\s*(?:and\s+include\s+citations?)?\.?',
-
+        r"[Ii]nclude\s+relevant\s+citations?\s*(?:and\s+(?:source\s+)?references?)?\s*(?:in\s+your\s+response)?\.?",
+        r"[Ii]nclude\s+(?:source\s+)?references?\s*(?:and\s+citations?)?\s*(?:in\s+your\s+response)?\.?",
+        r"[Cc]ite\s+(?:your\s+)?sources?\s*(?:appropriately|properly|when\s+available)?\.?",
+        r"[Pp]rovide\s+(?:relevant\s+)?(?:citations?|references?)\s*(?:and\s+(?:sources?|references?))?\.?",
+        r"[Mm]aintain\s+academic\s+rigor\s*(?:and\s+include\s+citations?)?\.?",
         # Reference section instructions
         r'[Aa]fter\s+your\s+(?:main\s+)?response,?\s*(?:you\s+)?(?:MUST\s+)?include\s+a?\s*"?[Rr]eferences?"?\s+section\.?',
-        r'[Ee]nd\s+your\s+response\s+with\s+(?:a\s+)?(?:list\s+of\s+)?(?:sources?|references?)\.?',
-
+        r"[Ee]nd\s+your\s+response\s+with\s+(?:a\s+)?(?:list\s+of\s+)?(?:sources?|references?)\.?",
         # Source attribution instructions
-        r'[Aa]ttribute\s+(?:all\s+)?(?:information\s+)?to\s+(?:its\s+)?sources?\.?',
-        r'[Aa]lways\s+(?:cite|reference)\s+(?:your\s+)?sources?\.?',
-
+        r"[Aa]ttribute\s+(?:all\s+)?(?:information\s+)?to\s+(?:its\s+)?sources?\.?",
+        r"[Aa]lways\s+(?:cite|reference)\s+(?:your\s+)?sources?\.?",
         # Academic-style citation instructions
-        r'[Uu]se\s+(?:proper\s+)?(?:academic\s+)?citation\s+format\.?',
-        r'[Ff]ollow\s+(?:standard\s+)?citation\s+(?:guidelines|practices)\.?',
-
+        r"[Uu]se\s+(?:proper\s+)?(?:academic\s+)?citation\s+format\.?",
+        r"[Ff]ollow\s+(?:standard\s+)?citation\s+(?:guidelines|practices)\.?",
         # Numbered reference patterns
-        r'\[\d+\]|\(\d+\)',  # [1] or (1) style references
-        r'references?\s*:\s*$',  # "References:" at end of prompt
+        r"\[\d+\]|\(\d+\)",  # [1] or (1) style references
+        r"references?\s*:\s*$",  # "References:" at end of prompt
     ]
 
     # Check each pattern
@@ -60,24 +54,20 @@ def has_citation_instructions(prompt_content: str) -> bool:
 
 
 def should_disable_system_references(prompt_content: str) -> bool:
-    """
-    Determine if system references should be disabled due to prompt-level citation handling.
+    """Determine if system references should be disabled due to prompt-level citation handling.
 
     Args:
         prompt_content: The prompt content to check
 
     Returns:
         True if system references should be disabled
+
     """
     return has_citation_instructions(prompt_content)
 
 
-def get_effective_reference_setting(
-    kb_include_references: bool,
-    prompt_content: str
-) -> tuple[bool, str]:
-    """
-    Determine the effective reference setting considering both KB config and prompt content.
+def get_effective_reference_setting(kb_include_references: bool, prompt_content: str) -> tuple[bool, str]:
+    """Determine the effective reference setting considering both KB config and prompt content.
 
     Args:
         kb_include_references: Whether KB is configured to include references
@@ -85,6 +75,7 @@ def get_effective_reference_setting(
 
     Returns:
         Tuple of (should_include_system_references, reason)
+
     """
     if not prompt_content:
         return kb_include_references, "default"
@@ -96,8 +87,7 @@ def get_effective_reference_setting(
 
 
 def analyze_response_references(response_content: str, available_sources: list = None) -> dict:
-    """
-    Analyze an LLM response to detect existing references and citation patterns.
+    """Analyze an LLM response to detect existing references and citation patterns.
 
     Args:
         response_content: The LLM response content to analyze
@@ -109,13 +99,14 @@ def analyze_response_references(response_content: str, available_sources: list =
         - cited_sources: List of sources mentioned in the response
         - citation_patterns: Types of citation patterns found
         - reference_section_indicators: List of potential reference section headers found
+
     """
     if not response_content:
         return {
             "has_source_citations": False,
             "cited_sources": [],
             "citation_patterns": [],
-            "reference_section_indicators": []
+            "reference_section_indicators": [],
         }
 
     cited_sources = []
@@ -124,15 +115,15 @@ def analyze_response_references(response_content: str, available_sources: list =
 
     # Look for various reference section headers (simplified patterns)
     reference_headers = [
-        r'References\s*:',
-        r'Sources\s*:',
-        r'Resources\s*:',
-        r'Bibliography\s*:',
-        r'Further Reading\s*:',
-        r'Additional Documents\s*:',
-        r'See Also\s*:',
-        r'Related Materials\s*:',
-        r'Supporting Documents\s*:',
+        r"References\s*:",
+        r"Sources\s*:",
+        r"Resources\s*:",
+        r"Bibliography\s*:",
+        r"Further Reading\s*:",
+        r"Additional Documents\s*:",
+        r"See Also\s*:",
+        r"Related Materials\s*:",
+        r"Supporting Documents\s*:",
     ]
 
     for header_pattern in reference_headers:
@@ -169,8 +160,8 @@ def analyze_response_references(response_content: str, available_sources: list =
 
             # Check for filename match (extract filename from title or URL)
             filename_patterns = [
-                r'([^/\\]+\.(?:md|py|js|pdf|docx?|txt|html?|xlsx?|pptx?))',  # File extensions incl. md/py/js
-                r'([A-Z][A-Za-z0-9_\-\s]+\.(?:md|py|js|pdf|docx?|txt|html?|xlsx?|pptx?))',  # Capitalized filenames incl. md/py/js
+                r"([^/\\]+\.(?:md|py|js|pdf|docx?|txt|html?|xlsx?|pptx?))",  # File extensions incl. md/py/js
+                r"([A-Z][A-Za-z0-9_\-\s]+\.(?:md|py|js|pdf|docx?|txt|html?|xlsx?|pptx?))",  # Capitalized filenames incl. md/py/js
             ]
 
             for pattern in filename_patterns:
@@ -181,36 +172,33 @@ def analyze_response_references(response_content: str, available_sources: list =
                         break
 
     # Look for citation patterns in the text
-    if re.search(r'\[\d+\]', response_content):
+    if re.search(r"\[\d+\]", response_content):
         citation_patterns.append("numbered_brackets")
-    if re.search(r'\(\d+\)', response_content):
+    if re.search(r"\(\d+\)", response_content):
         citation_patterns.append("numbered_parentheses")
-    if re.search(r'according to|as stated in|from|source:|based on', response_content, re.IGNORECASE):
+    if re.search(r"according to|as stated in|from|source:|based on", response_content, re.IGNORECASE):
         citation_patterns.append("inline_mentions")
 
     # Look for markdown links
-    if re.search(r'\[([^\]]+)\]\([^)]+\)', response_content):
+    if re.search(r"\[([^\]]+)\]\([^)]+\)", response_content):
         citation_patterns.append("markdown_links")
 
     # Look for bullet/numbered lists that might contain references
-    if re.search(r'^\s*(?:[-*•]|\d+\.)\s*[A-Z]', response_content, re.MULTILINE):
+    if re.search(r"^\s*(?:[-*•]|\d+\.)\s*[A-Z]", response_content, re.MULTILINE):
         citation_patterns.append("list_format")
 
     return {
         "has_source_citations": len(cited_sources) > 0,
         "cited_sources": list(set(cited_sources)),  # Remove duplicates
         "citation_patterns": citation_patterns,
-        "reference_section_indicators": reference_section_indicators
+        "reference_section_indicators": reference_section_indicators,
     }
 
 
 def should_add_system_references(
-    response_content: str,
-    available_sources: list,
-    kb_include_references: bool = True
+    response_content: str, available_sources: list, kb_include_references: bool = True
 ) -> tuple[bool, str, list]:
-    """
-    Determine if system references should be added to a response based on robust content analysis.
+    """Determine if system references should be added to a response based on robust content analysis.
 
     Args:
         response_content: The LLM response content
@@ -219,6 +207,7 @@ def should_add_system_references(
 
     Returns:
         Tuple of (should_add_references, reason, missing_sources)
+
     """
     if not kb_include_references:
         return False, "kb_disabled", []
@@ -251,8 +240,7 @@ def should_add_system_references(
 
         if missing_sources:
             return True, "missing_sources", missing_sources
-        else:
-            return False, "complete_citations", []
+        return False, "complete_citations", []
 
     # If response has citation patterns but no actual source citations, add system references
     if analysis["citation_patterns"] and not analysis["has_source_citations"]:
@@ -265,12 +253,8 @@ def should_add_system_references(
     return False, "citations_present", []
 
 
-def get_citation_conflict_info(
-    prompt_content: str,
-    kb_include_references: bool
-) -> Optional[dict]:
-    """
-    Get information about citation conflicts and recommendations.
+def get_citation_conflict_info(prompt_content: str, kb_include_references: bool) -> dict | None:
+    """Get information about citation conflicts and recommendations.
 
     Args:
         prompt_content: The prompt content to check
@@ -278,6 +262,7 @@ def get_citation_conflict_info(
 
     Returns:
         Dictionary with conflict info and recommendations, None if no conflict
+
     """
     if not prompt_content:
         return None
@@ -295,25 +280,25 @@ def get_citation_conflict_info(
                 "will be automatically disabled to prevent duplication. The prompt "
                 "will handle citations directly in the response."
             ),
-            "effective_setting": False
+            "effective_setting": False,
         }
-    elif prompt_has_citations:
+    if prompt_has_citations:
         return {
             "has_conflict": False,
             "prompt_has_citations": True,
             "kb_has_references": False,
             "recommendation": "keep_prompt_citations",
             "message": "This prompt handles citations directly.",
-            "effective_setting": False
+            "effective_setting": False,
         }
-    elif kb_include_references:
+    if kb_include_references:
         return {
             "has_conflict": False,
             "prompt_has_citations": False,
             "kb_has_references": True,
             "recommendation": "use_system_references",
             "message": "System references will be automatically added.",
-            "effective_setting": True
+            "effective_setting": True,
         }
 
     return None

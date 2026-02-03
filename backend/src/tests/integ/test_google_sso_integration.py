@@ -9,11 +9,11 @@ These tests verify Google SSO authentication workflows:
 - Inactive account handling
 """
 
-import sys
 import logging
+import sys
 import uuid
-from typing import List, Callable
-from unittest.mock import patch, AsyncMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock, patch
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
@@ -36,7 +36,7 @@ def _mock_google_adapter_exchange_code():
 
 def _mock_adapter_get_user_info(user_data: dict):
     """Create a mock for GoogleAuthAdapter.get_user_info.
-    
+
     Converts test data format to normalized provider info format.
     """
     mock = AsyncMock()
@@ -51,12 +51,12 @@ def _mock_adapter_get_user_info(user_data: dict):
     return mock
 
 
-async def _create_user_with_orm(db, email: str, name: str,
-                                 auth_method: str = "google", is_active: bool = True,
-                                 password_hash: str | None = None):
+async def _create_user_with_orm(
+    db, email: str, name: str, auth_method: str = "google", is_active: bool = True, password_hash: str | None = None
+):
     """Create a user using the ORM pattern (consistent with integration_test_runner.py)."""
     from shu.auth.models import User
-    
+
     user = User(
         email=email,
         name=name,
@@ -70,11 +70,12 @@ async def _create_user_with_orm(db, email: str, name: str,
     return user
 
 
-async def _create_provider_identity(db, user_id: str, provider_key: str, account_id: str,
-                                     primary_email: str, display_name: str):
+async def _create_provider_identity(
+    db, user_id: str, provider_key: str, account_id: str, primary_email: str, display_name: str
+):
     """Create a ProviderIdentity using the ORM pattern."""
     from shu.models.provider_identity import ProviderIdentity
-    
+
     identity = ProviderIdentity(
         user_id=user_id,
         provider_key=provider_key,
@@ -94,8 +95,9 @@ async def test_google_login_endpoint_returns_redirect(client, _db, _auth_headers
     # Should redirect to Google OAuth
     assert response.status_code in (302, 307), f"Expected redirect, got {response.status_code}"
     location = response.headers.get("location", "")
-    assert "accounts.google.com" in location or "google" in location.lower(), \
-        f"Expected Google OAuth URL, got: {location}"
+    assert (
+        "accounts.google.com" in location or "google" in location.lower()
+    ), f"Expected Google OAuth URL, got: {location}"
 
 
 async def test_google_exchange_login_new_user(client, _db, _auth_headers):
@@ -109,16 +111,17 @@ async def test_google_exchange_login_new_user(client, _db, _auth_headers):
         "picture": "https://example.com/photo.jpg",
     }
 
-    with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
-        with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()):
-            response = await client.post(
-                "/api/v1/auth/google/exchange-login",
-                json={"code": "mock_auth_code"}
-            )
+    with patch(
+        "shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)
+    ):
+        with patch(
+            "shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()
+        ):
+            response = await client.post("/api/v1/auth/google/exchange-login", json={"code": "mock_auth_code"})
 
     # New user should be created (may be inactive pending admin activation)
     assert response.status_code in (200, 201), f"Unexpected status: {response.status_code}, body: {response.text}"
-    
+
     if response.status_code == 200:
         data = extract_data(response)
         assert "access_token" in data, f"Missing access_token in response: {data}"
@@ -132,7 +135,7 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
     unique_id = uuid.uuid4().hex
     unique_email = f"test_google_existing_{unique_id}@example.com"
     google_id = f"test_google_existing_id_{unique_id}"
-    
+
     # Create user using ORM
     user = await _create_user_with_orm(
         db,
@@ -141,7 +144,7 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
         auth_method="google",
         is_active=True,
     )
-    
+
     # Create provider identity (the new way to store Google identities)
     await _create_provider_identity(
         db,
@@ -151,7 +154,7 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
         primary_email=unique_email,
         display_name="Test Existing Google User",
     )
-    
+
     mock_user = {
         "google_id": google_id,
         "email": unique_email,
@@ -159,12 +162,13 @@ async def test_google_exchange_login_existing_user_via_provider_identity(client,
         "picture": None,
     }
 
-    with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
-        with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()):
-            response = await client.post(
-                "/api/v1/auth/google/exchange-login",
-                json={"code": "mock_auth_code"}
-            )
+    with patch(
+        "shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)
+    ):
+        with patch(
+            "shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()
+        ):
+            response = await client.post("/api/v1/auth/google/exchange-login", json={"code": "mock_auth_code"})
 
     assert response.status_code == 200, f"Unexpected status: {response.status_code}, body: {response.text}"
     data = extract_data(response)
@@ -177,7 +181,7 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
     unique_id = uuid.uuid4().hex
     unique_email = f"test_google_link_{unique_id}@example.com"
     google_id = f"test_google_link_id_{unique_id}"
-    
+
     # Create existing Microsoft user using ORM
     user = await _create_user_with_orm(
         db,
@@ -186,7 +190,7 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
         auth_method="microsoft",
         is_active=True,
     )
-    
+
     # Create Microsoft provider identity for the user
     await _create_provider_identity(
         db,
@@ -196,7 +200,7 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
         primary_email=unique_email,
         display_name="Test Microsoft User",
     )
-    
+
     mock_user = {
         "google_id": google_id,
         "email": unique_email,
@@ -204,27 +208,26 @@ async def test_google_exchange_login_links_to_existing_microsoft_user(client, db
         "picture": None,
     }
 
-    with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
-        with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()):
-            response = await client.post(
-                "/api/v1/auth/google/exchange-login",
-                json={"code": "mock_auth_code"}
-            )
+    with patch(
+        "shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)
+    ):
+        with patch(
+            "shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()
+        ):
+            response = await client.post("/api/v1/auth/google/exchange-login", json={"code": "mock_auth_code"})
 
     assert response.status_code == 200, f"Unexpected status: {response.status_code}, body: {response.text}"
     data = extract_data(response)
     assert "access_token" in data
     assert data["user"]["email"] == unique_email
-    
+
     # Verify that a Google ProviderIdentity was created (identity linking)
     from sqlalchemy import select
+
     from shu.models.provider_identity import ProviderIdentity
-    
+
     result = await db.execute(
-        select(ProviderIdentity).where(
-            ProviderIdentity.user_id == user.id,
-            ProviderIdentity.provider_key == "google"
-        )
+        select(ProviderIdentity).where(ProviderIdentity.user_id == user.id, ProviderIdentity.provider_key == "google")
     )
     google_identity = result.scalar_one_or_none()
     assert google_identity is not None, "Google ProviderIdentity should be created for identity linking"
@@ -235,7 +238,7 @@ async def test_google_exchange_login_password_conflict(client, db, _auth_headers
     """Test Google SSO returns 409 when user exists with password auth."""
     unique_id = uuid.uuid4().hex
     unique_email = f"test_google_pwd_conflict_{unique_id}@example.com"
-    
+
     # Create existing password user using ORM
     await _create_user_with_orm(
         db,
@@ -245,7 +248,7 @@ async def test_google_exchange_login_password_conflict(client, db, _auth_headers
         is_active=True,
         password_hash="fake_hash",
     )
-    
+
     mock_user = {
         "google_id": f"test_google_pwd_{unique_id}",
         "email": unique_email,
@@ -255,12 +258,13 @@ async def test_google_exchange_login_password_conflict(client, db, _auth_headers
 
     logger.info("=== EXPECTED TEST OUTPUT: 409 conflict error for password auth user is expected ===")
 
-    with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
-        with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()):
-            response = await client.post(
-                "/api/v1/auth/google/exchange-login",
-                json={"code": "mock_auth_code"}
-            )
+    with patch(
+        "shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)
+    ):
+        with patch(
+            "shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()
+        ):
+            response = await client.post("/api/v1/auth/google/exchange-login", json={"code": "mock_auth_code"})
 
     assert response.status_code == 409, f"Expected 409, got {response.status_code}, body: {response.text}"
     logger.info("=== EXPECTED TEST OUTPUT: 409 conflict occurred as expected ===")
@@ -271,7 +275,7 @@ async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
     unique_id = uuid.uuid4().hex
     unique_email = f"test_google_inactive_{unique_id}@example.com"
     google_id = f"test_google_inactive_id_{unique_id}"
-    
+
     # Create inactive user with Google identity using ORM
     user = await _create_user_with_orm(
         db,
@@ -280,7 +284,7 @@ async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
         auth_method="google",
         is_active=False,  # Inactive user
     )
-    
+
     # Create provider identity
     await _create_provider_identity(
         db,
@@ -290,7 +294,7 @@ async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
         primary_email=unique_email,
         display_name="Test Inactive Google User",
     )
-    
+
     mock_user = {
         "google_id": google_id,
         "email": unique_email,
@@ -300,12 +304,13 @@ async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
 
     logger.info("=== EXPECTED TEST OUTPUT: 400 error for inactive user is expected ===")
 
-    with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)):
-        with patch("shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()):
-            response = await client.post(
-                "/api/v1/auth/google/exchange-login",
-                json={"code": "mock_auth_code"}
-            )
+    with patch(
+        "shu.providers.google.auth_adapter.GoogleAuthAdapter.get_user_info", _mock_adapter_get_user_info(mock_user)
+    ):
+        with patch(
+            "shu.providers.google.auth_adapter.GoogleAuthAdapter.exchange_code", _mock_google_adapter_exchange_code()
+        ):
+            response = await client.post("/api/v1/auth/google/exchange-login", json={"code": "mock_auth_code"})
 
     assert response.status_code == 400, f"Expected 400, got {response.status_code}, body: {response.text}"
     logger.info("=== EXPECTED TEST OUTPUT: 400 error for inactive user occurred as expected ===")
@@ -314,11 +319,8 @@ async def test_google_exchange_login_inactive_user(client, db, _auth_headers):
 async def test_google_exchange_login_missing_code(client, _db, _auth_headers):
     """Test Google SSO returns 422 when code is missing."""
     logger.info("=== EXPECTED TEST OUTPUT: 422 validation error for missing code is expected ===")
-    
-    response = await client.post(
-        "/api/v1/auth/google/exchange-login",
-        json={}
-    )
+
+    response = await client.post("/api/v1/auth/google/exchange-login", json={})
 
     assert response.status_code == 422, f"Expected 422, got {response.status_code}, body: {response.text}"
     logger.info("=== EXPECTED TEST OUTPUT: 422 validation error occurred as expected ===")
@@ -326,8 +328,8 @@ async def test_google_exchange_login_missing_code(client, _db, _auth_headers):
 
 class GoogleSSOTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for Google SSO functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all Google SSO test functions."""
         return [
             test_google_login_endpoint_returns_redirect,
@@ -338,11 +340,11 @@ class GoogleSSOTestSuite(BaseIntegrationTestSuite):
             test_google_exchange_login_inactive_user,
             test_google_exchange_login_missing_code,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Google SSO Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "End-to-end integration tests for Google SSO authentication with ProviderIdentity [SHU-504]"

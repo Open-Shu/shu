@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   Grid,
   TextField,
@@ -13,12 +13,15 @@ import {
   Typography,
   Accordion,
   AccordionSummary,
-  AccordionDetails
-} from '@mui/material';
-import { InfoOutlined, ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
-import SecureTextField from '../SecureTextField';
-import NotImplemented from '../NotImplemented';
-import HelpTooltip from '../HelpTooltip';
+  AccordionDetails,
+} from "@mui/material";
+import {
+  InfoOutlined,
+  ExpandMore as ExpandMoreIcon,
+} from "@mui/icons-material";
+import SecureTextField from "../SecureTextField";
+import NotImplemented from "../NotImplemented";
+import HelpTooltip from "../HelpTooltip";
 
 /**
  * Shared form for Create/Edit LLM Provider dialogs.
@@ -44,13 +47,19 @@ const LLMProviderForm = ({
   const base = baseEndpoints || {};
   const caps = providerCapabilities || {};
   const effectiveCaps = (() => {
-    const fromProvider = provider.provider_capabilities && Object.keys(provider.provider_capabilities).length > 0
-      ? provider.provider_capabilities
-      : null;
-    if (fromProvider) return fromProvider;
+    const fromProvider =
+      provider.provider_capabilities &&
+      Object.keys(provider.provider_capabilities).length > 0
+        ? provider.provider_capabilities
+        : null;
+    if (fromProvider) {
+      return fromProvider;
+    }
 
     const fromCaps = Object.keys(caps).length > 0 ? caps : null;
-    if (fromCaps) return fromCaps;
+    if (fromCaps) {
+      return fromCaps;
+    }
 
     return {};
   })();
@@ -58,7 +67,10 @@ const LLMProviderForm = ({
   const getEffectiveEndpoint = (key) => {
     const b = base[key] || {};
     const o = (endpointsOverride || {})[key] || {};
-    return { ...(typeof b === 'object' ? b : {}), ...(typeof o === 'object' ? o : {}) };
+    return {
+      ...(typeof b === "object" ? b : {}),
+      ...(typeof o === "object" ? o : {}),
+    };
   };
 
   return (
@@ -68,7 +80,9 @@ const LLMProviderForm = ({
           fullWidth
           label="Provider Name"
           value={provider.name}
-          onChange={(e) => onProviderChange({ ...provider, name: e.target.value })}
+          onChange={(e) =>
+            onProviderChange({ ...provider, name: e.target.value })
+          }
           margin="normal"
         />
       </Grid>
@@ -92,10 +106,16 @@ const LLMProviderForm = ({
       <Grid item xs={12}>
         <SecureTextField
           label="API Key"
-          value={provider.api_key || ''}
-          onChange={(e) => onProviderChange({ ...provider, api_key: e.target.value })}
+          value={provider.api_key || ""}
+          onChange={(e) =>
+            onProviderChange({ ...provider, api_key: e.target.value })
+          }
           hasExistingValue={!!provider.has_api_key}
-          placeholder={provider.has_api_key ? 'Leave empty to keep existing key' : undefined}
+          placeholder={
+            provider.has_api_key
+              ? "Leave empty to keep existing key"
+              : undefined
+          }
           editPlaceholder="Enter API key"
         />
       </Grid>
@@ -104,8 +124,10 @@ const LLMProviderForm = ({
         <TextField
           fullWidth
           label="Organization ID (Optional)"
-          value={provider.organization_id || ''}
-          onChange={(e) => onProviderChange({ ...provider, organization_id: e.target.value })}
+          value={provider.organization_id || ""}
+          onChange={(e) =>
+            onProviderChange({ ...provider, organization_id: e.target.value })
+          }
           margin="normal"
         />
       </Grid>
@@ -114,8 +136,15 @@ const LLMProviderForm = ({
           fullWidth
           label="Monthly Budget Limit ($)"
           type="number"
-          value={provider.budget_limit_monthly ?? ''}
-          onChange={(e) => onProviderChange({ ...provider, budget_limit_monthly: e.target.value ? parseFloat(e.target.value) : null })}
+          value={provider.budget_limit_monthly ?? ""}
+          onChange={(e) =>
+            onProviderChange({
+              ...provider,
+              budget_limit_monthly: e.target.value
+                ? parseFloat(e.target.value)
+                : null,
+            })
+          }
           margin="normal"
         />
         <Box sx={{ mt: 0.5 }}>
@@ -125,13 +154,18 @@ const LLMProviderForm = ({
 
       <Grid item xs={12} sm={6}>
         <Box sx={{ mt: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <TextField
               fullWidth
               label="Rate Limit (RPM)"
               type="number"
               value={provider.rate_limit_rpm}
-              onChange={(e) => onProviderChange({ ...provider, rate_limit_rpm: parseInt(e.target.value || '0', 10) })}
+              onChange={(e) =>
+                onProviderChange({
+                  ...provider,
+                  rate_limit_rpm: parseInt(e.target.value || "0", 10),
+                })
+              }
               margin="normal"
               helperText="Requests per minute limit for this provider"
             />
@@ -142,13 +176,18 @@ const LLMProviderForm = ({
 
       <Grid item xs={12} sm={6}>
         <Box sx={{ mt: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <TextField
               fullWidth
               label="Token Rate Limit (TPM)"
               type="number"
               value={provider.rate_limit_tpm}
-              onChange={(e) => onProviderChange({ ...provider, rate_limit_tpm: parseInt(e.target.value || '0', 10) })}
+              onChange={(e) =>
+                onProviderChange({
+                  ...provider,
+                  rate_limit_tpm: parseInt(e.target.value || "0", 10),
+                })
+              }
               margin="normal"
               helperText="Tokens per minute limit for this provider"
             />
@@ -158,22 +197,27 @@ const LLMProviderForm = ({
       </Grid>
 
       {/* Endpoints configuration - Advanced options accordion */}
-      {(base && Object.keys(base).length > 0) && (
+      {base && Object.keys(base).length > 0 && (
         <Grid item xs={12}>
           <Accordion>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Typography variant="subtitle1">Advanced options</Typography>
             </AccordionSummary>
             <AccordionDetails>
-
               <Box sx={{ p: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}
+                >
                   <Typography variant="h6">Basic Provider Settings</Typography>
                   <Tooltip title="Defaults come from Provider Type Definition. Overrides here take precedence and are stored on the provider.">
                     <InfoOutlined fontSize="small" color="action" />
                   </Tooltip>
                 </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mb: 2 }}
+                >
                   Change the URL at which a provider can be called.
                 </Typography>
 
@@ -182,31 +226,61 @@ const LLMProviderForm = ({
                     fullWidth
                     label="API Endpoint"
                     value={provider.api_endpoint}
-                    onChange={(e) => onProviderChange({ ...provider, api_endpoint: e.target.value })}
+                    onChange={(e) =>
+                      onProviderChange({
+                        ...provider,
+                        api_endpoint: e.target.value,
+                      })
+                    }
                     margin="normal"
                   />
                 </Grid>
               </Box>
 
               <Box sx={{ p: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}
+                >
                   <Typography variant="h6">Endpoints</Typography>
                   <Tooltip title="Defaults come from Provider Type Definition. Overrides here take precedence and are stored on the provider.">
                     <InfoOutlined fontSize="small" color="action" />
                   </Tooltip>
                 </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  These fields change the way the provider is called. While most providers follow a standard format, some may require customizing these fields.
-                  We accept comma separated lists of JMESPath formats.
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mb: 2 }}
+                >
+                  These fields change the way the provider is called. While most
+                  providers follow a standard format, some may require
+                  customizing these fields. We accept comma separated lists of
+                  JMESPath formats.
                 </Typography>
 
                 {Object.keys(base).map((epKey) => {
                   const eff = getEffectiveEndpoint(epKey);
                   const b = base[epKey] || {};
                   const cur = (endpointsOverride || {})[epKey] || {};
-                  const qdStr = (() => { try { return eff.query_defaults ? JSON.stringify(eff.query_defaults) : ''; } catch { return ''; } })();
+                  const qdStr = (() => {
+                    try {
+                      return eff.query_defaults
+                        ? JSON.stringify(eff.query_defaults)
+                        : "";
+                    } catch {
+                      return "";
+                    }
+                  })();
                   return (
-                    <Box key={epKey} sx={{ mb: 2, p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                    <Box
+                      key={epKey}
+                      sx={{
+                        mb: 2,
+                        p: 1.5,
+                        border: "1px dashed",
+                        borderColor: "divider",
+                        borderRadius: 1,
+                      }}
+                    >
                       <Typography variant="subtitle1">
                         {eff.label || `API - ${epKey}`}
                       </Typography>
@@ -215,28 +289,57 @@ const LLMProviderForm = ({
                           <TextField
                             fullWidth
                             label="Path"
-                            value={cur.path !== undefined ? cur.path : (b.path || '')}
-                            onChange={(e) => onUpdateEndpointField(epKey, 'path', e.target.value)}
+                            value={
+                              cur.path !== undefined ? cur.path : b.path || ""
+                            }
+                            onChange={(e) =>
+                              onUpdateEndpointField(
+                                epKey,
+                                "path",
+                                e.target.value,
+                              )
+                            }
                             helperText="Relative path appended to provider base URL"
                             margin="dense"
                           />
                         </Grid>
                         {/* Dynamic options from definition/override */}
                         {(() => {
-                          const bOpts = (b.options && typeof b.options === 'object') ? b.options : {};
-                          const cOpts = (cur.options && typeof cur.options === 'object') ? cur.options : {};
-                          const keys = Array.from(new Set([...(Object.keys(bOpts)), ...(Object.keys(cOpts))])).sort();
-                          if (keys.length === 0) return null;
+                          const bOpts =
+                            b.options && typeof b.options === "object"
+                              ? b.options
+                              : {};
+                          const cOpts =
+                            cur.options && typeof cur.options === "object"
+                              ? cur.options
+                              : {};
+                          const keys = Array.from(
+                            new Set([
+                              ...Object.keys(bOpts),
+                              ...Object.keys(cOpts),
+                            ]),
+                          ).sort();
+                          if (keys.length === 0) {
+                            return null;
+                          }
                           return (
                             <>
                               <Grid item xs={12}>
-                                <Typography variant="subtitle2" sx={{ mt: 1 }}>Options</Typography>
+                                <Typography variant="subtitle2" sx={{ mt: 1 }}>
+                                  Options
+                                </Typography>
                               </Grid>
                               {keys.map((optKey) => {
                                 const baseOpt = bOpts[optKey] || {};
                                 const curOpt = cOpts[optKey] || {};
-                                const optLabel = curOpt.label || baseOpt.label || optKey;
-                                const optVal = curOpt.value !== undefined ? curOpt.value : baseOpt.value !== undefined ? baseOpt.value : '';
+                                const optLabel =
+                                  curOpt.label || baseOpt.label || optKey;
+                                const optVal =
+                                  curOpt.value !== undefined
+                                    ? curOpt.value
+                                    : baseOpt.value !== undefined
+                                      ? baseOpt.value
+                                      : "";
                                 return (
                                   <Grid item xs={12} md={6} key={optKey}>
                                     <TextField
@@ -245,9 +348,20 @@ const LLMProviderForm = ({
                                       value={optVal}
                                       onChange={(e) => {
                                         const value = e.target.value;
-                                        const nextOpt = { ...curOpt, value, label: optLabel };
-                                        const nextOpts = { ...cOpts, [optKey]: nextOpt };
-                                        onUpdateEndpointField(epKey, 'options', nextOpts);
+                                        const nextOpt = {
+                                          ...curOpt,
+                                          value,
+                                          label: optLabel,
+                                        };
+                                        const nextOpts = {
+                                          ...cOpts,
+                                          [optKey]: nextOpt,
+                                        };
+                                        onUpdateEndpointField(
+                                          epKey,
+                                          "options",
+                                          nextOpts,
+                                        );
                                       }}
                                       margin="dense"
                                     />
@@ -272,7 +386,9 @@ const LLMProviderForm = ({
           control={
             <Switch
               checked={!!provider.is_active}
-              onChange={(e) => onProviderChange({ ...provider, is_active: e.target.checked })}
+              onChange={(e) =>
+                onProviderChange({ ...provider, is_active: e.target.checked })
+              }
             />
           }
           label="Active"
@@ -291,7 +407,10 @@ const LLMProviderForm = ({
                       value: e.target.checked,
                     },
                   };
-                  onProviderChange({ ...provider, provider_capabilities: nextCaps });
+                  onProviderChange({
+                    ...provider,
+                    provider_capabilities: nextCaps,
+                  });
                 }}
               />
             }

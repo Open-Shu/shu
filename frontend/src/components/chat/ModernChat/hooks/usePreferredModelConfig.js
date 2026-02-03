@@ -1,20 +1,20 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from "react";
 
-const STORAGE_KEY = 'shu.chat.preferredModelConfig';
+const STORAGE_KEY = "shu.chat.preferredModelConfig";
 
 const readStoredPreference = () => {
-  if (typeof window === 'undefined') {
-    return '';
+  if (typeof window === "undefined") {
+    return "";
   }
   try {
-    return localStorage.getItem(STORAGE_KEY) || '';
+    return localStorage.getItem(STORAGE_KEY) || "";
   } catch (_) {
-    return '';
+    return "";
   }
 };
 
 const persistPreference = (value) => {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return;
   }
   try {
@@ -28,24 +28,26 @@ const persistPreference = (value) => {
   }
 };
 
-export default function usePreferredModelConfig(availableModelConfigs, selectedConversation) {
-  const [preferredModelConfig, setPreferredModelConfig] = useState(() => readStoredPreference());
+export default function usePreferredModelConfig(
+  availableModelConfigs,
+  selectedConversation,
+) {
+  const [preferredModelConfig, setPreferredModelConfig] = useState(() =>
+    readStoredPreference(),
+  );
 
   const availableIds = useMemo(
     () => new Set((availableModelConfigs || []).map((cfg) => cfg.id)),
-    [availableModelConfigs]
+    [availableModelConfigs],
   );
 
-  const selectPreferredModelConfig = useCallback(
-    (nextId) => {
-      setPreferredModelConfig(nextId || '');
-      persistPreference(nextId || '');
-    },
-    []
-  );
+  const selectPreferredModelConfig = useCallback((nextId) => {
+    setPreferredModelConfig(nextId || "");
+    persistPreference(nextId || "");
+  }, []);
 
   const resolveInitialModelConfig = useCallback(() => {
-    const selectedId = selectedConversation?.model_configuration_id || '';
+    const selectedId = selectedConversation?.model_configuration_id || "";
     if (selectedId && availableIds.has(selectedId)) {
       selectPreferredModelConfig(selectedId);
       return selectedId;
@@ -56,7 +58,7 @@ export default function usePreferredModelConfig(availableModelConfigs, selectedC
       return storedPreference;
     }
 
-    const fallbackId = availableModelConfigs?.[0]?.id || '';
+    const fallbackId = availableModelConfigs?.[0]?.id || "";
     if (fallbackId) {
       selectPreferredModelConfig(fallbackId);
     }

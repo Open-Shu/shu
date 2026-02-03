@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback } from "react";
 
 const initialRenameState = {
   open: false,
   conversation: null,
-  value: '',
+  value: "",
 };
 
 const initialDocumentPreview = {
@@ -17,9 +17,11 @@ const useChatUiState = () => {
   const [automationAnchorEl, setAutomationAnchorEl] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [renameDialog, setRenameDialog] = useState(initialRenameState);
-  const [renameError, setRenameError] = useState('');
+  const [renameError, setRenameError] = useState("");
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [documentPreview, setDocumentPreview] = useState(initialDocumentPreview);
+  const [documentPreview, setDocumentPreview] = useState(
+    initialDocumentPreview,
+  );
 
   const openSummaryMenu = useCallback((anchorEl) => {
     setSummaryAnchorEl(anchorEl || null);
@@ -49,25 +51,28 @@ const useChatUiState = () => {
     setRenameDialog({
       open: true,
       conversation,
-      value: conversation?.title || '',
+      value: conversation?.title || "",
     });
-    setRenameError('');
+    setRenameError("");
   }, []);
 
   const closeRenameDialog = useCallback(() => {
     setRenameDialog(initialRenameState);
-    setRenameError('');
+    setRenameError("");
   }, []);
 
-  const updateRenameValue = useCallback((value) => {
-    setRenameDialog((prev) => ({
-      ...prev,
-      value,
-    }));
-    if (renameError) {
-      setRenameError('');
-    }
-  }, [renameError]);
+  const updateRenameValue = useCallback(
+    (value) => {
+      setRenameDialog((prev) => ({
+        ...prev,
+        value,
+      }));
+      if (renameError) {
+        setRenameError("");
+      }
+    },
+    [renameError],
+  );
 
   const openSettingsDialog = useCallback(() => {
     setSettingsDialogOpen(true);

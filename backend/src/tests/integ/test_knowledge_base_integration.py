@@ -5,19 +5,16 @@ These tests cover knowledge base CRUD operations, document management,
 and the complete knowledge base lifecycle.
 """
 
-import sys
-import os
 import logging
-from typing import List, Callable
+import sys
+from collections.abc import Callable
+
+from sqlalchemy import text
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.expected_error_context import (
-    expect_authentication_errors,
-    expect_validation_errors,
     expect_duplicate_errors,
-    ExpectedErrorContext
 )
-from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +56,7 @@ async def test_list_knowledge_bases_structure(client, db, auth_headers):
 async def test_create_knowledge_base_success(client, db, auth_headers):
     """Test successful knowledge base creation."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     kb_data = {
@@ -67,12 +65,10 @@ async def test_create_knowledge_base_success(client, db, auth_headers):
         "sync_enabled": True,
         "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
         "chunk_size": 1000,
-        "chunk_overlap": 200
+        "chunk_overlap": 200,
     }
 
-    response = await client.post("/api/v1/knowledge-bases",
-                                json=kb_data,
-                                headers=auth_headers)
+    response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert response.status_code == 201
 
     response_data = response.json()
@@ -89,8 +85,7 @@ async def test_create_knowledge_base_success(client, db, auth_headers):
     assert "status" in data
 
     # Verify in database
-    result = await db.execute(text("SELECT * FROM knowledge_bases WHERE id = :id"),
-                             {"id": data["id"]})
+    result = await db.execute(text("SELECT * FROM knowledge_bases WHERE id = :id"), {"id": data["id"]})
     kb_record = result.fetchone()
     assert kb_record is not None
     assert kb_record.name == kb_data["name"]
@@ -99,24 +94,22 @@ async def test_create_knowledge_base_success(client, db, auth_headers):
 async def test_get_knowledge_base_by_id(client, db, auth_headers):
     """Test retrieving a knowledge base by ID."""
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     # First create a knowledge base
     kb_data = {
         "name": f"Test KB for Retrieval {unique_id}",
         "description": "Testing retrieval functionality",
-        "sync_enabled": True
+        "sync_enabled": True,
     }
 
-    create_response = await client.post("/api/v1/knowledge-bases",
-                                       json=kb_data,
-                                       headers=auth_headers)
+    create_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert create_response.status_code == 201
     kb_id = create_response.json()["data"]["id"]
 
     # Now retrieve it
-    response = await client.get(f"/api/v1/knowledge-bases/{kb_id}",
-                               headers=auth_headers)
+    response = await client.get(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
     assert response.status_code == 200
 
     response_data = response.json()
@@ -135,12 +128,10 @@ async def test_update_knowledge_base(client, db, auth_headers):
         "name": "Original Test KB Name",
         "description": "Original description",
         "sync_enabled": True,
-        "chunk_size": 1000
+        "chunk_size": 1000,
     }
 
-    create_response = await client.post("/api/v1/knowledge-bases",
-                                       json=kb_data,
-                                       headers=auth_headers)
+    create_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert create_response.status_code == 201
     kb_id = create_response.json()["data"]["id"]
 
@@ -149,12 +140,10 @@ async def test_update_knowledge_base(client, db, auth_headers):
         "name": "Updated Test KB Name",
         "description": "Updated description",
         "sync_enabled": False,
-        "chunk_size": 1500
+        "chunk_size": 1500,
     }
 
-    response = await client.put(f"/api/v1/knowledge-bases/{kb_id}",
-                               json=update_data,
-                               headers=auth_headers)
+    response = await client.put(f"/api/v1/knowledge-bases/{kb_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200
 
     response_data = response.json()
@@ -166,8 +155,7 @@ async def test_update_knowledge_base(client, db, auth_headers):
     assert data["chunk_size"] == update_data["chunk_size"]
 
     # Verify in database
-    result = await db.execute(text("SELECT * FROM knowledge_bases WHERE id = :id"),
-                             {"id": kb_id})
+    result = await db.execute(text("SELECT * FROM knowledge_bases WHERE id = :id"), {"id": kb_id})
     kb_record = result.fetchone()
     assert kb_record.name == update_data["name"]
 
@@ -175,32 +163,23 @@ async def test_update_knowledge_base(client, db, auth_headers):
 async def test_delete_knowledge_base(client, db, auth_headers):
     """Test deleting a knowledge base."""
     # Create a knowledge base
-    kb_data = {
-        "name": "KB to Delete",
-        "description": "This will be deleted",
-        "sync_enabled": True
-    }
+    kb_data = {"name": "KB to Delete", "description": "This will be deleted", "sync_enabled": True}
 
-    create_response = await client.post("/api/v1/knowledge-bases",
-                                       json=kb_data,
-                                       headers=auth_headers)
+    create_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert create_response.status_code == 201
     kb_id = create_response.json()["data"]["id"]
 
     # Delete it
-    response = await client.delete(f"/api/v1/knowledge-bases/{kb_id}",
-                                  headers=auth_headers)
+    response = await client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
     assert response.status_code == 204
 
     # Verify it's gone from database
-    result = await db.execute(text("SELECT * FROM knowledge_bases WHERE id = :id"),
-                             {"id": kb_id})
+    result = await db.execute(text("SELECT * FROM knowledge_bases WHERE id = :id"), {"id": kb_id})
     kb_record = result.fetchone()
     assert kb_record is None
 
     # Verify 404 on subsequent GET
-    get_response = await client.get(f"/api/v1/knowledge-bases/{kb_id}",
-                                   headers=auth_headers)
+    get_response = await client.get(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
     assert get_response.status_code == 404
 
 
@@ -209,18 +188,17 @@ async def test_create_knowledge_base_duplicate_name(client, db, auth_headers):
     logger.info("=== EXPECTED TEST OUTPUT: Testing duplicate knowledge base name handling ===")
 
     import uuid
+
     unique_id = str(uuid.uuid4())[:8]
 
     kb_data = {
         "name": f"Duplicate Name Test {unique_id}",
         "description": "First KB with this name",
-        "sync_enabled": True
+        "sync_enabled": True,
     }
 
     # Create first KB
-    response1 = await client.post("/api/v1/knowledge-bases",
-                                 json=kb_data,
-                                 headers=auth_headers)
+    response1 = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert response1.status_code == 201
 
     with expect_duplicate_errors():
@@ -228,12 +206,10 @@ async def test_create_knowledge_base_duplicate_name(client, db, auth_headers):
         kb_data2 = {
             "name": f"Duplicate Name Test {unique_id}",
             "description": "Second KB with same name",
-            "sync_enabled": False
+            "sync_enabled": False,
         }
 
-        response2 = await client.post("/api/v1/knowledge-bases",
-                                     json=kb_data2,
-                                     headers=auth_headers)
+        response2 = await client.post("/api/v1/knowledge-bases", json=kb_data2, headers=auth_headers)
         # Should fail since duplicate names aren't allowed
         assert response2.status_code in [400, 500]  # Accept either 400 or 500 for duplicate names
 
@@ -252,10 +228,11 @@ async def test_create_knowledge_base_invalid_data(client, db, auth_headers):
     ]
 
     for i, invalid_data in enumerate(invalid_data_sets):
-        response = await client.post("/api/v1/knowledge-bases",
-                                    json=invalid_data,
-                                    headers=auth_headers)
-        assert response.status_code in [400, 422], f"Invalid data should be rejected: {invalid_data}"
+        response = await client.post("/api/v1/knowledge-bases", json=invalid_data, headers=auth_headers)
+        assert response.status_code in [
+            400,
+            422,
+        ], f"Invalid data should be rejected: {invalid_data}"
         logger.info(f"=== EXPECTED TEST OUTPUT: Validation error {i+1}/4 for invalid data occurred as expected ===")
 
 
@@ -268,8 +245,7 @@ async def test_unauthorized_access(client, db, auth_headers):
     assert response.status_code == 401
     logger.info("=== EXPECTED TEST OUTPUT: 401 error for unauthenticated GET occurred as expected ===")
 
-    response = await client.post("/api/v1/knowledge-bases",
-                                json={"name": "Test", "access_level": "RESEARCH"})
+    response = await client.post("/api/v1/knowledge-bases", json={"name": "Test", "access_level": "RESEARCH"})
     assert response.status_code == 401
     logger.info("=== EXPECTED TEST OUTPUT: 401 error for unauthenticated POST occurred as expected ===")
 
@@ -278,7 +254,7 @@ async def test_knowledge_base_embedding_models(client, db, auth_headers):
     """Test different embedding models for knowledge bases."""
     embedding_models = [
         "sentence-transformers/all-MiniLM-L6-v2",
-        "sentence-transformers/all-mpnet-base-v2"
+        "sentence-transformers/all-mpnet-base-v2",
     ]
 
     for model in embedding_models:
@@ -286,12 +262,10 @@ async def test_knowledge_base_embedding_models(client, db, auth_headers):
             "name": f"Test KB {model.split('/')[-1]}",
             "description": f"Testing {model} embedding model",
             "embedding_model": model,
-            "sync_enabled": True
+            "sync_enabled": True,
         }
 
-        response = await client.post("/api/v1/knowledge-bases",
-                                    json=kb_data,
-                                    headers=auth_headers)
+        response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
         assert response.status_code == 201
 
         response_data = response.json()
@@ -301,8 +275,8 @@ async def test_knowledge_base_embedding_models(client, db, auth_headers):
 
 class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for knowledge base functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all knowledge base integration test functions."""
         return [
             test_health_endpoint,
@@ -316,15 +290,15 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_unauthorized_access,
             test_knowledge_base_embedding_models,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Knowledge Base Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "End-to-end integration tests for knowledge base CRUD operations and access control"
-    
+
     def get_cli_examples(self) -> str:
         """Return knowledge base-specific CLI examples."""
         return """

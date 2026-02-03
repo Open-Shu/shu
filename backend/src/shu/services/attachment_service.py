@@ -1,17 +1,13 @@
-"""
-AttachmentService handles chat attachments: saving files, extracting text, and persistence.
-"""
-import os
-import uuid
-import mimetypes
+"""AttachmentService handles chat attachments: saving files, extracting text, and persistence."""
+
 import datetime as dt
-
+import mimetypes
+import uuid
 from pathlib import Path
-from typing import Any, Tuple, Dict
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
 from ..models.attachment import Attachment, MessageAttachment
@@ -25,7 +21,7 @@ class AttachmentService:
         # Ensure storage directory exists
         Path(self.settings.chat_attachment_storage_dir).mkdir(parents=True, exist_ok=True)
 
-    async def _fast_extract_text(self, storage_path: Path, retry: bool = True) -> Tuple[str, Dict[str, Any]]:
+    async def _fast_extract_text(self, storage_path: Path, retry: bool = True) -> tuple[str, dict[str, Any]]:
         extractor = TextExtractor()
         try:
             extraction = await extractor.extract_text(
@@ -46,34 +42,32 @@ class AttachmentService:
                 "duration": None,
                 "details": {"error": str(ex)},
             }
-        
+
     def _sanitize_filename(self, filename: str, fallback_ext: str = "") -> str:
         """Sanitize a filename to prevent header injection, path traversal, etc.
-        
+
         Keeps only alphanumeric characters, dots, underscores, hyphens, and spaces.
         Ensures the result is a valid, non-empty filename with preserved extension.
-        
+
         Args:
             filename: The original filename to sanitize
             fallback_ext: Extension to use if filename becomes invalid (without leading dot)
-        
+
         Returns:
             A sanitized filename safe for storage and HTTP headers
+
         """
         raw_name = Path(filename).name
-        sanitized = "".join(
-            c for c in raw_name
-            if c.isalnum() or c in "._- "
-        ).strip()
-        
+        sanitized = "".join(c for c in raw_name if c.isalnum() or c in "._- ").strip()
+
         # Ensure we have a valid filename
         if not sanitized or sanitized.startswith("."):
             sanitized = f"attachment.{fallback_ext}" if fallback_ext else "attachment"
-        
+
         # Ensure extension is preserved
         if fallback_ext and not sanitized.lower().endswith(f".{fallback_ext}"):
             sanitized = f"{sanitized}.{fallback_ext}"
-        
+
         return sanitized
 
     async def save_upload(
@@ -83,7 +77,7 @@ class AttachmentService:
         user_id: str,
         filename: str,
         file_bytes: bytes,
-    ) -> Tuple[Attachment, str]:
+    ) -> tuple[Attachment, str]:
         """Save an uploaded file to disk, extract text, and create Attachment.
 
         Returns (attachment, temp_path).
@@ -120,7 +114,8 @@ class AttachmentService:
 
         # Create DB record
         import datetime as _dt
-        expires_at = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=self.settings.chat_attachment_ttl_days)
+
+        expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(days=self.settings.chat_attachment_ttl_days)
 
         attachment = Attachment(
             id=att_id,
@@ -152,20 +147,20 @@ class AttachmentService:
             return []
         stmt = select(Attachment).where(Attachment.id.in_(ids))
         result = await self.db.execute(stmt)
-        attachments = [a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id]
+        attachments = [
+            a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id
+        ]
         return attachments
 
     async def get_conversation_attachments_with_links(
-        self,
-        conversation_id: str,
-        user_id: str
+        self, conversation_id: str, user_id: str
     ) -> list[tuple[str, Attachment]]:
         """Fetch (message_id, attachment) pairs for a conversation owned by the user.
-        
+
         Excludes expired attachments (expires_at in the past).
         """
-        now = dt.datetime.now(dt.timezone.utc)
-        
+        now = dt.datetime.now(dt.UTC)
+
         stmt = (
             select(MessageAttachment.message_id, Attachment)
             .join(Attachment, Attachment.id == MessageAttachment.attachment_id)

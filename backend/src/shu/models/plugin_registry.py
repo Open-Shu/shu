@@ -1,11 +1,10 @@
-"""
-Plugin Registry v0 model(s) for Agent Foundation MVP.
+"""Plugin Registry v0 model(s) for Agent Foundation MVP.
 
 Minimal DB-backed registry of plugin with versioning and schema hashes.
 This is intentionally simple and will be extended in EPIC-PLUGIN-ECOSYSTEM.
 """
 
-from sqlalchemy import Column, String, Boolean, JSON, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, String, UniqueConstraint
 
 from .base import BaseModel
 
@@ -33,17 +32,12 @@ class PluginDefinition(BaseModel):
     input_schema = Column(JSON, nullable=True)
     output_schema = Column(JSON, nullable=True)
 
-
     # Optional per-plugin overrides for rate limits and quotas
     limits = Column(JSON, nullable=True)
 
     created_by = Column(String(36), nullable=True, index=True)
 
-    __table_args__ = (
-        UniqueConstraint("name", "version", name="uq_plugin_name_version"),
-    )
+    __table_args__ = (UniqueConstraint("name", "version", name="uq_plugin_name_version"),)
 
     def __repr__(self) -> str:
         return f"<PluginDefinition(name={self.name}, version={self.version}, enabled={self.enabled})>"
-
-
