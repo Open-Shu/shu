@@ -45,9 +45,36 @@ class OutlookCalendarPlugin:
         return "&".join(parts)
 
     def _window(self, since_hours: int, time_min: Optional[str], time_max: Optional[str]) -> tuple[str, str]:
-        """Compute symmetric time window (past + future) for calendar events."""
+        """Compute symmetric time window (past + future) for calendar events.
+        
+        Supports partial overrides:
+        - Both provided: return unchanged
+        - Only time_min: compute time_max = time_min + since_hours
+        - Only time_max: compute time_min = time_max - since_hours
+        - Neither: compute symmetric window around now
+        """
         if time_min and time_max:
             return time_min, time_max
+        
+        if time_min:
+            # Parse time_min and compute time_max
+            try:
+                tmin_dt = datetime.fromisoformat(time_min.replace("Z", "+00:00"))
+                tmax_dt = tmin_dt + timedelta(hours=since_hours)
+                return time_min, tmax_dt.isoformat().replace("+00:00", "Z")
+            except ValueError as e:
+                raise ValueError(f"Invalid time_min format: {time_min}") from e
+        
+        if time_max:
+            # Parse time_max and compute time_min
+            try:
+                tmax_dt = datetime.fromisoformat(time_max.replace("Z", "+00:00"))
+                tmin_dt = tmax_dt - timedelta(hours=since_hours)
+                return tmin_dt.isoformat().replace("+00:00", "Z"), time_max
+            except ValueError as e:
+                raise ValueError(f"Invalid time_max format: {time_max}") from e
+        
+        # Neither provided: symmetric window around now
         now = datetime.now(timezone.utc)
         tmin = now - timedelta(hours=since_hours)
         tmax = now + timedelta(hours=since_hours)

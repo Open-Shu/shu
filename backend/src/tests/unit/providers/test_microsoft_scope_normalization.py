@@ -7,23 +7,7 @@ Verifies that Microsoft scopes are normalized correctly:
 """
 import pytest
 
-
-# OIDC protocol scopes that should NOT be prefixed
-OIDC_SCOPES = {"openid", "profile", "email", "offline_access"}
-
-
-def normalize_microsoft_scopes(token_scopes):
-    """Helper that mirrors the normalization logic from host_auth.py."""
-    normalized_scopes = []
-    for scope in token_scopes:
-        # Skip falsy values (None, empty string)
-        if not scope:
-            continue
-        if not scope.startswith("https://") and scope not in OIDC_SCOPES:
-            normalized_scopes.append(f"https://graph.microsoft.com/{scope}")
-        else:
-            normalized_scopes.append(scope)
-    return normalized_scopes
+from shu.api.host_auth import normalize_microsoft_scopes
 
 
 def test_scope_normalization_graph_scopes_prefixed():

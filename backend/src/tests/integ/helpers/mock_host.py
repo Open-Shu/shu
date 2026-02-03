@@ -136,8 +136,13 @@ class MockHostHttp:
         response = self._find_response(url)
         status_code = response.get("status_code", 200)
         if status_code >= 400:
-            # Extract body for the exception
-            body = response.get("body") or response.get("error") or response
+            # Extract body for the exception, preserving empty bodies
+            if "body" in response:
+                body = response["body"]
+            elif "error" in response:
+                body = response["error"]
+            else:
+                body = response
             raise HttpRequestFailed(
                 status_code=status_code,
                 url=url,

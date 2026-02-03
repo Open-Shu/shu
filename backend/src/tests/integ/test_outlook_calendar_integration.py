@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
+from integ.helpers.mock_host import MockHost, create_mock_graph_response
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +84,6 @@ def _create_mock_cancelled_event(event_id: str) -> Dict[str, Any]:
         "@removed": {"reason": "deleted"}
     }
 
-
-# ============================================================================
-# Mock Host (shared module)
-# ============================================================================
-
-from integ.helpers.mock_host import MockHost, create_mock_graph_response
 
 # Local alias for backward compatibility in tests
 _create_mock_graph_response = create_mock_graph_response

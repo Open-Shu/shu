@@ -422,7 +422,7 @@ The exception provides semantic properties so you don't need to parse status cod
 - `e.is_retryable`: True for 429 and 5xx
 - `e.retry_after_seconds`: From Retry-After header if present
 - `e.provider_message`: Best-effort extraction from response body
-- `e.provider_error_code`: Provider-specific error code if available (e.g., Microsoft Graph's `ErrorCode`)
+- `e.provider_error_code`: Provider-specific error code if available (e.g., Microsoft Graph's `error.code`)
 
 **Error categories and their meaning**
 

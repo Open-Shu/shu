@@ -671,20 +671,6 @@ class Executor:
                 except Exception as e:  # noqa: BLE001
                     # Map host.http failures to a structured provider_error so callers get clear surfaces
                     if isinstance(e, HttpRequestFailed):
-                        try:
-                            body = e.body
-                            # Try to extract a useful provider message
-                            if isinstance(body, dict):
-                                prov_msg = (
-                                    body.get("error_description")
-                                    or body.get("error")
-                                    or body.get("message")
-                                    or str(body)
-                                )
-                            else:
-                                prov_msg = str(body)[:400] if body is not None else ""
-                        except Exception:
-                            prov_msg = str(e)
                         details = {
                             "status_code": e.status_code,
                             "url": e.url,

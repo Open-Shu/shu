@@ -312,7 +312,7 @@ All operations support the following parameters:
 **Examples**:
 - `"from/emailAddress/address eq 'user@example.com'"` - Messages from specific sender
 - `"hasAttachments eq true"` - Messages with attachments
-- `"importance eq 'high'"` - High priority messages
+- `"importance eq 'high'"` - High-priority messages
 - `"subject eq 'Meeting'"` - Messages with specific subject
 
 **Reference**: [OData Filter Syntax](https://learn.microsoft.com/en-us/graph/query-parameters#filter-parameter)

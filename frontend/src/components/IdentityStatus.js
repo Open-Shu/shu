@@ -135,8 +135,7 @@ export default function IdentityStatus({
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('OAuth authorization failed', e);
-    } finally {
-      // Ensure authorizing state is cleared even if startAuthorize throws before onDone
+      // Clear authorizing state on error since onDone won't be called
       setAuthorizing((m) => ({ ...m, [provider]: false }));
     }
   }, [setAuthorizing, startAuthorize]);

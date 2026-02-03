@@ -264,10 +264,8 @@ class OutlookMailPlugin:
             return await self._execute_list(params, context, host, access_token)
         elif op == "digest":
             return await self._execute_digest(params, context, host, access_token)
-        elif op == "ingest":
+        else:  # op == "ingest"
             return await self._execute_ingest(params, context, host, access_token)
-
-        return _Result.err(f"Unsupported operation: {op}", code="unsupported_operation")
     
     async def _graph_api_request(
         self,

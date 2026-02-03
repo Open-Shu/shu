@@ -209,7 +209,7 @@ class TestOutlookMailAuthentication:
     @pytest.mark.asyncio
     async def test_missing_oauth_token_returns_error(self, plugin, mock_host):
         """Test missing OAuth token returns auth error."""
-        mock_host.auth.resolve_token_and_target.return_value = None
+        mock_host.auth.resolve_token_and_target.return_value = (None, None)
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         
@@ -220,7 +220,7 @@ class TestOutlookMailAuthentication:
     @pytest.mark.asyncio
     async def test_empty_access_token_returns_error(self, plugin, mock_host):
         """Test auth result without access_token field returns error."""
-        mock_host.auth.resolve_token_and_target.return_value = {}
+        mock_host.auth.resolve_token_and_target.return_value = ("", None)
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
         

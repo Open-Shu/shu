@@ -14,6 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 
 class _Result:
