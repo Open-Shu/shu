@@ -148,8 +148,8 @@ class TestOutlookMailOperationRouting:
         """Test list operation routes to _execute_list."""
         mock_host.http.fetch.return_value = {
             "status_code": 200,
-            "value": [],
-            "@odata.nextLink": None
+            "headers": {},
+            "body": {"value": [], "@odata.nextLink": None}
         }
         
         result = await plugin.execute({"op": "list"}, None, mock_host)
@@ -163,8 +163,8 @@ class TestOutlookMailOperationRouting:
         """Test digest operation routes to _execute_digest."""
         mock_host.http.fetch.return_value = {
             "status_code": 200,
-            "value": [],
-            "@odata.nextLink": None
+            "headers": {},
+            "body": {"value": [], "@odata.nextLink": None}
         }
         
         result = await plugin.execute({"op": "digest"}, None, mock_host)
@@ -179,8 +179,8 @@ class TestOutlookMailOperationRouting:
     async def test_ingest_routes_correctly(self, plugin, mock_host):
         """Test ingest operation routes to _execute_ingest."""
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}
+            {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.nextLink": None}},
+            {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}}
         ]
         
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
@@ -193,8 +193,8 @@ class TestOutlookMailOperationRouting:
     async def test_default_operation_is_ingest(self, plugin, mock_host):
         """Test default operation is ingest when op not specified."""
         mock_host.http.fetch.side_effect = [
-            {"status_code": 200, "value": [], "@odata.nextLink": None},
-            {"status_code": 200, "value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}
+            {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.nextLink": None}},
+            {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}}
         ]
         
         result = await plugin.execute({"kb_id": "test-kb"}, None, mock_host)

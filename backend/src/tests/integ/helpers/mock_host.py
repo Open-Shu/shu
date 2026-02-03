@@ -41,10 +41,11 @@ def create_mock_graph_response(
         status_code: HTTP status code (default 200)
 
     Returns:
-        Dict matching Graph API response structure
+        Dict matching Graph API response structure (status_code, headers, body)
     """
     response = {
         "status_code": status_code,
+        "headers": {},
         "body": {"value": items}
     }
 
@@ -216,7 +217,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock document ingestion."""
         record = {
-            "knowledge_base_id": knowledge_base_id,
+            "kb_id": knowledge_base_id,
             "filename": filename,
             "mime_type": mime_type,
             "source_id": source_id,
@@ -239,7 +240,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock text ingestion."""
         record = {
-            "knowledge_base_id": knowledge_base_id,
+            "kb_id": knowledge_base_id,
             "title": title,
             "content": content,
             "source_id": source_id,
@@ -267,7 +268,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock email ingestion."""
         record = {
-            "knowledge_base_id": knowledge_base_id,
+            "kb_id": knowledge_base_id,
             "subject": subject,
             "sender": sender,
             "recipients": recipients,
@@ -295,7 +296,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock thread ingestion."""
         record = {
-            "knowledge_base_id": knowledge_base_id,
+            "kb_id": knowledge_base_id,
             "title": title,
             "content": content,
             "thread_id": thread_id,
@@ -314,7 +315,7 @@ class MockHostKb:
         
         Matches real KbCapability.upsert_knowledge_object signature.
         """
-        record = {"knowledge_base_id": knowledge_base_id, "ko": ko}
+        record = {"kb_id": knowledge_base_id, "ko": ko}
         self.upserted_kos.append(record)
         external_id = ko.get("external_id", "unknown")
         return f"mock_ko_{external_id}"

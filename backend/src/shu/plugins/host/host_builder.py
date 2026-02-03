@@ -10,13 +10,10 @@ from .exceptions import CapabilityDenied
 from .http_capability import HttpCapability
 from .identity_capability import IdentityCapability
 from .kb_capability import KbCapability
+from .log_capability import LogCapability
 from .ocr_capability import OcrCapability
 from .secrets_capability import SecretsCapability
 from .storage_capability import StorageCapability
-from .cursor_capability import CursorCapability
-from .cache_capability import CacheCapability
-from .ocr_capability import OcrCapability
-from .log_capability import LogCapability
 from .utils_capability import UtilsCapability
 
 
@@ -82,11 +79,11 @@ class Host:
 
     def __setattr__(self, name: str, value: Any) -> None:
         if getattr(self, "_frozen", False):
-            raise AttributeError("Host attributes are immutable after construction")
+            raise AttributeError(f"Host attribute '{name}' is immutable after construction")
         object.__setattr__(self, name, value)
 
     def __delattr__(self, name: str) -> None:
-        raise AttributeError("Host attributes cannot be deleted")
+        raise AttributeError(f"Host attribute '{name}' cannot be deleted")
 
     # Capability names that require declaration before access
     # Note: 'log' and 'utils' are NOT in this set - they are always available

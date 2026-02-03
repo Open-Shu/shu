@@ -195,7 +195,7 @@ async def test_ingest_operation_full_sync(client, db, auth_headers):
 
     assert len(mock_host.kb.ingested_texts) == 3
     for i, ingested in enumerate(mock_host.kb.ingested_texts):
-        assert ingested["kb_id"] == "test_kb_123"
+        assert ingested["kb_id"] == "test_kb_123", f"Expected kb_id 'test_kb_123', got keys: {list(ingested.keys())}"
         assert ingested["source_id"] == f"evt_{i}"
         assert ingested["attributes"]["plugin"] == "outlook_calendar"
 

@@ -201,16 +201,16 @@ def create_mock_host_with_messages(messages=None, track_requests=False):
     
     class MockCursor:
         def __init__(self):
-            self.cursor_value = None
+            self.store = {}
         
         async def get(self, key):
-            return self.cursor_value
+            return self.store.get(key)
         
         async def set(self, key, value):
-            self.cursor_value = value
+            self.store[key] = value
         
         async def delete(self, key):
-            self.cursor_value = None
+            self.store.pop(key, None)
     
     class MockHost:
         def __init__(self):

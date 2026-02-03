@@ -38,6 +38,41 @@ _TRUSTED_MODULE_PREFIXES = (
 )
 
 
+def _is_called_from_trusted_code(frame_offset: int = 2) -> bool:
+    """Check if the import is being called from trusted host code.
+    
+    Walks the call stack to find the module that initiated the import.
+    If any frame in the stack is from a trusted module prefix, allow the import.
+    
+    Args:
+        frame_offset: Number of frames to skip from the current frame.
+            Default is 2 (skip this function and the immediate caller).
+    
+    Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
+    Short-circuits as soon as a trusted frame is found.
+    """
+    try:
+        frame = sys._getframe(frame_offset)
+    except ValueError:
+        return False
+    
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        # Quick check: only inspect frames from shu modules
+        if "/shu/" in filename:
+            for prefix in _TRUSTED_MODULE_PREFIXES:
+                # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
+                path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
+                if path_fragment in filename:
+                    return True
+                # Also check for exact module file matches
+                path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
+                if filename.endswith(path_fragment_exact + ".py"):
+                    return True
+        frame = frame.f_back
+    return False
+
+
 class _DenyImportsFinder(MetaPathFinder):
     """Import finder that blocks certain imports during plugin execution.
 
@@ -55,40 +90,6 @@ class _DenyImportsFinder(MetaPathFinder):
     # Deny shu.* imports only from untrusted (plugin) code
     deny_from_plugins = {"shu"}
 
-    def _is_called_from_trusted_code(self) -> bool:
-        """Check if the import is being called from trusted host code.
-
-        Walks the call stack to find the module that initiated the import.
-        If any frame in the stack is from a trusted module prefix, allow the import.
-
-        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-        Short-circuits as soon as a trusted frame is found.
-        """
-        import sys
-
-        # Walk frames directly - more efficient than traceback.extract_stack()
-        # which creates FrameSummary objects for every frame
-        try:
-            frame = sys._getframe(2)  # Skip this method and find_spec/caller
-        except ValueError:
-            return False
-
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            # Quick check: only inspect frames from shu modules
-            if "/shu/" in filename:
-                for prefix in _TRUSTED_MODULE_PREFIXES:
-                    # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
-                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                    if path_fragment in filename:
-                        return True
-                    # Also check for exact module file matches
-                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                    if filename.endswith(path_fragment_exact + ".py"):
-                        return True
-            frame = frame.f_back
-        return False
-
     def find_spec(self, fullname, path, target=None):  # type: ignore[override]
         # Block exact and submodule imports under denylisted packages
         name = str(fullname)
@@ -101,8 +102,13 @@ class _DenyImportsFinder(MetaPathFinder):
         # Block shu.* imports only from plugin code, not from trusted host code
         for p in self.deny_from_plugins:
             if name == p or name.startswith(p + "."):
-                if not self._is_called_from_trusted_code():
-                    raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
+                # frame_offset=2: skip find_spec -> _is_called_from_trusted_code -> sys._getframe
+                if not _is_called_from_trusted_code(frame_offset=2):
+                    raise ImportError(
+                        f"Import of '{fullname}' is denied by host policy. Use host.http instead."
+                    )
+
+        return None
 
 
 class _DenyHttpImportsCtx:
@@ -117,32 +123,6 @@ class _DenyHttpImportsCtx:
     def __init__(self):
         self._finder: _DenyImportsFinder | None = None
         self._orig_import_module = None
-
-    @staticmethod
-    def _is_called_from_trusted_code() -> bool:
-        """Check if the import is being called from trusted host code.
-
-        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-        """
-        import sys
-
-        try:
-            frame = sys._getframe(2)
-        except ValueError:
-            return False
-
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            if "/shu/" in filename:
-                for prefix in _TRUSTED_MODULE_PREFIXES:
-                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                    if path_fragment in filename:
-                        return True
-                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                    if filename.endswith(path_fragment_exact + ".py"):
-                        return True
-            frame = frame.f_back
-        return False
 
     @staticmethod
     def _is_denied(name: str) -> bool:
@@ -163,7 +143,8 @@ class _DenyHttpImportsCtx:
         # Deny shu.* only from plugin code
         for p in _DenyImportsFinder.deny_from_plugins:
             if n == p or n.startswith(p + "."):
-                if not _DenyHttpImportsCtx._is_called_from_trusted_code():
+                # frame_offset=3: skip _is_denied -> _is_called_from_trusted_code -> sys._getframe
+                if not _is_called_from_trusted_code(frame_offset=3):
                     return True
 
         return False
@@ -688,8 +669,6 @@ class Executor:
                 except HTTPException:
                     raise
                 except Exception as e:  # noqa: BLE001
-                    # Map host.http failures to a structured error using HttpRequestFailed properties
-                except Exception as e:
                     # Map host.http failures to a structured provider_error so callers get clear surfaces
                     if isinstance(e, HttpRequestFailed):
                         try:

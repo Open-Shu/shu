@@ -6,8 +6,9 @@ Verifies that the plugin is properly registered and discoverable by the plugin s
 from __future__ import annotations
 
 import logging
+import sys
 
-from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
+from integ.base_integration_test import BaseIntegrationTestSuite
 
 logger = logging.getLogger(__name__)
 
@@ -217,4 +218,6 @@ class OutlookMailPluginRegistrationSuite(BaseIntegrationTestSuite):
 
 
 if __name__ == "__main__":
-    create_test_runner_script(OutlookMailPluginRegistrationSuite, globals())
+    suite = OutlookMailPluginRegistrationSuite()
+    exit_code = suite.run()
+    sys.exit(exit_code)

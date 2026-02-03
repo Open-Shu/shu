@@ -73,8 +73,17 @@ class HttpRequestFailed(Exception):
 
     @property
     def retry_after_seconds(self) -> int | None:
-        """Parse Retry-After header if present. Returns seconds or None."""
-        retry_after = self.headers.get("retry-after") or self.headers.get("Retry-After")
+        """Parse Retry-After header if present. Returns seconds or None.
+        
+        Performs case-insensitive header lookup per RFC 7230.
+        """
+        # Case-insensitive header lookup
+        retry_after = None
+        for key, value in self.headers.items():
+            if key.lower() == "retry-after":
+                retry_after = value
+                break
+        
         if not retry_after:
             return None
         try:

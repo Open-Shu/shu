@@ -1,99 +1,51 @@
-"""Tests for safe capability methods (SHU-540).
+"""Tests for safe capability methods.
 
 These tests verify the safe methods on host capabilities that plugins can use
 to avoid try/except blocks for common error cases.
 
-Tests for LogCapability and UtilsCapability are isolated to avoid circular
-import issues with other host capabilities.
+Note: We import directly from the module files (not through the package __init__.py)
+to avoid circular import issues with other host capabilities that depend on
+services and database modules.
 """
 
 import pytest
-from unittest.mock import patch
-import pytest
-from unittest.mock import patch
-import logging
-import logging
+import importlib.util
+import sys
+from pathlib import Path
 
 
-# Inline LogCapability for testing to avoid circular import issues
-class ImmutableCapabilityMixin:
-    """Mixin to make capability objects immutable."""
-    def __setattr__(self, name, value):
-        raise AttributeError(f"Cannot modify immutable capability attribute: {name}")
+def _import_module_directly(module_name: str, file_path: str):
+    """Import a module directly from its file path, bypassing package __init__.py."""
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    module = importlib.util.module_from_spec(spec)
+    # Temporarily add the module to sys.modules to handle relative imports
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-_plugin_logger = logging.getLogger("shu.plugins.runtime")
+# Get the path to the host capability modules
+_host_dir = Path(__file__).parent.parent.parent.parent / "shu" / "plugins" / "host"
 
+# Import base first (needed by other modules)
+_base_module = _import_module_directly(
+    "shu.plugins.host.base",
+    str(_host_dir / "base.py")
+)
 
-class LogCapability(ImmutableCapabilityMixin):
-    """Plugin logging capability with automatic context injection."""
+# Import log_capability with base available
+_log_module = _import_module_directly(
+    "shu.plugins.host.log_capability",
+    str(_host_dir / "log_capability.py")
+)
+LogCapability = _log_module.LogCapability
 
-    __slots__ = ("_plugin_name", "_user_id", "_operation")
-
-    def __init__(self, *, plugin_name: str, user_id: str, operation=None):
-        object.__setattr__(self, "_plugin_name", plugin_name)
-        object.__setattr__(self, "_user_id", user_id)
-        object.__setattr__(self, "_operation", operation)
-
-    def _make_extra(self, extra=None):
-        base = {}
-        if extra:
-            base.update(extra)
-        # Set protected fields after merging extra to prevent spoofing
-        base["plugin_name"] = self._plugin_name
-        base["user_id"] = self._user_id
-        if self._operation:
-            base["operation"] = self._operation
-        return base
-
-    def debug(self, msg, *, extra=None):
-        _plugin_logger.debug(msg, extra=self._make_extra(extra))
-
-    def info(self, msg, *, extra=None):
-        _plugin_logger.info(msg, extra=self._make_extra(extra))
-
-    def warning(self, msg, *, extra=None):
-        _plugin_logger.warning(msg, extra=self._make_extra(extra))
-
-    def error(self, msg, *, extra=None):
-        _plugin_logger.error(msg, extra=self._make_extra(extra))
-
-    def exception(self, msg, *, extra=None):
-        _plugin_logger.exception(msg, extra=self._make_extra(extra))
-
-
-class UtilsCapability(ImmutableCapabilityMixin):
-    """Plugin utility functions for common patterns."""
-
-    __slots__ = ("_plugin_name", "_user_id")
-
-    def __init__(self, *, plugin_name: str, user_id: str):
-        object.__setattr__(self, "_plugin_name", plugin_name)
-        object.__setattr__(self, "_user_id", user_id)
-
-    async def map_safe(self, items, async_fn, *, max_errors=None):
-        results = []
-        errors = []
-        for item in items:
-            if max_errors is not None and len(errors) >= max_errors:
-                break
-            try:
-                result = await async_fn(item)
-                results.append(result)
-            except Exception as e:
-                errors.append((item, e))
-        return results, errors
-
-    async def filter_safe(self, items, async_predicate):
-        kept = []
-        errors = []
-        for item in items:
-            try:
-                if await async_predicate(item):
-                    kept.append(item)
-            except Exception as e:
-                errors.append((item, e))
-        return kept, errors
+# Import utils_capability with base available
+_utils_module = _import_module_directly(
+    "shu.plugins.host.utils_capability",
+    str(_host_dir / "utils_capability.py")
+)
+UtilsCapability = _utils_module.UtilsCapability
 
 
 class TestLogCapability:

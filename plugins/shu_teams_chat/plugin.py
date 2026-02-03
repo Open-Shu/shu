@@ -14,7 +14,6 @@ import json
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
 
 
 class _Result:
@@ -125,8 +124,9 @@ class TeamsChatPlugin:
         try:
             token, _ = await auth.resolve_token_and_target("microsoft")
             return token
-        except Exception:
-            return None
+        except Exception as e:
+            if hasattr(host, "log"):
+                host.log.debug(f"Failed to resolve Microsoft token: {e}")
 
     async def _graph_request(self, host: Any, access_token: str, method: str, url: str,
                               params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -191,7 +191,9 @@ class TeamsChatPlugin:
         messages: List[Dict[str, Any]] = []
         next_link: Optional[str] = None
         filter_param = f"lastModifiedDateTime gt {since_ts}"
-        url = f"/me/chats/{chat_id}/messages"
+        # URL-encode chat_id to prevent injection of unsafe characters
+        encoded_chat_id = quote(chat_id, safe='')
+        url = f"/me/chats/{encoded_chat_id}/messages"
 
         while len(messages) < max_messages:
             params = {
@@ -248,7 +250,9 @@ class TeamsChatPlugin:
                 return cached
 
         # Try to get user profile from Graph API (404/403 returns None)
-        url = f"https://graph.microsoft.com/v1.0/users/{user_id}"
+        # URL-encode user_id to prevent injection of unsafe characters
+        encoded_user_id = quote(user_id, safe='')
+        url = f"https://graph.microsoft.com/v1.0/users/{encoded_user_id}"
         headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
         user_data = await host.http.fetch_or_none(
             "GET", url, headers=headers, params={"$select": "id,displayName,mail,userPrincipalName"}
@@ -410,7 +414,6 @@ class TeamsChatPlugin:
 
                 # Strip HTML if needed
                 if content_type == "html":
-                    import re
                     content = re.sub(r'<[^>]+>', '', content)
 
                 content = content.strip()
@@ -500,11 +503,9 @@ class TeamsChatPlugin:
             return await self._execute_list(
                 host, params, access_token, since_hours, max_chats, max_messages_per_chat
             )
-        elif op == "ingest":
+        else:  # op == "ingest"
             if not kb_id:
                 return _Result.err("kb_id is required for ingest operation")
             return await self._execute_ingest(
                 host, params, access_token, kb_id, since_hours, max_chats, max_messages_per_chat
             )
-
-        return _Result.err(f"Unsupported operation: {op}")

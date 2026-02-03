@@ -124,17 +124,22 @@ export default function IdentityStatus({
   const navigate = useNavigate();
 
   const { startAuthorize } = useOAuthAuthorize();
-  const handleConnect = useCallback(
-    async (provider, desiredScopes) => {
+  const handleConnect = useCallback(async (provider, desiredScopes) => {
+    try {
       await startAuthorize({
         provider,
         scopes: desiredScopes,
         onStart: () => setAuthorizing((m) => ({ ...m, [provider]: true })),
         onDone: () => setAuthorizing((m) => ({ ...m, [provider]: false })),
       });
-    },
-    [setAuthorizing, startAuthorize],
-  );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('OAuth authorization failed', e);
+    } finally {
+      // Ensure authorizing state is cleared even if startAuthorize throws before onDone
+      setAuthorizing((m) => ({ ...m, [provider]: false }));
+    }
+  }, [setAuthorizing, startAuthorize]);
 
   if (!providers.length) {
     return null;
@@ -176,34 +181,17 @@ export default function IdentityStatus({
               <Tooltip title={chipTooltip}>
                 <Chip color={chipColor} label={label} />
               </Tooltip>
-              {needReauth &&
-                !hideConnectButton &&
-                (() => {
-                  const displayScopes = desired;
-                  const tooltipText = displayScopes.length
-                    ? `Authorize ${p} with selected scopes.\n${displayScopes.join("\n")}`
-                    : `Select plugin subscriptions for ${p} to request scopes before connecting.`;
-                  return (
-                    <Tooltip title={tooltipText}>
-                      <span>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={
-                            !!authorizing[p] || displayScopes.length === 0
-                          }
-                          onClick={() => handleConnect(p, displayScopes)}
-                        >
-                          {authorizing[p] ? (
-                            <CircularProgress size={14} />
-                          ) : (
-                            "Authorize Selected Scopes"
-                          )}
-                        </Button>
-                      </span>
-                    </Tooltip>
-                  );
-                })()}
+              {needReauth && !hideConnectButton && (
+                <Tooltip title={desired.length
+                  ? `Authorize ${p} with selected scopes.\n${desired.join('\n')}`
+                  : `Select plugin subscriptions for ${p} to request scopes before connecting.`}>
+                  <span>
+                    <Button size="small" variant="outlined" disabled={!!authorizing[p] || desired.length === 0} onClick={() => handleConnect(p, desired)}>
+                      {authorizing[p] ? <CircularProgress size={14} /> : 'Authorize Selected Scopes'}
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
               {needReauth && showManageLink && (
                 <Tooltip title="Open the Connected Accounts page to review or manage providers">
                   <Button

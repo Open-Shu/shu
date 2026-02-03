@@ -20,21 +20,13 @@ class _Result:
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
 
-# Sentinel class to detect HttpRequestFailed from host.http
-# The real exception is injected at runtime; this allows isinstance checks
-class _HttpRequestFailedBase(Exception):
-    """Base for detecting HttpRequestFailed exceptions.
-    
-    At runtime, host.http raises the real HttpRequestFailed from
-    shu.plugins.host.exceptions. We detect it by checking for the
-    error_category attribute rather than importing the class directly
-    (which would create circular import issues for plugins).
-    """
-    pass
-
-
 def _is_http_request_failed(e: Exception) -> bool:
-    """Check if exception is HttpRequestFailed by duck-typing."""
+    """Check if exception is HttpRequestFailed via duck-typing.
+    
+    The real HttpRequestFailed is defined in shu.plugins.host.exceptions.
+    We detect it by checking for error_category and status_code attributes
+    rather than importing the class (which would create circular imports).
+    """
     return hasattr(e, 'error_category') and hasattr(e, 'status_code')
 
 
@@ -279,18 +271,23 @@ class OutlookCalendarPlugin:
             )
 
         async def _process_event(ev: Dict[str, Any]) -> tuple[int, int]:
-            """Process a single event (upsert or delete). Returns (upserts, deletes)."""
+            """Process a single event (upsert or delete). Returns (upserts, deletes).
+            
+            Errors are logged but don't abort the sync - a single event failure
+            shouldn't prevent processing of remaining events.
+            """
             eid = ev.get("id")
             if ev.get("isCancelled") or ev.get("@removed"):
+                if not eid:
+                    host.log.warning("Skipping delete for event with no id")
+                    return (0, 0)
                 try:
                     await host.kb.delete_ko(external_id=eid)
                     return (0, 1)
                 except Exception as del_err:
                     if _is_http_request_failed(del_err):
-                        # Log HTTP errors with context but continue processing
                         host.log.warning(f"HTTP error deleting event {eid}: {del_err}")
                     else:
-                        # Log unexpected errors with full context
                         host.log.exception(f"Unexpected error in delete_ko for event_id={eid}")
                     return (0, 0)
             else:
@@ -302,7 +299,7 @@ class OutlookCalendarPlugin:
                         host.log.warning(f"HTTP error upserting event {eid}: {upsert_err}")
                     else:
                         host.log.exception(f"Unexpected error in _upsert_event for event_id={eid}")
-                    raise
+                    return (0, 0)
 
         if use_delta_sync and cursor_data:
             # Use delta endpoint for incremental sync
@@ -414,6 +411,9 @@ class OutlookCalendarPlugin:
             elif op == "ingest":
                 return await self._execute_ingest(params, context, host, access_token)
         except Exception as e:
+            # Preserve HttpRequestFailed semantics - let it bubble up to executor
+            if _is_http_request_failed(e):
+                raise
             return _Result.err(
                 f"Unexpected error during {op} operation: {str(e)}",
                 code="execution_error",

@@ -81,7 +81,7 @@ MICROSOFT_TENANT_ID=common  # or your specific tenant ID
 
 2. **Configure Application**
    - **Name**: Shu Outlook Mail Plugin (or similar)
-   - **Supported account types**: 
+   - **Supported account types**:
      - Single tenant: Users in your M365 tenant only
      - Multi-tenant: Users from any Azure AD tenant (recommended)
    - **Redirect URI**: Web → `http://localhost:8000/auth/callback` (or your production URL)

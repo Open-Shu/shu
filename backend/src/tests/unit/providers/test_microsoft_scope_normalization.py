@@ -16,7 +16,10 @@ def normalize_microsoft_scopes(token_scopes):
     """Helper that mirrors the normalization logic from host_auth.py."""
     normalized_scopes = []
     for scope in token_scopes:
-        if scope and not scope.startswith("https://") and scope not in OIDC_SCOPES:
+        # Skip falsy values (None, empty string)
+        if not scope:
+            continue
+        if not scope.startswith("https://") and scope not in OIDC_SCOPES:
             normalized_scopes.append(f"https://graph.microsoft.com/{scope}")
         else:
             normalized_scopes.append(scope)
@@ -93,8 +96,8 @@ def test_scope_normalization_empty_list():
     assert normalized_scopes == []
 
 
-def test_scope_normalization_preserves_none_and_empty():
-    """Test that None and empty string scopes are handled gracefully."""
+def test_scope_normalization_filters_none_and_empty():
+    """Test that None and empty string scopes are filtered out."""
     token_scopes = ["Mail.Read", "", None, "openid"]
     
     normalized_scopes = normalize_microsoft_scopes(token_scopes)
@@ -103,9 +106,11 @@ def test_scope_normalization_preserves_none_and_empty():
     assert "https://graph.microsoft.com/Mail.Read" in normalized_scopes
     # openid should remain unprefixed
     assert "openid" in normalized_scopes
-    # Empty string and None should pass through (falsy check handles them)
-    assert "" in normalized_scopes
-    assert None in normalized_scopes
+    # Empty string and None should be filtered out
+    assert "" not in normalized_scopes
+    assert None not in normalized_scopes
+    # Should only have 2 valid scopes
+    assert len(normalized_scopes) == 2
 
 
 def test_scope_normalization_realistic_microsoft_response():

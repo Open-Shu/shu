@@ -3,31 +3,64 @@
 Currently supports minimal status for Google (Gmail) user credentials.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+import requests
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user
 from ..core.logging import get_logger
+from ..core.oauth_encryption import OAuthEncryptionError
 from ..core.response import ShuResponse
 from ..models.provider_credential import ProviderCredential
 from ..models.provider_identity import ProviderIdentity
+from ..plugins.host.auth_capability import AuthCapability
+from ..providers.registry import get_auth_adapter
 from .dependencies import get_db
 
 logger = get_logger(__name__)
 
-from datetime import UTC, datetime, timedelta
+# OIDC protocol scopes that should NOT be prefixed with Graph API URL
+_OIDC_SCOPES = frozenset({"openid", "profile", "email", "offline_access"})
 
-import requests
-from fastapi import HTTPException, status
-from pydantic import BaseModel
 
-from ..core.oauth_encryption import OAuthEncryptionError
-from ..plugins.host.auth_capability import AuthCapability
-from ..providers.registry import get_auth_adapter
+def normalize_microsoft_scopes(scopes: list | None) -> list[str]:
+    """Normalize Microsoft scopes by adding Graph API URL prefix where needed.
+
+    Microsoft returns short-form scopes like "Mail.Read" but manifests declare them
+    as "https://graph.microsoft.com/Mail.Read". OIDC protocol scopes (openid, profile,
+    email, offline_access) are left unchanged as they are protocol-level.
+
+    Args:
+        scopes: List of scope strings (may contain None/empty values)
+
+    Returns:
+        De-duplicated list of normalized scope strings
+    """
+    if not scopes:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for scope in scopes:
+        if not scope:
+            continue
+        s = str(scope)
+        # Prefix non-HTTPS, non-OIDC scopes with Graph API URL
+        if s and not s.startswith("https://") and s not in _OIDC_SCOPES:
+            s = f"https://graph.microsoft.com/{s}"
+        if s and s not in seen:
+            normalized.append(s)
+            seen.add(s)
+
+    return normalized
+
 
 router = APIRouter(prefix="/host/auth", tags=["host-auth"])
 
@@ -79,16 +112,16 @@ async def get_host_auth_status(
             scopes_union: list[str] = []
             for pi in pis:
                 try:
-                    # OIDC protocol scopes that should NOT be prefixed with Graph API URL
-                    oidc_scopes = {"openid", "profile", "email", "offline_access"}
-                    for s in (pi.scopes or []):
-                        s_str = str(s)
-                        # Normalize Microsoft scopes in fallback path
-                        # Skip OIDC scopes - they are protocol-level and should not be prefixed
-                        if p == "microsoft" and s_str and not s_str.startswith("https://") and s_str not in oidc_scopes:
-                            s_str = f"https://graph.microsoft.com/{s_str}"
-                        if s_str not in scopes_union:
-                            scopes_union.append(s_str)
+                    if p == "microsoft":
+                        # Normalize Microsoft scopes using helper
+                        for s in normalize_microsoft_scopes(pi.scopes):
+                            if s not in scopes_union:
+                                scopes_union.append(s)
+                    else:
+                        for s in (pi.scopes or []):
+                            s_str = str(s)
+                            if s_str and s_str not in scopes_union:
+                                scopes_union.append(s_str)
                 except Exception:
                     pass
             out[p] = {"user_connected": bool(user_connected), "granted_scopes": scopes_union}
@@ -354,16 +387,7 @@ async def host_auth_exchange(
         # Normalize Microsoft scopes: add URL prefix if missing
         # OIDC protocol scopes should NOT be prefixed - they are protocol-level
         if provider == "microsoft":
-            oidc_scopes = {"openid", "profile", "email", "offline_access"}
-            normalized_scopes = []
-            for scope in (token_scopes or requested_scopes):
-                if scope and not scope.startswith("https://") and scope not in oidc_scopes:
-                    # Microsoft returns short-form scopes like "Mail.Read"
-                    # but manifests declare them as "https://graph.microsoft.com/Mail.Read"
-                    normalized_scopes.append(f"https://graph.microsoft.com/{scope}")
-                else:
-                    normalized_scopes.append(scope)
-            final_scopes = normalized_scopes
+            final_scopes = normalize_microsoft_scopes(token_scopes or requested_scopes)
         else:
             final_scopes = token_scopes or requested_scopes
         # Log what we will persist for diagnosis of scope issues
