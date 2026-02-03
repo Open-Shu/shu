@@ -4,14 +4,86 @@ from unittest.mock import AsyncMock, MagicMock
 from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
 
 
-class MockHttpRequestFailed(Exception):
-    """Mock exception that simulates HttpRequestFailed from host.http."""
+class HttpRequestFailed(Exception):
+    """Copy of HttpRequestFailed from shu.plugins.host.exceptions.
+    
+    This is a standalone copy to avoid circular import issues when running
+    unit tests. It has the exact same interface as the real class so the
+    plugin's exception handling works correctly.
+    
+    The real class is at: shu/backend/src/shu/plugins/host/exceptions.py
+    """
     def __init__(self, status_code: int, url: str, body: object = None, headers: dict = None):
-        self.status_code = status_code
-        self.url = url
+        self.status_code = int(status_code)
+        self.url = str(url)
         self.body = body
-        self.headers = headers or {}
-        super().__init__(f"HTTP {status_code} calling {url}")
+        self.headers = dict(headers or {})
+        msg = f"HTTP {self.status_code} calling {self.url}"
+        super().__init__(msg)
+
+    @property
+    def error_category(self) -> str:
+        if self.status_code == 401:
+            return "auth_error"
+        elif self.status_code == 403:
+            return "forbidden"
+        elif self.status_code == 404:
+            return "not_found"
+        elif self.status_code == 410:
+            return "gone"
+        elif self.status_code == 429:
+            return "rate_limited"
+        elif self.status_code >= 500:
+            return "server_error"
+        else:
+            return "client_error"
+
+    @property
+    def is_retryable(self) -> bool:
+        return self.status_code == 429 or self.status_code >= 500
+
+    @property
+    def retry_after_seconds(self):
+        retry_after = self.headers.get("retry-after") or self.headers.get("Retry-After")
+        if not retry_after:
+            return None
+        try:
+            return int(retry_after)
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def provider_message(self) -> str:
+        if self.body is None:
+            return ""
+        if isinstance(self.body, str):
+            return self.body[:500] if len(self.body) > 500 else self.body
+        if isinstance(self.body, dict):
+            error_obj = self.body.get("error")
+            if isinstance(error_obj, dict):
+                msg = error_obj.get("message")
+                if msg:
+                    return str(msg)
+            for key in ("error_description", "message", "error", "detail"):
+                val = self.body.get(key)
+                if val and isinstance(val, str):
+                    return val
+            return str(self.body)[:500]
+        return str(self.body)[:500]
+
+    @property
+    def provider_error_code(self):
+        if not isinstance(self.body, dict):
+            return None
+        error_obj = self.body.get("error")
+        if isinstance(error_obj, dict):
+            code = error_obj.get("code") or error_obj.get("status")
+            if code:
+                return str(code)
+        code = self.body.get("code")
+        if code:
+            return str(code)
+        return None
 
 
 def wrap_graph_response(body_data: dict, status_code: int = 200) -> dict:
@@ -46,11 +118,9 @@ def mock_host():
     """Create mock host with all required capabilities using MagicMock/AsyncMock."""
     host = MagicMock()
     
-    # Mock auth capability
+    # Mock auth capability - returns Tuple[Optional[str], Optional[str]]
     host.auth = AsyncMock()
-    host.auth.resolve_token_and_target = AsyncMock(return_value={
-        "access_token": "test_token_123"
-    })
+    host.auth.resolve_token_and_target = AsyncMock(return_value=("test_token_123", "me"))
     
     # Mock http capability
     host.http = AsyncMock()
@@ -60,13 +130,15 @@ def mock_host():
     host.kb = AsyncMock()
     host.kb.ingest_email = AsyncMock()
     host.kb.delete_ko = AsyncMock()
-    host.kb.write_ko = AsyncMock(return_value={"id": "mock_ko_id"})
+    host.kb.upsert_knowledge_object = AsyncMock(return_value="mock_ko_id")
     
     # Mock cursor capability
     host.cursor = AsyncMock()
     host.cursor.get = AsyncMock(return_value=None)
     host.cursor.set = AsyncMock()
+    host.cursor.set_safe = AsyncMock(return_value=True)
     host.cursor.delete = AsyncMock()
+    host.cursor.delete_safe = AsyncMock(return_value=True)
     
     return host
 
@@ -83,8 +155,9 @@ def create_mock_host_with_messages(messages=None, track_requests=False):
         messages = []
 
     class MockAuth:
-        async def resolve_token_and_target(self, provider):
-            return {"access_token": "mock_token_123"}
+        async def resolve_token_and_target(self, provider, *, scopes=None):
+            """Returns Tuple[Optional[str], Optional[str]] matching real AuthCapability."""
+            return ("mock_token_123", "me")
     
     class MockHttp:
         def __init__(self):
@@ -115,16 +188,16 @@ def create_mock_host_with_messages(messages=None, track_requests=False):
     
     class MockKb:
         def __init__(self):
-            self.write_calls = []
+            self.upsert_calls = []
             self.ingest_calls = []
         
-        async def write_ko(self, kb_id, ko):
-            self.write_calls.append({"kb_id": kb_id, "ko": ko})
-            return {"id": "mock_ko_id"}
+        async def upsert_knowledge_object(self, knowledge_base_id, ko):
+            self.upsert_calls.append({"knowledge_base_id": knowledge_base_id, "ko": ko})
+            return "mock_ko_id"
         
-        async def ingest_email(self, kb_id, **kwargs):
-            self.ingest_calls.append({"kb_id": kb_id, **kwargs})
-            return {"id": "mock_email_ko_id"}
+        async def ingest_email(self, knowledge_base_id, **kwargs):
+            self.ingest_calls.append({"knowledge_base_id": knowledge_base_id, **kwargs})
+            return {"ko_id": "mock_email_ko_id"}
     
     class MockCursor:
         def __init__(self):

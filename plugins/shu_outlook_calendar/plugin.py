@@ -2,7 +2,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, List
 from urllib.parse import quote
-import json
 
 
 # Local minimal result shim to avoid importing host internals

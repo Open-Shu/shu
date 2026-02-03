@@ -1,102 +1,142 @@
 """Error handling tests for Outlook Mail plugin.
 
 Tests HTTP errors, network errors, diagnostics, and skips array.
+
+Note: The Outlook Mail plugin lets HttpRequestFailed exceptions bubble up to the
+executor, which converts them to structured PluginResult.err() responses. These
+tests verify that behavior by wrapping plugin execution with executor-like error
+handling, simulating the full execution flow.
 """
 import pytest
-from conftest import MockHttpRequestFailed, wrap_graph_response
+from conftest import HttpRequestFailed, wrap_graph_response
+
+
+def _executor_error_handler(e: HttpRequestFailed):
+    """Simulate executor's HttpRequestFailed handling (from executor.py lines 642-661).
+    
+    This mirrors the actual executor behavior so we can test the full error flow.
+    """
+    from plugins.shu_outlook_mail.plugin import _Result
+    
+    details = {
+        "http_status": e.status_code,
+        "url": e.url,
+        "provider_message": e.provider_message,
+        "is_retryable": e.is_retryable,
+    }
+    if e.provider_error_code:
+        details["provider_error_code"] = e.provider_error_code
+    if e.retry_after_seconds is not None:
+        details["retry_after_seconds"] = e.retry_after_seconds
+    
+    message = f"Provider HTTP error ({e.status_code}): {e.provider_message}" if e.provider_message else f"Provider HTTP error ({e.status_code})"
+    return _Result.err(message=message, code=e.error_category, details=details)
+
+
+async def execute_with_error_handling(plugin, params, context, host):
+    """Execute plugin with executor-like error handling for HttpRequestFailed."""
+    try:
+        return await plugin.execute(params, context, host)
+    except HttpRequestFailed as e:
+        return _executor_error_handler(e)
 
 
 class TestHttpErrors:
-    """Test HTTP error handling."""
+    """Test HTTP error handling.
+    
+    The plugin lets HttpRequestFailed bubble up to the executor, which converts
+    it to structured errors using error_category. These tests use execute_with_error_handling
+    to simulate the full execution flow.
+    """
 
     @pytest.mark.asyncio
     async def test_401_returns_auth_error(self, plugin, mock_host):
-        """Test HTTP 401 returns auth_missing_or_insufficient_scopes error."""
-        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+        """Test HTTP 401 returns auth_error (executor converts HttpRequestFailed)."""
+        mock_host.http.fetch.side_effect = HttpRequestFailed(
             status_code=401,
             url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
             body={"error": {"message": "Invalid authentication token"}}
         )
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        result = await execute_with_error_handling(plugin, {"op": "list"}, None, mock_host)
         
         assert result.status == "error"
-        assert result.error["code"] == "auth_missing_or_insufficient_scopes"
-        assert "Authentication failed" in result.error["message"]
+        assert result.error["code"] == "auth_error"
+        assert "401" in result.error["message"]
         assert result.error["details"]["http_status"] == 401
 
     @pytest.mark.asyncio
-    async def test_403_returns_permission_error(self, plugin, mock_host):
-        """Test HTTP 403 returns insufficient_permissions error."""
-        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+    async def test_403_returns_forbidden_error(self, plugin, mock_host):
+        """Test HTTP 403 returns forbidden error (executor converts HttpRequestFailed)."""
+        mock_host.http.fetch.side_effect = HttpRequestFailed(
             status_code=403,
             url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
             body={"error": {"message": "Insufficient permissions to access mailbox"}}
         )
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        result = await execute_with_error_handling(plugin, {"op": "list"}, None, mock_host)
         
         assert result.status == "error"
-        assert result.error["code"] == "insufficient_permissions"
-        assert "Insufficient permissions" in result.error["message"]
+        assert result.error["code"] == "forbidden"
+        assert "403" in result.error["message"]
         assert result.error["details"]["http_status"] == 403
 
     @pytest.mark.asyncio
-    async def test_429_returns_rate_limit_error(self, plugin, mock_host):
-        """Test HTTP 429 returns rate_limit_exceeded error."""
-        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+    async def test_429_returns_rate_limited_error(self, plugin, mock_host):
+        """Test HTTP 429 returns rate_limited error (executor converts HttpRequestFailed)."""
+        mock_host.http.fetch.side_effect = HttpRequestFailed(
             status_code=429,
             url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
             body={"error": {"message": "Too many requests"}}
         )
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        result = await execute_with_error_handling(plugin, {"op": "list"}, None, mock_host)
         
         assert result.status == "error"
-        assert result.error["code"] == "rate_limit_exceeded"
-        assert "Rate limit exceeded" in result.error["message"]
+        assert result.error["code"] == "rate_limited"
+        assert "429" in result.error["message"]
         assert result.error["details"]["http_status"] == 429
 
     @pytest.mark.asyncio 
     async def test_500_returns_server_error(self, plugin, mock_host):
-        """Test HTTP 500 returns server_error."""
-        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+        """Test HTTP 500 returns server_error (executor converts HttpRequestFailed)."""
+        mock_host.http.fetch.side_effect = HttpRequestFailed(
             status_code=500,
             url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
             body={"error": {"message": "Internal server error"}}
         )
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        result = await execute_with_error_handling(plugin, {"op": "list"}, None, mock_host)
         
         assert result.status == "error"
         assert result.error["code"] == "server_error"
-        assert "Server error: 500" in result.error["message"]
+        assert "500" in result.error["message"]
 
     @pytest.mark.asyncio
     async def test_503_returns_server_error(self, plugin, mock_host):
-        """Test HTTP 503 returns server_error."""
-        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+        """Test HTTP 503 returns server_error (executor converts HttpRequestFailed)."""
+        mock_host.http.fetch.side_effect = HttpRequestFailed(
             status_code=503,
             url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
             body={"error": {"message": "Service temporarily unavailable"}}
         )
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        result = await execute_with_error_handling(plugin, {"op": "list"}, None, mock_host)
         
         assert result.status == "error"
         assert result.error["code"] == "server_error"
-        assert "Server error: 503" in result.error["message"]
+        assert "503" in result.error["message"]
 
     @pytest.mark.asyncio
     async def test_error_details_include_provider_message(self, plugin, mock_host):
         """Test error details include provider_message from Graph API."""
-        mock_host.http.fetch.side_effect = MockHttpRequestFailed(
+        mock_host.http.fetch.side_effect = HttpRequestFailed(
             status_code=401,
             url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
             body={"error": {"message": "Token expired or invalid"}}
         )
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        result = await execute_with_error_handling(plugin, {"op": "list"}, None, mock_host)
         
         assert result.status == "error"
         assert "details" in result.error
@@ -105,19 +145,23 @@ class TestHttpErrors:
 
 
 class TestNetworkErrors:
-    """Test network error handling."""
+    """Test network error handling.
+    
+    Generic exceptions (not HttpRequestFailed) bubble up to the executor which
+    converts them to plugin_execute_error. These tests verify that behavior.
+    """
 
     @pytest.mark.asyncio
-    async def test_network_error_returns_appropriate_error(self, plugin, mock_host):
-        """Test network errors return network_error code."""
+    async def test_network_error_bubbles_up_as_plugin_error(self, plugin, mock_host):
+        """Test network errors bubble up and executor converts to plugin_execute_error."""
         mock_host.http.fetch.side_effect = Exception("Connection timeout")
         
-        result = await plugin.execute({"op": "list"}, None, mock_host)
+        # The plugin lets this exception bubble up
+        # The executor would catch it and convert to plugin_execute_error
+        with pytest.raises(Exception) as exc_info:
+            await plugin.execute({"op": "list"}, None, mock_host)
         
-        assert result.status == "error"
-        assert result.error["code"] == "network_error"
-        assert "Network error:" in result.error["message"]
-        assert "Connection timeout" in result.error["message"]
+        assert "Connection timeout" in str(exc_info.value)
 
 
 class TestDiagnostics:
@@ -260,7 +304,7 @@ class TestSkipsArray:
         mock_host.http.fetch.side_effect = [
             wrap_graph_response({"value": [{"id": "msg1"}], "@odata.nextLink": None}),
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}),
-            MockHttpRequestFailed(
+            HttpRequestFailed(
                 status_code=404,
                 url="https://graph.microsoft.com/v1.0/me/messages/msg1",
                 body={"error": {"message": "Message not found"}}

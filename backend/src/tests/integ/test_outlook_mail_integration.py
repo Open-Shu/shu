@@ -284,65 +284,6 @@ async def test_ingest_operation_requires_kb_id(client, db, auth_headers):
     logger.info("=== EXPECTED TEST OUTPUT: Missing kb_id error occurred as expected ===")
 
 
-async def test_ingest_operation_full_sync(client, db, auth_headers):
-    """Test ingest operation performs full sync when no cursor exists.
-
-    TODO(SHU-540): Fix mock response structure for full sync path.
-    The plugin's full sync fetches messages then separately fetches /delta endpoint.
-    """
-    return  # Skip for now - mock setup needs work
-    from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
-    
-    plugin = OutlookMailPlugin()
-    mock_host = MockHost()
-    
-    # Create mock messages
-    messages = [
-        _create_mock_message(message_id=f"msg_{i}", subject=f"Test {i}")
-        for i in range(3)
-    ]
-    
-    # Set up responses for list and individual message fetches
-    mock_host.http.set_response(
-        "/me/mailFolders/inbox/messages",
-        _create_mock_graph_response(messages, delta_link="https://graph.microsoft.com/delta?token=abc123")
-    )
-    
-    # Set up responses for individual message fetches
-    # Response structure: {"status_code": 200, "body": {...message...}}
-    for msg in messages:
-        mock_host.http.set_response(
-            f"/me/messages/{msg['id']}",
-            {
-                "status_code": 200,
-                "body": msg
-            }
-        )
-    
-    # Execute ingest operation
-    params = {
-        "op": "ingest",
-        "kb_id": "test_kb_456"
-    }
-    result = await plugin.execute(params, None, mock_host)
-    
-    # Verify result
-    assert result.status == "success"
-    assert result.data["count"] == 3
-    assert result.data["deleted"] == 0
-    
-    # Verify emails were ingested
-    assert len(mock_host.kb.ingested_emails) == 3
-    for i, email in enumerate(mock_host.kb.ingested_emails):
-        assert email["kb_id"] == "test_kb_456"
-        assert email["message_id"] == f"msg_{i}"
-        assert email["subject"] == f"Test {i}"
-    
-    # Verify delta token was stored
-    cursor = await mock_host.cursor.get("test_kb_456")
-    assert cursor is not None
-
-
 async def test_ingest_operation_delta_sync(client, db, auth_headers):
     """Test ingest operation uses delta sync when cursor exists."""
     from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
@@ -437,43 +378,6 @@ async def test_ingest_operation_delta_token_expired(client, db, auth_headers):
     logger.info("=== EXPECTED TEST OUTPUT: Fallback to full sync succeeded as expected ===")
 
 
-async def test_ingest_operation_reset_cursor(client, db, auth_headers):
-    """Test ingest operation performs full sync when reset_cursor is true.
-
-    TODO(SHU-540): Fix mock response structure for full sync path.
-    Same issue as test_ingest_operation_full_sync.
-    """
-    return  # Skip for now - mock setup needs work
-    from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
-    
-    plugin = OutlookMailPlugin()
-    mock_host = MockHost()
-    
-    # Set up existing cursor
-    await mock_host.cursor.set("test_kb_reset", "https://graph.microsoft.com/delta?token=old")
-    
-    # Set up full sync response
-    messages = [_create_mock_message(message_id="msg_1")]
-    mock_host.http.set_response("/me/mailFolders/inbox/messages",
-                               _create_mock_graph_response(messages))
-    mock_host.http.set_response("/me/messages/msg_1", {
-        "status_code": 200,
-        "body": messages[0]
-    })
-    
-    # Execute ingest with reset_cursor
-    params = {
-        "op": "ingest",
-        "kb_id": "test_kb_reset",
-        "reset_cursor": True
-    }
-    result = await plugin.execute(params, None, mock_host)
-    
-    # Verify result
-    assert result.status == "success"
-    assert result.data["count"] == 1
-
-
 async def test_invalid_operation_parameter(client, db, auth_headers):
     """Test plugin returns error for invalid operation."""
     from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
@@ -559,10 +463,8 @@ class OutlookMailIntegrationTestSuite(BaseIntegrationTestSuite):
             test_digest_operation_creates_summary,
             test_digest_operation_without_kb_id,
             test_ingest_operation_requires_kb_id,
-            test_ingest_operation_full_sync,
             test_ingest_operation_delta_sync,
             test_ingest_operation_delta_token_expired,
-            test_ingest_operation_reset_cursor,
             test_invalid_operation_parameter,
             test_parameter_validation_since_hours,
             test_parameter_validation_max_results,

@@ -4,7 +4,7 @@ Tests list, digest, ingest, and delta sync operation behavior.
 """
 import pytest
 from urllib.parse import unquote
-from conftest import wrap_graph_response
+from conftest import wrap_graph_response, HttpRequestFailed
 
 
 class TestListOperation:
@@ -265,9 +265,9 @@ class TestDigestOperation:
         result = await plugin.execute({"op": "digest", "kb_id": "test-kb"}, None, mock_host)
         
         assert result.status == "success"
-        mock_host.kb.write_ko.assert_called_once()
-        call_args = mock_host.kb.write_ko.call_args
-        assert call_args.kwargs.get('kb_id') == "test-kb" or (call_args.args and call_args.args[0] == "test-kb")
+        mock_host.kb.upsert_knowledge_object.assert_called_once()
+        call_args = mock_host.kb.upsert_knowledge_object.call_args
+        assert call_args.kwargs.get('knowledge_base_id') == "test-kb"
 
     @pytest.mark.asyncio
     async def test_no_kb_write_without_kb_id(self, plugin, mock_host):
@@ -280,7 +280,7 @@ class TestDigestOperation:
         result = await plugin.execute({"op": "digest"}, None, mock_host)
         
         assert result.status == "success"
-        mock_host.kb.write_ko.assert_not_called()
+        mock_host.kb.upsert_knowledge_object.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handles_zero_messages(self, plugin, mock_host):
@@ -434,7 +434,7 @@ class TestDeltaSyncBehavior:
 
     @pytest.mark.asyncio
     async def test_stores_delta_token_after_success(self, plugin, mock_host):
-        """Test plugin stores delta token via host.cursor.set."""
+        """Test plugin stores delta token via host.cursor.set_safe."""
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=old"
         new_token = "https://graph.microsoft.com/delta?token=new"
         mock_host.http.fetch.return_value = wrap_graph_response({
@@ -445,15 +445,20 @@ class TestDeltaSyncBehavior:
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
         
         assert result.status == "success"
-        mock_host.cursor.set.assert_called_once_with("test-kb", new_token)
+        mock_host.cursor.set_safe.assert_called_once_with("test-kb", new_token)
         assert result.data.get("history_id") == new_token
 
     @pytest.mark.asyncio
     async def test_handles_410_gone_with_fallback(self, plugin, mock_host):
         """Test 410 Gone triggers fallback to full sync."""
         mock_host.cursor.get.return_value = "https://graph.microsoft.com/delta?token=expired"
+        # First call raises 410 (delta token expired), then full sync succeeds
         mock_host.http.fetch.side_effect = [
-            wrap_graph_response({"error": {"message": "Delta token expired"}}, status_code=410),
+            HttpRequestFailed(
+                status_code=410,
+                url="https://graph.microsoft.com/delta?token=expired",
+                body={"error": {"message": "Delta token expired"}}
+            ),
             wrap_graph_response({"value": [], "@odata.nextLink": None}),
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"})
         ]
@@ -461,7 +466,7 @@ class TestDeltaSyncBehavior:
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
         
         assert result.status == "success"
-        mock_host.cursor.delete.assert_called_once_with("test-kb")
+        mock_host.cursor.delete_safe.assert_called_once_with("test-kb")
 
     @pytest.mark.asyncio
     async def test_reset_cursor_forces_full_sync(self, plugin, mock_host):

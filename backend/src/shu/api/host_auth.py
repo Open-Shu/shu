@@ -79,10 +79,13 @@ async def get_host_auth_status(
             scopes_union: list[str] = []
             for pi in pis:
                 try:
-                    for s in pi.scopes or []:
+                    # OIDC protocol scopes that should NOT be prefixed with Graph API URL
+                    oidc_scopes = {"openid", "profile", "email", "offline_access"}
+                    for s in (pi.scopes or []):
                         s_str = str(s)
                         # Normalize Microsoft scopes in fallback path
-                        if p == "microsoft" and s_str and not s_str.startswith("https://"):
+                        # Skip OIDC scopes - they are protocol-level and should not be prefixed
+                        if p == "microsoft" and s_str and not s_str.startswith("https://") and s_str not in oidc_scopes:
                             s_str = f"https://graph.microsoft.com/{s_str}"
                         if s_str not in scopes_union:
                             scopes_union.append(s_str)
@@ -349,10 +352,12 @@ async def host_auth_exchange(
             )
 
         # Normalize Microsoft scopes: add URL prefix if missing
+        # OIDC protocol scopes should NOT be prefixed - they are protocol-level
         if provider == "microsoft":
+            oidc_scopes = {"openid", "profile", "email", "offline_access"}
             normalized_scopes = []
             for scope in (token_scopes or requested_scopes):
-                if scope and not scope.startswith("https://"):
+                if scope and not scope.startswith("https://") and scope not in oidc_scopes:
                     # Microsoft returns short-form scopes like "Mail.Read"
                     # but manifests declare them as "https://graph.microsoft.com/Mail.Read"
                     normalized_scopes.append(f"https://graph.microsoft.com/{scope}")

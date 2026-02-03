@@ -159,13 +159,16 @@ class MockHostHttp:
         This mirrors HttpCapability.fetch_or_none behavior:
         - Returns response dict on success (2xx/3xx)
         - Returns None on 4xx client errors
-        - Raises on 5xx server errors (not implemented in mock for simplicity)
+        - Raises HttpRequestFailed on 5xx server errors
         """
-        response = await self.fetch(method, url, headers=headers, params=params, json=json, **kwargs)
-        status = response.get("status_code", 200)
-        if 400 <= status < 500:
-            return None
-        return response
+        try:
+            return await self.fetch(method, url, headers=headers, params=params, json=json, **kwargs)
+        except HttpRequestFailed as e:
+            if e.status_code < 500:
+                # 4xx errors return None
+                return None
+            # 5xx errors still raise
+            raise
 
     async def fetch_bytes(
         self,
@@ -187,7 +190,10 @@ class MockHostHttp:
 
 
 class MockHostKb:
-    """Mock host.kb capability for knowledge base operations."""
+    """Mock host.kb capability for knowledge base operations.
+    
+    Matches the real KbCapability interface from shu/plugins/host/kb_capability.py.
+    """
 
     def __init__(self):
         self.ingested_texts: List[Dict[str, Any]] = []
@@ -196,11 +202,34 @@ class MockHostKb:
         self.ingested_documents: List[Dict[str, Any]] = []
         self.upserted_kos: List[Dict[str, Any]] = []
         self.deleted_kos: List[str] = []
-        self.written_kos: List[Dict[str, Any]] = []  # For write_ko() calls
+
+    async def ingest_document(
+        self,
+        knowledge_base_id: str,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        mime_type: str,
+        source_id: str,
+        source_url: Optional[str] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Mock document ingestion."""
+        record = {
+            "knowledge_base_id": knowledge_base_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "source_id": source_id,
+            "source_url": source_url,
+            "attributes": attributes,
+            "file_bytes_len": len(file_bytes),
+        }
+        self.ingested_documents.append(record)
+        return {"ko_id": f"mock_ko_{source_id}"}
 
     async def ingest_text(
         self,
-        kb_id: str,
+        knowledge_base_id: str,
         *,
         title: str,
         content: str,
@@ -210,7 +239,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock text ingestion."""
         record = {
-            "kb_id": kb_id,
+            "knowledge_base_id": knowledge_base_id,
             "title": title,
             "content": content,
             "source_id": source_id,
@@ -222,15 +251,15 @@ class MockHostKb:
 
     async def ingest_email(
         self,
-        kb_id: str,
+        knowledge_base_id: str,
         *,
         subject: str,
         sender: Optional[str],
         recipients: Dict[str, Any],
         date: Optional[str],
         message_id: str,
-        thread_id: Optional[str] = None,
-        body_text: Optional[str] = None,
+        thread_id: Optional[str],
+        body_text: Optional[str],
         body_html: Optional[str] = None,
         labels: Optional[List[str]] = None,
         source_url: Optional[str] = None,
@@ -238,7 +267,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock email ingestion."""
         record = {
-            "kb_id": kb_id,
+            "knowledge_base_id": knowledge_base_id,
             "subject": subject,
             "sender": sender,
             "recipients": recipients,
@@ -256,7 +285,7 @@ class MockHostKb:
 
     async def ingest_thread(
         self,
-        kb_id: str,
+        knowledge_base_id: str,
         *,
         title: str,
         content: str,
@@ -266,7 +295,7 @@ class MockHostKb:
     ) -> Dict[str, Any]:
         """Mock thread ingestion."""
         record = {
-            "kb_id": kb_id,
+            "knowledge_base_id": knowledge_base_id,
             "title": title,
             "content": content,
             "thread_id": thread_id,
@@ -281,22 +310,14 @@ class MockHostKb:
         knowledge_base_id: str,
         ko: Dict[str, Any]
     ) -> str:
-        """Mock KO upsert."""
-        record = {"kb_id": knowledge_base_id, "ko": ko}
+        """Mock KO upsert.
+        
+        Matches real KbCapability.upsert_knowledge_object signature.
+        """
+        record = {"knowledge_base_id": knowledge_base_id, "ko": ko}
         self.upserted_kos.append(record)
         external_id = ko.get("external_id", "unknown")
         return f"mock_ko_{external_id}"
-
-    async def write_ko(self, *, kb_id: str, ko: Dict[str, Any]) -> Dict[str, Any]:
-        """Mock KO write (non-standard method used by Outlook Mail plugin).
-
-        NOTE: This method doesn't exist in the actual KbCapability. The plugin
-        should use upsert_knowledge_object() instead. This mock exists for
-        backward compatibility with tests until the plugin is refactored.
-        """
-        record = {"kb_id": kb_id, "ko": ko}
-        self.written_kos.append(record)
-        return {"id": f"mock_ko_{ko.get('external_id', 'unknown')}"}
 
     async def delete_ko(self, *, external_id: str) -> Dict[str, Any]:
         """Mock KO deletion."""
@@ -433,15 +454,14 @@ class MockHostUtils:
         self,
         items: List[T],
         async_predicate: Callable[[T], Awaitable[bool]],
-        *,
-        max_errors: Optional[int] = None
     ) -> Tuple[List[T], List[Tuple[T, Exception]]]:
         """Filter items, collecting errors instead of failing.
+
+        Matches real UtilsCapability.filter_safe signature.
 
         Args:
             items: List of items to filter
             async_predicate: Async function returning True to keep item
-            max_errors: Optional maximum errors before stopping
 
         Returns:
             Tuple of (kept_items, errors)
@@ -450,8 +470,6 @@ class MockHostUtils:
         errors: List[Tuple[T, Exception]] = []
 
         for item in items:
-            if max_errors is not None and len(errors) >= max_errors:
-                break
             try:
                 if await async_predicate(item):
                     kept.append(item)

@@ -84,7 +84,7 @@ async def test_outlook_mail_manifest_loaded_correctly(client, db, auth_headers):
         assert plugin.name == "outlook_mail", f"Expected plugin.name 'outlook_mail', got '{plugin.name}'"
         logger.info("✓ Outlook Mail plugin loaded successfully")
     except Exception as e:
-        raise AssertionError(f"Failed to load outlook_mail plugin: {e}")
+        raise AssertionError(f"Failed to load outlook_mail plugin: {e}") from e
     
     # Verify plugin has required methods
     assert hasattr(plugin, "get_schema"), "Plugin missing get_schema method"
