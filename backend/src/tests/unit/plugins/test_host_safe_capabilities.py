@@ -9,7 +9,9 @@ import issues with other host capabilities.
 
 import pytest
 from unittest.mock import patch
-import sys
+import pytest
+from unittest.mock import patch
+import logging
 import logging
 
 
@@ -34,11 +36,14 @@ class LogCapability(ImmutableCapabilityMixin):
         object.__setattr__(self, "_operation", operation)
 
     def _make_extra(self, extra=None):
-        base = {"plugin_name": self._plugin_name, "user_id": self._user_id}
-        if self._operation:
-            base["operation"] = self._operation
+        base = {}
         if extra:
             base.update(extra)
+        # Set protected fields after merging extra to prevent spoofing
+        base["plugin_name"] = self._plugin_name
+        base["user_id"] = self._user_id
+        if self._operation:
+            base["operation"] = self._operation
         return base
 
     def debug(self, msg, *, extra=None):
@@ -119,6 +124,22 @@ class TestLogCapability:
         """_make_extra includes operation when provided."""
         log = LogCapability(plugin_name="test-plugin", user_id="user-123", operation="sync")
         extra = log._make_extra()
+        assert extra["operation"] == "sync"
+
+    def test_make_extra_prevents_spoofing_plugin_name(self, log):
+        """_make_extra prevents plugins from spoofing plugin_name."""
+        extra = log._make_extra({"plugin_name": "malicious-plugin"})
+        assert extra["plugin_name"] == "test-plugin"
+
+    def test_make_extra_prevents_spoofing_user_id(self, log):
+        """_make_extra prevents plugins from spoofing user_id."""
+        extra = log._make_extra({"user_id": "admin-user"})
+        assert extra["user_id"] == "user-123"
+
+    def test_make_extra_prevents_spoofing_operation(self):
+        """_make_extra prevents plugins from spoofing operation."""
+        log = LogCapability(plugin_name="test-plugin", user_id="user-123", operation="sync")
+        extra = log._make_extra({"operation": "admin-action"})
         assert extra["operation"] == "sync"
 
     def test_info_does_not_raise(self, log):

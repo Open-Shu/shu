@@ -12,6 +12,7 @@ Channel messages require ChannelMessage.Read.All (admin consent) - not included 
 from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -286,21 +287,22 @@ class TeamsChatPlugin:
         chats = await self._list_chats(host, access_token, max_chats)
 
         # Fetch messages from each chat using map_safe for graceful failure handling
-        async def fetch_chat_messages(chat: Dict[str, Any]) -> List[Dict[str, Any]]:
+        # Returns (chat, messages) tuples to maintain alignment
+        async def fetch_chat_messages(chat: Dict[str, Any]) -> tuple:
             chat_id = chat.get("id")
             if not chat_id:
-                return []
-            return await self._list_chat_messages(host, access_token, chat_id, since_ts, max_messages_per_chat)
+                return (chat, [])
+            messages = await self._list_chat_messages(host, access_token, chat_id, since_ts, max_messages_per_chat)
+            return (chat, messages)
 
         chat_results, errors = await host.utils.map_safe(chats, fetch_chat_messages)
         if errors:
             host.log.warning(f"Failed to fetch messages from {len(errors)} chats")
 
-        # Process results - zip chat_results with chats for context
+        # Process results - each result is a (chat, messages) tuple
         all_messages: List[Dict[str, Any]] = []
         chats_processed = len(chat_results)
-        for i, messages in enumerate(chat_results):
-            chat = chats[i] if i < len(chats) else {}
+        for chat, messages in chat_results:
             chat_id = chat.get("id")
 
             for msg in messages:
@@ -315,7 +317,6 @@ class TeamsChatPlugin:
 
                 # Strip HTML if needed (basic)
                 if content_type == "html":
-                    import re
                     content = re.sub(r'<[^>]+>', '', content)
 
                 all_messages.append({

@@ -196,7 +196,9 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
             )
         )
         creds = result.scalars().all()
-        scopes_union: list[str] = []
+        scopes_union: List[str] = []
+        # OIDC scopes that should not be prefixed with Graph API URL
+        oidc_scopes = {"openid", "profile", "email", "offline_access"}
         for c in creds:
             try:
                 from ...api.host_auth import normalize_microsoft_scopes

@@ -108,6 +108,23 @@ class CacheCapability(ImmutableCapabilityMixin):
             object.__setattr__(self, "_backend", backend)
         return self._backend
 
+    async def _serialize_and_set(
+        self, namespaced_key: str, value: Any, ttl_seconds: int
+    ) -> None:
+        """Serialize value and write to cache backend.
+        
+        This is the shared implementation for set() and set_safe().
+        Exceptions are not caught here - callers handle errors differently.
+        
+        Args:
+            namespaced_key: The fully namespaced cache key.
+            value: The value to store (must be JSON-serializable).
+            ttl_seconds: Time-to-live in seconds.
+        """
+        backend = await self._get_backend()
+        serialized = json.dumps(value, default=str)
+        await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
+
     async def set(self, key: str, value: Any, ttl_seconds: int = 300) -> None:
         """Store a value in the cache with optional TTL.
 
@@ -130,9 +147,7 @@ class CacheCapability(ImmutableCapabilityMixin):
         """
         namespaced_key = self._make_namespaced_key(key)
         try:
-            backend = await self._get_backend()
-            serialized = json.dumps(value, default=str)
-            await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
+            await self._serialize_and_set(namespaced_key, value, ttl_seconds)
         except Exception as e:
             # Best-effort; do not crash tool
             logger.warning(
@@ -238,9 +253,7 @@ class CacheCapability(ImmutableCapabilityMixin):
         """
         namespaced_key = self._make_namespaced_key(key)
         try:
-            backend = await self._get_backend()
-            serialized = json.dumps(value, default=str)
-            await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
+            await self._serialize_and_set(namespaced_key, value, ttl_seconds)
             return True
         except Exception as e:
             logger.warning(

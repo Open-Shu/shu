@@ -20,6 +20,24 @@ class _Result:
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
 
+# Sentinel class to detect HttpRequestFailed from host.http
+# The real exception is injected at runtime; this allows isinstance checks
+class _HttpRequestFailedBase(Exception):
+    """Base for detecting HttpRequestFailed exceptions.
+    
+    At runtime, host.http raises the real HttpRequestFailed from
+    shu.plugins.host.exceptions. We detect it by checking for the
+    error_category attribute rather than importing the class directly
+    (which would create circular import issues for plugins).
+    """
+    pass
+
+
+def _is_http_request_failed(e: Exception) -> bool:
+    """Check if exception is HttpRequestFailed by duck-typing."""
+    return hasattr(e, 'error_category') and hasattr(e, 'status_code')
+
+
 class OutlookCalendarPlugin:
     """Microsoft Outlook Calendar plugin for listing and ingesting calendar events."""
 
@@ -109,24 +127,6 @@ class OutlookCalendarPlugin:
             "required": [],
             "additionalProperties": True,
         }
-
-    async def _graph_api_request(self, host: Any, access_token: str, endpoint: str,
-                                  method: str = "GET", params: Optional[Dict[str, Any]] = None,
-                                  body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Make a request to Microsoft Graph API.
-
-        HttpRequestFailed exceptions bubble up to the executor which converts them
-        to structured PluginResult.err() with semantic error_category.
-        """
-        base_url = "https://graph.microsoft.com/v1.0"
-        url = f"{base_url}{endpoint}"
-
-        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-
-        response = await host.http.fetch(
-            method=method, url=url, headers=headers, params=params or {}, json=body
-        )
-        return response
 
     async def _fetch_all_pages(self, host: Any, access_token: str, initial_url: str,
                                 max_results: Optional[int] = None) -> tuple[List[Dict[str, Any]], Optional[str]]:
@@ -278,6 +278,32 @@ class OutlookCalendarPlugin:
                 },
             )
 
+        async def _process_event(ev: Dict[str, Any]) -> tuple[int, int]:
+            """Process a single event (upsert or delete). Returns (upserts, deletes)."""
+            eid = ev.get("id")
+            if ev.get("isCancelled") or ev.get("@removed"):
+                try:
+                    await host.kb.delete_ko(external_id=eid)
+                    return (0, 1)
+                except Exception as del_err:
+                    if _is_http_request_failed(del_err):
+                        # Log HTTP errors with context but continue processing
+                        host.log.warning(f"HTTP error deleting event {eid}: {del_err}")
+                    else:
+                        # Log unexpected errors with full context
+                        host.log.exception(f"Unexpected error in delete_ko for event_id={eid}")
+                    return (0, 0)
+            else:
+                try:
+                    await _upsert_event(ev)
+                    return (1, 0)
+                except Exception as upsert_err:
+                    if _is_http_request_failed(upsert_err):
+                        host.log.warning(f"HTTP error upserting event {eid}: {upsert_err}")
+                    else:
+                        host.log.exception(f"Unexpected error in _upsert_event for event_id={eid}")
+                    raise
+
         if use_delta_sync and cursor_data:
             # Use delta endpoint for incremental sync
             delta_url = cursor_data if isinstance(cursor_data, str) else cursor_data.get("delta_link")
@@ -287,22 +313,20 @@ class OutlookCalendarPlugin:
                     events, delta_link = await self._fetch_all_pages(host, access_token, delta_url, max_results)
 
                     for ev in events:
-                        if ev.get("isCancelled") or ev.get("@removed"):
-                            try:
-                                await host.kb.delete_ko(external_id=ev.get("id"))
-                                deleted += 1
-                            except Exception as del_err:
-                                host.log.warning(f"Failed to delete cancelled event {ev.get('id')}: {del_err}")
-                        else:
-                            await _upsert_event(ev)
-                            upserts += 1
+                        u, d = await _process_event(ev)
+                        upserts += u
+                        deleted += d
 
                 except Exception as e:
                     # Check for HTTP 410 (delta token expired) using error_category
-                    if hasattr(e, 'error_category') and e.error_category == 'gone':
+                    if _is_http_request_failed(e) and e.error_category == 'gone':
+                        # Delta token expired; fall back to full sync
                         use_delta_sync = False
                         cursor_data = None
                     else:
+                        # Log unexpected errors from _fetch_all_pages with context
+                        if not _is_http_request_failed(e):
+                            host.log.exception("Unexpected error in _fetch_all_pages during delta sync")
                         raise
 
         if not use_delta_sync or not cursor_data:
@@ -320,15 +344,9 @@ class OutlookCalendarPlugin:
             events, delta_link = await self._fetch_all_pages(host, access_token, endpoint, max_results)
 
             for ev in events:
-                if ev.get("isCancelled") or ev.get("@removed"):
-                    try:
-                        await host.kb.delete_ko(external_id=ev.get("id"))
-                        deleted += 1
-                    except Exception as del_err:
-                        host.log.warning(f"Failed to delete cancelled event {ev.get('id')}: {del_err}")
-                else:
-                    await _upsert_event(ev)
-                    upserts += 1
+                u, d = await _process_event(ev)
+                upserts += u
+                deleted += d
 
         # Store delta link for next sync using safe method
         if hasattr(host, "cursor") and delta_link:

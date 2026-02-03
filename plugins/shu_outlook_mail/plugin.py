@@ -1,7 +1,10 @@
 from __future__ import annotations
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, List
 from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 
 # Local minimal result shim to avoid importing host internals
@@ -327,14 +330,6 @@ class OutlookMailPlugin:
         while next_url:
             # For subsequent pages, use the full URL from @odata.nextLink
             if next_url.startswith("http"):
-                # Extract endpoint from full URL
-                base_url = "https://graph.microsoft.com/v1.0"
-                if next_url.startswith(base_url):
-                    endpoint = next_url[len(base_url):]
-                else:
-                    # Handle delta links or other full URLs
-                    endpoint = next_url
-                
                 # Make request directly with full URL
                 # HttpRequestFailed exceptions bubble up - caller can check error_category
                 headers = {
@@ -850,9 +845,9 @@ class OutlookMailPlugin:
                 else:
                     delta_link = None
                 
-            except Exception:
+            except Exception as e:
                 # If we can't get delta link, that's okay - we'll do full sync next time
-                pass
+                logger.exception("Failed to get delta link for kb_id=%s", kb_id)
 
         # Process messages: handle messageAdded and messageDeleted events
         # This runs for both delta sync and full sync

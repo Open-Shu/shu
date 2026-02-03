@@ -32,7 +32,7 @@ The plugin is located in `shu/plugins/shu_outlook_mail/` and follows the standar
 
 ### Plugin Structure
 
-```
+```text
 shu/plugins/shu_outlook_mail/
 ├── __init__.py          # Package exports
 ├── manifest.py          # Plugin metadata and configuration
@@ -653,7 +653,7 @@ The plugin includes comprehensive test coverage using multiple testing approache
 
 ### Test Structure
 
-```
+```text
 backend/src/tests/
 ├── unit/plugins/
 │   ├── test_outlook_mail_manifest.py           # Manifest validation

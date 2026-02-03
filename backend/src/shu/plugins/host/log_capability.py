@@ -79,15 +79,19 @@ class LogCapability(ImmutableCapabilityMixin):
             
         Returns:
             Dict with plugin context merged with any extra context.
+            
+        Note:
+            Protected fields (plugin_name, user_id, operation) are set after
+            merging extra to prevent plugins from spoofing log context.
         """
-        base = {
-            "plugin_name": self._plugin_name,
-            "user_id": self._user_id,
-        }
-        if self._operation:
-            base["operation"] = self._operation
+        base: Dict[str, Any] = {}
         if extra:
             base.update(extra)
+        # Set protected fields after merging extra to prevent spoofing
+        base["plugin_name"] = self._plugin_name
+        base["user_id"] = self._user_id
+        if self._operation:
+            base["operation"] = self._operation
         return base
 
     def debug(self, msg: str, *, extra: Optional[Dict[str, Any]] = None) -> None:
