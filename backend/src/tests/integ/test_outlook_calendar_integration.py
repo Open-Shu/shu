@@ -7,14 +7,14 @@ These tests verify the Outlook Calendar plugin operations:
 - Error handling: Auth failures, missing parameters, API errors
 """
 
-import sys
 import logging
+import sys
 import uuid
-from typing import List, Callable, Dict, Any
-from datetime import datetime, timezone, timedelta
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.response_utils import extract_data
 from integ.helpers.mock_host import MockHost, create_mock_graph_response
 
 logger = logging.getLogger(__name__)
@@ -30,23 +30,23 @@ def _create_mock_event(
     start_hours_offset: int = 0,
     duration_hours: int = 1,
     location: str = "Conference Room A",
-    attendees: List[str] = None,
+    attendees: list[str] = None,
     organizer_email: str = "organizer@example.com",
     body_preview: str = "Test event body preview",
     body_content: str = "Test event body content",
     is_cancelled: bool = False,
     online_meeting_url: str = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a mock Graph API calendar event object."""
     if event_id is None:
         event_id = f"AAMkAGI2{uuid.uuid4().hex[:20]}"
-    
+
     if attendees is None:
         attendees = ["attendee1@example.com", "attendee2@example.com"]
-    
-    start_time = datetime.now(timezone.utc) + timedelta(hours=start_hours_offset)
+
+    start_time = datetime.now(UTC) + timedelta(hours=start_hours_offset)
     end_time = start_time + timedelta(hours=duration_hours)
-    
+
     event = {
         "id": event_id,
         "subject": subject,
@@ -69,14 +69,14 @@ def _create_mock_event(
         "isCancelled": is_cancelled,
         "webLink": f"https://outlook.office365.com/owa/?itemid={event_id}",
     }
-    
+
     if online_meeting_url:
         event["onlineMeeting"] = {"joinUrl": online_meeting_url}
-    
+
     return event
 
 
-def _create_mock_cancelled_event(event_id: str) -> Dict[str, Any]:
+def _create_mock_cancelled_event(event_id: str) -> dict[str, Any]:
     """Create a mock cancelled event for delta sync."""
     return {
         "id": event_id,
@@ -358,7 +358,7 @@ async def test_event_attributes_extraction(client, db, auth_headers):
 class OutlookCalendarIntegrationTestSuite(BaseIntegrationTestSuite):
     """Test suite for Outlook Calendar plugin integration tests."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return all Outlook Calendar plugin test functions."""
         return [
             test_list_operation_default_parameters,

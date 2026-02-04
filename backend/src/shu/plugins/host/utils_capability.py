@@ -1,5 +1,4 @@
-"""
-UtilsCapability - Plugin utility functions.
+"""UtilsCapability - Plugin utility functions.
 
 This module provides utility functions for plugins that help with common
 patterns like batch processing with error handling.
@@ -11,10 +10,10 @@ plugins from mutating internal state.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, List, Tuple, TypeVar, Optional
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from .base import ImmutableCapabilityMixin
-
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +43,7 @@ class UtilsCapability(ImmutableCapabilityMixin):
             host.log.warning(f"Failed to fetch {len(errors)} messages")
         for msg in messages:
             # process message...
+
     """
 
     __slots__ = ("_plugin_name", "_user_id")
@@ -57,17 +57,18 @@ class UtilsCapability(ImmutableCapabilityMixin):
         Args:
             plugin_name: The name of the plugin using this capability.
             user_id: The ID of the user the plugin is running for.
+
         """
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
 
     async def map_safe(
         self,
-        items: List[T],
+        items: list[T],
         async_fn: Callable[[T], Awaitable[R]],
         *,
-        max_errors: Optional[int] = None,
-    ) -> Tuple[List[R], List[Tuple[T, Exception]]]:
+        max_errors: int | None = None,
+    ) -> tuple[list[R], list[tuple[T, Exception]]]:
         """Process items with a function, collecting errors instead of failing.
         
         This is useful for batch operations where individual failures should
@@ -96,10 +97,11 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 host.log.warning(f"Failed to fetch {len(errors)} users")
             for user in users:
                 print(user["name"])
+
         """
-        results: List[R] = []
-        errors: List[Tuple[T, Exception]] = []
-        
+        results: list[R] = []
+        errors: list[tuple[T, Exception]] = []
+
         for item in items:
             if max_errors is not None and len(errors) >= max_errors:
                 # Stop processing if we've hit the error limit
@@ -109,14 +111,14 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 results.append(result)
             except Exception as e:
                 errors.append((item, e))
-        
+
         return results, errors
 
     async def filter_safe(
         self,
-        items: List[T],
+        items: list[T],
         async_predicate: Callable[[T], Awaitable[bool]],
-    ) -> Tuple[List[T], List[Tuple[T, Exception]]]:
+    ) -> tuple[list[T], list[tuple[T, Exception]]]:
         """Filter items with a predicate, collecting errors instead of failing.
         
         This is useful for filtering operations where individual failures
@@ -137,16 +139,17 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 return resp["body"]["valid"]
             
             valid_items, errors = await host.utils.filter_safe(items, is_valid)
+
         """
-        kept: List[T] = []
-        errors: List[Tuple[T, Exception]] = []
-        
+        kept: list[T] = []
+        errors: list[tuple[T, Exception]] = []
+
         for item in items:
             try:
                 if await async_predicate(item):
                     kept.append(item)
             except Exception as e:
                 errors.append((item, e))
-        
+
         return kept, errors
 

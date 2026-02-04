@@ -2,9 +2,10 @@
 
 Tests list, digest, ingest, and delta sync operation behavior.
 """
-import pytest
 from urllib.parse import unquote
-from conftest import wrap_graph_response, HttpRequestFailed
+
+import pytest
+from conftest import HttpRequestFailed, wrap_graph_response
 
 
 class TestListOperation:
@@ -17,9 +18,9 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "success"
         call_args = mock_host.http.fetch.call_args
         url = call_args.kwargs['url']
@@ -32,9 +33,9 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "success"
         call_args = mock_host.http.fetch.call_args
         headers = call_args.kwargs['headers']
@@ -47,9 +48,9 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         call_args = mock_host.http.fetch.call_args
         url = call_args.kwargs['url']
         assert "$select=" in url
@@ -66,9 +67,9 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         await plugin.execute({"op": "list", "since_hours": 24}, None, mock_host)
-        
+
         call_args = mock_host.http.fetch.call_args
         url = call_args.kwargs['url']
         assert "$filter=" in url
@@ -81,13 +82,13 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         await plugin.execute(
             {"op": "list", "query_filter": "from/emailAddress/address eq 'test@example.com'"},
             None,
             mock_host
         )
-        
+
         call_args = mock_host.http.fetch.call_args
         url = unquote(call_args.kwargs['url'])
         assert "from/emailAddress/address" in url
@@ -99,9 +100,9 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         await plugin.execute({"op": "list", "max_results": 10}, None, mock_host)
-        
+
         call_args = mock_host.http.fetch.call_args
         url = call_args.kwargs['url']
         assert "$top=10" in url
@@ -116,9 +117,9 @@ class TestListOperation:
             ],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert "messages" in result.data
         assert len(result.data["messages"]) == 2
@@ -137,9 +138,9 @@ class TestListOperation:
                 "@odata.nextLink": None
             })
         ]
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert len(result.data["messages"]) == 3
         assert mock_host.http.fetch.call_count == 2
@@ -151,9 +152,9 @@ class TestListOperation:
             "value": [{"id": f"msg{i}"} for i in range(10)],
             "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skip=10"
         })
-        
+
         result = await plugin.execute({"op": "list", "max_results": 5}, None, mock_host)
-        
+
         assert result.status == "success"
         assert len(result.data["messages"]) == 5
         assert mock_host.http.fetch.call_count == 1
@@ -165,9 +166,9 @@ class TestListOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         call_args = mock_host.http.fetch.call_args
         url = call_args.kwargs['url']
         assert "$orderby=receivedDateTime" in url
@@ -193,9 +194,9 @@ class TestDigestOperation:
             ],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert result.data["ko"]["type"] == "email_digest"
         assert "title" in result.data["ko"]
@@ -213,9 +214,9 @@ class TestDigestOperation:
             ],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         top_senders = result.data["ko"]["attributes"]["top_senders"]
         assert len(top_senders) == 2
         assert top_senders[0]["email"] == "john@example.com"
@@ -232,9 +233,9 @@ class TestDigestOperation:
             ],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         recent_subjects = result.data["ko"]["attributes"]["recent_subjects"]
         assert "Subject A" in recent_subjects
         assert "Subject B" in recent_subjects
@@ -246,9 +247,9 @@ class TestDigestOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest", "since_hours": 48}, None, mock_host)
-        
+
         window = result.data["window"]
         assert "since" in window
         assert "until" in window
@@ -261,9 +262,9 @@ class TestDigestOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         mock_host.kb.upsert_knowledge_object.assert_called_once()
         call_args = mock_host.kb.upsert_knowledge_object.call_args
@@ -276,9 +277,9 @@ class TestDigestOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         assert result.status == "success"
         mock_host.kb.upsert_knowledge_object.assert_not_called()
 
@@ -289,9 +290,9 @@ class TestDigestOperation:
             "value": [],
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert result.data["count"] == 0
         assert len(result.data["ko"]["attributes"]["top_senders"]) == 0
@@ -308,9 +309,9 @@ class TestDigestOperation:
             "value": messages,
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         assert len(result.data["ko"]["attributes"]["top_senders"]) == 10
 
     @pytest.mark.asyncio
@@ -324,9 +325,9 @@ class TestDigestOperation:
             "value": messages,
             "@odata.nextLink": None
         })
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         assert len(result.data["ko"]["attributes"]["recent_subjects"]) == 20
 
 
@@ -359,9 +360,9 @@ class TestIngestOperation:
                 "body": {"contentType": "text", "content": "Body"}
             })
         ]
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert result.data["count"] == 1
         mock_host.kb.ingest_email.assert_called_once()
@@ -373,9 +374,9 @@ class TestIngestOperation:
             wrap_graph_response({"value": [], "@odata.nextLink": None}),
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"})
         ]
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert "count" in result.data
         assert "deleted" in result.data
@@ -392,9 +393,9 @@ class TestDeltaSyncBehavior:
             wrap_graph_response({"value": [], "@odata.nextLink": None}),
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"})
         ]
-        
+
         await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         mock_host.cursor.get.assert_called_once_with("test-kb")
 
     @pytest.mark.asyncio
@@ -406,9 +407,9 @@ class TestDeltaSyncBehavior:
             "value": [],
             "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"
         })
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         # Verify delta endpoint was used
         call_args = mock_host.http.fetch.call_args_list[0]
@@ -425,9 +426,9 @@ class TestDeltaSyncBehavior:
             ],
             "@odata.deltaLink": "https://graph.microsoft.com/delta?token=xyz"
         })
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert result.data["deleted"] == 1
         mock_host.kb.delete_ko.assert_called_once_with(external_id="msg_deleted_001")
@@ -441,9 +442,9 @@ class TestDeltaSyncBehavior:
             "value": [],
             "@odata.deltaLink": new_token
         })
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         mock_host.cursor.set_safe.assert_called_once_with("test-kb", new_token)
         assert result.data.get("history_id") == new_token
@@ -462,9 +463,9 @@ class TestDeltaSyncBehavior:
             wrap_graph_response({"value": [], "@odata.nextLink": None}),
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"})
         ]
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         mock_host.cursor.delete_safe.assert_called_once_with("test-kb")
 
@@ -476,13 +477,13 @@ class TestDeltaSyncBehavior:
             wrap_graph_response({"value": [], "@odata.nextLink": None}),
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=new"})
         ]
-        
+
         result = await plugin.execute(
             {"op": "ingest", "kb_id": "test-kb", "reset_cursor": True},
             None,
             mock_host
         )
-        
+
         assert result.status == "success"
         # cursor.get should NOT be called when reset_cursor is True
         mock_host.cursor.get.assert_not_called()
@@ -512,9 +513,9 @@ class TestDeltaSyncBehavior:
                 "body": {"contentType": "text", "content": "Body"}
             })
         ]
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert result.data["count"] == 1
         assert result.data["deleted"] == 1

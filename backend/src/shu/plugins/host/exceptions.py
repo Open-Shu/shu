@@ -28,6 +28,7 @@ class HttpRequestFailed(Exception):
         is_retryable: True for 429 and 5xx errors
         retry_after_seconds: From Retry-After header if present
         provider_message: Best-effort extraction of error message from body
+
     """
 
     def __init__(self, status_code: int, url: str, body: object = None, headers: dict | None = None):
@@ -53,18 +54,17 @@ class HttpRequestFailed(Exception):
         """
         if self.status_code == 401:
             return "auth_error"
-        elif self.status_code == 403:
+        if self.status_code == 403:
             return "forbidden"
-        elif self.status_code == 404:
+        if self.status_code == 404:
             return "not_found"
-        elif self.status_code == 410:
+        if self.status_code == 410:
             return "gone"
-        elif self.status_code == 429:
+        if self.status_code == 429:
             return "rate_limited"
-        elif self.status_code >= 500:
+        if self.status_code >= 500:
             return "server_error"
-        else:
-            return "client_error"
+        return "client_error"
 
     @property
     def is_retryable(self) -> bool:
@@ -83,7 +83,7 @@ class HttpRequestFailed(Exception):
             if key.lower() == "retry-after":
                 retry_after = value
                 break
-        
+
         if not retry_after:
             return None
         try:

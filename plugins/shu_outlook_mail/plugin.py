@@ -638,10 +638,17 @@ class OutlookMailPlugin:
         }
 
         # Write digest KO to kb_id using host.kb if kb_id is provided
+        kb_write_failed = False
         if kb_id:
-            await host.kb.upsert_knowledge_object(knowledge_base_id=kb_id, ko=ko)
-            if debug_mode:
-                diagnostics.append(f"Wrote digest KO to knowledge base: {kb_id}")
+            try:
+                await host.kb.upsert_knowledge_object(knowledge_base_id=kb_id, ko=ko)
+                if debug_mode:
+                    diagnostics.append(f"Wrote digest KO to knowledge base: {kb_id}")
+            except Exception as kb_err:
+                # Graceful degradation: return the computed digest with a warning
+                kb_write_failed = True
+                if debug_mode:
+                    diagnostics.append(f"Warning: Failed to write digest to KB: {kb_err}")
 
         # Build result data
         result_data = {
@@ -649,6 +656,10 @@ class OutlookMailPlugin:
             "count": total_count,
             "window": window
         }
+
+        # Add warning if KB write failed
+        if kb_write_failed:
+            result_data["note"] = "Digest computed but failed to persist to knowledge base"
 
         # Include diagnostics if debug mode enabled
         if debug_mode and diagnostics:
@@ -783,9 +794,9 @@ class OutlookMailPlugin:
         # If not using delta sync, perform full list-based sync
         # This runs when: no cursor exists, cursor retrieval failed, or delta token expired
         if not use_delta_sync:
-            # Build OData query parameters (same as list operation)
+            # Build OData query parameters - include body to avoid N+1 fetches
             odata_params = {
-                "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview",
+                "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,body,bodyPreview",
                 "$orderby": "receivedDateTime desc",
                 "$top": str(max_results)
             }
@@ -828,7 +839,7 @@ class OutlookMailPlugin:
             try:
                 delta_endpoint = "/me/mailFolders/inbox/messages/delta"
                 delta_params = {
-                    "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview"
+                    "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,body,bodyPreview"
                 }
                 
                 # Add the same filters to delta query
@@ -859,6 +870,7 @@ class OutlookMailPlugin:
 
         # Process messages: handle messageAdded and messageDeleted events
         # This runs for both delta sync and full sync
+        # Body is included in the initial query to avoid N+1 API calls
         for message in messages:
             # Check if this is a messageDeleted event (has @removed field)
             if "@removed" in message:
@@ -889,34 +901,20 @@ class OutlookMailPlugin:
                 continue
             
             try:
-                # Fetch full message content including body field
-                response = await self._graph_api_request(
-                    host=host,
-                    access_token=access_token,
-                    endpoint=f"/me/messages/{message_id}",
-                    params={
-                        "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,body"
-                    }
-                )
-
-                # Extract message from response body
-                # _graph_api_request returns {"status_code": ..., "body": ...}
-                full_message = response.get("body", {}) if isinstance(response.get("body"), dict) else response
-
-                # Extract email fields
-                subject = full_message.get("subject") or "(no subject)"
+                # Extract email fields directly from the message (body included in initial query)
+                subject = message.get("subject") or "(no subject)"
                 
                 # Extract sender
-                from_field = full_message.get("from", {})
+                from_field = message.get("from", {})
                 sender_email_obj = from_field.get("emailAddress", {})
                 sender_name = sender_email_obj.get("name", "")
                 sender_address = sender_email_obj.get("address", "")
                 sender = f"{sender_name} <{sender_address}>" if sender_name else sender_address
                 
                 # Extract recipients (to/cc/bcc)
-                to_recipients = self._extract_recipients(full_message.get("toRecipients", []))
-                cc_recipients = self._extract_recipients(full_message.get("ccRecipients", []))
-                bcc_recipients = self._extract_recipients(full_message.get("bccRecipients", []))
+                to_recipients = self._extract_recipients(message.get("toRecipients", []))
+                cc_recipients = self._extract_recipients(message.get("ccRecipients", []))
+                bcc_recipients = self._extract_recipients(message.get("bccRecipients", []))
                 
                 recipients = {
                     "to": to_recipients,
@@ -925,16 +923,15 @@ class OutlookMailPlugin:
                 }
                 
                 # Extract date
-                date = full_message.get("receivedDateTime")
+                date = message.get("receivedDateTime")
                 
                 # Extract body text from body.content field
-                body_obj = full_message.get("body", {})
+                body_obj = message.get("body", {})
                 body_content = body_obj.get("content", "")
                 body_type = body_obj.get("contentType", "text")
                 
-                # If body is HTML, we'll pass it as body_text for now
-                # The kb capability will handle text extraction if needed
-                body_text = body_content or full_message.get("bodyPreview", "")
+                # Use body content if available, fall back to bodyPreview
+                body_text = body_content or message.get("bodyPreview", "")
                 
                 # Call host.kb.ingest_email() with extracted fields
                 await host.kb.ingest_email(

@@ -1,6 +1,5 @@
 """Tests for HttpRequestFailed exception semantic properties."""
 
-import pytest
 
 # Import directly from exceptions module to avoid circular import via host __init__
 import importlib.util

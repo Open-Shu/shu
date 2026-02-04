@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import urllib.parse
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ...core.config import get_settings_instance
 from ...core.http_client import get_http_client
@@ -123,7 +123,7 @@ class HttpCapability(ImmutableCapabilityMixin):
             raise HttpRequestFailed(status, url, body=body, headers=result["headers"])
         return result
 
-    async def fetch_or_none(self, method: str, url: str, **kwargs) -> Optional[Dict[str, Any]]:
+    async def fetch_or_none(self, method: str, url: str, **kwargs) -> dict[str, Any] | None:
         """Fetch a URL, returning None on 4xx errors instead of raising.
 
         This is useful for optional lookups where a 404 or 403 is expected
@@ -148,6 +148,7 @@ class HttpCapability(ImmutableCapabilityMixin):
                 profile = data["body"]
             else:
                 profile = {"name": "Unknown"}
+
         """
         try:
             return await self.fetch(method, url, **kwargs)
@@ -202,7 +203,7 @@ class HttpCapability(ImmutableCapabilityMixin):
             raise HttpRequestFailed(status, url, body=None, headers=result["headers"])
         return result
 
-    async def fetch_bytes_or_none(self, method: str, url: str, **kwargs) -> Optional[Dict[str, Any]]:
+    async def fetch_bytes_or_none(self, method: str, url: str, **kwargs) -> dict[str, Any] | None:
         """Fetch bytes from a URL, returning None on 4xx errors instead of raising.
 
         This is the bytes variant of fetch_or_none(). Useful for optional
@@ -219,6 +220,7 @@ class HttpCapability(ImmutableCapabilityMixin):
         Raises:
             HttpRequestFailed: On 5xx server errors
             EgressDenied: If the URL is not allowed by policy
+
         """
         try:
             return await self.fetch_bytes(method, url, **kwargs)

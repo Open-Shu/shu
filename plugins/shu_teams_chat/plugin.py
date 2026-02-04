@@ -330,14 +330,21 @@ class TeamsChatPlugin:
                     "chatTopic": chat.get("topic"),
                     "chatType": chat.get("chatType"),
                     "createdDateTime": msg.get("createdDateTime"),
+                    "lastModifiedDateTime": msg.get("lastModifiedDateTime"),
                     "content": content.strip(),
                     "sender": sender,
                 })
 
-        # Sort by timestamp descending
-        all_messages.sort(key=lambda x: x.get("createdDateTime") or "", reverse=True)
+        # Sort by lastModifiedDateTime (falling back to createdDateTime) to align with filter
+        all_messages.sort(
+            key=lambda x: x.get("lastModifiedDateTime") or x.get("createdDateTime") or "",
+            reverse=True
+        )
 
-        last_ts = all_messages[0].get("createdDateTime") if all_messages else None
+        # Use lastModifiedDateTime for last_ts to align with the filter used in _list_chat_messages
+        last_ts = None
+        if all_messages:
+            last_ts = all_messages[0].get("lastModifiedDateTime") or all_messages[0].get("createdDateTime")
 
         return _Result.ok({
             "messages": all_messages,

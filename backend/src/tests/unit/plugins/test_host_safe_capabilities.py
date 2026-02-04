@@ -8,10 +8,11 @@ to avoid circular import issues with other host capabilities that depend on
 services and database modules.
 """
 
-import pytest
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 
 def _import_module_directly(module_name: str, file_path: str):

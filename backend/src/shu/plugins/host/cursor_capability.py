@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .base import ImmutableCapabilityMixin
 from .storage_capability import StorageCapability
-
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +37,7 @@ class CursorCapability(ImmutableCapabilityMixin):
         sid = self._schedule_id
         return f"feed:{sid}:kb:{kb_id}" if sid else f"adhoc:kb:{kb_id}"
 
-    async def get(self, kb_id: str) -> Optional[str]:
+    async def get(self, kb_id: str) -> str | None:
         """Get the cursor value for a knowledge base.
 
         Returns None if the cursor doesn't exist or on any error.
@@ -50,6 +48,7 @@ class CursorCapability(ImmutableCapabilityMixin):
 
         Returns:
             The cursor value as a string, or None if not found or on error.
+
         """
         try:
             val = await self._storage.get(self._key(kb_id), namespace=self.NAMESPACE)
@@ -87,6 +86,7 @@ class CursorCapability(ImmutableCapabilityMixin):
 
         Returns:
             True if the cursor was set successfully, False on any error.
+
         """
         try:
             await self.set(kb_id, value)
@@ -117,6 +117,7 @@ class CursorCapability(ImmutableCapabilityMixin):
 
         Returns:
             True if the cursor was deleted successfully, False on any error.
+
         """
         try:
             await self.delete(kb_id)

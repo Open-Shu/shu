@@ -41,6 +41,7 @@ def normalize_microsoft_scopes(scopes: list | None) -> list[str]:
 
     Returns:
         De-duplicated list of normalized scope strings
+
     """
     if not scopes:
         return []

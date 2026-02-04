@@ -120,6 +120,7 @@ class CacheCapability(ImmutableCapabilityMixin):
             namespaced_key: The fully namespaced cache key.
             value: The value to store (must be JSON-serializable).
             ttl_seconds: Time-to-live in seconds.
+
         """
         backend = await self._get_backend()
         serialized = json.dumps(value, default=str)
@@ -250,6 +251,7 @@ class CacheCapability(ImmutableCapabilityMixin):
             success = await cache.set_safe("user_prefs", {"theme": "dark"})
             if not success:
                 host.log.warning("Failed to cache user preferences")
+
         """
         namespaced_key = self._make_namespaced_key(key)
         try:
@@ -280,6 +282,7 @@ class CacheCapability(ImmutableCapabilityMixin):
 
         Example:
             success = await cache.delete_safe("user_prefs")
+
         """
         namespaced_key = self._make_namespaced_key(key)
         try:

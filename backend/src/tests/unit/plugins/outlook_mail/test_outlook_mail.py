@@ -3,7 +3,6 @@
 Tests schema validation, parameter validation, operation routing, and authentication.
 """
 import pytest
-from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
 
 
 class TestOutlookMailPluginSchema:
@@ -151,9 +150,9 @@ class TestOutlookMailOperationRouting:
             "headers": {},
             "body": {"value": [], "@odata.nextLink": None}
         }
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert "messages" in result.data
         assert isinstance(result.data["messages"], list)
@@ -166,9 +165,9 @@ class TestOutlookMailOperationRouting:
             "headers": {},
             "body": {"value": [], "@odata.nextLink": None}
         }
-        
+
         result = await plugin.execute({"op": "digest"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert "ko" in result.data
         assert result.data["ko"]["type"] == "email_digest"
@@ -182,9 +181,9 @@ class TestOutlookMailOperationRouting:
             {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.nextLink": None}},
             {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}}
         ]
-        
+
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert "count" in result.data
         assert result.data["count"] >= 0
@@ -196,9 +195,9 @@ class TestOutlookMailOperationRouting:
             {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.nextLink": None}},
             {"status_code": 200, "headers": {}, "body": {"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}}
         ]
-        
+
         result = await plugin.execute({"kb_id": "test-kb"}, None, mock_host)
-        
+
         assert result.status == "success"
         assert "count" in result.data
 
@@ -210,9 +209,9 @@ class TestOutlookMailAuthentication:
     async def test_missing_oauth_token_returns_error(self, plugin, mock_host):
         """Test missing OAuth token returns auth error."""
         mock_host.auth.resolve_token_and_target.return_value = (None, None)
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "error"
         assert result.error["code"] == "auth_missing_or_insufficient_scopes"
         assert "No Microsoft access token available" in result.error["message"]
@@ -221,9 +220,9 @@ class TestOutlookMailAuthentication:
     async def test_empty_access_token_returns_error(self, plugin, mock_host):
         """Test auth result without access_token field returns error."""
         mock_host.auth.resolve_token_and_target.return_value = ("", None)
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "error"
         assert result.error["code"] == "auth_missing_or_insufficient_scopes"
         assert "No Microsoft access token available" in result.error["message"]
@@ -232,9 +231,9 @@ class TestOutlookMailAuthentication:
     async def test_oauth_resolution_exception(self, plugin, mock_host):
         """Test OAuth resolution exception returns auth error."""
         mock_host.auth.resolve_token_and_target.side_effect = Exception("OAuth service unavailable")
-        
+
         result = await plugin.execute({"op": "list"}, None, mock_host)
-        
+
         assert result.status == "error"
         assert result.error["code"] == "auth_missing_or_insufficient_scopes"
         assert "Failed to resolve Microsoft OAuth token" in result.error["message"]

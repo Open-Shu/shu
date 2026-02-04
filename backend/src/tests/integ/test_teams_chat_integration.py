@@ -8,14 +8,14 @@ These tests verify the Teams Chat plugin operations:
 - Error handling: Auth failures, missing parameters, API errors
 """
 
-import sys
 import logging
+import sys
 import uuid
-from typing import List, Callable, Dict, Any
-from datetime import datetime, timezone, timedelta
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.response_utils import extract_data
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,13 @@ def _create_mock_chat(
     topic: str = "Test Chat",
     chat_type: str = "group",
     last_updated_hours_ago: int = 0
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a mock Graph API chat object."""
     if chat_id is None:
         chat_id = f"19:{uuid.uuid4().hex}@thread.v2"
-    
-    last_updated = datetime.now(timezone.utc) - timedelta(hours=last_updated_hours_ago)
-    
+
+    last_updated = datetime.now(UTC) - timedelta(hours=last_updated_hours_ago)
+
     return {
         "id": chat_id,
         "topic": topic,
@@ -52,15 +52,15 @@ def _create_mock_message(
     created_hours_ago: int = 0,
     content_type: str = "text",
     message_type: str = "message"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a mock Graph API chat message object."""
     if message_id is None:
         message_id = str(uuid.uuid4())
     if sender_id is None:
         sender_id = str(uuid.uuid4())
-    
-    created_time = datetime.now(timezone.utc) - timedelta(hours=created_hours_ago)
-    
+
+    created_time = datetime.now(UTC) - timedelta(hours=created_hours_ago)
+
     return {
         "id": message_id,
         "messageType": message_type,
@@ -82,11 +82,11 @@ def _create_mock_user(
     user_id: str,
     display_name: str = "Test User",
     email: str = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a mock Graph API user object."""
     if email is None:
         email = f"{display_name.lower().replace(' ', '.')}@example.com"
-    
+
     return {
         "id": user_id,
         "displayName": display_name,
@@ -100,7 +100,6 @@ def _create_mock_user(
 # ============================================================================
 
 from integ.helpers.mock_host import MockHost, create_mock_graph_response
-
 
 # Local alias for backward compatibility in tests
 _create_mock_graph_response = create_mock_graph_response
@@ -230,7 +229,7 @@ async def test_ingest_operation_incremental_sync(client, db, auth_headers):
     mock_host = MockHost()
 
     # Set existing cursor
-    old_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    old_ts = (datetime.now(UTC) - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
     await mock_host.cursor.set("test-kb-123", old_ts)
 
     chats = [_create_mock_chat(chat_id="chat_1")]
@@ -255,7 +254,7 @@ async def test_ingest_operation_reset_cursor(client, db, auth_headers):
     mock_host = MockHost()
 
     # Set existing cursor
-    old_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    old_ts = (datetime.now(UTC) - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
     await mock_host.cursor.set("test-kb-123", old_ts)
 
     chats = [_create_mock_chat(chat_id="chat_1")]
@@ -482,7 +481,7 @@ async def test_ingest_extracts_message_attributes(client, db, auth_headers):
 class TeamsChatIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for Teams Chat plugin."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return all test functions for this suite."""
         return [
             test_list_operation_default_parameters,

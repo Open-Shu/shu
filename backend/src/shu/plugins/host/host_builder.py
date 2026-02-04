@@ -64,7 +64,7 @@ class Host:
     declaration. This encourages proper logging over silent exception swallowing.
     """
 
-    __slots__ = ("_declared_caps", "_frozen", "http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr", "log", "utils")
+    __slots__ = ("_declared_caps", "_frozen", "auth", "cache", "cursor", "http", "identity", "kb", "log", "ocr", "secrets", "storage", "utils")
 
     def __init__(self, declared_caps: list[str] | None = None):
         object.__setattr__(self, "_declared_caps", set(declared_caps or []))

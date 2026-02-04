@@ -14,7 +14,8 @@ Usage:
     result = await plugin.execute(params, None, mock_host)
 """
 
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from shu.plugins.host.exceptions import HttpRequestFailed
 
@@ -27,11 +28,11 @@ R = TypeVar("R")
 # ============================================================================
 
 def create_mock_graph_response(
-    items: List[Dict[str, Any]],
-    next_link: Optional[str] = None,
-    delta_link: Optional[str] = None,
+    items: list[dict[str, Any]],
+    next_link: str | None = None,
+    delta_link: str | None = None,
     status_code: int = 200
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a mock Graph API response.
 
     Args:
@@ -69,7 +70,7 @@ class MockHostAuth:
         self.access_token = access_token
         self.should_fail = should_fail
 
-    async def resolve_token_and_target(self, provider: str, *, scopes: Optional[List[str]] = None):
+    async def resolve_token_and_target(self, provider: str, *, scopes: list[str] | None = None):
         """Mock token resolution.
 
         Returns:
@@ -87,19 +88,19 @@ class MockHostHttp:
     """Mock host.http capability with fetch, fetch_or_none, and bytes variants."""
 
     def __init__(self):
-        self.requests: List[Dict[str, Any]] = []
-        self.responses: Dict[str, Dict[str, Any]] = {}
-        self.default_response: Optional[Dict[str, Any]] = None
+        self.requests: list[dict[str, Any]] = []
+        self.responses: dict[str, dict[str, Any]] = {}
+        self.default_response: dict[str, Any] | None = None
 
-    def set_response(self, url_pattern: str, response: Dict[str, Any]):
+    def set_response(self, url_pattern: str, response: dict[str, Any]):
         """Set a mock response for a URL pattern."""
         self.responses[url_pattern] = response
 
-    def set_default_response(self, response: Dict[str, Any]):
+    def set_default_response(self, response: dict[str, Any]):
         """Set a default response for all unmatched requests."""
         self.default_response = response
 
-    def _find_response(self, url: str) -> Dict[str, Any]:
+    def _find_response(self, url: str) -> dict[str, Any]:
         """Find matching response, preferring longer (more specific) patterns."""
         # Sort patterns by length (longest first) for more specific matching
         sorted_patterns = sorted(self.responses.keys(), key=len, reverse=True)
@@ -116,11 +117,11 @@ class MockHostHttp:
         self,
         method: str,
         url: str,
-        headers: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        headers: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Mock HTTP fetch.
 
         Raises HttpRequestFailed for 4xx/5xx status codes, matching real
@@ -155,11 +156,11 @@ class MockHostHttp:
         self,
         method: str,
         url: str,
-        headers: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        headers: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
         **kwargs
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Mock HTTP fetch that returns None on 4xx (optional lookups).
 
         This mirrors HttpCapability.fetch_or_none behavior:
@@ -181,7 +182,7 @@ class MockHostHttp:
         method: str,
         url: str,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Mock HTTP fetch for binary content."""
         return await self.fetch(method, url, **kwargs)
 
@@ -190,7 +191,7 @@ class MockHostHttp:
         method: str,
         url: str,
         **kwargs
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Mock HTTP fetch_bytes that returns None on 4xx."""
         return await self.fetch_or_none(method, url, **kwargs)
 
@@ -202,12 +203,12 @@ class MockHostKb:
     """
 
     def __init__(self):
-        self.ingested_texts: List[Dict[str, Any]] = []
-        self.ingested_emails: List[Dict[str, Any]] = []
-        self.ingested_threads: List[Dict[str, Any]] = []
-        self.ingested_documents: List[Dict[str, Any]] = []
-        self.upserted_kos: List[Dict[str, Any]] = []
-        self.deleted_kos: List[str] = []
+        self.ingested_texts: list[dict[str, Any]] = []
+        self.ingested_emails: list[dict[str, Any]] = []
+        self.ingested_threads: list[dict[str, Any]] = []
+        self.ingested_documents: list[dict[str, Any]] = []
+        self.upserted_kos: list[dict[str, Any]] = []
+        self.deleted_kos: list[str] = []
 
     async def ingest_document(
         self,
@@ -217,9 +218,9 @@ class MockHostKb:
         filename: str,
         mime_type: str,
         source_id: str,
-        source_url: Optional[str] = None,
-        attributes: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        source_url: str | None = None,
+        attributes: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Mock document ingestion."""
         record = {
             "kb_id": knowledge_base_id,
@@ -240,9 +241,9 @@ class MockHostKb:
         title: str,
         content: str,
         source_id: str,
-        source_url: Optional[str] = None,
-        attributes: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        source_url: str | None = None,
+        attributes: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Mock text ingestion."""
         record = {
             "kb_id": knowledge_base_id,
@@ -260,17 +261,17 @@ class MockHostKb:
         knowledge_base_id: str,
         *,
         subject: str,
-        sender: Optional[str],
-        recipients: Dict[str, Any],
-        date: Optional[str],
+        sender: str | None,
+        recipients: dict[str, Any],
+        date: str | None,
         message_id: str,
-        thread_id: Optional[str],
-        body_text: Optional[str],
-        body_html: Optional[str] = None,
-        labels: Optional[List[str]] = None,
-        source_url: Optional[str] = None,
-        attributes: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        thread_id: str | None,
+        body_text: str | None,
+        body_html: str | None = None,
+        labels: list[str] | None = None,
+        source_url: str | None = None,
+        attributes: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Mock email ingestion."""
         record = {
             "kb_id": knowledge_base_id,
@@ -296,9 +297,9 @@ class MockHostKb:
         title: str,
         content: str,
         thread_id: str,
-        source_url: Optional[str] = None,
-        attributes: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        source_url: str | None = None,
+        attributes: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Mock thread ingestion."""
         record = {
             "kb_id": knowledge_base_id,
@@ -314,7 +315,7 @@ class MockHostKb:
     async def upsert_knowledge_object(
         self,
         knowledge_base_id: str,
-        ko: Dict[str, Any]
+        ko: dict[str, Any]
     ) -> str:
         """Mock KO upsert.
         
@@ -325,12 +326,12 @@ class MockHostKb:
         external_id = ko.get("external_id", "unknown")
         return f"mock_ko_{external_id}"
 
-    async def delete_ko(self, *, external_id: str) -> Dict[str, Any]:
+    async def delete_ko(self, *, external_id: str) -> dict[str, Any]:
         """Mock KO deletion."""
         self.deleted_kos.append(external_id)
         return {"deleted": True, "ko_id": f"mock_ko_{external_id}"}
 
-    async def delete_kos_batch(self, *, external_ids: List[str]) -> Dict[str, Any]:
+    async def delete_kos_batch(self, *, external_ids: list[str]) -> dict[str, Any]:
         """Mock batch KO deletion."""
         for eid in external_ids:
             self.deleted_kos.append(eid)
@@ -341,9 +342,9 @@ class MockHostCache:
     """Mock host.cache capability with safe methods."""
 
     def __init__(self):
-        self.cache: Dict[str, Any] = {}
+        self.cache: dict[str, Any] = {}
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Get a value from cache."""
         return self.cache.get(key)
 
@@ -370,9 +371,9 @@ class MockHostCursor:
     """Mock host.cursor capability with safe methods."""
 
     def __init__(self):
-        self.cursors: Dict[str, str] = {}
+        self.cursors: dict[str, str] = {}
 
-    async def get(self, kb_id: str) -> Optional[str]:
+    async def get(self, kb_id: str) -> str | None:
         """Get cursor value for a knowledge base."""
         return self.cursors.get(kb_id)
 
@@ -399,25 +400,25 @@ class MockHostLog:
     """Mock host.log capability for structured logging."""
 
     def __init__(self):
-        self.messages: List[Tuple[str, str, Optional[Dict[str, Any]]]] = []
+        self.messages: list[tuple[str, str, dict[str, Any] | None]] = []
 
-    def debug(self, msg: str, *, extra: Optional[Dict[str, Any]] = None) -> None:
+    def debug(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log a debug message."""
         self.messages.append(("debug", msg, extra))
 
-    def info(self, msg: str, *, extra: Optional[Dict[str, Any]] = None) -> None:
+    def info(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log an info message."""
         self.messages.append(("info", msg, extra))
 
-    def warning(self, msg: str, *, extra: Optional[Dict[str, Any]] = None) -> None:
+    def warning(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log a warning message."""
         self.messages.append(("warning", msg, extra))
 
-    def error(self, msg: str, *, extra: Optional[Dict[str, Any]] = None) -> None:
+    def error(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log an error message."""
         self.messages.append(("error", msg, extra))
 
-    def exception(self, msg: str, *, extra: Optional[Dict[str, Any]] = None) -> None:
+    def exception(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log an exception message."""
         self.messages.append(("exception", msg, extra))
 
@@ -427,11 +428,11 @@ class MockHostUtils:
 
     async def map_safe(
         self,
-        items: List[T],
+        items: list[T],
         async_fn: Callable[[T], Awaitable[R]],
         *,
-        max_errors: Optional[int] = None
-    ) -> Tuple[List[R], List[Tuple[T, Exception]]]:
+        max_errors: int | None = None
+    ) -> tuple[list[R], list[tuple[T, Exception]]]:
         """Process items, collecting errors instead of failing.
 
         Args:
@@ -442,8 +443,8 @@ class MockHostUtils:
         Returns:
             Tuple of (results, errors)
         """
-        results: List[R] = []
-        errors: List[Tuple[T, Exception]] = []
+        results: list[R] = []
+        errors: list[tuple[T, Exception]] = []
 
         for item in items:
             if max_errors is not None and len(errors) >= max_errors:
@@ -458,9 +459,9 @@ class MockHostUtils:
 
     async def filter_safe(
         self,
-        items: List[T],
+        items: list[T],
         async_predicate: Callable[[T], Awaitable[bool]],
-    ) -> Tuple[List[T], List[Tuple[T, Exception]]]:
+    ) -> tuple[list[T], list[tuple[T, Exception]]]:
         """Filter items, collecting errors instead of failing.
 
         Matches real UtilsCapability.filter_safe signature.
@@ -472,8 +473,8 @@ class MockHostUtils:
         Returns:
             Tuple of (kept_items, errors)
         """
-        kept: List[T] = []
-        errors: List[Tuple[T, Exception]] = []
+        kept: list[T] = []
+        errors: list[tuple[T, Exception]] = []
 
         for item in items:
             try:

@@ -1,4 +1,10 @@
-"""Plugin executor: coordinates rate limiting, schema validation (if provided), and plugin execution."""
+"""Plugin executor: coordinates rate limiting, schema validation (if provided), and plugin execution.
+
+Provider HTTP errors (HttpRequestFailed) are mapped to structured PluginResult.err() responses
+using the exception's semantic error_category (e.g., 'auth_error', 'rate_limited', 'gone',
+'not_found', 'server_error') rather than a generic code. This allows callers to handle
+specific error conditions appropriately.
+"""
 
 from __future__ import annotations
 
@@ -50,12 +56,13 @@ def _is_called_from_trusted_code(frame_offset: int = 2) -> bool:
     
     Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
     Short-circuits as soon as a trusted frame is found.
+
     """
     try:
         frame = sys._getframe(frame_offset)
     except ValueError:
         return False
-    
+
     while frame is not None:
         filename = frame.f_code.co_filename
         # Quick check: only inspect frames from shu modules
@@ -109,7 +116,6 @@ class _DenyImportsFinder(MetaPathFinder):
                         f"Import of '{fullname}' is denied by host policy. Use host.http instead."
                     )
 
-        return None
 
 
 class _DenyHttpImportsCtx:
@@ -669,7 +675,7 @@ class Executor:
                     return result
                 except HTTPException:
                     raise
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     # Map host.http failures to a structured provider_error so callers get clear surfaces
                     if isinstance(e, HttpRequestFailed):
                         details = {

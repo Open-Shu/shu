@@ -1,6 +1,8 @@
 """Shared fixtures for Outlook Mail plugin tests."""
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
 
 
@@ -25,18 +27,17 @@ class HttpRequestFailed(Exception):
     def error_category(self) -> str:
         if self.status_code == 401:
             return "auth_error"
-        elif self.status_code == 403:
+        if self.status_code == 403:
             return "forbidden"
-        elif self.status_code == 404:
+        if self.status_code == 404:
             return "not_found"
-        elif self.status_code == 410:
+        if self.status_code == 410:
             return "gone"
-        elif self.status_code == 429:
+        if self.status_code == 429:
             return "rate_limited"
-        elif self.status_code >= 500:
+        if self.status_code >= 500:
             return "server_error"
-        else:
-            return "client_error"
+        return "client_error"
 
     @property
     def is_retryable(self) -> bool:
@@ -117,21 +118,21 @@ def plugin():
 def mock_host():
     """Create mock host with all required capabilities using MagicMock/AsyncMock."""
     host = MagicMock()
-    
+
     # Mock auth capability - returns Tuple[Optional[str], Optional[str]]
     host.auth = AsyncMock()
     host.auth.resolve_token_and_target = AsyncMock(return_value=("test_token_123", "me"))
-    
+
     # Mock http capability
     host.http = AsyncMock()
     host.http.fetch = AsyncMock()
-    
+
     # Mock kb capability
     host.kb = AsyncMock()
     host.kb.ingest_email = AsyncMock()
     host.kb.delete_ko = AsyncMock()
     host.kb.upsert_knowledge_object = AsyncMock(return_value="mock_ko_id")
-    
+
     # Mock cursor capability
     host.cursor = AsyncMock()
     host.cursor.get = AsyncMock(return_value=None)
@@ -139,7 +140,7 @@ def mock_host():
     host.cursor.set_safe = AsyncMock(return_value=True)
     host.cursor.delete = AsyncMock()
     host.cursor.delete_safe = AsyncMock(return_value=True)
-    
+
     return host
 
 
@@ -158,13 +159,13 @@ def create_mock_host_with_messages(messages=None, track_requests=False):
         async def resolve_token_and_target(self, provider, *, scopes=None):
             """Returns Tuple[Optional[str], Optional[str]] matching real AuthCapability."""
             return ("mock_token_123", "me")
-    
+
     class MockHttp:
         def __init__(self):
             self.fetch_calls = []
             self.last_url = None
             self.last_headers = None
-        
+
         async def fetch(self, method, url, headers, params=None, json=None):
             self.last_url = url
             self.last_headers = headers
@@ -185,40 +186,40 @@ def create_mock_host_with_messages(messages=None, track_requests=False):
                     "@odata.nextLink": None
                 }
             }
-    
+
     class MockKb:
         def __init__(self):
             self.upsert_calls = []
             self.ingest_calls = []
-        
+
         async def upsert_knowledge_object(self, knowledge_base_id, ko):
             self.upsert_calls.append({"knowledge_base_id": knowledge_base_id, "ko": ko})
             return "mock_ko_id"
-        
+
         async def ingest_email(self, knowledge_base_id, **kwargs):
             self.ingest_calls.append({"knowledge_base_id": knowledge_base_id, **kwargs})
             return {"ko_id": "mock_email_ko_id"}
-    
+
     class MockCursor:
         def __init__(self):
             self.store = {}
-        
+
         async def get(self, key):
             return self.store.get(key)
-        
+
         async def set(self, key, value):
             self.store[key] = value
-        
+
         async def delete(self, key):
             self.store.pop(key, None)
-    
+
     class MockHost:
         def __init__(self):
             self.auth = MockAuth()
             self.http = MockHttp()
             self.kb = MockKb()
             self.cursor = MockCursor()
-    
+
     return MockHost()
 
 
@@ -254,10 +255,10 @@ def create_sample_message(
         "receivedDateTime": received_datetime,
         "bodyPreview": body_preview
     }
-    
+
     if include_body:
         msg["body"] = {"contentType": "text", "content": "Full message body content"}
-    
+
     return msg
 
 
@@ -270,7 +271,7 @@ def create_sample_messages(count=3, sender_distribution=None):
         sender_distribution: Optional dict mapping sender emails to count of messages
     """
     messages = []
-    
+
     if sender_distribution:
         msg_id = 1
         for email, msg_count in sender_distribution.items():
@@ -290,5 +291,5 @@ def create_sample_messages(count=3, sender_distribution=None):
                 sender_email=f"sender{i+1}@example.com",
                 sender_name=f"Sender {i+1}"
             ))
-    
+
     return messages
