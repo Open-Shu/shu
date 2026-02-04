@@ -4,7 +4,7 @@ This module provides business logic for managing knowledge bases,
 including CRUD operations, statistics, and configuration management.
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,12 +37,12 @@ class KnowledgeBaseService:
         self._config_manager = config_manager
 
     @property
-    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:
+    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:  # noqa: N802 # i think this can be removed, but needs verified
         """Get default RAG configuration from ConfigurationManager."""
         return self._config_manager.get_rag_config_dict()
 
     # Default templates for different use cases
-    DEFAULT_TEMPLATES = {
+    DEFAULT_TEMPLATES: ClassVar[dict[str, dict[str, Any]]] = {
         "academic": {
             "include_references": True,
             "reference_format": "markdown",

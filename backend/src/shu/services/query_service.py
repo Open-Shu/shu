@@ -393,7 +393,7 @@ def measure_execution_time(func):
     """
 
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any):
         start_time = time.time()
         result = await func(*args, **kwargs)
         execution_time = time.time() - start_time
@@ -857,7 +857,7 @@ class QueryService:
             results = []
             # Document deduplication: Limit chunks per document based on configuration
             # This prevents the same document from appearing multiple times while allowing multiple relevant chunks
-            for doc_id, doc_chunks in document_chunks.items():
+            for _, doc_chunks in document_chunks.items():
                 # Sort chunks within each document by similarity score (descending)
                 doc_chunks.sort(key=lambda x: float(x.similarity_score), reverse=True)
                 # Add up to max_chunks_per_doc chunks for this document
@@ -1128,19 +1128,17 @@ class QueryService:
                 "avg_tokens_escalated": (total_tokens / max(len(escalated_docs), 1)),
                 "docs": escalated_docs,
             }
+        # TODO: Evaluate if this needs to actvually be here.
+        # except ShuException:
+        #     # Re-raise shu exception without modification
+        #     raise
         except Exception as e:
             logger.warning(f"Full-doc escalation failed: {e}")
             return {"enabled": False, "error": str(e)}
 
-        except ShuException:
-            # Re-raise ShuException without modification
-            raise
-        except Exception as e:
-            logger.error(f"Failed to query documents: {e}", exc_info=True)
-            raise ShuException(f"Failed to query documents: {e!s}", "QUERY_ERROR")
-
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
     @measure_execution_time
-    async def keyword_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:
+    async def keyword_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
         """Perform keyword search on document chunks with improved term extraction."""
         try:
             # Verify knowledge base exists
@@ -1392,7 +1390,7 @@ class QueryService:
                     ) title_matches
                     WHERE title_score > 0
                     ORDER BY title_score DESC
-                """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here
+                """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here  # noqa: S608
 
                 params["exact_pattern"] = f"\\m{re.escape(query)}\\M"
                 title_result = await self.db.execute(title_match_query, params)
@@ -1580,7 +1578,8 @@ class QueryService:
                     AND ({where_clause})
                     ORDER BY keyword_score DESC, dc.chunk_index
                     LIMIT :limit
-                """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here
+                """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not
+                # possible here
 
                 result = await self.db.execute(keyword_query, params)
                 chunks = result.fetchall()
@@ -1761,8 +1760,9 @@ class QueryService:
 
         return matches / total_terms if total_terms > 0 else 0.0
 
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
     @measure_execution_time
-    async def title_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:
+    async def title_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:  # noqa: PLR0915
         """Perform dedicated title search with highest priority scoring.
         This method specifically searches document titles and gives them maximum weight.
         For title-matched documents, finds the most relevant chunks within each document.
@@ -1923,7 +1923,8 @@ class QueryService:
                 AND ({where_clause})
                 ORDER BY title_score DESC, d.title, dc.chunk_index
                 LIMIT :limit
-            """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here
+            """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not
+            # possible here
 
             result = await self.db.execute(title_query, params)
             chunks = result.fetchall()
@@ -2151,14 +2152,14 @@ class QueryService:
                 document_results[doc_id].append(result)
 
             # Sort chunks within each document by combined score
-            for doc_id in document_results:
-                document_results[doc_id].sort(key=lambda x: x["combined_score"], reverse=True)
+            for _, doc_results in document_results.items():
+                doc_results.sort(key=lambda x: x["combined_score"], reverse=True)
 
             # Flatten results, maintaining order by combined score
             sorted_results = []
             # Document deduplication: Limit chunks per document based on configuration
             # This prevents the same document from appearing multiple times while allowing multiple relevant chunks
-            for doc_id, doc_results in document_results.items():
+            for _, doc_results in document_results.items():
                 # Add up to max_chunks_per_doc results for this document
                 results_to_add = doc_results[:max_chunks_per_doc]
                 sorted_results.extend(results_to_add)

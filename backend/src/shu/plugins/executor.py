@@ -7,7 +7,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from importlib.abc import MetaPathFinder
-from typing import Any
+from typing import Any, ClassVar, Self
 
 from fastapi import HTTPException
 
@@ -51,9 +51,9 @@ class _DenyImportsFinder(MetaPathFinder):
     """
 
     # Deny direct HTTP clients from plugins at runtime.
-    deny_always = {"requests", "httpx", "urllib3", "urllib.request"}
+    deny_always: ClassVar[set[str]] = {"requests", "httpx", "urllib3", "urllib.request"}
     # Deny shu.* imports only from untrusted (plugin) code
-    deny_from_plugins = {"shu"}
+    deny_from_plugins: ClassVar[set[str]] = {"shu"}
 
     def _is_called_from_trusted_code(self) -> bool:
         """Check if the import is being called from trusted host code.
@@ -166,7 +166,7 @@ class _DenyHttpImportsCtx:
 
         return False
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self._finder = _DenyImportsFinder()
         sys.meta_path.insert(0, self._finder)
         # Patch importlib.import_module to catch explicit dynamic imports
@@ -186,7 +186,7 @@ class _DenyHttpImportsCtx:
             self._orig_import_module = None
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type, exc, tb) -> bool:
         try:
             # Restore importlib.import_module
             if self._orig_import_module is not None:
@@ -456,7 +456,8 @@ class Executor:
         except Exception:
             pass
 
-    async def execute(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def execute(  # noqa: PLR0912, PLR0915
         self,
         *,
         plugin: Plugin,

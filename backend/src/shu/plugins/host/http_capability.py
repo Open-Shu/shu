@@ -21,7 +21,7 @@ def _is_allowed_url(url: str, allowlist: list[str] | None) -> bool:
         return False
     host = host.lower()
     for pat in allowlist:
-        pat = (pat or "").lower().strip()
+        pat = (pat or "").lower().strip()  # noqa: PLW2901 # not fixing, since this is currently working as intended
         if not pat:
             continue
         # simple suffix match for domains, exact for hosts
@@ -52,7 +52,7 @@ class HttpCapability(ImmutableCapabilityMixin):
         object.__setattr__(self, "_allowlist", getattr(s, "http_egress_allowlist", None))
         object.__setattr__(self, "_default_timeout", float(getattr(s, "http_default_timeout", 30.0)))
 
-    async def fetch(self, method: str, url: str, **kwargs) -> dict[str, Any]:
+    async def fetch(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
             logger.warning(
                 "Egress denied by allowlist",
@@ -123,7 +123,7 @@ class HttpCapability(ImmutableCapabilityMixin):
             raise HttpRequestFailed(status, url, body=body, headers=result["headers"])
         return result
 
-    async def fetch_bytes(self, method: str, url: str, **kwargs) -> dict[str, Any]:
+    async def fetch_bytes(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
             logger.warning(
                 "Egress denied by allowlist",

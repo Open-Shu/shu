@@ -6,7 +6,7 @@ This module contains utility functions used throughout the application.
 
 import uuid
 from datetime import UTC, datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from .knowledge_base_verifier import KnowledgeBaseVerifier
 from .tokenization import (

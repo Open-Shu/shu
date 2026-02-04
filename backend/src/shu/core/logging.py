@@ -13,6 +13,7 @@ import sys
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, ClassVar
 
 from .config import get_settings_instance
 
@@ -92,7 +93,7 @@ class ColoredFormatter(logging.Formatter):
     """Custom colored formatter for human-readable logs with proper alignment."""
 
     # Color codes for different log levels
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",  # Cyan
         "INFO": "\033[32m",  # Green
         "WARNING": "\033[33m",  # Yellow
@@ -112,7 +113,7 @@ class ColoredFormatter(logging.Formatter):
         reset_color = self.COLORS["RESET"] if self.use_colors else ""
 
         # Format timestamp
-        timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%d %H:%M:%S")
 
         # Format logger name with fixed width (truncate if too long)
         logger_name = record.name
@@ -126,7 +127,7 @@ class ColoredFormatter(logging.Formatter):
         # Add extra fields if present (but not too verbose)
         extra_fields = []
         for key, value in record.__dict__.items():
-            if (
+            if (  # noqa: SIM102 # we'll need to fix this at some point, limiting  bugs for now
                 key
                 not in [
                     "name",
@@ -242,9 +243,10 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-def setup_logging() -> None:
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def setup_logging() -> None:  # noqa: PLR0915
     """Set up logging configuration with improved readability."""
-    global _LOGGING_CONFIGURED
+    global _LOGGING_CONFIGURED  # noqa: PLW0603 # it's working, so we will leave it as is for now
     if _LOGGING_CONFIGURED:
         return
 
@@ -413,7 +415,7 @@ class LoggerMixin:
 def log_function_call(func):
     """Log function calls at DEBUG level decorator."""
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any):
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling {func.__name__}",
@@ -444,7 +446,7 @@ def log_function_call(func):
 def log_async_function_call(func):
     """Log async function calls at DEBUG level decorator."""
 
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any):
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling async {func.__name__}",

@@ -143,8 +143,9 @@ def log_exception_details(exc: Exception, request: Request, error_id: str, inclu
         logger.error("Unhandled exception", extra=exception_details)
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     """Application lifespan manager."""
     # Setup logging first
     setup_logging()
@@ -321,7 +322,7 @@ async def lifespan(app: FastAPI):
             tasks_to_cancel.append((name, task))
 
     # Cancel all tasks
-    for name, task in tasks_to_cancel:
+    for _, task in tasks_to_cancel:
         task.cancel()
 
     # Wait for all tasks to complete cancellation

@@ -124,7 +124,7 @@ def get_oauth_encryption_service() -> OAuthEncryptionService:
         OAuthEncryptionError: If the service cannot be initialized
 
     """
-    global _oauth_encryption_service
+    global _oauth_encryption_service  # noqa: PLW0603 # works for now
 
     if _oauth_encryption_service is None:
         _oauth_encryption_service = OAuthEncryptionService()

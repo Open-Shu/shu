@@ -219,8 +219,8 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         )
 
     async def get_user_info(
-        self, *, access_token: Optional[str] = None, id_token: Optional[str] = None, db=None
-    ) -> Dict[str, Any]:
+        self, *, access_token: str | None = None, id_token: str | None = None, db=None
+    ) -> dict[str, Any]:
         """Get Microsoft user info via Graph API and return normalized user info.
 
         Args:

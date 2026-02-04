@@ -72,7 +72,7 @@ _profiling_semaphore: asyncio.Semaphore | None = None
 
 def _get_profiling_semaphore() -> asyncio.Semaphore:
     """Get or create the profiling semaphore with configured concurrency limit."""
-    global _profiling_semaphore
+    global _profiling_semaphore  # noqa: PLW0603 # works for now
     if _profiling_semaphore is None:
         from ..core.config import get_settings_instance
 
@@ -140,7 +140,7 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
                 )
 
     # Fire-and-forget - don't await
-    asyncio.create_task(_run_profiling())
+    asyncio.create_task(_run_profiling())  # noqa: RUF006 # we don't need the task reference here
 
 
 def _infer_file_type(filename: str, mime_type: str) -> str:
@@ -350,7 +350,8 @@ async def _upsert_document_record(
     return UpsertResult(document=document, extraction=extraction_data, skipped=False)
 
 
-async def ingest_document(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_document(  # noqa: PLR0912, PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,

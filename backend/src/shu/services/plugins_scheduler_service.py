@@ -184,7 +184,8 @@ class PluginsSchedulerService:
             # Best-effort cleanup; don't fail execution if this fails
             pass
 
-    async def run_pending(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def run_pending(  # noqa: PLR0912, PLR0915
         self, *, limit: int = 10, schedule_id: str | None = None, execution_id: str | None = None
     ) -> dict[str, int]:
         """Claim up to limit pending executions and run them sequentially.

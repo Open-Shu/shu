@@ -21,6 +21,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
 # Models are imported lazily inside functions to avoid circulars in some import contexts
 
 
@@ -109,7 +114,8 @@ async def has_provider_identity(db: AsyncSession, user_id: str, provider_key: st
         return False
 
 
-def resolve_auth_requirements(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def resolve_auth_requirements(  # noqa: PLR0912, PLR0915
     plugin: Any, params: dict[str, Any] | None = None
 ) -> tuple[str | None, str | None, str | None, list[str] | None]:
     """Resolve (provider, mode, subject, scopes) from plugin manifest and params.

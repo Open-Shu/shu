@@ -5,7 +5,7 @@ including CRUD operations, template validation, and required scopes computation.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 import yaml
@@ -239,7 +239,8 @@ class ExperienceService:
 
         return self._experience_to_response(experience)
 
-    async def update_experience(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def update_experience(  # noqa: PLR0912
         self,
         experience_id: str,
         update_data: ExperienceUpdate,
@@ -276,9 +277,8 @@ class ExperienceService:
             self._validate_template_syntax(update_data.inline_prompt_template, "inline_prompt_template")
 
         # Validate model configuration if being updated (with user access check)
-        if update_data.model_configuration_id is not None:
-            if update_data.model_configuration_id:  # Not empty string or None
-                await self._validate_model_configuration(update_data.model_configuration_id, current_user)
+        if update_data.model_configuration_id is not None and update_data.model_configuration_id:
+            await self._validate_model_configuration(update_data.model_configuration_id, current_user)
 
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={"steps"})
@@ -477,7 +477,7 @@ class ExperienceService:
             "input": {},
             "steps": {},
             "previous_run": None,
-            "now": datetime.now(),
+            "now": datetime.now(UTC),
         }
 
     # =========================================================================
@@ -911,7 +911,7 @@ class ExperienceService:
 
         # Add header comment
         header = f"""# Experience Export: {experience.name}
-# Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+# Generated on: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}
 #
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)

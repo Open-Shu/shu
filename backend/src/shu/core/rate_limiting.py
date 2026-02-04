@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from .cache_backend import CacheBackend, get_cache_backend
 
@@ -484,7 +484,7 @@ def get_rate_limit_service() -> RateLimitService:
         RateLimitService: The shared RateLimitService instance used by the application.
 
     """
-    global _rate_limit_service
+    global _rate_limit_service  # noqa: PLW0603 # works for now
     if _rate_limit_service is None:
         _rate_limit_service = RateLimitService()
     return _rate_limit_service

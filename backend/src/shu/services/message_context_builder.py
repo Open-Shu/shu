@@ -216,7 +216,8 @@ class MessageContextBuilder:
 
         return None
 
-    async def _get_rag_sections(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _get_rag_sections(  # noqa: PLR0912, PLR0915
         self,
         conversation: Conversation,
         user_message: str,
@@ -515,7 +516,8 @@ class MessageContextBuilder:
         # The decision to add system references will be made after getting the LLM response
         return rag_content, source_metadata
 
-    async def _post_process_references(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _post_process_references(  # noqa: PLR0912, PLR0915
         self,
         response_content: str,
         source_metadata: list[dict],

@@ -152,7 +152,8 @@ class AuthCapability(ImmutableCapabilityMixin):
             data.update({k: str(v) for k, v in extra_params.items() if v is not None})
         return await self._post_form(token_url, data)
 
-    async def user_google_token(self, *, required_scopes: list[str] | None = None) -> str | None:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def user_google_token(self, *, required_scopes: list[str] | None = None) -> str | None:  # noqa: PLR0912, PLR0915
         """Return an access token for the connected Google account of the current user (via ProviderCredential).
         - If required_scopes is provided, ensure the stored grant includes all of them; otherwise return None
         - Uses the stored refresh_token in provider_credentials and refreshes via Google's token endpoint.

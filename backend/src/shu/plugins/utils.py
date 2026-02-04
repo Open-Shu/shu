@@ -6,7 +6,8 @@ import logging
 from typing import Any
 
 
-def log_plugin_diagnostics(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def log_plugin_diagnostics(  # noqa: PLR0912
     payload: dict[str, Any] | None,
     *,
     plugin_name: str,

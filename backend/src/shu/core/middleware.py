@@ -124,7 +124,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         self.jwt_manager = JWTManager()
 
         # Public endpoints that don't require authentication
-        self.public_paths: Set[str] = {
+        self.public_paths: set[str] = {
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -179,7 +179,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             await db.commit()
             logger.debug(f"Updated daily login for user {user.id}")
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:  # noqa: PLR0912, PLR0915
         # Skip authentication for public endpoints
         """Authenticate incoming requests, validate user status against the database, and attach the resolved user context to request.state for downstream authorization.
 

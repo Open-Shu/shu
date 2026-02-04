@@ -3,6 +3,8 @@
 This module contains schemas for chat conversations, messages, and related operations.
 """
 
+from typing import ClassVar
+
 from pydantic import BaseModel, Field
 
 
@@ -22,4 +24,4 @@ class ConversationFromExperienceRequest(BaseModel):
     class Config:
         """Pydantic model configuration."""
 
-        json_schema_extra = {"example": {"title": "Follow-up on Morning Briefing"}}
+        json_schema_extra: ClassVar[dict[str, dict]] = {"example": {"title": "Follow-up on Morning Briefing"}}

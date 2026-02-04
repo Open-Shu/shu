@@ -80,7 +80,7 @@ class LLMService:
         api_endpoint: str,
         api_key: str | None = None,
         organization_id: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> LLMProvider:
         """Create a new LLM provider."""
         provider_type_definition = await self.provider_type.get(provider_type)
@@ -124,7 +124,7 @@ class LLMService:
         logger.info(f"Created LLM provider: {name} ({provider_type})")
         return provider
 
-    async def update_provider(self, provider_id: str, **updates) -> LLMProvider:
+    async def update_provider(self, provider_id: str, **updates: Any) -> LLMProvider:
         """Update an existing LLM provider."""
         provider = await self.get_provider_by_id(provider_id)
         if not provider:
@@ -204,7 +204,7 @@ class LLMService:
         return result.scalar_one_or_none()
 
     async def create_model(
-        self, provider_id: str, model_name: str, display_name: str | None = None, **kwargs
+        self, provider_id: str, model_name: str, display_name: str | None = None, **kwargs: Any
     ) -> LLMModel:
         """Create a new LLM model configuration."""
         provider = await self.get_provider_by_id(provider_id)

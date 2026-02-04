@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -375,7 +375,7 @@ class SideCallService:
                 {
                     "model_config_id": model_config_id,
                     "updated_by": user_id,
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 },
             )
 
@@ -479,7 +479,7 @@ class SideCallService:
                 return model
 
         raise LLMProviderError(
-            f"Model '{model_config.model_name}' not found or inactive " f"for provider '{provider.name}'"
+            f"Model '{model_config.model_name}' not found or inactive for provider '{provider.name}'"
         )
 
     async def _build_sequence_messages(

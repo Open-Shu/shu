@@ -5,6 +5,7 @@ for external API calls (Google Drive, LLM providers, etc.).
 """
 
 from functools import lru_cache
+from typing import Any
 
 import httpx
 
@@ -45,11 +46,11 @@ class HTTPClientManager:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> httpx.AsyncClient:
         """Async context manager entry."""
         return await self.get_client()
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> Any:
         """Async context manager exit."""
         await self.close()
 

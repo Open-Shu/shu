@@ -9,7 +9,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import easyocr
 
@@ -33,11 +33,11 @@ class TextExtractor:
     # OCR instance management (EasyOCR → Tesseract fallback chain)
 
     # Thread tracking for proper cleanup
-    _active_ocr_threads = {}  # job_id -> list of threads
+    _active_ocr_threads: ClassVar[dict[str, list]] = {}  # job_id -> list of threads
     _thread_lock = threading.Lock()
 
     # Cancellation events for jobs
-    _job_cancellation_events = {}  # job_id -> threading.Event
+    _job_cancellation_events: ClassVar[dict[str, threading.Event]] = {}  # job_id -> threading.Event
     _cancellation_lock = threading.Lock()
 
     def __init__(self, config_manager: ConfigurationManager = None) -> None:
@@ -200,7 +200,8 @@ class TextExtractor:
                 del cls._job_cancellation_events[job_id]
                 logger.debug(f"Cleaned up cancellation tracking for job {job_id}")
 
-    async def extract_text(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def extract_text(  # noqa: PLR0915
         self,
         file_path: str,
         file_content: bytes | None = None,
@@ -297,14 +298,12 @@ class TextExtractor:
             # Update progress tracker with actual method used
             if progress_context and progress_context.get("enhanced_tracker"):
                 tracker = progress_context["enhanced_tracker"]
-                if tracker.current_document_tracker:
-                    # Update the tracker's method if it changed
-                    if tracker.current_document_tracker.method != actual_method:
-                        logger.info(
-                            f"Updating processing method from {tracker.current_document_tracker.method} to {actual_method}"
-                        )
-                        tracker.current_document_tracker.method = actual_method
-                        # Broadcast the update
+                if tracker.current_document_tracker and tracker.current_document_tracker.method != actual_method:
+                    logger.info(
+                        f"Updating processing method from {tracker.current_document_tracker.method} to {actual_method}"
+                    )
+                    tracker.current_document_tracker.method = actual_method
+                    # Broadcast the update
 
             return {
                 "text": text,
@@ -488,7 +487,7 @@ class TextExtractor:
                                 )
 
                         # Schedule the coroutine in the main event loop
-                        asyncio.create_task(update_progress())
+                        asyncio.create_task(update_progress())  # noqa: RUF006 # we don't need the task reference
 
                     except Exception as e:
                         logger.error(
@@ -802,7 +801,8 @@ class TextExtractor:
                 )
             return ""
 
-    async def _process_pdf_with_ocr_direct(self, doc, file_path: str, progress_callback=None):
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _process_pdf_with_ocr_direct(self, doc, file_path: str, progress_callback=None):  # noqa: PLR0912, PLR0915
         """Process PDF with OCR directly (EasyOCR with Tesseract fallback)."""
         import threading
         import time
@@ -866,30 +866,30 @@ class TextExtractor:
             ocr_error = None
             ocr_complete = threading.Event()
 
-            def run_ocr() -> None:
+            def run_ocr(current_page_num: int = page_num) -> None:
                 """Run OCR in a separate thread so we can monitor progress."""
                 nonlocal ocr_result, ocr_error
                 try:
                     # Check for job cancellation before starting OCR
                     if self._current_sync_job_id and self.is_job_cancelled(self._current_sync_job_id):
-                        logger.info(f"OCR cancelled for job {self._current_sync_job_id} on page {page_num + 1}")
+                        logger.info(f"OCR cancelled for job {self._current_sync_job_id} on page {current_page_num + 1}")
                         ocr_error = Exception("OCR cancelled")
                         return
 
-                    logger.info(f"Running OCR on page {page_num + 1}", extra={"file_path": file_path})
+                    logger.info(f"Running OCR on page {current_page_num + 1}", extra={"file_path": file_path})
 
                     # Use EasyOCR (Tesseract fallback handled in get_ocr_instance)
                     if hasattr(ocr, "readtext"):  # EasyOCR
-                        ocr_result = ocr.readtext(img_array)
-                        logger.info(f"EasyOCR completed for page {page_num + 1}")
+                        ocr_result = ocr.readtext(img_array)  # noqa: B023
+                        logger.info(f"EasyOCR completed for page {current_page_num + 1}")
                     else:
-                        logger.error(f"Unknown OCR instance type on page {page_num + 1}")
+                        logger.error(f"Unknown OCR instance type on page {current_page_num + 1}")
                         ocr_result = []
                 except Exception as e:
                     ocr_error = e
-                    logger.error(f"OCR failed on page {page_num + 1}: {e}", extra={"file_path": file_path})
+                    logger.error(f"OCR failed on page {current_page_num + 1}: {e}", extra={"file_path": file_path})
                 finally:
-                    ocr_complete.set()
+                    ocr_complete.set()  # noqa: B023
 
             # Start OCR in background thread
             ocr_thread = threading.Thread(target=run_ocr)
@@ -1092,7 +1092,8 @@ class TextExtractor:
 
         return await asyncio.get_event_loop().run_in_executor(None, _read_file)
 
-    async def _extract_text_pdf(self, file_path: str, file_content: bytes | None = None) -> str:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _extract_text_pdf(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
         """Extract text from PDF files using multiple methods including OCR for image-based PDFs."""
         logger.debug("Extracting text from PDF", extra={"file_path": file_path})
 
@@ -1356,7 +1357,8 @@ class TextExtractor:
         # Combine scores
         return meaningful_ratio * 0.4 + min(avg_word_length / 10.0, 1.0) * 0.3 + common_word_ratio * 0.3
 
-    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
         """Extract text from DOCX files using multiple methods with fallbacks."""
 
         def _try_python_docx():
@@ -1398,8 +1400,6 @@ class TextExtractor:
         def _try_textract():
             """Try textract for DOCX text extraction."""
             try:
-                from io import BytesIO
-
                 import textract
 
                 if file_content:
@@ -1457,8 +1457,6 @@ class TextExtractor:
     async def _extract_text_doc(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from DOC files."""
         try:
-            from io import BytesIO
-
             import textract
 
             def _extract_doc():

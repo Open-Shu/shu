@@ -335,7 +335,8 @@ class EnsembleStreamingHelper:
 
         return final_message_event, followup_messages
 
-    async def stream_ensemble_responses(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def stream_ensemble_responses(  # noqa: PLR0915
         self,
         ensemble_inputs: list["ModelExecutionInputs"],
         conversation_id: str,
@@ -370,7 +371,8 @@ class EnsembleStreamingHelper:
 
         conversation_owner_id = await self._get_conversation_owner(conversation_id)
 
-        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs") -> None:
+        # TODO: Refactor this function. It's too complex (number of branches and statements).
+        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs") -> None:  # noqa: PLR0915
             """Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
 
             Parameters

@@ -882,7 +882,7 @@ class ChatService:
                 groups_by_root.setdefault(root_id, []).append(msg)
 
             # For each group, sort by created_at and backfill missing variant_index
-            for root_id, group in groups_by_root.items():
+            for _, group in groups_by_root.items():
                 sorted_msgs = sorted(group, key=lambda m: m.created_at)
                 for idx, msg in enumerate(sorted_msgs):
                     # Only update variant_index when missing
@@ -1074,7 +1074,8 @@ class ChatService:
             metadata={"error": e.details if isinstance(e, ShuException) else str(e)},
         )
 
-    async def regenerate_message(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def regenerate_message(  # noqa: PLR0915
         self,
         message_id: str,
         current_user,
@@ -1254,7 +1255,7 @@ class ChatService:
         if root_turn_idx is None and sibling_candidates:
             earliest_idx, _ = min(
                 sibling_candidates,
-                key=lambda item: getattr(item[1], "created_at", datetime.min),
+                key=lambda item: getattr(item[1], "created_at", datetime.min.replace(tzinfo=UTC)),
             )
             root_turn_idx = earliest_idx
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 import certifi
@@ -22,7 +23,8 @@ class GoogleAuthAdapter(BaseAuthAdapter):
     step we can migrate logic into the adapter itself if needed.
     """
 
-    async def user_token(self, *, required_scopes: list[str] | None = None) -> str | None:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def user_token(self, *, required_scopes: list[str] | None = None) -> str | None:  # noqa: PLR0912, PLR0915
         """Fetch a Google user access token from ProviderCredential, refreshing via OAuth if needed.
         Returns None if no credential or required scopes are not granted.
         """

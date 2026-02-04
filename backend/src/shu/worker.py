@@ -69,7 +69,7 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
 
     workload_types = set()
     for name in workload_types_str.split(","):
-        name = name.strip().upper()
+        name = name.strip().upper()  # noqa: PLW2901
         if not name:
             continue
 

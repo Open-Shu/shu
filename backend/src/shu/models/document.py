@@ -6,7 +6,7 @@ document metadata, content, and vector embeddings.
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -17,7 +17,7 @@ try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
     # Fallback for development without pgvector
-    def Vector(dim):
+    def Vector(dim):  # noqa: N802
         return Text
 
 
@@ -203,7 +203,7 @@ class Document(BaseModel):
         self.profiling_status = "in_progress"
 
     # Valid document types for profiling (must match schemas.profiling.DocumentType)
-    VALID_DOCUMENT_TYPES = {"narrative", "transactional", "technical", "conversational"}
+    VALID_DOCUMENT_TYPES: ClassVar[set[str]] = {"narrative", "transactional", "technical", "conversational"}
 
     def mark_profiling_complete(
         self,

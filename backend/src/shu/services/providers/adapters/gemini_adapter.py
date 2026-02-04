@@ -391,7 +391,8 @@ class GeminiAdapter(BaseProviderAdapter):
     def _sanitize_schema_for_gemini(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Strip unsupported keys and coerce schema to Gemini's limited Schema shape."""
 
-        def _clean(obj: Any) -> dict[str, Any]:
+        # TODO: Refactor this function. It's too complex (number of branches and statements).
+        def _clean(obj: Any) -> dict[str, Any]:  # noqa: PLR0912
             if not isinstance(obj, dict):
                 return {}
 

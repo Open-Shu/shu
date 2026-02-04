@@ -192,7 +192,7 @@ class KnowledgeBase(BaseModel):
             "version": self.rag_config_version or "1.0",
         }
 
-    def update_rag_config(self, config: dict[str, Any]) -> None:
+    def update_rag_config(self, config: dict[str, Any]) -> None:  # noqa: PLR0912
         """Update RAG configuration from dictionary."""
         if "include_references" in config:
             self.rag_include_references = config["include_references"]

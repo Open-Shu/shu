@@ -55,7 +55,7 @@ async def enforce_output_limit(
         try:
             from ..models.plugin_execution import PluginExecutionStatus  # type: ignore
         except Exception:
-            PluginExecutionStatus = None  # best-effort fallback
+            PluginExecutionStatus = None  # best-effort fallback  # noqa: N806
         # Update execution record similarly to existing behavior
         try:
             exec_rec.completed_at = datetime.now(UTC)

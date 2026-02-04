@@ -84,7 +84,8 @@ class PluginLoader:
             for p in plugin_dir.rglob("*.py"):
                 try:
                     txt = p.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
+                except Exception as e:
+                    logger.error("Could not read text: %s", e)
                     continue
                 for d in deny:
                     if d in txt:

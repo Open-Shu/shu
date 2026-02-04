@@ -82,6 +82,16 @@ ignore = [
     "S101",     # Use of assert (allowed in tests)
     "SIM105",   # Suppressible exception (prefer try-except-pass for performance)
     "N818",     # Exception class name should end with 'Error'
+    "UP038",    # Use `isinstance` instead of `type` check
+
+    # Pathlib directives. We are currently fine using the legacy functions over `Path`.
+    "PTH123",
+    "PTH110",
+    "PTH107",
+    "PTH111",
+    "PTH103",
+    "PTH108",
+    "PTH118",
 ]
 
 [tool.ruff.lint.mccabe]
@@ -132,6 +142,7 @@ max-returns = 15
     "D205",     # Missing blank line after summary (49 violations - manual fix required)
     "D417",     # Undocumented param (49 violations - manual fix required)
     "ANN202",   # Missing return type private function (47 violations - manual fix required)
+    "UP038",    # isinstance with tuple instead of union (keeping traditional syntax)
 ]
 
 # NEW CODE - Strict rules (no ignores except B008 for FastAPI)
