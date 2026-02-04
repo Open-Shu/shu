@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+import httpx
+
 from .config import get_settings_instance
 from .logging import get_logger
 
