@@ -3,9 +3,6 @@
 import logging
 from typing import Any
 
-import logging
-from typing import Any
-
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
