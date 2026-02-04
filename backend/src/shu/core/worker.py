@@ -31,7 +31,7 @@ import signal
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from .queue_backend import Job, QueueBackend
 from .workload_routing import WorkloadType

@@ -258,6 +258,7 @@ async def lifespan(app: FastAPI):
     # Start inline workers if workers are enabled
     try:
         if settings.workers_enabled:
+            from .core.queue_backend import get_queue_backend
             from .core.worker import Worker, WorkerConfig
             from .core.workload_routing import WorkloadType
             from .worker import process_job
