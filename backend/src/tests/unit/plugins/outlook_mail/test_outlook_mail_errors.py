@@ -19,7 +19,7 @@ def _executor_error_handler(e: HttpRequestFailed):
     from plugins.shu_outlook_mail.plugin import _Result
 
     details = {
-        "http_status": e.status_code,
+        "status_code": e.status_code,
         "url": e.url,
         "provider_message": e.provider_message,
         "is_retryable": e.is_retryable,
@@ -63,7 +63,7 @@ class TestHttpErrors:
         assert result.status == "error"
         assert result.error["code"] == "auth_error"
         assert "401" in result.error["message"]
-        assert result.error["details"]["http_status"] == 401
+        assert result.error["details"]["status_code"] == 401
 
     @pytest.mark.asyncio
     async def test_403_returns_forbidden_error(self, plugin, mock_host):
@@ -79,7 +79,7 @@ class TestHttpErrors:
         assert result.status == "error"
         assert result.error["code"] == "forbidden"
         assert "403" in result.error["message"]
-        assert result.error["details"]["http_status"] == 403
+        assert result.error["details"]["status_code"] == 403
 
     @pytest.mark.asyncio
     async def test_429_returns_rate_limited_error(self, plugin, mock_host):
@@ -95,7 +95,7 @@ class TestHttpErrors:
         assert result.status == "error"
         assert result.error["code"] == "rate_limited"
         assert "429" in result.error["message"]
-        assert result.error["details"]["http_status"] == 429
+        assert result.error["details"]["status_code"] == 429
 
     @pytest.mark.asyncio
     async def test_500_returns_server_error(self, plugin, mock_host):
@@ -301,15 +301,28 @@ class TestSkipsArray:
     @pytest.mark.asyncio
     async def test_skips_has_structured_format(self, plugin, mock_host):
         """Test skips entries have item_id, reason, and code fields."""
+        # Setup: return a message with body included (no separate fetch needed after N+1 fix)
         mock_host.http.fetch.side_effect = [
-            wrap_graph_response({"value": [{"id": "msg1"}], "@odata.nextLink": None}),
-            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"}),
-            HttpRequestFailed(
-                status_code=404,
-                url="https://graph.microsoft.com/v1.0/me/messages/msg1",
-                body={"error": {"message": "Message not found"}}
-            )
+            # List messages with body included
+            wrap_graph_response({
+                "value": [{
+                    "id": "msg1",
+                    "subject": "Test",
+                    "from": {"emailAddress": {"name": "J", "address": "j@e.com"}},
+                    "toRecipients": [],
+                    "ccRecipients": [],
+                    "bccRecipients": [],
+                    "receivedDateTime": "2024-01-15T10:00:00Z",
+                    "body": {"contentType": "text", "content": "Body"}
+                }],
+                "@odata.nextLink": None
+            }),
+            # Delta query to get initial token
+            wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"})
         ]
+        
+        # Make ingestion fail to trigger skip
+        mock_host.kb.ingest_email.side_effect = Exception("Message not found in mailbox")
 
         result = await plugin.execute({"op": "ingest", "kb_id": "test-kb"}, None, mock_host)
 
@@ -321,6 +334,8 @@ class TestSkipsArray:
         assert "item_id" in skip
         assert "reason" in skip
         assert "code" in skip
+        assert skip["item_id"] == "msg1"
+        assert skip["code"] == "ingestion_failed"
 
     @pytest.mark.asyncio
     async def test_no_skips_when_all_succeed(self, plugin, mock_host):

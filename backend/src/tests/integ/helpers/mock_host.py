@@ -108,7 +108,7 @@ class MockHostHttp:
             if pattern in url:
                 return self.responses[pattern]
 
-        if self.default_response:
+        if self.default_response is not None:
             return self.default_response
 
         return create_mock_graph_response([])
@@ -438,11 +438,18 @@ class MockHostUtils:
         Args:
             items: List of items to process
             async_fn: Async function to apply to each item
-            max_errors: Optional maximum errors before stopping
+            max_errors: Optional maximum errors before stopping.
+                Must be None (unlimited) or a positive integer >= 1.
 
         Returns:
             Tuple of (results, errors)
+
+        Raises:
+            ValueError: If max_errors is not None and less than 1.
         """
+        if max_errors is not None and max_errors < 1:
+            raise ValueError("max_errors must be None or >= 1")
+
         results: list[R] = []
         errors: list[tuple[T, Exception]] = []
 

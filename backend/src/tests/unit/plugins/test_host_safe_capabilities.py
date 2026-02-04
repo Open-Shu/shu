@@ -178,6 +178,24 @@ class TestUtilsCapabilityMapSafe:
         assert results == []
         assert errors == []
 
+    @pytest.mark.asyncio
+    async def test_map_safe_max_errors_zero_raises(self, utils):
+        """map_safe raises ValueError when max_errors=0."""
+        async def double(x):
+            return x * 2
+
+        with pytest.raises(ValueError, match="max_errors must be None or >= 1"):
+            await utils.map_safe([1, 2, 3], double, max_errors=0)
+
+    @pytest.mark.asyncio
+    async def test_map_safe_max_errors_negative_raises(self, utils):
+        """map_safe raises ValueError when max_errors is negative."""
+        async def double(x):
+            return x * 2
+
+        with pytest.raises(ValueError, match="max_errors must be None or >= 1"):
+            await utils.map_safe([1, 2, 3], double, max_errors=-1)
+
 
 class TestUtilsCapabilityFilterSafe:
     """Tests for UtilsCapability.filter_safe."""

@@ -79,6 +79,7 @@ class UtilsCapability(ImmutableCapabilityMixin):
             items: List of items to process.
             async_fn: Async function to apply to each item.
             max_errors: Optional maximum number of errors before stopping.
+                Must be None (unlimited) or a positive integer >= 1.
                 If None (default), all items are processed regardless of errors.
                 If set, processing stops after this many errors.
         
@@ -86,6 +87,9 @@ class UtilsCapability(ImmutableCapabilityMixin):
             A tuple of (results, errors) where:
             - results: List of successful results (in order of success)
             - errors: List of (item, exception) tuples for failed items
+        
+        Raises:
+            ValueError: If max_errors is not None and less than 1.
         
         Example:
             async def fetch_user(user_id):
@@ -99,6 +103,9 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 print(user["name"])
 
         """
+        if max_errors is not None and max_errors < 1:
+            raise ValueError("max_errors must be None or >= 1")
+
         results: list[R] = []
         errors: list[tuple[T, Exception]] = []
 

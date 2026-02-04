@@ -754,26 +754,37 @@ class OutlookMailPlugin:
 
             if delta_url:
                 try:
-                    # Fetch delta changes
+                    # Fetch all pages of delta changes
+                    # Microsoft Graph delta responses use @odata.nextLink for intermediate pages
+                    # and @odata.deltaLink for the final page (mutually exclusive)
                     headers = {
                         "Authorization": f"Bearer {access_token}",
                         "Content-Type": "application/json"
                     }
+                    
+                    next_url = delta_url
+                    while next_url:
+                        response = await host.http.fetch(
+                            method="GET",
+                            url=next_url,
+                            headers=headers
+                        )
 
-                    response = await host.http.fetch(
-                        method="GET",
-                        url=delta_url,
-                        headers=headers
-                    )
-
-                    # Success - extract messages and delta link from response body
-                    body = response.get("body", {})
-                    if isinstance(body, dict):
-                        messages = body.get("value", [])
-                        delta_link = body.get("@odata.deltaLink")
-                    else:
-                        messages = []
-                        delta_link = None
+                        body = response.get("body", {})
+                        if isinstance(body, dict):
+                            page_messages = body.get("value", [])
+                            messages.extend(page_messages)
+                            
+                            # Check for next page or final delta link
+                            next_url = body.get("@odata.nextLink")
+                            if not next_url:
+                                # No more pages - get the final delta link for next sync
+                                delta_link = body.get("@odata.deltaLink")
+                        else:
+                            next_url = None
+                    
+                    if debug_mode:
+                        diagnostics.append(f"Delta sync fetched {len(messages)} messages")
 
                 except Exception as e:
                     # Check for HTTP 410 (delta token expired) using error_category
@@ -781,6 +792,7 @@ class OutlookMailPlugin:
                         if debug_mode:
                             diagnostics.append("Delta token expired (410), falling back to full sync")
                         use_delta_sync = False
+                        messages = []  # Clear any partial results
                         # Reset cursor (best-effort)
                         if hasattr(host, "cursor"):
                             await host.cursor.delete_safe(kb_id)
