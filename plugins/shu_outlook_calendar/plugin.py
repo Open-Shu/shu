@@ -332,7 +332,12 @@ class OutlookCalendarPlugin:
             # Use delta endpoint for incremental sync
             delta_url = cursor_data if isinstance(cursor_data, str) else cursor_data.get("delta_link")
 
-            if delta_url:
+            # If cursor_data is a dict but missing delta_link, fall back to full sync
+            if not delta_url:
+                host.log.info("Cursor data missing delta_link; falling back to full sync")
+                use_delta_sync = False
+                cursor_data = None
+            else:
                 try:
                     events, delta_link = await self._fetch_all_pages(host, access_token, delta_url, max_results)
 

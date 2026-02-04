@@ -201,7 +201,7 @@ class HttpCapability(ImmutableCapabilityMixin):
                 pass
             raise HttpRequestFailed(status, url, body=None, headers=result["headers"])
         return result
-    
+
     async def fetch_bytes_or_none(self, method: str, url: str, **kwargs) -> Optional[Dict[str, Any]]:
         """Fetch bytes from a URL, returning None on 4xx errors instead of raising.
 

@@ -428,6 +428,10 @@ class TeamsChatPlugin:
                 source_id = f"teams:{chat_id}:{msg_id}"
 
                 created_dt = msg.get("createdDateTime")
+                # Use lastModifiedDateTime for cursor tracking to align with the filter
+                # (we filter on lastModifiedDateTime, so cursor must track the same field
+                # to ensure edited messages are re-ingested on subsequent syncs)
+                ts = msg.get("lastModifiedDateTime") or created_dt
 
                 # Ingest to KB
                 await host.kb.ingest_text(
@@ -450,9 +454,9 @@ class TeamsChatPlugin:
                 )
                 upserts += 1
 
-                # Track newest timestamp
-                if created_dt and (not newest_ts or created_dt > newest_ts):
-                    newest_ts = created_dt
+                # Track newest timestamp using lastModifiedDateTime to align with filter
+                if ts and (not newest_ts or ts > newest_ts):
+                    newest_ts = ts
 
         # Update cursor with newest timestamp (set_safe logs on error but doesn't raise)
         if hasattr(host, "cursor") and newest_ts:

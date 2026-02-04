@@ -55,6 +55,25 @@ class OutlookMailPlugin:
             parts.append(f"{key}={encoded_value}")
         return "&".join(parts)
 
+    @staticmethod
+    def _extract_recipients(recipient_list: List[Dict[str, Any]]) -> List[str]:
+        """Extract email addresses from recipient list.
+        
+        Args:
+            recipient_list: List of recipient objects from Graph API
+            
+        Returns:
+            List of formatted email strings (e.g., "Name <email@example.com>")
+        """
+        result = []
+        for recipient in recipient_list or []:
+            email_obj = recipient.get("emailAddress", {})
+            name = email_obj.get("name", "")
+            address = email_obj.get("address", "")
+            if address:
+                result.append(f"{name} <{address}>" if name else address)
+        return result
+
     def get_schema(self) -> Optional[Dict[str, Any]]:
         """Return JSON schema for plugin parameters."""
         return {
@@ -326,27 +345,18 @@ class OutlookMailPlugin:
             next_url = f"https://graph.microsoft.com/v1.0{next_url}"
         
         while next_url:
-            # For subsequent pages, use the full URL from @odata.nextLink
-            if next_url.startswith("http"):
-                # Make request directly with full URL
-                # HttpRequestFailed exceptions bubble up - caller can check error_category
-                headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json"
-                }
+            # Make request with full URL
+            # HttpRequestFailed exceptions bubble up - caller can check error_category
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
 
-                response = await host.http.fetch(
-                    method="GET",
-                    url=next_url,
-                    headers=headers
-                )
-            else:
-                # First request with endpoint path
-                response = await self._graph_api_request(
-                    host=host,
-                    access_token=access_token,
-                    endpoint=next_url
-                )
+            response = await host.http.fetch(
+                method="GET",
+                url=next_url,
+                headers=headers
+            )
             
             # Extract items from response body
             # host.http.fetch returns {"status_code": ..., "headers": ..., "body": ...}
@@ -845,7 +855,7 @@ class OutlookMailPlugin:
                 
             except Exception as e:
                 # If we can't get delta link, that's okay - we'll do full sync next time
-                logger.exception("Failed to get delta link for kb_id=%s", kb_id)
+                logger.warning("Failed to get delta link for kb_id=%s: %s", kb_id, e)
 
         # Process messages: handle messageAdded and messageDeleted events
         # This runs for both delta sync and full sync
@@ -904,20 +914,9 @@ class OutlookMailPlugin:
                 sender = f"{sender_name} <{sender_address}>" if sender_name else sender_address
                 
                 # Extract recipients (to/cc/bcc)
-                def extract_recipients(recipient_list: List[Dict[str, Any]]) -> List[str]:
-                    """Extract email addresses from recipient list."""
-                    result = []
-                    for recipient in recipient_list or []:
-                        email_obj = recipient.get("emailAddress", {})
-                        name = email_obj.get("name", "")
-                        address = email_obj.get("address", "")
-                        if address:
-                            result.append(f"{name} <{address}>" if name else address)
-                    return result
-                
-                to_recipients = extract_recipients(full_message.get("toRecipients", []))
-                cc_recipients = extract_recipients(full_message.get("ccRecipients", []))
-                bcc_recipients = extract_recipients(full_message.get("bccRecipients", []))
+                to_recipients = self._extract_recipients(full_message.get("toRecipients", []))
+                cc_recipients = self._extract_recipients(full_message.get("ccRecipients", []))
+                bcc_recipients = self._extract_recipients(full_message.get("bccRecipients", []))
                 
                 recipients = {
                     "to": to_recipients,

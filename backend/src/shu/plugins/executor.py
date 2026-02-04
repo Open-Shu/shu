@@ -102,7 +102,8 @@ class _DenyImportsFinder(MetaPathFinder):
         # Block shu.* imports only from plugin code, not from trusted host code
         for p in self.deny_from_plugins:
             if name == p or name.startswith(p + "."):
-                # frame_offset=2: skip find_spec -> _is_called_from_trusted_code -> sys._getframe
+                # frame_offset=2: Frame 0 is _is_called_from_trusted_code, Frame 1 is find_spec,
+                # Frame 2 is the actual caller where we start walking the stack
                 if not _is_called_from_trusted_code(frame_offset=2):
                     raise ImportError(
                         f"Import of '{fullname}' is denied by host policy. Use host.http instead."
