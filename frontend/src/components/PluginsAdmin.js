@@ -92,7 +92,7 @@ const PluginCard = ({
       monitoring: 'Plugin can monitor system health and metrics',
       identity: 'Plugin can access user identity information and profile data',
       kb: 'Plugin can interact with knowledge bases for storing and retrieving documents',
-      secrets: 'Plugin can access and manage encrypted user secrets and credentials',
+      secrets: 'Plugin can access and manage encrypted user secrets and credentials', // pragma: allowlist secret
       cache: 'Plugin can use caching mechanisms for improved performance',
     };
     return tooltips[capability] || `Host capability: ${capability}`;

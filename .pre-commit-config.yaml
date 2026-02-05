@@ -51,31 +51,23 @@ repos:
   #         - --no-error-summary
   #       exclude: ^(tests/|migrations/versions/|backend/src/tests/)
 
-  # Frontend: ESLint (with Prettier integration)
-  - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v9.17.0
-    hooks:
-      - id: eslint
-        files: \.(js|jsx|ts|tsx)$
-        args: [--fix, --max-warnings=0]
-        additional_dependencies:
-          - eslint@8.57.0
-          - eslint-plugin-react@7.33.2
-          - eslint-plugin-react-hooks@4.6.0
-          - eslint-config-prettier@9.1.0
-          - eslint-plugin-prettier@5.1.3
-          - prettier@3.1.1
-        exclude: ^(?!frontend/)
-
-  # Frontend: Prettier (using local config for non-JS files)
+  # Frontend: ESLint and Prettier (using local installation)
   - repo: local
     hooks:
+      - id: eslint
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && npx eslint --fix $(echo "$@" | sed "s|frontend/||g")' --
+        language: system
+        files: ^frontend/.*\.(js|jsx)$
+        pass_filenames: true
+
       - id: prettier-frontend
         name: prettier (frontend)
-        entry: bash -c 'cd frontend && npx prettier --write'
+        entry: bash -c 'cd frontend && npx prettier --write $(echo "$@" | sed "s|frontend/||g")' --
         language: system
-        files: ^frontend/.*\.(json|css|md)$
+        files: ^frontend/.*\.(js|jsx|json|css|md)$
         exclude: package-lock\.json$
+        pass_filenames: true
 
   # General: Trailing whitespace, EOF, YAML
   - repo: https://github.com/pre-commit/pre-commit-hooks
