@@ -572,6 +572,8 @@ class InMemoryCacheBackend:
     async def delete(self, key: str) -> bool:
         """Delete a key from the cache.
 
+        Deletes from both string and binary storage if the key exists.
+
         Args:
             key: The cache key to delete. Must be a non-empty string.
 
@@ -588,17 +590,25 @@ class InMemoryCacheBackend:
         with self._lock:
             self._maybe_cleanup()
 
-            if key not in self._data:
-                return False
+            deleted = False
 
-            # Check if already expired (lazy expiration)
-            _, expiry = self._data[key]
-            if self._is_expired(expiry):
+            # Check and delete from string data
+            if key in self._data:
+                # Check if already expired (lazy expiration)
+                _, expiry = self._data[key]
+                if not self._is_expired(expiry):
+                    deleted = True
                 del self._data[key]
-                return False
 
-            del self._data[key]
-            return True
+            # Check and delete from binary data
+            if key in self._binary_data:
+                # Check if already expired (lazy expiration)
+                _, expiry = self._binary_data[key]
+                if not self._is_expired(expiry):
+                    deleted = True
+                del self._binary_data[key]
+
+            return deleted
 
     async def exists(self, key: str) -> bool:
         """Check if a key exists in the cache.
