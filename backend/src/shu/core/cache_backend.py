@@ -345,8 +345,9 @@ class CacheBackend(Protocol):
         """Retrieve binary data by key.
 
         This method is for storing raw binary data (e.g., file contents, images)
-        without the overhead of base64 encoding. Binary data is stored separately
-        from string data and cannot be mixed.
+        without the overhead of base64 encoding. A key can hold either a string
+        value or a binary value, not both; writing one type evicts the other
+        (last-write-wins).
 
         Args:
             key: The cache key to retrieve. Must be a non-empty string.
@@ -377,8 +378,9 @@ class CacheBackend(Protocol):
         """Store binary data with optional TTL.
 
         This method is for storing raw binary data (e.g., file contents, images)
-        without the overhead of base64 encoding. Binary data is stored separately
-        from string data and cannot be mixed.
+        without the overhead of base64 encoding. A key can hold either a string
+        value or a binary value, not both; writing one type evicts the other
+        (last-write-wins).
 
         Args:
             key: The cache key. Must be a non-empty string.
@@ -560,6 +562,9 @@ class InMemoryCacheBackend:
                 if key in self._data:
                     del self._data[key]
                 return True
+
+            # Evict from binary storage (last-write-wins, matches Redis behaviour)
+            self._binary_data.pop(key, None)
 
             # Calculate expiry timestamp
             expiry: float | None = None
@@ -853,6 +858,9 @@ class InMemoryCacheBackend:
                 if key in self._binary_data:
                     del self._binary_data[key]
                 return True
+
+            # Evict from string storage (last-write-wins, matches Redis behaviour)
+            self._data.pop(key, None)
 
             # Calculate expiry timestamp
             expiry: float | None = None
