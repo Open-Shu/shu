@@ -24,12 +24,13 @@ class KbCapability(ImmutableCapabilityMixin):
     plugins from mutating _plugin_name or _user_id to access other plugins' knowledge bases.
     """
 
-    __slots__ = ("_ocr_mode", "_plugin_name", "_schedule_id", "_user_id")
+    __slots__ = ("_ocr_mode", "_plugin_name", "_schedule_id", "_staging_ttl", "_user_id")
 
     _plugin_name: str
     _user_id: str
     _schedule_id: str | None
     _ocr_mode: str | None
+    _staging_ttl: int | None
 
     def __init__(
         self,
@@ -38,10 +39,12 @@ class KbCapability(ImmutableCapabilityMixin):
         user_id: str,
         ocr_mode: str | None = None,
         schedule_id: str | None = None,
+        staging_ttl: int | None = None,
     ):
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_schedule_id", str(schedule_id) if schedule_id else None)
+        object.__setattr__(self, "_staging_ttl", staging_ttl)
         m = (ocr_mode or "").strip().lower() if isinstance(ocr_mode, str) else None
         object.__setattr__(self, "_ocr_mode", m if m in {"auto", "always", "never", "fallback"} else None)
 
@@ -92,6 +95,7 @@ class KbCapability(ImmutableCapabilityMixin):
                 source_url=source_url,
                 attributes=attributes,
                 ocr_mode=self._ocr_mode,
+                staging_ttl=self._staging_ttl,
             )
         finally:
             try:

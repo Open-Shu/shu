@@ -145,11 +145,12 @@ async def test_scheduler_jobs_enqueued(client, db, auth_headers):
     reset_queue_backend()
     
     # Enable test_schema plugin using the correct endpoint
-    await client.patch(
+    enable_resp = await client.patch(
         "/api/v1/plugins/admin/test_schema/enable",
         json={"enabled": True},
         headers=auth_headers,
     )
+    assert enable_resp.status_code in (200, 201), f"Failed to enable plugin: {enable_resp.text}"
     
     # Create a feed that's due to run
     feed_response = await client.post(
@@ -214,11 +215,12 @@ async def test_scheduler_idempotency_preserved(client, db, auth_headers):
     reset_queue_backend()
     
     # Enable test_schema plugin using the correct endpoint
-    await client.patch(
+    enable_resp = await client.patch(
         "/api/v1/plugins/admin/test_schema/enable",
         json={"enabled": True},
         headers=auth_headers,
     )
+    assert enable_resp.status_code in (200, 201), f"Failed to enable plugin: {enable_resp.text}"
     
     # Create a feed
     feed_response = await client.post(
@@ -280,11 +282,12 @@ async def test_scheduler_job_can_be_dequeued(client, db, auth_headers):
     reset_queue_backend()
     
     # Enable test_schema plugin using the correct endpoint
-    await client.patch(
+    enable_resp = await client.patch(
         "/api/v1/plugins/admin/test_schema/enable",
         json={"enabled": True},
         headers=auth_headers,
     )
+    assert enable_resp.status_code in (200, 201), f"Failed to enable plugin: {enable_resp.text}"
     
     # Create a feed
     feed_response = await client.post(

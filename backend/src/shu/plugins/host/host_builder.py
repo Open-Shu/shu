@@ -122,6 +122,7 @@ def make_host(
     capabilities: list[str] | None = None,
     provider_identities: dict[str, list[dict[str, Any]]] | None = None,
     host_context: dict[str, Any] | None = None,
+    staging_ttl: int | None = None,
 ) -> Host:
     caps = set(capabilities or [])
     # Policy: when kb is declared, auto-include cursor for plugin authors
@@ -167,6 +168,7 @@ def make_host(
             user_id=user_id,
             ocr_mode=parsed.ocr_mode,
             schedule_id=parsed.schedule_id,
+            staging_ttl=staging_ttl,
         )
 
     if "secrets" in caps:

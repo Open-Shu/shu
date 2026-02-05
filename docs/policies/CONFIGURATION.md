@@ -405,7 +405,9 @@ python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
 
 ##### WorkloadType Reference
-- **INGESTION**: Document ingestion and indexing tasks
+- **INGESTION**: Document ingestion and indexing tasks (legacy, general ingestion)
+- **INGESTION_OCR**: OCR/text extraction stage of document pipeline (first stage of async ingestion)
+- **INGESTION_EMBED**: Embedding stage of document pipeline (chunking, embedding generation, vector storage)
 - **LLM_WORKFLOW**: LLM-based workflows and chat processing
 - **MAINTENANCE**: Scheduled tasks, cleanup, and system maintenance
 - **PROFILING**: Document profiling (LLM-based analysis)

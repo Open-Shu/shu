@@ -341,6 +341,7 @@ async def ingest_document(
     source_url: str | None = None,
     attributes: dict[str, Any] | None = None,
     ocr_mode: str | None = None,
+    staging_ttl: int | None = None,
 ) -> dict[str, Any]:
     """Ingest a document asynchronously via queue pipeline.
 
@@ -351,6 +352,20 @@ async def ingest_document(
     1. PENDING → EXTRACTING: OCR job extracts text
     2. EXTRACTING → EMBEDDING: Embed job creates chunks and embeddings
     3. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+
+    Args:
+        db: Database session.
+        knowledge_base_id: Target knowledge base ID.
+        plugin_name: Name of the plugin ingesting the document.
+        user_id: User ID performing the ingestion.
+        file_bytes: Raw file bytes to ingest.
+        filename: Original filename.
+        mime_type: MIME type of the file.
+        source_id: Unique source identifier.
+        source_url: Optional source URL.
+        attributes: Optional additional attributes.
+        ocr_mode: Optional OCR mode override.
+        staging_ttl: Optional TTL for staged files (defaults to settings.file_staging_ttl).
     """
     from ..core.cache_backend import get_cache_backend
     from ..core.queue_backend import get_queue_backend
@@ -398,7 +413,7 @@ async def ingest_document(
     effective_source_url = source_url or attrs.get("source_url")
 
     if existing is None:
-        # New document - create it
+        # New document - create it with PENDING status
         doc_create = DocumentCreate(
             knowledge_base_id=knowledge_base_id,
             title=title,
@@ -417,8 +432,11 @@ async def ingest_document(
 
         res = await db.execute(select(Document).where(Document.id == created.id))
         document = res.scalar_one()
+        # Set status to PENDING atomically with creation
+        document.update_status(DocumentStatus.PENDING)
+        await db.commit()
     else:
-        # Existing document - update for re-ingestion
+        # Existing document - update for re-ingestion with PENDING status
         document = existing
         document.title = title
         document.file_type = file_type
@@ -432,17 +450,15 @@ async def ingest_document(
             document.source_hash = source_hash
         if source_modified_at is not None:
             document.source_modified_at = source_modified_at
+        # Set status to PENDING atomically with update
+        document.update_status(DocumentStatus.PENDING)
         db.add(document)
         await db.commit()
         await db.refresh(document)
 
-    # Set status to PENDING
-    document.update_status(DocumentStatus.PENDING)
-    await db.commit()
-
     # Stage file bytes using FileStagingService
     cache = await get_cache_backend()
-    staging_service = FileStagingService()
+    staging_service = FileStagingService(staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService()
     staging_key = await staging_service.stage_file(document.id, file_bytes, cache)
 
     # Enqueue OCR job
@@ -636,12 +652,14 @@ async def ingest_text(
     source_hash = attrs.get("source_hash")
     force_reingest = bool(attrs.get("force_reingest"))
 
+    # Compute content hash once for skip check and document creation
+    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
+
     # Check for existing document with same source_id (for hash-based skip)
     existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
 
     if existing is not None and not force_reingest:
         # Check if content is unchanged using content hash
-        content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
         if existing.content_hash and content_hash == existing.content_hash:
             logger.info(
                 "Skipping unchanged document",
@@ -663,8 +681,6 @@ async def ingest_text(
                 "skip_reason": "hash_match",
             }
 
-    # Compute content hash for new/updated document
-    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
 
@@ -782,12 +798,14 @@ async def ingest_thread(
     source_hash = attrs.get("source_hash")
     force_reingest = bool(attrs.get("force_reingest"))
 
+    # Compute content hash once for skip check and document creation
+    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
+
     # Check for existing document with same source_id (for hash-based skip)
     existing = await svc.get_document_by_source_id(knowledge_base_id, thread_id)
 
     if existing is not None and not force_reingest:
         # Check if content is unchanged using content hash
-        content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
         if existing.content_hash and content_hash == existing.content_hash:
             logger.info(
                 "Skipping unchanged thread",
@@ -809,8 +827,6 @@ async def ingest_thread(
                 "skip_reason": "hash_match",
             }
 
-    # Compute content hash for new/updated document
-    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
 

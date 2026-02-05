@@ -16,6 +16,9 @@ from ..core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Default TTL for staged files (1 hour)
+DEFAULT_STAGING_TTL = 3600
+
 
 class FileStagingError(ShuException):
     """Raised when file staging operations fail."""
@@ -34,9 +37,18 @@ class FileStagingService:
 
     Uses CacheBackend.set_bytes/get_bytes for native binary storage.
     Works with both RedisCacheBackend and InMemoryCacheBackend.
+
+    Args:
+        staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
     """
 
-    STAGING_TTL = 3600  # 1 hour
+    def __init__(self, staging_ttl: int = DEFAULT_STAGING_TTL):
+        """Initialize the file staging service.
+
+        Args:
+            staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
+        """
+        self._staging_ttl = staging_ttl
 
     async def stage_file(
         self,
@@ -63,7 +75,7 @@ class FileStagingService:
             success = await cache.set_bytes(
                 staging_key,
                 file_bytes,
-                ttl_seconds=self.STAGING_TTL,
+                ttl_seconds=self._staging_ttl,
             )
             if not success:
                 raise FileStagingError(
@@ -117,7 +129,17 @@ class FileStagingService:
                 )
 
             # Clean up after retrieval
-            await cache.delete(staging_key)
+            try:
+                await cache.delete(staging_key)
+            except Exception as cleanup_error:
+                # Log but don't fail - file was retrieved successfully
+                logger.warning(
+                    "Failed to clean up staging key after retrieval",
+                    extra={
+                        "staging_key": staging_key,
+                        "error": str(cleanup_error),
+                    },
+                )
 
             logger.debug(
                 "Retrieved and cleaned up staged file",

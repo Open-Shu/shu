@@ -154,6 +154,9 @@ class Settings(BaseSettings):
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
+    # File staging configuration (for document ingestion pipeline)
+    file_staging_ttl: int = Field(3600, alias="SHU_FILE_STAGING_TTL")  # TTL in seconds for staged files (default: 1 hour)
+
     # API Rate Limiting (HTTP request throttling, not LLM-specific)
     enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
     api_rate_limit_requests: int = Field(100, alias="SHU_API_RATE_LIMIT_REQUESTS")  # requests per period

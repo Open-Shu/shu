@@ -18,7 +18,6 @@ from alembic import op
 
 from migrations.helpers import (
     add_column_if_not_exists,
-    column_exists,
     drop_column_if_exists,
     index_exists,
 )

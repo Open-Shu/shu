@@ -46,7 +46,8 @@ async def _wait_for_document_status(
     Raises:
         TimeoutError: If document doesn't reach target status within timeout
     """
-    start_time = asyncio.get_event_loop().time()
+    loop = asyncio.get_running_loop()
+    start_time = loop.time()
 
     while True:
         result = await db.execute(
@@ -71,7 +72,7 @@ async def _wait_for_document_status(
                 "chunk_count": chunk_count,
             }
 
-        elapsed = asyncio.get_event_loop().time() - start_time
+        elapsed = loop.time() - start_time
         if elapsed > timeout:
             raise TimeoutError(
                 f"Document {document_id} did not reach status {target_statuses} "
@@ -403,7 +404,8 @@ async def test_status_polling_via_api(client, db, auth_headers):
     logger.info(f"Document created with ID: {doc_id}, polling status via API...")
 
     # Poll the document preview endpoint to check status
-    start_time = asyncio.get_event_loop().time()
+    loop = asyncio.get_running_loop()
+    start_time = loop.time()
     final_status = None
 
     while True:
@@ -424,7 +426,7 @@ async def test_status_polling_via_api(client, db, auth_headers):
                 final_status = status
                 break
 
-        elapsed = asyncio.get_event_loop().time() - start_time
+        elapsed = loop.time() - start_time
         if elapsed > PIPELINE_TIMEOUT:
             raise TimeoutError(
                 f"Document {doc_id} did not complete within {PIPELINE_TIMEOUT}s"

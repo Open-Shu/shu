@@ -146,7 +146,7 @@ async def _handle_ocr_job(job) -> None:
 
     session_local = get_async_session_local()
     cache = await get_cache_backend()
-    staging_service = FileStagingService()
+    staging_service = FileStagingService()  # TTL not needed for retrieval
 
     async with session_local() as session:
         # Get document and update status to EXTRACTING
@@ -603,12 +603,21 @@ async def run_worker(
 
 
     try:
-        # Run all workers concurrently
-        await asyncio.gather(*[w.run() for w in workers])
+        # Run all workers concurrently, handling individual failures gracefully
+        results = await asyncio.gather(*[w.run() for w in workers], return_exceptions=True)
+        
+        # Check for individual worker failures
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                worker_id = workers[i].worker_id if hasattr(workers[i], 'worker_id') else f"{i + 1}/{len(workers)}"
+                logger.error(
+                    f"Worker {worker_id} failed with error: {result}",
+                    exc_info=result,
+                )
     except KeyboardInterrupt:
         logger.info("Workers interrupted by user")
     except Exception as e:
-        logger.error(f"Worker error: {e}", exc_info=True)
+        logger.error(f"Worker orchestration error: {e}", exc_info=True)
         sys.exit(1)
     finally:
         logger.info("Workers shutdown complete")

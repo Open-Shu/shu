@@ -20,7 +20,7 @@ import json
 import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select

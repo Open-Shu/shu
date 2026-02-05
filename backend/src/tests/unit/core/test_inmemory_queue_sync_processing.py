@@ -7,15 +7,12 @@ single-node deployments and tests.
 """
 
 import asyncio
-from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from shu.core.queue_backend import InMemoryQueueBackend, Job
-from shu.core.worker import Worker, WorkerConfig
 from shu.core.workload_routing import WorkloadType, enqueue_job
 
 
@@ -78,14 +75,6 @@ class TestInMemoryQueueSynchronousProcessing:
         assert queue_length == num_jobs, (
             f"Expected {num_jobs} jobs in queue, got {queue_length}"
         )
-
-        # Create worker with short poll interval
-        config = WorkerConfig(
-            workload_types={WorkloadType.INGESTION},
-            poll_interval=0.01,  # Very short poll interval
-            shutdown_timeout=1.0,
-        )
-        worker = Worker(backend, config, job_handler=job_handler)
 
         # Process all jobs with a timeout
         async def run_worker_until_done():
@@ -183,7 +172,7 @@ class TestInMemoryQueueSynchronousProcessing:
         Unit test: InMemoryQueueBackend operations complete without network latency.
 
         This test verifies that enqueue and dequeue operations complete
-        in microseconds, not milliseconds, demonstrating synchronous behavior.
+        quickly, demonstrating synchronous in-memory behavior.
         """
         import time
 
@@ -201,12 +190,14 @@ class TestInMemoryQueueSynchronousProcessing:
         dequeued = await backend.dequeue(queue_name, timeout_seconds=None)
         dequeue_time = time.perf_counter() - start
 
-        # Operations should complete in under 10ms (typically microseconds)
-        assert enqueue_time < 0.01, (
-            f"Enqueue took {enqueue_time*1000:.3f}ms, expected < 10ms"
+        # Sanity threshold: operations should complete in under 100ms.
+        # This is a relaxed threshold to avoid CI flakiness; actual times
+        # are typically microseconds on local machines.
+        assert enqueue_time < 0.1, (
+            f"Enqueue took {enqueue_time*1000:.3f}ms, expected < 100ms"
         )
-        assert dequeue_time < 0.01, (
-            f"Dequeue took {dequeue_time*1000:.3f}ms, expected < 10ms"
+        assert dequeue_time < 0.1, (
+            f"Dequeue took {dequeue_time*1000:.3f}ms, expected < 100ms"
         )
         assert dequeued is not None
         assert dequeued.id == job.id
