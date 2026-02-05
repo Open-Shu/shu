@@ -402,7 +402,8 @@ async def _handle_embed_job(job) -> None:
 async def _handle_profiling_job(job) -> None:
     """Handle a PROFILING workload job.
 
-    Runs the profiling orchestrator for the specified document.
+    Runs the profiling orchestrator for the specified document. On success,
+    sets the document's pipeline status to READY (the final state).
 
     Args:
         job: The job containing document_id in payload.
@@ -420,10 +421,13 @@ async def _handle_profiling_job(job) -> None:
         extra={"job_id": job.id, "document_id": document_id}
     )
 
-    from .core.database import get_async_session_local
+    from sqlalchemy import select
+
     from .core.config import get_config_manager, get_settings_instance
-    from .services.side_call_service import SideCallService
+    from .core.database import get_async_session_local
+    from .models.document import Document, DocumentStatus
     from .services.profiling_orchestrator import ProfilingOrchestrator
+    from .services.side_call_service import SideCallService
 
     settings = get_settings_instance()
     session_local = get_async_session_local()
@@ -436,6 +440,17 @@ async def _handle_profiling_job(job) -> None:
         result = await orchestrator.run_for_document(document_id)
 
         if result.success:
+            # Set document pipeline status to READY (final state)
+            # The orchestrator already updated profiling_status to "complete"
+            # Now we need to update the pipeline status field
+            stmt = select(Document).where(Document.id == document_id)
+            doc_result = await session.execute(stmt)
+            document = doc_result.scalar_one_or_none()
+
+            if document:
+                document.update_status(DocumentStatus.READY)
+                await session.commit()
+
             logger.info(
                 "Profiling job completed successfully",
                 extra={
@@ -444,6 +459,7 @@ async def _handle_profiling_job(job) -> None:
                     "profiling_mode": result.profiling_mode.value if result.profiling_mode else None,
                     "tokens_used": result.tokens_used,
                     "duration_ms": result.duration_ms,
+                    "status": DocumentStatus.READY.value,
                 }
             )
         else:

@@ -15,7 +15,6 @@ Security Vulnerabilities:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.logging import get_logger
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
-from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
 from ..services.document_service import DocumentService
 
 logger = get_logger(__name__)
@@ -344,221 +342,144 @@ async def ingest_document(
     attributes: dict[str, Any] | None = None,
     ocr_mode: str | None = None,
 ) -> dict[str, Any]:
-    # OCR/text extraction
-    mt = (mime_type or "").lower()
-    # Prefer filename extension when available; allow caller hint via attributes; fall back to MIME type
-    fname = filename or ""
-    ext_from_name = None
-    if isinstance(fname, str) and "." in fname:
-        ext_from_name = "." + fname.rsplit(".", 1)[-1].lower()
+    """Ingest a document asynchronously via queue pipeline.
 
-    ext_map = {
-        "application/pdf": ".pdf",
-        "text/plain": ".txt",
-        "text/markdown": ".md",
-        "text/csv": ".csv",
-        "text/html": ".html",
-        "application/xhtml+xml": ".html",
-        "message/rfc822": ".eml",
-        # JavaScript mimetypes
-        "text/javascript": ".js",
-        "application/javascript": ".js",
-        "application/x-javascript": ".js",
-        "text/ecmascript": ".js",
-        "application/ecmascript": ".js",
-        # Common Python mimetypes observed in the wild
-        "text/x-python": ".py",
-        "application/x-python": ".py",
-        "application/x-python-code": ".py",
-        # Office
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-        # XML
-        "text/xml": ".xml",
-        "application/xml": ".xml",
-    }
+    Creates Document record with PENDING status and enqueues OCR job.
+    Returns immediately without waiting for processing.
 
-    # Optional caller hint via attributes: preferred_extension or force_extension
-    preferred_ext = None
-    try:
-        if attributes and isinstance(attributes, dict):
-            preferred_ext = attributes.get("preferred_extension") or attributes.get("force_extension")
-            if preferred_ext and not str(preferred_ext).startswith("."):
-                preferred_ext = f".{preferred_ext}"
-    except Exception:
-        preferred_ext = None
+    The pipeline stages are:
+    1. PENDING → EXTRACTING: OCR job extracts text
+    2. EXTRACTING → EMBEDDING: Embed job creates chunks and embeddings
+    3. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+    """
+    from ..core.cache_backend import get_cache_backend
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
+    from ..models.document import DocumentStatus
+    from ..schemas.document import DocumentCreate
+    from .file_staging_service import FileStagingService
 
-    # Choose suffix: caller hint > filename extension > MIME mapping > generic text/* -> .txt > .bin
-    suffix = preferred_ext or ext_from_name or ext_map.get(mt) or (".txt" if mt.startswith("text/") else ".bin")
-    file_path = f"/virtual/input{suffix}"
-    extractor = TextExtractor()
-    eff = (ocr_mode or "auto").strip().lower()
-    if eff not in {"auto", "always", "never", "fallback"}:
-        eff = "auto"
-    try:
-        if eff == "fallback":
-            res_no = await extractor.extract_text(
-                file_path,
-                file_content=file_bytes,
-                use_ocr=False,
-                kb_config=None,
-                progress_context=None,
-            )
-            text = ""
-            meta: dict[str, Any] = {}
-            if isinstance(res_no, dict):
-                text = str(res_no.get("text") or "")
-                meta = res_no.get("metadata") or {}
-                if text.strip():
-                    extraction = {
-                        "method": meta.get("method"),
-                        "engine": meta.get("engine"),
-                        "confidence": meta.get("confidence"),
-                        "duration": meta.get("duration"),
-                        "details": meta,
-                    }
-                else:
-                    res_ocr = await extractor.extract_text(
-                        file_path,
-                        file_content=file_bytes,
-                        use_ocr=True,
-                        kb_config=None,
-                        progress_context=None,
-                    )
-                    if isinstance(res_ocr, dict):
-                        text = str(res_ocr.get("text") or "")
-                        meta = res_ocr.get("metadata") or {}
-                    else:
-                        text = str(res_ocr or "")
-                        meta = {}
-                    extraction = {
-                        "method": meta.get("method"),
-                        "engine": meta.get("engine"),
-                        "confidence": meta.get("confidence"),
-                        "duration": meta.get("duration"),
-                        "details": meta,
-                    }
-            else:
-                text = str(res_no or "")
-                if not text.strip():
-                    res_ocr = await extractor.extract_text(
-                        file_path,
-                        file_content=file_bytes,
-                        use_ocr=True,
-                        kb_config=None,
-                        progress_context=None,
-                    )
-                    if isinstance(res_ocr, dict):
-                        text = str(res_ocr.get("text") or "")
-                        meta = res_ocr.get("metadata") or {}
-                    else:
-                        text = str(res_ocr or "")
-                        meta = {}
-                extraction = {
-                    "method": meta.get("method"),
-                    "engine": meta.get("engine"),
-                    "confidence": meta.get("confidence"),
-                    "duration": meta.get("duration"),
-                    "details": meta,
-                }
-        else:
-            use_ocr = True if eff == "always" else False if eff == "never" else (mt == "application/pdf")
-            res = await extractor.extract_text(
-                file_path,
-                file_content=file_bytes,
-                use_ocr=use_ocr,
-                kb_config=None,
-                progress_context=None,
-            )
-            if isinstance(res, dict):
-                text = str(res.get("text") or "")
-                meta = res.get("metadata") or {}
-            else:
-                text = str(res or "")
-                meta = {}
-            extraction = {
-                "method": meta.get("method"),
-                "engine": meta.get("engine"),
-                "confidence": meta.get("confidence"),
-                "duration": meta.get("duration"),
-                "details": meta,
-            }
-    except UnsupportedFileFormatError:
-        # Preserve a useful reason in extraction details for upstream callers
-        text = ""
-        extraction = {
-            "method": None,
-            "engine": None,
-            "confidence": None,
-            "duration": None,
-            "details": {"error": "unsupported_format", "file_extension": suffix},
-        }
-    except Exception:
-        text = ""
-        extraction = {
-            "method": None,
-            "engine": None,
-            "confidence": None,
-            "duration": None,
-            "details": {},
-        }
-
-    # Persist Document (create or update by kb_id/source_id)
+    # Check for existing document with same source_id (for hash-based skip)
     svc = DocumentService(db)
+    existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
+
+    attrs = attributes or {}
+    source_hash = attrs.get("source_hash")
+    force_reingest = bool(attrs.get("force_reingest"))
+
+    if existing is not None and not force_reingest:
+        # Check if content is unchanged using source_hash
+        if source_hash and existing.source_hash and source_hash == existing.source_hash:
+            logger.info(
+                "Skipping unchanged document",
+                extra={
+                    "kb_id": knowledge_base_id,
+                    "source_id": source_id,
+                    "hash": source_hash,
+                    "document_id": existing.id,
+                },
+            )
+            return {
+                "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
+                "document_id": existing.id,
+                "status": existing.status,
+                "word_count": existing.word_count or 0,
+                "character_count": existing.character_count or 0,
+                "chunk_count": existing.chunk_count or 0,
+                "skipped": True,
+                "skip_reason": "hash_match",
+            }
+
+    # Create document record with PENDING status and empty content
     source_type = f"plugin:{plugin_name}"
     file_type = _infer_file_type(filename, mime_type)
     title = filename or source_id
-    content = text or ""
+    source_modified_at = _safe_dt(attrs.get("modified_at"))
+    effective_source_url = source_url or attrs.get("source_url")
 
-    upsert_result = await _upsert_document_record(
-        svc,
-        knowledge_base_id,
-        source_id=source_id,
-        source_type=source_type,
-        title=title,
-        file_type=file_type,
-        content=content,
-        extraction={
-            "method": extraction.get("method") or ("ocr" if extraction.get("engine") else "text"),
-            "engine": extraction.get("engine") or plugin_name,
-            "confidence": extraction.get("confidence"),
-            "duration": extraction.get("duration"),
-            "details": extraction.get("details"),
-        },
-        source_url=source_url,
-        attributes=attributes,
-    )
-
-    document = upsert_result.document
-    extraction = upsert_result.extraction
-
-    # Skip chunk recomputation if document is unchanged
-    if upsert_result.skipped:
-        return _build_skipped_result(
-            document,
-            extraction,
-            deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
-            upsert_result.skip_reason,
+    if existing is None:
+        # New document - create it
+        doc_create = DocumentCreate(
+            knowledge_base_id=knowledge_base_id,
+            title=title,
+            file_type=file_type,
+            source_type=source_type,
+            source_id=source_id,
+            source_url=effective_source_url,
+            file_size=len(file_bytes) if file_bytes else None,
+            content="",  # Will be populated by OCR handler
+            content_hash=None,
+            source_hash=source_hash,
+            source_modified_at=source_modified_at,
         )
+        created = await svc.create_document(doc_create)
+        from sqlalchemy import select
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        title,
-        content,
+        res = await db.execute(select(Document).where(Document.id == created.id))
+        document = res.scalar_one()
+    else:
+        # Existing document - update for re-ingestion
+        document = existing
+        document.title = title
+        document.file_type = file_type
+        document.source_type = source_type
+        document.file_size = len(file_bytes) if file_bytes else None
+        document.content = ""  # Will be populated by OCR handler
+        document.content_hash = None
+        if effective_source_url:
+            document.source_url = effective_source_url
+        if source_hash:
+            document.source_hash = source_hash
+        if source_modified_at is not None:
+            document.source_modified_at = source_modified_at
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+
+    # Set status to PENDING
+    document.update_status(DocumentStatus.PENDING)
+    await db.commit()
+
+    # Stage file bytes using FileStagingService
+    cache = await get_cache_backend()
+    staging_service = FileStagingService()
+    staging_key = await staging_service.stage_file(document.id, file_bytes, cache)
+
+    # Enqueue OCR job
+    queue = await get_queue_backend()
+    job_payload = {
+        "document_id": document.id,
+        "knowledge_base_id": knowledge_base_id,
+        "filename": filename,
+        "mime_type": mime_type,
+        "source_id": source_id,
+        "staging_key": staging_key,
+        "ocr_mode": ocr_mode,
+        "action": "extract_text",
+    }
+
+    await enqueue_job(
+        queue,
+        WorkloadType.INGESTION_OCR,
+        payload=job_payload,
+        max_attempts=3,
+        visibility_timeout=600,  # 10 minutes for large PDFs
     )
 
-    # Trigger async profiling if enabled (SHU-344)
-    await _trigger_profiling_if_enabled(document.id)
+    logger.info(
+        "Document ingestion enqueued",
+        extra={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "source_id": source_id,
+            "staging_key": staging_key,
+        },
+    )
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
         "document_id": document.id,
-        "word_count": word_count,
-        "character_count": character_count,
-        "chunk_count": chunk_count,
-        "extraction": extraction,
+        "status": DocumentStatus.PENDING.value,
         "skipped": False,
     }
 
@@ -691,60 +612,136 @@ async def ingest_text(
     source_url: str | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Ingest text content directly via queue pipeline (no OCR needed).
+
+    Creates Document with content and enqueues EMBED job directly,
+    skipping the OCR stage. Returns immediately without waiting for processing.
+
+    The pipeline stages are:
+    1. EMBEDDING: Embed job creates chunks and embeddings
+    2. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+    """
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
+    from ..models.document import DocumentStatus
+    from ..schemas.document import DocumentCreate
+
     svc = DocumentService(db)
     source_type = f"plugin:{plugin_name}"
     file_type = "txt"
     effective_title = title or source_id
     effective_content = content or ""
 
-    upsert_result = await _upsert_document_record(
-        svc,
-        knowledge_base_id,
-        source_id=source_id,
-        source_type=source_type,
-        title=effective_title,
-        file_type=file_type,
-        content=effective_content,
-        extraction={
-            "method": "text",
-            "engine": "direct",
-            "confidence": None,
-            "duration": None,
-            "details": {},
-        },
-        source_url=source_url,
-        attributes=attributes,
-    )
+    attrs = attributes or {}
+    source_hash = attrs.get("source_hash")
+    force_reingest = bool(attrs.get("force_reingest"))
 
-    document = upsert_result.document
-    extraction = upsert_result.extraction
+    # Check for existing document with same source_id (for hash-based skip)
+    existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
 
-    # Skip chunk recomputation if document is unchanged
-    if upsert_result.skipped:
-        return _build_skipped_result(
-            document,
-            extraction,
-            deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
-            upsert_result.skip_reason,
+    if existing is not None and not force_reingest:
+        # Check if content is unchanged using content hash
+        content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
+        if existing.content_hash and content_hash == existing.content_hash:
+            logger.info(
+                "Skipping unchanged document",
+                extra={
+                    "kb_id": knowledge_base_id,
+                    "source_id": source_id,
+                    "hash": content_hash,
+                    "document_id": existing.id,
+                },
+            )
+            return {
+                "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
+                "document_id": existing.id,
+                "status": existing.status,
+                "word_count": existing.word_count or 0,
+                "character_count": existing.character_count or 0,
+                "chunk_count": existing.chunk_count or 0,
+                "skipped": True,
+                "skip_reason": "hash_match",
+            }
+
+    # Compute content hash for new/updated document
+    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
+    source_modified_at = _safe_dt(attrs.get("modified_at"))
+    effective_source_url = source_url or attrs.get("source_url")
+
+    if existing is None:
+        # New document - create it with content populated
+        doc_create = DocumentCreate(
+            knowledge_base_id=knowledge_base_id,
+            title=effective_title,
+            file_type=file_type,
+            source_type=source_type,
+            source_id=source_id,
+            source_url=effective_source_url,
+            file_size=len(effective_content) if effective_content else None,
+            content=effective_content,
+            content_hash=content_hash,
+            source_hash=source_hash,
+            source_modified_at=source_modified_at,
+            extraction_method="text",
+            extraction_engine="direct",
         )
+        created = await svc.create_document(doc_create)
+        from sqlalchemy import select
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        effective_title,
-        effective_content,
+        res = await db.execute(select(Document).where(Document.id == created.id))
+        document = res.scalar_one()
+    else:
+        # Existing document - update for re-ingestion
+        document = existing
+        document.title = effective_title
+        document.file_type = file_type
+        document.source_type = source_type
+        document.file_size = len(effective_content) if effective_content else None
+        document.content = effective_content
+        document.content_hash = content_hash
+        document.extraction_method = "text"
+        document.extraction_engine = "direct"
+        if effective_source_url:
+            document.source_url = effective_source_url
+        if source_hash:
+            document.source_hash = source_hash
+        if source_modified_at is not None:
+            document.source_modified_at = source_modified_at
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+
+    # Set status to EMBEDDING (skip OCR stage)
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
+
+    # Enqueue embedding job directly (no file staging needed)
+    queue = await get_queue_backend()
+    await enqueue_job(
+        queue,
+        WorkloadType.INGESTION_EMBED,
+        payload={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "action": "embed_document",
+        },
+        max_attempts=3,
+        visibility_timeout=300,
     )
 
-    # Trigger async profiling if enabled (SHU-344)
-    await _trigger_profiling_if_enabled(document.id)
+    logger.info(
+        "Text ingestion enqueued (skipping OCR)",
+        extra={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "source_id": source_id,
+        },
+    )
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
         "document_id": document.id,
-        "word_count": word_count,
-        "character_count": character_count,
-        "chunk_count": chunk_count,
-        "extraction": extraction,
+        "status": DocumentStatus.EMBEDDING.value,
         "skipped": False,
     }
 
@@ -761,60 +758,135 @@ async def ingest_thread(
     source_url: str | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # Treat as a text document with file_type 'thread'
+    """Ingest thread content directly via queue pipeline (no OCR needed).
+
+    Creates Document with content and enqueues EMBED job directly,
+    skipping the OCR stage. Returns immediately without waiting for processing.
+
+    The pipeline stages are:
+    1. EMBEDDING: Embed job creates chunks and embeddings
+    2. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+    """
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
+    from ..models.document import DocumentStatus
+    from ..schemas.document import DocumentCreate
+
     svc = DocumentService(db)
     source_type = f"plugin:{plugin_name}"
     file_type = "thread"
     effective_title = title or thread_id
     effective_content = content or ""
 
-    upsert_result = await _upsert_document_record(
-        svc,
-        knowledge_base_id,
-        source_id=thread_id,
-        source_type=source_type,
-        title=effective_title,
-        file_type=file_type,
-        content=effective_content,
-        extraction={
-            "method": "text",
-            "engine": "direct",
-            "confidence": None,
-            "duration": None,
-            "details": {},
-        },
-        source_url=source_url,
-        attributes=attributes,
-    )
+    attrs = attributes or {}
+    source_hash = attrs.get("source_hash")
+    force_reingest = bool(attrs.get("force_reingest"))
 
-    document = upsert_result.document
-    extraction = upsert_result.extraction
+    # Check for existing document with same source_id (for hash-based skip)
+    existing = await svc.get_document_by_source_id(knowledge_base_id, thread_id)
 
-    # Skip chunk recomputation if document is unchanged
-    if upsert_result.skipped:
-        return _build_skipped_result(
-            document,
-            extraction,
-            deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),
-            upsert_result.skip_reason,
+    if existing is not None and not force_reingest:
+        # Check if content is unchanged using content hash
+        content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
+        if existing.content_hash and content_hash == existing.content_hash:
+            logger.info(
+                "Skipping unchanged thread",
+                extra={
+                    "kb_id": knowledge_base_id,
+                    "thread_id": thread_id,
+                    "hash": content_hash,
+                    "document_id": existing.id,
+                },
+            )
+            return {
+                "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),
+                "document_id": existing.id,
+                "status": existing.status,
+                "word_count": existing.word_count or 0,
+                "character_count": existing.character_count or 0,
+                "chunk_count": existing.chunk_count or 0,
+                "skipped": True,
+                "skip_reason": "hash_match",
+            }
+
+    # Compute content hash for new/updated document
+    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
+    source_modified_at = _safe_dt(attrs.get("modified_at"))
+    effective_source_url = source_url or attrs.get("source_url")
+
+    if existing is None:
+        # New document - create it with content populated
+        doc_create = DocumentCreate(
+            knowledge_base_id=knowledge_base_id,
+            title=effective_title,
+            file_type=file_type,
+            source_type=source_type,
+            source_id=thread_id,
+            source_url=effective_source_url,
+            file_size=len(effective_content) if effective_content else None,
+            content=effective_content,
+            content_hash=content_hash,
+            source_hash=source_hash,
+            source_modified_at=source_modified_at,
+            extraction_method="text",
+            extraction_engine="direct",
         )
+        created = await svc.create_document(doc_create)
+        from sqlalchemy import select
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        effective_title,
-        effective_content,
+        res = await db.execute(select(Document).where(Document.id == created.id))
+        document = res.scalar_one()
+    else:
+        # Existing document - update for re-ingestion
+        document = existing
+        document.title = effective_title
+        document.file_type = file_type
+        document.source_type = source_type
+        document.file_size = len(effective_content) if effective_content else None
+        document.content = effective_content
+        document.content_hash = content_hash
+        document.extraction_method = "text"
+        document.extraction_engine = "direct"
+        if effective_source_url:
+            document.source_url = effective_source_url
+        if source_hash:
+            document.source_hash = source_hash
+        if source_modified_at is not None:
+            document.source_modified_at = source_modified_at
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+
+    # Set status to EMBEDDING (skip OCR stage)
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
+
+    # Enqueue embedding job directly (no file staging needed)
+    queue = await get_queue_backend()
+    await enqueue_job(
+        queue,
+        WorkloadType.INGESTION_EMBED,
+        payload={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "action": "embed_document",
+        },
+        max_attempts=3,
+        visibility_timeout=300,
     )
 
-    # Trigger async profiling if enabled (SHU-344)
-    await _trigger_profiling_if_enabled(document.id)
+    logger.info(
+        "Thread ingestion enqueued (skipping OCR)",
+        extra={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "thread_id": thread_id,
+        },
+    )
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),
         "document_id": document.id,
-        "word_count": word_count,
-        "character_count": character_count,
-        "chunk_count": chunk_count,
-        "extraction": extraction,
+        "status": DocumentStatus.EMBEDDING.value,
         "skipped": False,
     }
