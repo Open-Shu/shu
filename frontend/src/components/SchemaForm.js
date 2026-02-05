@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   Grid,
   TextField,
@@ -10,8 +10,8 @@ import {
   MenuItem,
   InputAdornment,
   FormHelperText,
-} from "@mui/material";
-import HelpTooltip from "./HelpTooltip.jsx";
+} from '@mui/material';
+import HelpTooltip from './HelpTooltip.jsx';
 
 // Utility to build defaults for a given schema definition
 export function buildDefaultForDef(def) {
@@ -23,19 +23,19 @@ export function buildDefaultForDef(def) {
   if (def.default !== undefined) {
     return def.default;
   }
-  if (t === "string") {
-    return "";
+  if (t === 'string') {
+    return '';
   }
-  if (t === "number" || t === "integer") {
+  if (t === 'number' || t === 'integer') {
     return 0;
   }
-  if (t === "boolean") {
+  if (t === 'boolean') {
     return false;
   }
-  if (t === "array") {
+  if (t === 'array') {
     return [];
   }
-  if (t === "object") {
+  if (t === 'object') {
     const props = def.properties || {};
     const obj = {};
     for (const [k, sub] of Object.entries(props)) {
@@ -48,17 +48,17 @@ export function buildDefaultForDef(def) {
 
 function humanizeEnum(val) {
   if (val === null || val === undefined) {
-    return "";
+    return '';
   }
   const s = String(val);
   if (!s) {
-    return "";
+    return '';
   }
-  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function buildDefaultValues(schema) {
-  if (!schema || typeof schema !== "object") {
+  if (!schema || typeof schema !== 'object') {
     return {};
   }
   const props = schema.properties || {};
@@ -75,12 +75,7 @@ export function buildDefaultValues(schema) {
  * - Hides any field with x-binding present (host-bound)
  * - Allows caller to hide specific keys
  */
-export default function SchemaForm({
-  schema,
-  values,
-  onChangeField,
-  hideKeys = new Set(),
-}) {
+export default function SchemaForm({ schema, values, onChangeField, hideKeys = new Set() }) {
   if (!schema || !schema.properties) {
     return null;
   }
@@ -98,7 +93,7 @@ export default function SchemaForm({
       // 1) { field: 'auth_mode', equals: 'domain_delegate' }
       // 2) { field: 'auth_mode', in: ['domain_delegate','x'] }
       // 3) { auth_mode: 'domain_delegate' } or { auth_mode: ['domain_delegate','x'] }
-      if (typeof sw === "object" && "field" in sw) {
+      if (typeof sw === 'object' && 'field' in sw) {
         const val = values?.[sw.field];
         if (Array.isArray(sw.in)) {
           return sw.in.includes(val);
@@ -111,7 +106,7 @@ export default function SchemaForm({
         }
         return true;
       }
-      if (typeof sw === "object") {
+      if (typeof sw === 'object') {
         return Object.entries(sw).every(([k, v]) => {
           const val = values?.[k];
           if (Array.isArray(v)) {
@@ -131,31 +126,23 @@ export default function SchemaForm({
       {entries.map(([key, def]) => {
         const type = Array.isArray(def?.type) ? def.type[0] : def?.type;
         const hasEnum = Array.isArray(def?.enum) && def.enum.length > 0;
-        const xui = (def && (def["x-ui"] || def["x_ui"])) || {};
-        const hidden =
-          (xui && xui.hidden === true) || Boolean(def && def["x-binding"]);
+        const xui = (def && (def['x-ui'] || def['x_ui'])) || {};
+        const hidden = (xui && xui.hidden === true) || Boolean(def && def['x-binding']);
         if (!isVisible(xui) || hidden || hideKeys.has(key)) {
           return null;
         }
 
-        if (type === "boolean") {
+        if (type === 'boolean') {
           return (
             <Grid item xs={12} key={key}>
               <FormControlLabel
                 control={
-                  <Switch
-                    checked={!!values[key]}
-                    onChange={(e) =>
-                      onChangeField(key, "boolean", e.target.checked)
-                    }
-                  />
+                  <Switch checked={!!values[key]} onChange={(e) => onChangeField(key, 'boolean', e.target.checked)} />
                 }
                 label={
                   <>
                     {key}
-                    {xui?.help && (
-                      <HelpTooltip title={xui.help} placement="top" />
-                    )}
+                    {xui?.help && <HelpTooltip title={xui.help} placement="top" />}
                   </>
                 }
               />
@@ -163,7 +150,7 @@ export default function SchemaForm({
           );
         }
 
-        if (type === "number" || type === "integer") {
+        if (type === 'number' || type === 'integer') {
           return (
             <Grid item xs={12} key={key}>
               <TextField
@@ -188,20 +175,13 @@ export default function SchemaForm({
           );
         }
 
-        if (type === "string" && hasEnum) {
-          const nullable =
-            Array.isArray(def?.type) && def.type.includes("null");
+        if (type === 'string' && hasEnum) {
+          const nullable = Array.isArray(def?.type) && def.type.includes('null');
           const enumLabels = (xui && xui.enum_labels) || {};
           const enumHelp = (xui && xui.enum_help) || {};
-          const placeholder =
-            (xui && xui.placeholder) || (nullable ? "Auto" : undefined);
-          const current =
-            values[key] === null || values[key] === undefined
-              ? ""
-              : values[key];
-          const options = (def.enum || []).filter(
-            (opt) => opt !== null && String(opt).toLowerCase() !== "null",
-          );
+          const placeholder = (xui && xui.placeholder) || (nullable ? 'Auto' : undefined);
+          const current = values[key] === null || values[key] === undefined ? '' : values[key];
+          const options = (def.enum || []).filter((opt) => opt !== null && String(opt).toLowerCase() !== 'null');
           return (
             <Grid item xs={12} key={key}>
               <FormControl fullWidth>
@@ -212,41 +192,33 @@ export default function SchemaForm({
                   value={current}
                   onChange={(e) => {
                     const v = e.target.value;
-                    onChangeField(key, "string", v === "" ? null : v);
+                    onChangeField(key, 'string', v === '' ? null : v);
                   }}
                 >
-                  {placeholder !== undefined && (
-                    <MenuItem value="">{placeholder}</MenuItem>
-                  )}
+                  {placeholder !== undefined && <MenuItem value="">{placeholder}</MenuItem>}
                   {options.map((opt) => (
-                    <MenuItem
-                      key={String(opt)}
-                      value={opt}
-                      title={enumHelp[String(opt)] || ""}
-                    >
+                    <MenuItem key={String(opt)} value={opt} title={enumHelp[String(opt)] || ''}>
                       {enumLabels[String(opt)] || humanizeEnum(opt)}
                     </MenuItem>
                   ))}
                 </Select>
                 {(() => {
                   const helper = enumHelp[String(current)] || xui?.help;
-                  return helper ? (
-                    <FormHelperText>{helper}</FormHelperText>
-                  ) : null;
+                  return helper ? <FormHelperText>{helper}</FormHelperText> : null;
                 })()}
               </FormControl>
             </Grid>
           );
         }
 
-        if (type === "string") {
+        if (type === 'string') {
           return (
             <Grid item xs={12} key={key}>
               <TextField
                 fullWidth
                 label={key}
-                value={values[key] ?? ""}
-                onChange={(e) => onChangeField(key, "string", e.target.value)}
+                value={values[key] ?? ''}
+                onChange={(e) => onChangeField(key, 'string', e.target.value)}
                 InputProps={
                   xui?.help
                     ? {
@@ -266,19 +238,19 @@ export default function SchemaForm({
         // Object/Array or unknown: JSON field per key (prefill with defaults)
         const defaultVal = buildDefaultForDef(def);
         const displayVal = values[key] !== undefined ? values[key] : defaultVal;
-        const isArray = type === "array";
+        const isArray = type === 'array';
         return (
           <Grid item xs={12} key={key}>
             <TextField
               fullWidth
               multiline
               minRows={3}
-              label={`${key} (${isArray ? "JSON array" : "JSON object"})`}
+              label={`${key} (${isArray ? 'JSON array' : 'JSON object'})`}
               value={JSON.stringify(displayVal, null, 2)}
               onChange={(e) => {
                 try {
                   const parsed = JSON.parse(e.target.value);
-                  onChangeField(key, isArray ? "array" : "object", parsed);
+                  onChangeField(key, isArray ? 'array' : 'object', parsed);
                 } catch (_err) {
                   // Ignore until valid JSON
                 }

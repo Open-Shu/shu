@@ -1,22 +1,12 @@
-import React from "react";
-import {
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Menu,
-  MenuItem,
-  TextField,
-  Tooltip,
-  ListItemIcon,
-} from "@mui/material";
+import React from 'react';
+import { Box, Button, Chip, IconButton, Menu, MenuItem, TextField, Tooltip, ListItemIcon } from '@mui/material';
 import {
   Add as AddIcon,
   AttachFile as AttachmentIcon,
   SmartToy as BotIcon,
   Send as SendIcon,
   Hub as EnsembleIcon,
-} from "@mui/icons-material";
+} from '@mui/icons-material';
 
 const InputBar = React.memo(function InputBar({
   pendingAttachments,
@@ -47,7 +37,7 @@ const InputBar = React.memo(function InputBar({
   return (
     <>
       {pendingAttachments.length > 0 && (
-        <Box sx={{ mb: 1, display: "flex", flexWrap: "wrap", gap: 1 }}>
+        <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
           {pendingAttachments.map((attachment) => (
             <Chip
               key={attachment.id}
@@ -60,9 +50,9 @@ const InputBar = React.memo(function InputBar({
       )}
 
       {isEnsembleModeActive && onClearEnsembleMode && (
-        <Box sx={{ mb: 1, display: "flex", flexWrap: "wrap", gap: 1 }}>
+        <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
           <Chip
-            label={ensembleModeLabel || "Ensemble mode active"}
+            label={ensembleModeLabel || 'Ensemble mode active'}
             color="primary"
             onDelete={onClearEnsembleMode}
             variant="outlined"
@@ -70,26 +60,19 @@ const InputBar = React.memo(function InputBar({
         </Box>
       )}
 
-      <Box
-        sx={{ display: "flex", gap: { xs: 0.5, sm: 1 }, alignItems: "center" }}
-      >
-        <input
-          type="file"
-          ref={fileInputRef}
-          style={{ display: "none" }}
-          onChange={onFileSelected}
-        />
+      <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 }, alignItems: 'center' }}>
+        <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFileSelected} />
         <Tooltip title="Add attachments or run plugins">
           <IconButton
             onClick={(e) => onPlusOpen(e.currentTarget)}
             size="medium"
             sx={{
               border: 1,
-              borderColor: "divider",
-              bgcolor: "background.paper",
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
               width: { xs: 40, sm: 36 },
               height: { xs: 40, sm: 36 },
-              borderRadius: "50%",
+              borderRadius: '50%',
               flexShrink: 0,
             }}
             aria-label="Open actions menu"
@@ -101,8 +84,8 @@ const InputBar = React.memo(function InputBar({
           anchorEl={plusAnchorEl}
           open={Boolean(plusAnchorEl)}
           onClose={onPlusClose}
-          anchorOrigin={{ vertical: "top", horizontal: "left" }}
-          transformOrigin={{ vertical: "bottom", horizontal: "left" }}
+          anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+          transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         >
           <MenuItem
             onClick={() => {
@@ -127,9 +110,7 @@ const InputBar = React.memo(function InputBar({
               <ListItemIcon>
                 <EnsembleIcon fontSize="small" />
               </ListItemIcon>
-              {isEnsembleModeActive
-                ? "Edit ensemble mode"
-                : "Configure ensemble mode"}
+              {isEnsembleModeActive ? 'Edit ensemble mode' : 'Configure ensemble mode'}
             </MenuItem>
           )}
           {pluginsEnabled && (
@@ -155,10 +136,10 @@ const InputBar = React.memo(function InputBar({
           onChange={onInputChange}
           onKeyDown={onKeyDown}
           inputRef={inputRef}
-          size={isMobile ? "small" : "medium"}
+          size={isMobile ? 'small' : 'medium'}
           sx={{
-            "& .MuiInputBase-root": {
-              minHeight: { xs: 40, sm: "auto" },
+            '& .MuiInputBase-root': {
+              minHeight: { xs: 40, sm: 'auto' },
             },
           }}
         />
@@ -171,17 +152,17 @@ const InputBar = React.memo(function InputBar({
                 onClick={onSend}
                 disabled={sendDisabled || !inputMessage.trim()}
                 sx={{
-                  bgcolor: "primary.main",
-                  color: "primary.contrastText",
+                  bgcolor: 'primary.main',
+                  color: 'primary.contrastText',
                   width: 44,
                   height: 44,
                   flexShrink: 0,
-                  "&:hover": {
-                    bgcolor: "primary.dark",
+                  '&:hover': {
+                    bgcolor: 'primary.dark',
                   },
-                  "&.Mui-disabled": {
-                    bgcolor: "action.disabledBackground",
-                    color: "action.disabled",
+                  '&.Mui-disabled': {
+                    bgcolor: 'action.disabledBackground',
+                    color: 'action.disabled',
                   },
                 }}
                 aria-label="Send message"

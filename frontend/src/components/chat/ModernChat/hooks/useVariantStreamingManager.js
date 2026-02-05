@@ -1,15 +1,10 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 
-import {
-  buildMessageVariants,
-  buildStreamingParentIds,
-} from "../utils/messageVariants";
+import { buildMessageVariants, buildStreamingParentIds } from '../utils/messageVariants';
 
 const useVariantStreamingManager = ({ messages, selectedConversationId }) => {
   const [variantSelection, setVariantSelection] = useState({});
-  const [regenerationRequests, setRegenerationRequests] = useState(
-    () => new Map(),
-  );
+  const [regenerationRequests, setRegenerationRequests] = useState(() => new Map());
   const previousConversationIdRef = useRef(selectedConversationId);
 
   useEffect(() => {
@@ -26,7 +21,7 @@ const useVariantStreamingManager = ({ messages, selectedConversationId }) => {
       next.set(messageId, {
         parentId,
         tempId,
-        status: "pending",
+        status: 'pending',
       });
       return next;
     });
@@ -45,17 +40,14 @@ const useVariantStreamingManager = ({ messages, selectedConversationId }) => {
 
   const { visibleMessages: flattenedMessages, variantGroups } = useMemo(
     () => buildMessageVariants(messages, variantSelection),
-    [messages, variantSelection],
+    [messages, variantSelection]
   );
 
-  const streamingVariantParentIds = useMemo(
-    () => buildStreamingParentIds(messages),
-    [messages],
-  );
+  const streamingVariantParentIds = useMemo(() => buildStreamingParentIds(messages), [messages]);
 
   const isVariantGroupStreaming = useCallback(
     (parentId) => streamingVariantParentIds.has(parentId),
-    [streamingVariantParentIds],
+    [streamingVariantParentIds]
   );
 
   const handleVariantChange = useCallback((parentId, index) => {

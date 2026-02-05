@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -19,29 +19,25 @@ import {
   Divider,
   Slider,
   Grid,
-} from "@mui/material";
-import HelpTooltip from "./HelpTooltip.jsx";
-import { Save as SaveIcon, Refresh as RefreshIcon } from "@mui/icons-material";
-import { useMutation, useQuery } from "react-query";
-import {
-  knowledgeBaseAPI,
-  formatError,
-  extractDataFromResponse,
-} from "../services/api";
-import { log } from "../utils/log";
+} from '@mui/material';
+import HelpTooltip from './HelpTooltip.jsx';
+import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { useMutation, useQuery } from 'react-query';
+import { knowledgeBaseAPI, formatError, extractDataFromResponse } from '../services/api';
+import { log } from '../utils/log';
 
 const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
   // Initial state - will be populated from backend ConfigurationManager
   // Backend provides proper defaults via configuration cascade
   const [config, setConfig] = useState({
     include_references: true,
-    reference_format: "markdown",
-    context_format: "detailed",
-    prompt_template: "custom",
+    reference_format: 'markdown',
+    context_format: 'detailed',
+    prompt_template: 'custom',
     search_threshold: 0.7, // Default value to prevent uncontrolled component issues
     max_results: 10, // Default value to prevent uncontrolled component issues
     chunk_overlap_ratio: 0.2, // Default value to prevent uncontrolled component issues
-    search_type: "hybrid",
+    search_type: 'hybrid',
     // Title Search Configuration
     title_weighting_enabled: true,
     title_weight_multiplier: 3.0,
@@ -56,29 +52,28 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
 
   // Fetch current RAG configuration
   const { isLoading, error, refetch } = useQuery(
-    ["ragConfig", knowledgeBase?.id],
-    () =>
-      knowledgeBase ? knowledgeBaseAPI.getRAGConfig(knowledgeBase.id) : null,
+    ['ragConfig', knowledgeBase?.id],
+    () => (knowledgeBase ? knowledgeBaseAPI.getRAGConfig(knowledgeBase.id) : null),
     {
       enabled: !!knowledgeBase?.id && open,
       staleTime: 0, // Always consider data stale
       cacheTime: 0, // Don't cache the data
       refetchOnWindowFocus: true,
       onSuccess: (response) => {
-        log.debug("RAG Config fetched:", response);
+        log.debug('RAG Config fetched:', response);
         const data = extractDataFromResponse(response);
         if (data) {
           // Backend now provides proper defaults via ConfigurationManager
           // No need for hardcoded fallbacks in frontend
           setConfig({
             include_references: data.include_references ?? true,
-            reference_format: data.reference_format || "markdown",
-            context_format: data.context_format || "detailed",
-            prompt_template: data.prompt_template || "custom",
+            reference_format: data.reference_format || 'markdown',
+            context_format: data.context_format || 'detailed',
+            prompt_template: data.prompt_template || 'custom',
             search_threshold: data.search_threshold ?? 0.7,
             max_results: data.max_results ?? 10,
             chunk_overlap_ratio: data.chunk_overlap_ratio ?? 0.2,
-            search_type: data.search_type || "hybrid",
+            search_type: data.search_type || 'hybrid',
             // Title Search Configuration
             title_weighting_enabled: data.title_weighting_enabled ?? true,
             title_weight_multiplier: data.title_weight_multiplier ?? 3.0,
@@ -92,16 +87,15 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
           setHasChanges(false);
         }
       },
-    },
+    }
   );
 
   // Update RAG configuration mutation
   const updateConfigMutation = useMutation(
-    (configData) =>
-      knowledgeBaseAPI.updateRAGConfig(knowledgeBase.id, configData),
+    (configData) => knowledgeBaseAPI.updateRAGConfig(knowledgeBase.id, configData),
     {
       onSuccess: async (response) => {
-        log.info("RAG Config saved:", response);
+        log.info('RAG Config saved:', response);
         // Update the local state with the response data
         const data = extractDataFromResponse(response);
         if (data) {
@@ -109,13 +103,13 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
           // No need for hardcoded fallbacks in frontend
           setConfig({
             include_references: data.include_references ?? true,
-            reference_format: data.reference_format || "markdown",
-            context_format: data.context_format || "detailed",
-            prompt_template: data.prompt_template || "custom",
+            reference_format: data.reference_format || 'markdown',
+            context_format: data.context_format || 'detailed',
+            prompt_template: data.prompt_template || 'custom',
             search_threshold: data.search_threshold ?? 0.7,
             max_results: data.max_results ?? 10,
             chunk_overlap_ratio: data.chunk_overlap_ratio ?? 0.2,
-            search_type: data.search_type || "hybrid",
+            search_type: data.search_type || 'hybrid',
             // Title Search Configuration
             title_weighting_enabled: data.title_weighting_enabled ?? true,
             title_weight_multiplier: data.title_weight_multiplier ?? 3.0,
@@ -135,7 +129,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
         // Don't close immediately - let user see the updated values
         // onClose();
       },
-    },
+    }
   );
 
   const handleConfigChange = (field, value) => {
@@ -144,7 +138,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
   };
 
   const handleSave = () => {
-    log.info("Saving config:", config);
+    log.info('Saving config:', config);
     updateConfigMutation.mutate(config);
   };
 
@@ -160,9 +154,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Box display="flex" alignItems="center" justifyContent="space-between">
-          <Typography variant="h6">
-            Configure RAG Settings - {knowledgeBase.name}
-          </Typography>
+          <Typography variant="h6">Configure RAG Settings - {knowledgeBase.name}</Typography>
           <IconButton onClick={handleReset} disabled={isLoading}>
             <RefreshIcon />
           </IconButton>
@@ -184,8 +176,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
 
         {updateConfigMutation.error && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            Error saving configuration:{" "}
-            {formatError(updateConfigMutation.error)}
+            Error saving configuration: {formatError(updateConfigMutation.error)}
           </Alert>
         )}
 
@@ -206,16 +197,14 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 <Box sx={{ px: 2, mt: 1 }}>
                   <Slider
                     value={config.search_threshold}
-                    onChange={(_, value) =>
-                      handleConfigChange("search_threshold", value)
-                    }
+                    onChange={(_, value) => handleConfigChange('search_threshold', value)}
                     min={0.1}
                     max={1.0}
                     step={0.05}
                     marks={[
-                      { value: 0.1, label: "0.1 (Broad)" },
-                      { value: 0.5, label: "0.5" },
-                      { value: 0.9, label: "0.9 (Precise)" },
+                      { value: 0.1, label: '0.1 (Broad)' },
+                      { value: 0.5, label: '0.5' },
+                      { value: 0.9, label: '0.9 (Precise)' },
                     ]}
                     valueLabelDisplay="on"
                   />
@@ -229,12 +218,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 label="Maximum Results"
                 type="number"
                 value={config.max_results}
-                onChange={(e) =>
-                  handleConfigChange(
-                    "max_results",
-                    parseInt(e.target.value) || 10,
-                  )
-                }
+                onChange={(e) => handleConfigChange('max_results', parseInt(e.target.value) || 10)}
                 inputProps={{ min: 1, max: 50 }}
                 helperText="Maximum number of relevant chunks to retrieve (1-50)"
               />
@@ -246,12 +230,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 label="Max Chunks Per Document"
                 type="number"
                 value={config.max_chunks_per_document}
-                onChange={(e) =>
-                  handleConfigChange(
-                    "max_chunks_per_document",
-                    parseInt(e.target.value) || 4,
-                  )
-                }
+                onChange={(e) => handleConfigChange('max_chunks_per_document', parseInt(e.target.value) || 4)}
                 inputProps={{ min: 1, max: 10 }}
                 helperText="Maximum chunks to return from each document (1-10)"
               />
@@ -267,25 +246,11 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 </FormLabel>
                 <RadioGroup
                   value={config.search_type}
-                  onChange={(e) =>
-                    handleConfigChange("search_type", e.target.value)
-                  }
+                  onChange={(e) => handleConfigChange('search_type', e.target.value)}
                 >
-                  <FormControlLabel
-                    value="similarity"
-                    control={<Radio />}
-                    label="Similarity (semantic)"
-                  />
-                  <FormControlLabel
-                    value="keyword"
-                    control={<Radio />}
-                    label="Keyword (text matching)"
-                  />
-                  <FormControlLabel
-                    value="hybrid"
-                    control={<Radio />}
-                    label="Hybrid (combined)"
-                  />
+                  <FormControlLabel value="similarity" control={<Radio />} label="Similarity (semantic)" />
+                  <FormControlLabel value="keyword" control={<Radio />} label="Keyword (text matching)" />
+                  <FormControlLabel value="hybrid" control={<Radio />} label="Hybrid (combined)" />
                 </RadioGroup>
               </FormControl>
             </Grid>
@@ -305,22 +270,14 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 control={
                   <Switch
                     checked={config.title_weighting_enabled}
-                    onChange={(e) =>
-                      handleConfigChange(
-                        "title_weighting_enabled",
-                        e.target.checked,
-                      )
-                    }
+                    onChange={(e) => handleConfigChange('title_weighting_enabled', e.target.checked)}
                   />
                 }
                 label={
                   <Box>
-                    <Typography variant="body1">
-                      Enable Title Weighting
-                    </Typography>
+                    <Typography variant="body1">Enable Title Weighting</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Boost search scores for documents with titles matching the
-                      query
+                      Boost search scores for documents with titles matching the query
                     </Typography>
                   </Box>
                 }
@@ -332,12 +289,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 control={
                   <Switch
                     checked={config.title_chunk_enabled}
-                    onChange={(e) =>
-                      handleConfigChange(
-                        "title_chunk_enabled",
-                        e.target.checked,
-                      )
-                    }
+                    onChange={(e) => handleConfigChange('title_chunk_enabled', e.target.checked)}
                   />
                 }
                 label={
@@ -358,17 +310,15 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
               </Typography>
               <Slider
                 value={config.title_weight_multiplier}
-                onChange={(_, value) =>
-                  handleConfigChange("title_weight_multiplier", value)
-                }
+                onChange={(_, value) => handleConfigChange('title_weight_multiplier', value)}
                 min={1.0}
                 max={10.0}
                 step={0.5}
                 marks={[
-                  { value: 1.0, label: "1.0x" },
-                  { value: 3.0, label: "3.0x" },
-                  { value: 5.0, label: "5.0x" },
-                  { value: 10.0, label: "10.0x" },
+                  { value: 1.0, label: '1.0x' },
+                  { value: 3.0, label: '3.0x' },
+                  { value: 5.0, label: '5.0x' },
+                  { value: 10.0, label: '10.0x' },
                 ]}
                 disabled={!config.title_weighting_enabled}
                 sx={{ mt: 1 }}
@@ -390,19 +340,12 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 control={
                   <Switch
                     checked={config.fetch_full_documents}
-                    onChange={(e) =>
-                      handleConfigChange(
-                        "fetch_full_documents",
-                        e.target.checked,
-                      )
-                    }
+                    onChange={(e) => handleConfigChange('fetch_full_documents', e.target.checked)}
                   />
                 }
                 label={
                   <Box>
-                    <Typography variant="body1">
-                      Enable Full Document Fetch
-                    </Typography>
+                    <Typography variant="body1">Enable Full Document Fetch</Typography>
                     <Typography variant="body2" color="text.secondary">
                       Allow including full documents when needed
                     </Typography>
@@ -417,12 +360,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 label="Max Docs"
                 type="number"
                 value={config.full_doc_max_docs}
-                onChange={(e) =>
-                  handleConfigChange(
-                    "full_doc_max_docs",
-                    parseInt(e.target.value) || 1,
-                  )
-                }
+                onChange={(e) => handleConfigChange('full_doc_max_docs', parseInt(e.target.value) || 1)}
                 inputProps={{ min: 1, max: 10 }}
                 helperText="Maximum full documents to include"
                 disabled={!config.fetch_full_documents}
@@ -435,12 +373,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 label="Token Cap"
                 type="number"
                 value={config.full_doc_token_cap}
-                onChange={(e) =>
-                  handleConfigChange(
-                    "full_doc_token_cap",
-                    parseInt(e.target.value) || 8000,
-                  )
-                }
+                onChange={(e) => handleConfigChange('full_doc_token_cap', parseInt(e.target.value) || 8000)}
                 inputProps={{ min: 1000, max: 200000, step: 1000 }}
                 helperText="Max tokens across full-doc content"
                 disabled={!config.fetch_full_documents}
@@ -465,20 +398,10 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 </FormLabel>
                 <RadioGroup
                   value={config.context_format}
-                  onChange={(e) =>
-                    handleConfigChange("context_format", e.target.value)
-                  }
+                  onChange={(e) => handleConfigChange('context_format', e.target.value)}
                 >
-                  <FormControlLabel
-                    value="detailed"
-                    control={<Radio />}
-                    label="Detailed (with metadata)"
-                  />
-                  <FormControlLabel
-                    value="simple"
-                    control={<Radio />}
-                    label="Simple (content only)"
-                  />
+                  <FormControlLabel value="detailed" control={<Radio />} label="Detailed (with metadata)" />
+                  <FormControlLabel value="simple" control={<Radio />} label="Simple (content only)" />
                 </RadioGroup>
               </FormControl>
             </Grid>
@@ -491,20 +414,10 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                 </FormLabel>
                 <RadioGroup
                   value={config.reference_format}
-                  onChange={(e) =>
-                    handleConfigChange("reference_format", e.target.value)
-                  }
+                  onChange={(e) => handleConfigChange('reference_format', e.target.value)}
                 >
-                  <FormControlLabel
-                    value="markdown"
-                    control={<Radio />}
-                    label="Markdown links"
-                  />
-                  <FormControlLabel
-                    value="text"
-                    control={<Radio />}
-                    label="Plain text"
-                  />
+                  <FormControlLabel value="markdown" control={<Radio />} label="Markdown links" />
+                  <FormControlLabel value="text" control={<Radio />} label="Plain text" />
                 </RadioGroup>
               </FormControl>
             </Grid>
@@ -515,9 +428,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
               control={
                 <Switch
                   checked={config.include_references}
-                  onChange={(e) =>
-                    handleConfigChange("include_references", e.target.checked)
-                  }
+                  onChange={(e) => handleConfigChange('include_references', e.target.checked)}
                 />
               }
               label={
@@ -539,7 +450,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
           startIcon={<SaveIcon />}
           disabled={!hasChanges || updateConfigMutation.isLoading}
         >
-          {updateConfigMutation.isLoading ? "Saving..." : "Save Configuration"}
+          {updateConfigMutation.isLoading ? 'Saving...' : 'Save Configuration'}
         </Button>
       </DialogActions>
     </Dialog>

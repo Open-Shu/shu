@@ -9,7 +9,7 @@
  */
 export const formatFileSize = (bytes) => {
   if (bytes == null || isNaN(bytes)) {
-    return "0 B";
+    return '0 B';
   }
   if (bytes < 1024) {
     return `${bytes} B`;

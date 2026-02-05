@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -11,16 +11,12 @@ import {
   MenuItem,
   Tooltip,
   CircularProgress,
-} from "@mui/material";
-import IdentityGate from "./IdentityGate";
-import {
-  hostAuthAPI,
-  extractDataFromResponse,
-  formatError,
-} from "../services/api";
-import { useAuth } from "../hooks/useAuth";
-import { useQuery, useMutation, useQueryClient } from "react-query";
-import useOAuthAuthorize from "../hooks/useOAuthAuthorize";
+} from '@mui/material';
+import IdentityGate from './IdentityGate';
+import { hostAuthAPI, extractDataFromResponse, formatError } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
+import useOAuthAuthorize from '../hooks/useOAuthAuthorize';
 
 /*
   ProviderAuthPanel — DRY, provider-agnostic OAuth config/readiness UI
@@ -36,14 +32,14 @@ import useOAuthAuthorize from "../hooks/useOAuthAuthorize";
 */
 export default function ProviderAuthPanel({
   plugin,
-  op = "",
+  op = '',
   onGateChange = null,
   onAuthOverlayChange = null,
   initialOverlay = null,
   pluginName = null,
 }) {
   const { user } = useAuth();
-  const opKey = String(op || "").toLowerCase();
+  const opKey = String(op || '').toLowerCase();
   const pluginDef = plugin;
   const opAuthSpec = useMemo(() => {
     try {
@@ -54,26 +50,23 @@ export default function ProviderAuthPanel({
   }, [pluginDef, opKey]);
   const provider =
     opAuthSpec?.provider ||
-    (Array.isArray(pluginDef?.required_identities) &&
-      pluginDef.required_identities[0]?.provider) ||
+    (Array.isArray(pluginDef?.required_identities) && pluginDef.required_identities[0]?.provider) ||
     null;
   const mode =
     opAuthSpec?.mode ||
-    (Array.isArray(pluginDef?.required_identities) &&
-      pluginDef.required_identities[0]?.mode) ||
+    (Array.isArray(pluginDef?.required_identities) && pluginDef.required_identities[0]?.mode) ||
     null;
   const scopes =
     opAuthSpec?.scopes ||
-    (Array.isArray(pluginDef?.required_identities) &&
-      pluginDef.required_identities[0]?.scopes) ||
+    (Array.isArray(pluginDef?.required_identities) && pluginDef.required_identities[0]?.scopes) ||
     [];
 
   const [googleStatus, setGoogleStatus] = useState(null);
   useEffect(() => {
     let mounted = true;
-    if (provider === "google") {
+    if (provider === 'google') {
       hostAuthAPI
-        .status("google")
+        .status('google')
         .then(extractDataFromResponse)
         .then((data) => {
           if (mounted) {
@@ -104,8 +97,7 @@ export default function ProviderAuthPanel({
   // Hydrate selection/subject from persisted overlay when editing
   useEffect(() => {
     try {
-      const a =
-        initialOverlay && initialOverlay.auth ? initialOverlay.auth : null;
+      const a = initialOverlay && initialOverlay.auth ? initialOverlay.auth : null;
       if (!a || !provider) {
         return;
       }
@@ -113,16 +105,13 @@ export default function ProviderAuthPanel({
       if (!prov) {
         return;
       }
-      if (typeof prov.mode === "string" && prov.mode) {
+      if (typeof prov.mode === 'string' && prov.mode) {
         setSelectedMode(prov.mode);
       }
-      if (typeof prov.subject === "string" && prov.subject) {
+      if (typeof prov.subject === 'string' && prov.subject) {
         setProbeSubject(prov.subject);
       }
-      if (
-        typeof prov.impersonate_email === "string" &&
-        prov.impersonate_email
-      ) {
+      if (typeof prov.impersonate_email === 'string' && prov.impersonate_email) {
         setProbeSubject(prov.impersonate_email);
       }
     } catch (_) {}
@@ -140,64 +129,52 @@ export default function ProviderAuthPanel({
   // Otherwise fall back to manifest.required_identities filtered by provider.
   const requiredIdentities = useMemo(() => {
     if (!provider) {
-      return Array.isArray(pluginDef?.required_identities)
-        ? pluginDef.required_identities
-        : [];
+      return Array.isArray(pluginDef?.required_identities) ? pluginDef.required_identities : [];
     }
     // Prioritize op-specific scopes if available
     const opScopes = Array.isArray(opAuthSpec?.scopes) ? opAuthSpec.scopes : [];
     if (opScopes.length > 0) {
-      return [{ provider, scopes: opScopes, mode: "user" }];
+      return [{ provider, scopes: opScopes, mode: 'user' }];
     }
-    const all = Array.isArray(pluginDef?.required_identities)
-      ? pluginDef.required_identities
-      : [];
+    const all = Array.isArray(pluginDef?.required_identities) ? pluginDef.required_identities : [];
     return all.filter((ri) => ri?.provider === provider);
   }, [pluginDef, provider, opAuthSpec]);
   const [identitiesOk, setIdentitiesOk] = useState(true);
 
   // Probe (service account / delegation)
-  const [probeSubject, setProbeSubject] = useState(user?.email || "");
+  const [probeSubject, setProbeSubject] = useState(user?.email || '');
   // Allowed modes from manifest (op_auth.allowed_modes). If absent, treat opAuthSpec.mode as the only allowed.
   const allowedModes = useMemo(() => {
-    const raw = Array.isArray(opAuthSpec?.allowed_modes)
-      ? opAuthSpec.allowed_modes
-      : null;
+    const raw = Array.isArray(opAuthSpec?.allowed_modes) ? opAuthSpec.allowed_modes : null;
     if (raw && raw.length > 0) {
       return raw.map((m) => String(m).toLowerCase());
     }
-    const m = String(opAuthSpec?.mode || "").toLowerCase();
+    const m = String(opAuthSpec?.mode || '').toLowerCase();
     return m ? [m] : [];
   }, [opAuthSpec]);
   // Build available auth modes for provider based on host config intersected with allowedModes
   const availableModes = useMemo(() => {
     const modes = [];
-    const saConfigured = !!(
-      googleStatus && googleStatus.service_account_configured
-    );
-    const userOauthConfigured = !!(
-      googleStatus && googleStatus.user_oauth_configured
-    );
-    if (provider === "google") {
+    const saConfigured = !!(googleStatus && googleStatus.service_account_configured);
+    const userOauthConfigured = !!(googleStatus && googleStatus.user_oauth_configured);
+    if (provider === 'google') {
       const candidates = [];
       if (userOauthConfigured) {
-        candidates.push("user");
+        candidates.push('user');
       }
       if (saConfigured) {
-        candidates.push("domain_delegate");
-        candidates.push("service_account");
+        candidates.push('domain_delegate');
+        candidates.push('service_account');
       }
       const final =
-        allowedModes && allowedModes.length > 0
-          ? candidates.filter((v) => allowedModes.includes(v))
-          : candidates;
+        allowedModes && allowedModes.length > 0 ? candidates.filter((v) => allowedModes.includes(v)) : candidates;
       final.forEach((v) => {
         const label =
-          v === "user"
-            ? "User OAuth"
-            : v === "domain_delegate"
-              ? "Domain-wide Delegation (impersonation)"
-              : "Domain-wide Delegation (service account)";
+          v === 'user'
+            ? 'User OAuth'
+            : v === 'domain_delegate'
+              ? 'Domain-wide Delegation (impersonation)'
+              : 'Domain-wide Delegation (service account)';
         modes.push({ value: v, label });
       });
     }
@@ -206,26 +183,26 @@ export default function ProviderAuthPanel({
   // Ensure selection is one of the available modes
   useEffect(() => {
     const vals = availableModes.map((m) => m.value);
-    const current = String(selectedMode || mode || "").toLowerCase();
+    const current = String(selectedMode || mode || '').toLowerCase();
     if (vals.length > 0 && !vals.includes(current)) {
       setSelectedMode(vals[0]);
     }
   }, [availableModes, selectedMode, mode]);
-  const effMode = String(selectedMode || mode || "").toLowerCase();
+  const effMode = String(selectedMode || mode || '').toLowerCase();
 
   // Compute gating: selected mode must be satisfied exactly; no fallback
   useEffect(() => {
     try {
-      if (typeof onGateChange !== "function") {
+      if (typeof onGateChange !== 'function') {
         return;
       }
-      const m = String(effMode || "").toLowerCase();
+      const m = String(effMode || '').toLowerCase();
       let ok = true;
-      if (m === "user") {
+      if (m === 'user') {
         ok = !!identitiesOk;
-      } else if (m === "domain_delegate") {
-        ok = !!String(probeSubject || "").trim();
-      } else if (m === "service_account") {
+      } else if (m === 'domain_delegate') {
+        ok = !!String(probeSubject || '').trim();
+      } else if (m === 'service_account') {
         ok = !!(googleStatus && googleStatus.service_account_configured);
       }
       onGateChange(ok);
@@ -246,15 +223,15 @@ export default function ProviderAuthPanel({
       setProbeResult(null);
       const m = String(effMode);
       let resp;
-      if (m === "domain_delegate") {
-        const subject = String(probeSubject || "").trim();
+      if (m === 'domain_delegate') {
+        const subject = String(probeSubject || '').trim();
         if (!subject) {
-          setProbeError("Enter an impersonation email first.");
+          setProbeError('Enter an impersonation email first.');
           setProbeLoading(false);
           return;
         }
         resp = await hostAuthAPI.delegationCheck(provider, subject, scopes);
-      } else if (m === "service_account") {
+      } else if (m === 'service_account') {
         resp = await hostAuthAPI.serviceAccountCheck(provider, scopes);
       } else {
         setProbeLoading(false);
@@ -272,14 +249,14 @@ export default function ProviderAuthPanel({
   // Emit selected auth overlay to parent so execution/feed can honor it
   useEffect(() => {
     try {
-      if (typeof onAuthOverlayChange !== "function") {
+      if (typeof onAuthOverlayChange !== 'function') {
         return;
       }
       const overlay = {};
-      if (provider === "google") {
+      if (provider === 'google') {
         const payload = { mode: effMode };
-        if (effMode === "domain_delegate") {
-          const subj = String(probeSubject || "").trim();
+        if (effMode === 'domain_delegate') {
+          const subj = String(probeSubject || '').trim();
           if (subj) {
             payload.subject = subj;
           }
@@ -290,9 +267,9 @@ export default function ProviderAuthPanel({
     } catch (_) {}
   }, [provider, effMode, probeSubject, onAuthOverlayChange]);
 
-  const showIdentityGate = effMode === "user" && requiredIdentities.length > 0;
-  const showProbe = effMode === "domain_delegate" && provider === "google";
-  const showSaProbe = effMode === "service_account" && provider === "google";
+  const showIdentityGate = effMode === 'user' && requiredIdentities.length > 0;
+  const showProbe = effMode === 'domain_delegate' && provider === 'google';
+  const showSaProbe = effMode === 'service_account' && provider === 'google';
 
   return (
     <Box>
@@ -300,14 +277,14 @@ export default function ProviderAuthPanel({
         Authentication
       </Typography>
 
-      {provider === "google" && availableModes.length > 0 && (
+      {provider === 'google' && availableModes.length > 0 && (
         <Box sx={{ mb: 2 }}>
           <FormControl size="small" sx={{ minWidth: 260 }}>
             <InputLabel id="auth-mode-label">Auth Mode</InputLabel>
             <Select
               labelId="auth-mode-label"
               label="Auth Mode"
-              value={effMode || ""}
+              value={effMode || ''}
               onChange={(e) => setSelectedMode(e.target.value)}
             >
               {availableModes.map((opt) => (
@@ -317,25 +294,20 @@ export default function ProviderAuthPanel({
               ))}
             </Select>
           </FormControl>
-          {effMode !== "user" &&
-            !(googleStatus && googleStatus.service_account_configured) && (
-              <Alert severity="warning" sx={{ mt: 1 }}>
-                Service account is not configured on the host. Set
-                GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_FILE.
-              </Alert>
-            )}
+          {effMode !== 'user' && !(googleStatus && googleStatus.service_account_configured) && (
+            <Alert severity="warning" sx={{ mt: 1 }}>
+              Service account is not configured on the host. Set GOOGLE_SERVICE_ACCOUNT_JSON or
+              GOOGLE_SERVICE_ACCOUNT_FILE.
+            </Alert>
+          )}
         </Box>
       )}
       {/* Subscription controls for this plugin (authorize/unauthorize) */}
-      {provider && pluginName && effMode === "user" && (
+      {provider && pluginName && effMode === 'user' && (
         <SubscriptionControls
           provider={provider}
           pluginName={pluginName}
-          requiredScopes={
-            Array.isArray(opAuthSpec?.scopes)
-              ? opAuthSpec.scopes
-              : requiredIdentities[0]?.scopes || []
-          }
+          requiredScopes={Array.isArray(opAuthSpec?.scopes) ? opAuthSpec.scopes : requiredIdentities[0]?.scopes || []}
         />
       )}
 
@@ -355,10 +327,7 @@ export default function ProviderAuthPanel({
             Scopes requested for this operation:
           </Typography>
           <Box sx={{ ml: 2 }}>
-            {(Array.isArray(opAuthSpec?.scopes)
-              ? opAuthSpec.scopes
-              : requiredIdentities[0]?.scopes || []
-            ).map((s) => (
+            {(Array.isArray(opAuthSpec?.scopes) ? opAuthSpec.scopes : requiredIdentities[0]?.scopes || []).map((s) => (
               <Typography key={s} variant="caption" display="block">
                 {s}
               </Typography>
@@ -378,12 +347,8 @@ export default function ProviderAuthPanel({
               placeholder="user@example.com"
               sx={{ minWidth: 360 }}
             />
-            <Button
-              variant="outlined"
-              onClick={runProbe}
-              disabled={probeLoading}
-            >
-              {probeLoading ? "Testing…" : "Test Auth"}
+            <Button variant="outlined" onClick={runProbe} disabled={probeLoading}>
+              {probeLoading ? 'Testing…' : 'Test Auth'}
             </Button>
             {probeResult ? (
               probeResult.ready ? (
@@ -392,9 +357,8 @@ export default function ProviderAuthPanel({
                 </Alert>
               ) : (
                 <Alert severity="warning" sx={{ m: 0 }}>
-                  Not authorized (status {probeResult.status}).{" "}
-                  {probeResult?.error?.message ||
-                    "See server logs for details."}
+                  Not authorized (status {probeResult.status}).{' '}
+                  {probeResult?.error?.message || 'See server logs for details.'}
                 </Alert>
               )
             ) : (
@@ -406,8 +370,8 @@ export default function ProviderAuthPanel({
             )}
           </Box>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Use Test Auth to verify your service account is authorized to
-            impersonate the selected user for the required scopes.
+            Use Test Auth to verify your service account is authorized to impersonate the selected user for the required
+            scopes.
           </Typography>
         </Box>
       )}
@@ -415,12 +379,8 @@ export default function ProviderAuthPanel({
       {showSaProbe && (
         <Box sx={{ mb: 2 }}>
           <Box display="flex" alignItems="center" gap={2}>
-            <Button
-              variant="outlined"
-              onClick={runProbe}
-              disabled={probeLoading}
-            >
-              {probeLoading ? "Testing…" : "Test Auth"}
+            <Button variant="outlined" onClick={runProbe} disabled={probeLoading}>
+              {probeLoading ? 'Testing…' : 'Test Auth'}
             </Button>
             {probeResult ? (
               probeResult.ready ? (
@@ -429,9 +389,8 @@ export default function ProviderAuthPanel({
                 </Alert>
               ) : (
                 <Alert severity="warning" sx={{ m: 0 }}>
-                  Not authorized (status {probeResult.status}).{" "}
-                  {probeResult?.error?.message ||
-                    "See server logs for details."}
+                  Not authorized (status {probeResult.status}).{' '}
+                  {probeResult?.error?.message || 'See server logs for details.'}
                 </Alert>
               )
             ) : (
@@ -443,8 +402,7 @@ export default function ProviderAuthPanel({
             )}
           </Box>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Use Test Auth to verify your service account can obtain an access
-            token for the required scopes.
+            Use Test Auth to verify your service account can obtain an access token for the required scopes.
           </Typography>
         </Box>
       )}
@@ -454,14 +412,11 @@ export default function ProviderAuthPanel({
 
 export const authGateDisabled = (plugin, op, identitiesOk) => {
   try {
-    const spec =
-      plugin?.op_auth && plugin.op_auth[String(op || "").toLowerCase()];
+    const spec = plugin?.op_auth && plugin.op_auth[String(op || '').toLowerCase()];
     const mode = spec?.mode || null;
-    const req = Array.isArray(plugin?.required_identities)
-      ? plugin.required_identities
-      : [];
+    const req = Array.isArray(plugin?.required_identities) ? plugin.required_identities : [];
 
-    if (mode === "user" && req.length > 0) {
+    if (mode === 'user' && req.length > 0) {
       return !identitiesOk;
     }
     return false;
@@ -477,34 +432,27 @@ function SubscriptionControls({ provider, pluginName, requiredScopes = [] }) {
 
   // Current subscription state for this provider
   const subsQ = useQuery(
-    ["hostAuth", "subscriptions", provider],
+    ['hostAuth', 'subscriptions', provider],
     () => hostAuthAPI.listSubscriptions(provider).then(extractDataFromResponse),
-    { enabled: !!provider },
+    { enabled: !!provider }
   );
   const items = Array.isArray(subsQ?.data?.items) ? subsQ.data.items : [];
   const isSubscribed = items.some((s) => s.plugin_name === pluginName);
 
-  const subscribeMut = useMutation(
-    () =>
-      hostAuthAPI.subscribe(provider, pluginName).then(extractDataFromResponse),
-    {
-      onSuccess: () => {
-        qc.invalidateQueries(["hostAuth", "subscriptions", provider]);
-        qc.invalidateQueries(["hostAuth", "consentScopes", provider]);
-      },
+  const subscribeMut = useMutation(() => hostAuthAPI.subscribe(provider, pluginName).then(extractDataFromResponse), {
+    onSuccess: () => {
+      qc.invalidateQueries(['hostAuth', 'subscriptions', provider]);
+      qc.invalidateQueries(['hostAuth', 'consentScopes', provider]);
     },
-  );
+  });
   const unsubscribeMut = useMutation(
-    () =>
-      hostAuthAPI
-        .unsubscribe(provider, pluginName)
-        .then(extractDataFromResponse),
+    () => hostAuthAPI.unsubscribe(provider, pluginName).then(extractDataFromResponse),
     {
       onSuccess: () => {
-        qc.invalidateQueries(["hostAuth", "subscriptions", provider]);
-        qc.invalidateQueries(["hostAuth", "consentScopes", provider]);
+        qc.invalidateQueries(['hostAuth', 'subscriptions', provider]);
+        qc.invalidateQueries(['hostAuth', 'consentScopes', provider]);
       },
-    },
+    }
   );
 
   const { startAuthorize } = useOAuthAuthorize();
@@ -521,26 +469,21 @@ function SubscriptionControls({ provider, pluginName, requiredScopes = [] }) {
           } catch (_) {}
         }
         try {
-          qc.invalidateQueries(["hostAuth", "status"]);
-          qc.invalidateQueries(["hostAuth", "subscriptions", provider]);
-          qc.invalidateQueries(["hostAuth", "consentScopes", provider]);
+          qc.invalidateQueries(['hostAuth', 'status']);
+          qc.invalidateQueries(['hostAuth', 'subscriptions', provider]);
+          qc.invalidateQueries(['hostAuth', 'consentScopes', provider]);
         } catch (_) {}
       },
       onError: (e) => {
-        /* eslint-disable-next-line no-console */ console.error(
-          "Authorize failed:",
-          formatError(e),
-        );
+        /* eslint-disable-next-line no-console */ console.error('Authorize failed:', formatError(e));
       },
     });
   };
 
   return (
-    <Box sx={{ mb: 1, display: "flex", alignItems: "center", gap: 1 }}>
+    <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
       <Typography variant="body2" color="text.secondary">
-        {isSubscribed
-          ? `Subscribed to ${provider} for this plugin`
-          : `Not subscribed to ${provider} for this plugin`}
+        {isSubscribed ? `Subscribed to ${provider} for this plugin` : `Not subscribed to ${provider} for this plugin`}
       </Typography>
       {authorizing ? (
         <Tooltip title="Authorizing… please complete the OAuth dialog.">
@@ -560,28 +503,15 @@ function SubscriptionControls({ provider, pluginName, requiredScopes = [] }) {
               disabled={unsubscribeMut.isLoading}
               onClick={() => unsubscribeMut.mutate()}
             >
-              {unsubscribeMut.isLoading ? (
-                <CircularProgress size={14} />
-              ) : (
-                "Unauthorize"
-              )}
+              {unsubscribeMut.isLoading ? <CircularProgress size={14} /> : 'Unauthorize'}
             </Button>
           </span>
         </Tooltip>
       ) : (
         <Tooltip title="Authorize with the minimal scopes required by this plugin. Subscription will be created after successful authorization.">
           <span>
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={subscribeMut.isLoading}
-              onClick={handleAuthorize}
-            >
-              {subscribeMut.isLoading ? (
-                <CircularProgress size={14} />
-              ) : (
-                "Authorize"
-              )}
+            <Button size="small" variant="outlined" disabled={subscribeMut.isLoading} onClick={handleAuthorize}>
+              {subscribeMut.isLoading ? <CircularProgress size={14} /> : 'Authorize'}
             </Button>
           </span>
         </Tooltip>

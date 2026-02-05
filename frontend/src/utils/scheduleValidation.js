@@ -1,4 +1,4 @@
-import CronExpressionParser from "cron-parser";
+import CronExpressionParser from 'cron-parser';
 
 /**
  * Validation utilities for schedule configuration (cron expressions and timezones)
@@ -28,10 +28,10 @@ import CronExpressionParser from "cron-parser";
  */
 export function validateCronExpression(cronExpression) {
   // Check for null, undefined, or empty string
-  if (!cronExpression || typeof cronExpression !== "string") {
+  if (!cronExpression || typeof cronExpression !== 'string') {
     return {
       isValid: false,
-      error: "Cron expression is required and must be a non-empty string",
+      error: 'Cron expression is required and must be a non-empty string',
     };
   }
 
@@ -41,7 +41,7 @@ export function validateCronExpression(cronExpression) {
   if (trimmed.length === 0) {
     return {
       isValid: false,
-      error: "Cron expression cannot be empty or contain only whitespace",
+      error: 'Cron expression cannot be empty or contain only whitespace',
     };
   }
 
@@ -59,12 +59,12 @@ export function validateCronExpression(cronExpression) {
 
   // Define validation rules for each field
   const fieldValidations = [
-    { name: "second", range: [0, 59], optional: true },
-    { name: "minute", range: [0, 59] },
-    { name: "hour", range: [0, 23] },
-    { name: "day of month", range: [1, 31] },
-    { name: "month", range: [1, 12] },
-    { name: "day of week", range: [0, 7] }, // 0 and 7 both represent Sunday
+    { name: 'second', range: [0, 59], optional: true },
+    { name: 'minute', range: [0, 59] },
+    { name: 'hour', range: [0, 23] },
+    { name: 'day of month', range: [1, 31] },
+    { name: 'month', range: [1, 12] },
+    { name: 'day of week', range: [0, 7] }, // 0 and 7 both represent Sunday
   ];
 
   const startIndex = parts.length === 6 ? 0 : 1; // Skip seconds if not present
@@ -79,11 +79,7 @@ export function validateCronExpression(cronExpression) {
     }
 
     // Validate the field
-    const fieldResult = validateCronField(
-      part,
-      validation.name,
-      validation.range,
-    );
+    const fieldResult = validateCronField(part, validation.name, validation.range);
     if (!fieldResult.isValid) {
       return fieldResult;
     }
@@ -94,18 +90,15 @@ export function validateCronExpression(cronExpression) {
     CronExpressionParser.parse(trimmed);
   } catch (error) {
     // Extract meaningful error message
-    let errorMessage = error.message || "Invalid cron expression";
+    let errorMessage = error.message || 'Invalid cron expression';
 
     // Make error messages more user-friendly
-    if (errorMessage.includes("Invalid characters")) {
-      errorMessage =
-        "Cron expression contains invalid characters. Use only numbers, *, -, /, and ,";
-    } else if (errorMessage.includes("out of range")) {
-      errorMessage =
-        "One or more values in the cron expression are out of valid range";
-    } else if (errorMessage.includes("Invalid cron expression")) {
-      errorMessage =
-        'The cron expression format is invalid. Example: "0 9 * * *" for daily at 9 AM';
+    if (errorMessage.includes('Invalid characters')) {
+      errorMessage = 'Cron expression contains invalid characters. Use only numbers, *, -, /, and ,';
+    } else if (errorMessage.includes('out of range')) {
+      errorMessage = 'One or more values in the cron expression are out of valid range';
+    } else if (errorMessage.includes('Invalid cron expression')) {
+      errorMessage = 'The cron expression format is invalid. Example: "0 9 * * *" for daily at 9 AM';
     }
 
     return {
@@ -129,13 +122,13 @@ export function validateCronExpression(cronExpression) {
  */
 function validateCronField(field, fieldName, range) {
   // Allow wildcards
-  if (field === "*" || field === "?") {
+  if (field === '*' || field === '?') {
     return { isValid: true };
   }
 
   // Handle ranges (e.g., "1-5")
-  if (field.includes("-")) {
-    const rangeParts = field.split("-");
+  if (field.includes('-')) {
+    const rangeParts = field.split('-');
     if (rangeParts.length !== 2) {
       return {
         isValid: false,
@@ -151,12 +144,7 @@ function validateCronField(field, fieldName, range) {
       };
     }
 
-    if (
-      start < range[0] ||
-      start > range[1] ||
-      end < range[0] ||
-      end > range[1]
-    ) {
+    if (start < range[0] || start > range[1] || end < range[0] || end > range[1]) {
       return {
         isValid: false,
         error: `Range in ${fieldName} is out of bounds: "${field}". Valid range is ${range[0]}-${range[1]}`,
@@ -174,8 +162,8 @@ function validateCronField(field, fieldName, range) {
   }
 
   // Handle step values (e.g., "*/5" or "1-10/2")
-  if (field.includes("/")) {
-    const stepParts = field.split("/");
+  if (field.includes('/')) {
+    const stepParts = field.split('/');
     if (stepParts.length !== 2) {
       return {
         isValid: false,
@@ -192,7 +180,7 @@ function validateCronField(field, fieldName, range) {
     }
 
     // Validate the base part (before the /)
-    if (stepParts[0] !== "*") {
+    if (stepParts[0] !== '*') {
       return validateCronField(stepParts[0], fieldName, range);
     }
 
@@ -200,8 +188,8 @@ function validateCronField(field, fieldName, range) {
   }
 
   // Handle lists (e.g., "1,3,5")
-  if (field.includes(",")) {
-    const listParts = field.split(",");
+  if (field.includes(',')) {
+    const listParts = field.split(',');
     for (const part of listParts) {
       const result = validateCronField(part.trim(), fieldName, range);
       if (!result.isValid) {
@@ -245,10 +233,10 @@ function validateCronField(field, fieldName, range) {
  */
 export function validateTimezone(timezone) {
   // Check for null, undefined, or empty string
-  if (!timezone || typeof timezone !== "string") {
+  if (!timezone || typeof timezone !== 'string') {
     return {
       isValid: false,
-      error: "Timezone is required and must be a non-empty string",
+      error: 'Timezone is required and must be a non-empty string',
     };
   }
 
@@ -258,14 +246,14 @@ export function validateTimezone(timezone) {
   if (trimmed.length === 0) {
     return {
       isValid: false,
-      error: "Timezone cannot be empty or contain only whitespace",
+      error: 'Timezone cannot be empty or contain only whitespace',
     };
   }
 
   // Try to use the timezone with Intl.DateTimeFormat to validate it
   try {
     // This will throw an error if the timezone is invalid
-    Intl.DateTimeFormat("en-US", { timeZone: trimmed });
+    Intl.DateTimeFormat('en-US', { timeZone: trimmed });
     return { isValid: true };
   } catch (error) {
     return {
@@ -284,7 +272,7 @@ export function validateTimezone(timezone) {
 export function validateDayOfMonthEdgeCases(cronExpression) {
   const warnings = [];
 
-  if (!cronExpression || typeof cronExpression !== "string") {
+  if (!cronExpression || typeof cronExpression !== 'string') {
     return { isValid: true, warnings };
   }
 
@@ -298,7 +286,7 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
 
   // Skip validation if day-of-month is wildcard or if day-of-week is specified
-  if (dayOfMonth === "*" || dayOfWeek !== "*") {
+  if (dayOfMonth === '*' || dayOfWeek !== '*') {
     return { isValid: true, warnings };
   }
 
@@ -306,18 +294,18 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
   const dayValues = [];
 
   // Handle ranges (e.g., "1-5")
-  if (dayOfMonth.includes("-") && !dayOfMonth.includes(",")) {
-    const [start, end] = dayOfMonth.split("-").map((d) => parseInt(d, 10));
+  if (dayOfMonth.includes('-') && !dayOfMonth.includes(',')) {
+    const [start, end] = dayOfMonth.split('-').map((d) => parseInt(d, 10));
     for (let i = start; i <= end; i++) {
       dayValues.push(i);
     }
   }
   // Handle lists (e.g., "1,15,30")
-  else if (dayOfMonth.includes(",")) {
-    dayValues.push(...dayOfMonth.split(",").map((d) => parseInt(d.trim(), 10)));
+  else if (dayOfMonth.includes(',')) {
+    dayValues.push(...dayOfMonth.split(',').map((d) => parseInt(d.trim(), 10)));
   }
   // Handle single value
-  else if (!dayOfMonth.includes("/") && !dayOfMonth.includes("*")) {
+  else if (!dayOfMonth.includes('/') && !dayOfMonth.includes('*')) {
     dayValues.push(parseInt(dayOfMonth, 10));
   }
 
@@ -326,42 +314,37 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
 
   if (problematicDays.length > 0) {
     // Check if month is specified
-    const isMonthSpecific = month !== "*";
+    const isMonthSpecific = month !== '*';
 
     if (!isMonthSpecific) {
       // Days 29-31 don't exist in all months
       if (problematicDays.some((day) => day === 29)) {
         warnings.push(
-          "Day 29 is scheduled but does not exist in February (except leap years). " +
-            "The schedule will skip February in non-leap years.",
+          'Day 29 is scheduled but does not exist in February (except leap years). ' +
+            'The schedule will skip February in non-leap years.'
         );
       }
       if (problematicDays.some((day) => day === 30)) {
-        warnings.push(
-          "Day 30 is scheduled but does not exist in February. " +
-            "The schedule will skip February.",
-        );
+        warnings.push('Day 30 is scheduled but does not exist in February. ' + 'The schedule will skip February.');
       }
       if (problematicDays.some((day) => day === 31)) {
         warnings.push(
-          "Day 31 is scheduled but only exists in 7 months (Jan, Mar, May, Jul, Aug, Oct, Dec). " +
-            "The schedule will skip months with fewer days.",
+          'Day 31 is scheduled but only exists in 7 months (Jan, Mar, May, Jul, Aug, Oct, Dec). ' +
+            'The schedule will skip months with fewer days.'
         );
       }
     } else {
       // Validate specific month constraints
       const monthValues = [];
 
-      if (month.includes(",")) {
-        monthValues.push(
-          ...month.split(",").map((m) => parseInt(m.trim(), 10)),
-        );
-      } else if (month.includes("-")) {
-        const [start, end] = month.split("-").map((m) => parseInt(m, 10));
+      if (month.includes(',')) {
+        monthValues.push(...month.split(',').map((m) => parseInt(m.trim(), 10)));
+      } else if (month.includes('-')) {
+        const [start, end] = month.split('-').map((m) => parseInt(m, 10));
         for (let i = start; i <= end; i++) {
           monthValues.push(i);
         }
-      } else if (!month.includes("/") && !month.includes("*")) {
+      } else if (!month.includes('/') && !month.includes('*')) {
         monthValues.push(parseInt(month, 10));
       }
 
@@ -374,25 +357,22 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
           // February
           if (problematicDays.some((day) => day > 29)) {
             warnings.push(
-              `Days ${problematicDays.filter((d) => d > 29).join(", ")} are scheduled for February but do not exist. ` +
-                "The schedule will not run on these days in February.",
+              `Days ${problematicDays.filter((d) => d > 29).join(', ')} are scheduled for February but do not exist. ` +
+                'The schedule will not run on these days in February.'
             );
           } else if (problematicDays.some((day) => day === 29)) {
             warnings.push(
-              "Day 29 is scheduled for February but only exists in leap years. " +
-                "The schedule will skip non-leap years.",
+              'Day 29 is scheduled for February but only exists in leap years. ' +
+                'The schedule will skip non-leap years.'
             );
           }
         } else if (monthsWith30Days.includes(monthNum)) {
           // Months with 30 days
           if (problematicDays.some((day) => day === 31)) {
-            const monthName = new Date(2000, monthNum - 1, 1).toLocaleString(
-              "en-US",
-              { month: "long" },
-            );
+            const monthName = new Date(2000, monthNum - 1, 1).toLocaleString('en-US', { month: 'long' });
             warnings.push(
               `Day 31 is scheduled for ${monthName} but this month only has 30 days. ` +
-                "The schedule will not run on day 31.",
+                'The schedule will not run on day 31.'
             );
           }
         }
@@ -433,12 +413,11 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
  * // }
  */
 export function validateScheduleConfig(config) {
-  if (!config || typeof config !== "object") {
+  if (!config || typeof config !== 'object') {
     return {
       isValid: false,
       errors: {
-        general:
-          "Schedule configuration must be an object with cron and timezone properties",
+        general: 'Schedule configuration must be an object with cron and timezone properties',
       },
       warnings: [],
     };

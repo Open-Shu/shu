@@ -1,5 +1,5 @@
-import React from "react";
-import { useQuery, useMutation, useQueryClient } from "react-query";
+import React from 'react';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
   Box,
   Button,
@@ -14,54 +14,46 @@ import {
   Alert,
   ToggleButtonGroup,
   ToggleButton,
-} from "@mui/material";
-import DeleteIcon from "@mui/icons-material/Delete";
-import { pluginsAPI } from "../services/pluginsApi";
-import { extractDataFromResponse, formatError } from "../services/api";
+} from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
+import { pluginsAPI } from '../services/pluginsApi';
+import { extractDataFromResponse, formatError } from '../services/api';
 
 export default function PluginSecretsEditor({ name }) {
   const qc = useQueryClient();
-  const [scope, setScope] = React.useState("system"); // 'system' or 'user'
-  const [userId, setUserId] = React.useState("");
-  const [newKey, setNewKey] = React.useState("");
-  const [newVal, setNewVal] = React.useState("");
+  const [scope, setScope] = React.useState('system'); // 'system' or 'user'
+  const [userId, setUserId] = React.useState('');
+  const [newKey, setNewKey] = React.useState('');
+  const [newVal, setNewVal] = React.useState('');
 
-  const isSystemScope = scope === "system";
+  const isSystemScope = scope === 'system';
   const queryEnabled = !!name && (isSystemScope || !!userId);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery(
-    ["plugins", "secrets", name, scope, userId],
-    () =>
-      pluginsAPI
-        .listSecrets(name, isSystemScope ? null : userId, scope)
-        .then(extractDataFromResponse),
-    { enabled: queryEnabled },
+    ['plugins', 'secrets', name, scope, userId],
+    () => pluginsAPI.listSecrets(name, isSystemScope ? null : userId, scope).then(extractDataFromResponse),
+    { enabled: queryEnabled }
   );
 
   const setMut = useMutation(
     () =>
-      pluginsAPI
-        .setSecret(name, newKey, isSystemScope ? null : userId, newVal, scope)
-        .then(extractDataFromResponse),
+      pluginsAPI.setSecret(name, newKey, isSystemScope ? null : userId, newVal, scope).then(extractDataFromResponse),
     {
       onSuccess: () => {
-        setNewVal("");
-        setNewKey("");
-        qc.invalidateQueries(["plugins", "secrets", name, scope, userId]);
+        setNewVal('');
+        setNewKey('');
+        qc.invalidateQueries(['plugins', 'secrets', name, scope, userId]);
       },
-    },
+    }
   );
 
   const delMut = useMutation(
-    ({ key }) =>
-      pluginsAPI
-        .deleteSecret(name, key, isSystemScope ? null : userId, scope)
-        .then(extractDataFromResponse),
+    ({ key }) => pluginsAPI.deleteSecret(name, key, isSystemScope ? null : userId, scope).then(extractDataFromResponse),
     {
       onSuccess: () => {
-        qc.invalidateQueries(["plugins", "secrets", name, scope, userId]);
+        qc.invalidateQueries(['plugins', 'secrets', name, scope, userId]);
       },
-    },
+    }
   );
 
   const keys = data?.keys || [];
@@ -72,17 +64,12 @@ export default function PluginSecretsEditor({ name }) {
         <Stack spacing={2}>
           <Typography variant="h6">Secrets</Typography>
           <Typography variant="body2" color="text.secondary">
-            Manage encrypted secrets for this plugin. System secrets are shared
-            defaults; user secrets override them per-user.
+            Manage encrypted secrets for this plugin. System secrets are shared defaults; user secrets override them
+            per-user.
           </Typography>
 
           <Stack direction="row" spacing={2} alignItems="center">
-            <ToggleButtonGroup
-              value={scope}
-              exclusive
-              onChange={(e, val) => val && setScope(val)}
-              size="small"
-            >
+            <ToggleButtonGroup value={scope} exclusive onChange={(e, val) => val && setScope(val)} size="small">
               <ToggleButton value="system">System (Shared)</ToggleButton>
               <ToggleButton value="user">User (Per-User)</ToggleButton>
             </ToggleButtonGroup>
@@ -100,11 +87,7 @@ export default function PluginSecretsEditor({ name }) {
                 />
               </Grid>
               <Grid item xs={12} sm={6} md={2}>
-                <Button
-                  variant="outlined"
-                  onClick={() => refetch()}
-                  disabled={!userId || isFetching}
-                >
+                <Button variant="outlined" onClick={() => refetch()} disabled={!userId || isFetching}>
                   Load
                 </Button>
               </Grid>
@@ -120,9 +103,7 @@ export default function PluginSecretsEditor({ name }) {
 
           {queryEnabled && (
             <>
-              <Typography variant="subtitle2">
-                Existing keys ({scope} scope)
-              </Typography>
+              <Typography variant="subtitle2">Existing keys ({scope} scope)</Typography>
               {keys.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
                   No keys found
@@ -136,7 +117,7 @@ export default function PluginSecretsEditor({ name }) {
                       alignItems="center"
                       justifyContent="space-between"
                       sx={{
-                        border: "1px solid #e2e8f0",
+                        border: '1px solid #e2e8f0',
                         borderRadius: 1,
                         p: 1,
                         mb: 1,

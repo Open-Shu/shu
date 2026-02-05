@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Button,
@@ -16,27 +16,21 @@ import {
   Typography,
   CircularProgress,
   Alert,
-} from "@mui/material";
-import { PlayArrow as RunIcon } from "@mui/icons-material";
-import { useTheme } from "@mui/material/styles";
-import { experiencesAPI } from "../services/api";
-import StepStatusIcon from "./StepStatusIcon";
-import MarkdownRenderer from "./shared/MarkdownRenderer";
+} from '@mui/material';
+import { PlayArrow as RunIcon } from '@mui/icons-material';
+import { useTheme } from '@mui/material/styles';
+import { experiencesAPI } from '../services/api';
+import StepStatusIcon from './StepStatusIcon';
+import MarkdownRenderer from './shared/MarkdownRenderer';
 
-export default function ExperienceRunDialog({
-  open,
-  onClose,
-  experienceId,
-  experienceName,
-  steps = [],
-}) {
+export default function ExperienceRunDialog({ open, onClose, experienceId, experienceName, steps = [] }) {
   const theme = useTheme();
-  const isDarkMode = theme.palette.mode === "dark";
+  const isDarkMode = theme.palette.mode === 'dark';
 
-  const [status, setStatus] = useState("pending"); // pending, running, completed, failed
+  const [status, setStatus] = useState('pending'); // pending, running, completed, failed
   const [logs, setLogs] = useState([]); // List of parsed events for debugging
   const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error } }
-  const [llmContent, setLlmContent] = useState("");
+  const [llmContent, setLlmContent] = useState('');
   const [error, setError] = useState(null);
   const abortControllerRef = useRef(null);
 
@@ -47,7 +41,7 @@ export default function ExperienceRunDialog({
       const response = await experiencesAPI.streamRun(
         experienceId,
         { params: {} }, // Default empty params for "Run Now"
-        { signal: abortControllerRef.current.signal },
+        { signal: abortControllerRef.current.signal }
       );
 
       if (!response.ok) {
@@ -57,7 +51,7 @@ export default function ExperienceRunDialog({
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = "";
+      let buffer = '';
 
       try {
         while (true) {
@@ -68,13 +62,13 @@ export default function ExperienceRunDialog({
 
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() || ""; // Keep incomplete part
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || ''; // Keep incomplete part
 
           for (const part of parts) {
-            if (part.startsWith("data: ")) {
+            if (part.startsWith('data: ')) {
               const jsonStr = part.slice(6);
-              if (jsonStr.trim() === "[DONE]") {
+              if (jsonStr.trim() === '[DONE]') {
                 continue;
               }
 
@@ -83,50 +77,50 @@ export default function ExperienceRunDialog({
                 setLogs((prev) => [...prev, event]);
 
                 // Process events for state updates
-                if (event.type === "run_started") {
-                  setStatus("running");
-                } else if (event.type === "step_started") {
+                if (event.type === 'run_started') {
+                  setStatus('running');
+                } else if (event.type === 'step_started') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
-                      status: "running",
+                      status: 'running',
                       ...prev[event.step_key],
                     },
                   }));
-                } else if (event.type === "step_completed") {
+                } else if (event.type === 'step_completed') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
-                      status: "succeeded",
+                      status: 'succeeded',
                       summary: event.summary,
                     },
                   }));
-                } else if (event.type === "step_failed") {
+                } else if (event.type === 'step_failed') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
-                      status: "failed",
+                      status: 'failed',
                       error: event.error,
                     },
                   }));
-                } else if (event.type === "step_skipped") {
+                } else if (event.type === 'step_skipped') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
-                      status: "skipped",
+                      status: 'skipped',
                       reason: event.reason,
                     },
                   }));
-                } else if (event.type === "content_delta") {
-                  setLlmContent((prev) => prev + (event.content || ""));
-                } else if (event.type === "run_completed") {
-                  setStatus("completed");
-                } else if (event.type === "error") {
+                } else if (event.type === 'content_delta') {
+                  setLlmContent((prev) => prev + (event.content || ''));
+                } else if (event.type === 'run_completed') {
+                  setStatus('completed');
+                } else if (event.type === 'error') {
                   setError(event.message);
-                  setStatus("failed");
+                  setStatus('failed');
                 }
               } catch (e) {
-                console.warn("Failed to parse SSE event:", e);
+                console.warn('Failed to parse SSE event:', e);
               }
             }
           }
@@ -135,12 +129,12 @@ export default function ExperienceRunDialog({
         reader.cancel();
       }
     } catch (err) {
-      if (err.name === "AbortError") {
-        console.log("Execution aborted");
+      if (err.name === 'AbortError') {
+        console.log('Execution aborted');
       } else {
-        console.error("Execution error:", err);
-        setError(err.message || "Failed to execute experience");
-        setStatus("failed");
+        console.error('Execution error:', err);
+        setError(err.message || 'Failed to execute experience');
+        setStatus('failed');
       }
     }
   }, [experienceId]);
@@ -148,10 +142,10 @@ export default function ExperienceRunDialog({
   // Reset state when opening
   useEffect(() => {
     if (open) {
-      setStatus("running");
+      setStatus('running');
       setLogs([]);
       setStepStates({});
-      setLlmContent("");
+      setLlmContent('');
       setError(null);
 
       startExecution();
@@ -171,7 +165,7 @@ export default function ExperienceRunDialog({
       open={open}
       onClose={(e, reason) => {
         // Prevent closing by clicking outside while running
-        if (reason === "backdropClick" && status === "running") {
+        if (reason === 'backdropClick' && status === 'running') {
           return;
         }
         onClose();
@@ -181,7 +175,7 @@ export default function ExperienceRunDialog({
     >
       <DialogTitle>
         Execute: {experienceName}
-        {status === "running" && (
+        {status === 'running' && (
           <Typography variant="caption" sx={{ ml: 2 }}>
             Running...
           </Typography>
@@ -217,10 +211,7 @@ export default function ExperienceRunDialog({
                                 : step.step_type
                         }
                         primaryTypographyProps={{
-                          color:
-                            state?.status === "failed"
-                              ? "error"
-                              : "textPrimary",
+                          color: state?.status === 'failed' ? 'error' : 'textPrimary',
                         }}
                       />
                     </ListItem>
@@ -239,45 +230,31 @@ export default function ExperienceRunDialog({
               variant="outlined"
               sx={{
                 p: 2,
-                bgcolor: "grey.50",
+                bgcolor: 'grey.50',
                 minHeight: 200,
                 maxHeight: 400,
-                overflowY: "auto",
+                overflowY: 'auto',
               }}
             >
               {llmContent ? (
-                <MarkdownRenderer
-                  content={llmContent}
-                  isDarkMode={isDarkMode}
-                />
+                <MarkdownRenderer content={llmContent} isDarkMode={isDarkMode} />
               ) : (
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                  {status === "running" && <CircularProgress size={16} />}
-                  <Typography
-                    color="text.secondary"
-                    variant="body2"
-                    fontStyle="italic"
-                  >
-                    {status === "running"
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {status === 'running' && <CircularProgress size={16} />}
+                  <Typography color="text.secondary" variant="body2" fontStyle="italic">
+                    {status === 'running'
                       ? (() => {
                           // Check if all steps are complete (succeeded, failed, or skipped)
                           const allStepsComplete =
                             steps.length > 0 &&
                             steps.every((step) => {
                               const state = stepStates[step.step_key];
-                              return (
-                                state &&
-                                ["succeeded", "failed", "skipped"].includes(
-                                  state.status,
-                                )
-                              );
+                              return state && ['succeeded', 'failed', 'skipped'].includes(state.status);
                             });
 
-                          return allStepsComplete
-                            ? "Generating AI response..."
-                            : "Executing workflow steps...";
+                          return allStepsComplete ? 'Generating AI response...' : 'Executing workflow steps...';
                         })()
-                      : "No output generated."}
+                      : 'No output generated.'}
                   </Typography>
                 </Box>
               )}
@@ -286,7 +263,7 @@ export default function ExperienceRunDialog({
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={status === "running"}>
+        <Button onClick={onClose} disabled={status === 'running'}>
           Close
         </Button>
       </DialogActions>

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
-import GoogleLogin from "./GoogleLogin";
-import PasswordLogin from "./PasswordLogin";
-import PasswordRegistration from "./PasswordRegistration";
-import configService from "../services/config";
+import React, { useState, useEffect } from 'react';
+import GoogleLogin from './GoogleLogin';
+import PasswordLogin from './PasswordLogin';
+import PasswordRegistration from './PasswordRegistration';
+import configService from '../services/config';
 
 const AuthPage = () => {
-  const [authMode, setAuthMode] = useState("password"); // 'google', 'password', 'register'
+  const [authMode, setAuthMode] = useState('password'); // 'google', 'password', 'register'
   const [googleSsoEnabled, setGoogleSsoEnabled] = useState(false);
   const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false);
 
@@ -40,23 +40,23 @@ const AuthPage = () => {
     if (!googleSsoEnabled) {
       return;
     }
-    setAuthMode("google");
+    setAuthMode('google');
   };
 
   const handleSwitchToPassword = () => {
-    setAuthMode("password");
+    setAuthMode('password');
   };
 
   const handleSwitchToRegister = () => {
-    setAuthMode("register");
+    setAuthMode('register');
   };
 
   const handleSwitchToLogin = () => {
-    setAuthMode("password");
+    setAuthMode('password');
   };
 
   switch (authMode) {
-    case "google":
+    case 'google':
       return googleSsoEnabled ? (
         <GoogleLogin onSwitchToPassword={handleSwitchToPassword} />
       ) : (
@@ -67,9 +67,9 @@ const AuthPage = () => {
           isMicrosoftSsoEnabled={microsoftSsoEnabled}
         />
       );
-    case "register":
+    case 'register':
       return <PasswordRegistration onSwitchToLogin={handleSwitchToLogin} />;
-    case "password":
+    case 'password':
     default:
       return (
         <PasswordLogin

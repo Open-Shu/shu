@@ -1,22 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  Box,
-  Typography,
-  TextField,
-  Alert,
-  Paper,
-  Chip,
-  Stack,
-  Divider,
-} from "@mui/material";
-import {
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Info as InfoIcon,
-} from "@mui/icons-material";
-import YAMLProcessor from "../../services/yamlProcessor";
-import { extractImportPlaceholders } from "../../services/importPlaceholders";
-import { log } from "../../utils/log";
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Box, Typography, TextField, Alert, Paper, Chip, Stack, Divider } from '@mui/material';
+import { CheckCircle as CheckCircleIcon, Error as ErrorIcon, Info as InfoIcon } from '@mui/icons-material';
+import YAMLProcessor from '../../services/yamlProcessor';
+import { extractImportPlaceholders } from '../../services/importPlaceholders';
+import { log } from '../../utils/log';
 
 /**
  * YAMLInputStep - First step of the import wizard for YAML input and validation
@@ -27,12 +14,7 @@ import { log } from "../../utils/log";
  * @param {function} props.onValidationChange - Callback when validation state changes
  * @param {string} [props.prePopulatedYAML] - Pre-populated YAML content
  */
-const YAMLInputStep = ({
-  yamlContent,
-  onYAMLChange,
-  onValidationChange,
-  prePopulatedYAML,
-}) => {
+const YAMLInputStep = ({ yamlContent, onYAMLChange, onValidationChange, prePopulatedYAML }) => {
   const [validationResult, setValidationResult] = useState({
     isValid: false,
     errors: [],
@@ -46,7 +28,7 @@ const YAMLInputStep = ({
     (content) => {
       onYAMLChange(content);
     },
-    [onYAMLChange],
+    [onYAMLChange]
   );
 
   // Initialize with pre-populated YAML if provided
@@ -55,7 +37,7 @@ const YAMLInputStep = ({
       setIsPrePopulated(true);
       stableOnYAMLChange(prePopulatedYAML);
       initializedRef.current = true;
-      log.info("Pre-populated YAML content loaded", {
+      log.info('Pre-populated YAML content loaded', {
         length: prePopulatedYAML.length,
       });
     }
@@ -63,8 +45,8 @@ const YAMLInputStep = ({
 
   // Validate YAML content whenever it changes
   const validateYAML = useCallback((content) => {
-    if (!content || content.trim() === "") {
-      const result = { isValid: false, errors: ["YAML content is required"] };
+    if (!content || content.trim() === '') {
+      const result = { isValid: false, errors: ['YAML content is required'] };
       setValidationResult(result);
       setPlaceholders([]);
       onValidationChange(false);
@@ -84,11 +66,11 @@ const YAMLInputStep = ({
       onValidationChange(validation.isValid);
 
       if (validation.isValid) {
-        log.debug("YAML validation successful", {
+        log.debug('YAML validation successful', {
           placeholderCount: extractedPlaceholders.length,
         });
       } else {
-        log.debug("YAML validation failed", {
+        log.debug('YAML validation failed', {
           errors: validation.errors,
         });
       }
@@ -100,7 +82,7 @@ const YAMLInputStep = ({
       setValidationResult(result);
       setPlaceholders([]);
       onValidationChange(false);
-      log.error("YAML validation error", { error: error.message });
+      log.error('YAML validation error', { error: error.message });
     }
   }, []); // Removed onValidationChange from dependencies
 
@@ -118,17 +100,17 @@ const YAMLInputStep = ({
 
   // Get validation status icon and color
   const getValidationStatus = () => {
-    if (!yamlContent || yamlContent.trim() === "") {
-      return { icon: <InfoIcon />, color: "info", text: "Enter YAML content" };
+    if (!yamlContent || yamlContent.trim() === '') {
+      return { icon: <InfoIcon />, color: 'info', text: 'Enter YAML content' };
     }
     if (validationResult.isValid) {
       return {
         icon: <CheckCircleIcon />,
-        color: "success",
-        text: "Valid YAML",
+        color: 'success',
+        text: 'Valid YAML',
       };
     }
-    return { icon: <ErrorIcon />, color: "error", text: "Invalid YAML" };
+    return { icon: <ErrorIcon />, color: 'error', text: 'Invalid YAML' };
   };
 
   const status = getValidationStatus();
@@ -140,17 +122,16 @@ const YAMLInputStep = ({
       </Typography>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Paste or edit your experience YAML configuration below. The system will
-        validate the structure and extract any placeholders that need values.
+        Paste or edit your experience YAML configuration below. The system will validate the structure and extract any
+        placeholders that need values.
       </Typography>
 
       {/* Pre-populated indicator */}
       {isPrePopulated && (
         <Alert severity="info" sx={{ mb: 2 }}>
           <Typography variant="body2">
-            This YAML has been pre-populated from the Quick Start guide. You can
-            edit it or proceed to the next step. If this is your first time
-            setting up an experience, we recommend you leave everything as is.
+            This YAML has been pre-populated from the Quick Start guide. You can edit it or proceed to the next step. If
+            this is your first time setting up an experience, we recommend you leave everything as is.
           </Typography>
         </Alert>
       )}
@@ -166,21 +147,21 @@ const YAMLInputStep = ({
           onChange={handleYAMLChange}
           placeholder="Paste your YAML configuration here..."
           variant="outlined"
-          inputProps={{ "aria-label": "YAML configuration" }}
+          inputProps={{ 'aria-label': 'YAML configuration' }}
           InputProps={{
             sx: {
               fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
-              fontSize: "0.875rem",
+              fontSize: '0.875rem',
               lineHeight: 1.5,
-              "& .MuiInputBase-input": {
+              '& .MuiInputBase-input': {
                 padding: 2,
               },
             },
           }}
           sx={{
-            "& .MuiOutlinedInput-root": {
-              "& fieldset": {
-                border: "none",
+            '& .MuiOutlinedInput-root': {
+              '& fieldset': {
+                border: 'none',
               },
             },
           }}
@@ -210,16 +191,13 @@ const YAMLInputStep = ({
             <Box component="ul" sx={{ m: 0, pl: 2 }}>
               {validationResult.errors.map((error, index) => {
                 // Handle enhanced error objects with line/column info
-                if (
-                  typeof error === "object" &&
-                  error.type === "yaml_parsing"
-                ) {
+                if (typeof error === 'object' && error.type === 'yaml_parsing') {
                   return (
                     <Box component="li" key={index} sx={{ mb: 1 }}>
                       <Typography variant="body2" color="error.main">
                         <strong>
                           Line {error.line}, Column {error.column}:
-                        </strong>{" "}
+                        </strong>{' '}
                         {error.reason}
                       </Typography>
                       {error.context && (
@@ -228,13 +206,12 @@ const YAMLInputStep = ({
                           sx={{
                             mt: 1,
                             p: 1,
-                            bgcolor: "grey.100",
+                            bgcolor: 'grey.100',
                             borderRadius: 1,
-                            fontSize: "0.75rem",
-                            fontFamily:
-                              'Monaco, Menlo, "Ubuntu Mono", monospace',
-                            overflow: "auto",
-                            whiteSpace: "pre-wrap",
+                            fontSize: '0.75rem',
+                            fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+                            overflow: 'auto',
+                            whiteSpace: 'pre-wrap',
                           }}
                         >
                           {error.context}
@@ -277,37 +254,16 @@ const YAMLInputStep = ({
           validationResult.pluginValidation.requiredPlugins.length > 0 && (
             <Alert severity="info" sx={{ mb: 2 }}>
               <Typography variant="body2" fontWeight="medium" gutterBottom>
-                Required Plugins (
-                {validationResult.pluginValidation.requiredPlugins.length}):
+                Required Plugins ({validationResult.pluginValidation.requiredPlugins.length}):
               </Typography>
-              <Stack
-                direction="row"
-                spacing={1}
-                flexWrap="wrap"
-                useFlexGap
-                sx={{ mt: 1 }}
-              >
-                {validationResult.pluginValidation?.requiredPlugins?.map(
-                  (plugin) => (
-                    <Chip
-                      key={plugin}
-                      label={plugin}
-                      size="small"
-                      variant="outlined"
-                      color="info"
-                      icon={<InfoIcon />}
-                    />
-                  ),
-                )}
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+                {validationResult.pluginValidation?.requiredPlugins?.map((plugin) => (
+                  <Chip key={plugin} label={plugin} size="small" variant="outlined" color="info" icon={<InfoIcon />} />
+                ))}
               </Stack>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ mt: 1, display: "block" }}
-              >
-                At the moment these plugins are not installed automatically.
-                Please install them manually to ensure the experience works as
-                expected.
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                At the moment these plugins are not installed automatically. Please install them manually to ensure the
+                experience works as expected.
               </Typography>
             </Alert>
           )}

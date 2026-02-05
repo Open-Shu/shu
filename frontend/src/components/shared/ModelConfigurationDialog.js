@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "react-query";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from 'react-query';
 import {
   Dialog,
   DialogTitle,
@@ -23,19 +23,11 @@ import {
   Switch,
   Alert,
   CircularProgress,
-} from "@mui/material";
-import {
-  InfoOutlined,
-  ExpandMore as ExpandMoreIcon,
-  PlayArrow as VerifyIcon,
-} from "@mui/icons-material";
-import LLMTester from "../LLMTester";
-import {
-  modelConfigAPI,
-  formatError,
-  extractDataFromResponse,
-} from "../../services/api";
-import log from "../../utils/log";
+} from '@mui/material';
+import { InfoOutlined, ExpandMore as ExpandMoreIcon, PlayArrow as VerifyIcon } from '@mui/icons-material';
+import LLMTester from '../LLMTester';
+import { modelConfigAPI, formatError, extractDataFromResponse } from '../../services/api';
+import log from '../../utils/log';
 
 const ModelConfigurationDialog = ({
   open,
@@ -75,8 +67,7 @@ const ModelConfigurationDialog = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [testSucceeded, setTestSucceeded] = useState(false);
   // Track if config was saved during this session (for rollback logic)
-  const [configSavedDuringSession, setConfigSavedDuringSession] =
-    useState(false);
+  const [configSavedDuringSession, setConfigSavedDuringSession] = useState(false);
   // Confirmation dialog state
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   // AbortController for canceling in-flight verification requests
@@ -103,9 +94,7 @@ const ModelConfigurationDialog = ({
   const handleCancelClick = () => {
     // Block closing if verification is in progress
     if (isVerifying) {
-      setVerifyError(
-        "Please wait for verification to complete, or it will be canceled.",
-      );
+      setVerifyError('Please wait for verification to complete, or it will be canceled.');
       return;
     }
 
@@ -145,9 +134,7 @@ const ModelConfigurationDialog = ({
   const performRollbackAndClose = async () => {
     // Guard: Don't proceed if verification is still in progress
     if (isVerifying) {
-      log.warn(
-        "Attempted to rollback while verification in progress - blocking",
-      );
+      log.warn('Attempted to rollback while verification in progress - blocking');
       return;
     }
 
@@ -162,13 +149,10 @@ const ModelConfigurationDialog = ({
           await modelConfigAPI.delete(tempConfigId);
         }
         // Invalidate queries to refresh the list
-        queryClient.invalidateQueries([
-          "model-configurations",
-          { includeInactive: true },
-        ]);
+        queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
       } catch (err) {
         // Log error but don't block close - user can manually fix
-        log.error("Failed to rollback config:", err);
+        log.error('Failed to rollback config:', err);
       }
     }
 
@@ -182,9 +166,7 @@ const ModelConfigurationDialog = ({
   const handleDialogClose = (event, reason) => {
     // Block closing if verification is in progress
     if (isVerifying) {
-      setVerifyError(
-        "Please wait for verification to complete before closing.",
-      );
+      setVerifyError('Please wait for verification to complete before closing.');
       return;
     }
 
@@ -219,7 +201,7 @@ const ModelConfigurationDialog = ({
         try {
           extra = JSON.parse(advancedJson);
         } catch (e) {
-          setVerifyError("Invalid JSON in advanced parameters");
+          setVerifyError('Invalid JSON in advanced parameters');
           setIsVerifying(false);
           verifyAbortControllerRef.current = null;
           return;
@@ -231,9 +213,9 @@ const ModelConfigurationDialog = ({
           ([_, v]) =>
             v !== undefined &&
             v !== null &&
-            !(typeof v === "string" && v.trim() === "") &&
-            !(typeof v === "number" && Number.isNaN(v)),
-        ),
+            !(typeof v === 'string' && v.trim() === '') &&
+            !(typeof v === 'number' && Number.isNaN(v))
+        )
       );
 
       const payload = {
@@ -246,14 +228,10 @@ const ModelConfigurationDialog = ({
       let savedConfig;
       if (isEditMode && existingConfigId) {
         // Update existing config
-        const response = await modelConfigAPI.update(
-          existingConfigId,
-          payload,
-          { signal: abortController.signal },
-        );
+        const response = await modelConfigAPI.update(existingConfigId, payload, { signal: abortController.signal });
         // Check if aborted before processing response
         if (abortController.signal.aborted) {
-          log.debug("Verification aborted after update");
+          log.debug('Verification aborted after update');
           return;
         }
         savedConfig = extractDataFromResponse(response);
@@ -265,7 +243,7 @@ const ModelConfigurationDialog = ({
         });
         // Check if aborted before processing response
         if (abortController.signal.aborted) {
-          log.debug("Verification aborted after update");
+          log.debug('Verification aborted after update');
           return;
         }
         savedConfig = extractDataFromResponse(response);
@@ -276,7 +254,7 @@ const ModelConfigurationDialog = ({
         });
         // Check if aborted before processing response
         if (abortController.signal.aborted) {
-          log.debug("Verification aborted after create");
+          log.debug('Verification aborted after create');
           return;
         }
         savedConfig = extractDataFromResponse(response);
@@ -285,15 +263,12 @@ const ModelConfigurationDialog = ({
 
       // Check if aborted before updating state
       if (abortController.signal.aborted) {
-        log.debug("Verification aborted before state update");
+        log.debug('Verification aborted before state update');
         return;
       }
 
       // Invalidate queries to refresh the list
-      queryClient.invalidateQueries([
-        "model-configurations",
-        { includeInactive: true },
-      ]);
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
 
       // Mark that config was saved during this session (for rollback logic)
       setConfigSavedDuringSession(true);
@@ -303,12 +278,10 @@ const ModelConfigurationDialog = ({
     } catch (err) {
       // Don't show error if request was aborted
       if (abortController.signal.aborted) {
-        log.debug("Verification request was aborted");
+        log.debug('Verification request was aborted');
         return;
       }
-      setVerifyError(
-        formatError(err) || "Failed to save configuration for verification",
-      );
+      setVerifyError(formatError(err) || 'Failed to save configuration for verification');
     } finally {
       // Only clear state if not aborted (abort handler clears it)
       if (!abortController.signal.aborted) {
@@ -326,14 +299,11 @@ const ModelConfigurationDialog = ({
     setShowLLMTester(false);
 
     // Invalidate queries to ensure UI is up to date
-    queryClient.invalidateQueries([
-      "model-configurations",
-      { includeInactive: true },
-    ]);
+    queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
 
     // Also invalidate side-call config if needed
     if (formData.is_side_call_model) {
-      queryClient.invalidateQueries("side-call-config");
+      queryClient.invalidateQueries('side-call-config');
     }
 
     // Close the dialog - config is already saved as active
@@ -341,32 +311,22 @@ const ModelConfigurationDialog = ({
   };
 
   // Check if form is valid for verification
-  const isFormValidForVerify =
-    formData.name && formData.llm_provider_id && formData.model_name;
+  const isFormValidForVerify = formData.name && formData.llm_provider_id && formData.model_name;
 
   const selectedKnowledgeBases = useMemo(() => {
-    if (
-      !knowledgeBases ||
-      !Array.isArray(knowledgeBases) ||
-      !formData.knowledge_base_ids
-    ) {
+    if (!knowledgeBases || !Array.isArray(knowledgeBases) || !formData.knowledge_base_ids) {
       return [];
     }
-    return knowledgeBases.filter((kb) =>
-      formData.knowledge_base_ids.includes(kb.id),
-    );
+    return knowledgeBases.filter((kb) => formData.knowledge_base_ids.includes(kb.id));
   }, [knowledgeBases, formData.knowledge_base_ids]);
 
   const parseTextFieldValue = (key, spec) => {
     const val = paramOverrides[key];
     if (val === undefined || val === null) {
-      return "";
+      return '';
     }
     // if user input is an object/array we stringify for display
-    if (
-      (spec.type === "object" || spec.type === "array") &&
-      typeof val !== "string"
-    ) {
+    if ((spec.type === 'object' || spec.type === 'array') && typeof val !== 'string') {
       try {
         return JSON.stringify(val);
       } catch {
@@ -379,14 +339,11 @@ const ModelConfigurationDialog = ({
 
   // Invalidate side-call config query after successful save to refresh the chip
   const handleSaveSuccess = () => {
-    queryClient.invalidateQueries("side-call-config");
+    queryClient.invalidateQueries('side-call-config');
   };
 
   // Keep typed parameters and Advanced JSON in sync
-  const visibleParamKeys = useMemo(
-    () => new Set(visibleParams.map(([k]) => k)),
-    [visibleParams],
-  );
+  const visibleParamKeys = useMemo(() => new Set(visibleParams.map(([k]) => k)), [visibleParams]);
 
   const deepClone = (val) => {
     try {
@@ -406,29 +363,26 @@ const ModelConfigurationDialog = ({
 
   const selectedProvider = useMemo(
     () => (providers || []).find((p) => p.id === formData.llm_provider_id),
-    [providers, formData.llm_provider_id],
+    [providers, formData.llm_provider_id]
   );
 
   const providerCapabilities = useMemo(
     () =>
-      selectedProvider?.provider_capabilities &&
-      typeof selectedProvider.provider_capabilities === "object"
+      selectedProvider?.provider_capabilities && typeof selectedProvider.provider_capabilities === 'object'
         ? selectedProvider.provider_capabilities
         : {},
-    [selectedProvider],
+    [selectedProvider]
   );
   const lastProviderIdRef = useRef(null);
 
-  const mapCapabilityKey = (capKey) =>
-    capKey.startsWith("supports_") ? capKey : `supports_${capKey}`;
+  const mapCapabilityKey = (capKey) => (capKey.startsWith('supports_') ? capKey : `supports_${capKey}`);
 
   const capabilityToggles = useMemo(() => {
     const funcs = formData.functionalities || {};
     return Object.entries(providerCapabilities)
       .map(([capKey, capVal]) => {
         const funcKey = mapCapabilityKey(capKey);
-        const value =
-          funcs[funcKey] !== undefined ? funcs[funcKey] : !!capVal?.value;
+        const value = funcs[funcKey] !== undefined ? funcs[funcKey] : !!capVal?.value;
         const label = capVal?.label || `Supports ${capKey}`;
         return { funcKey, value, label };
       })
@@ -440,8 +394,7 @@ const ModelConfigurationDialog = ({
       return;
     }
     const providerId = selectedProvider.id;
-    const providerChanged =
-      providerId && providerId !== lastProviderIdRef.current;
+    const providerChanged = providerId && providerId !== lastProviderIdRef.current;
     setFormData((prev) => {
       const prevFuncs = prev.functionalities || {};
       const prevHasFuncs = Object.keys(prevFuncs).length > 0;
@@ -454,11 +407,7 @@ const ModelConfigurationDialog = ({
         const funcKey = mapCapabilityKey(capKey);
         const existing = prevFuncs[funcKey];
         const defaultVal = !!capVal?.value;
-        nextFuncs[funcKey] = providerChanged
-          ? defaultVal
-          : existing !== undefined
-            ? existing
-            : defaultVal;
+        nextFuncs[funcKey] = providerChanged ? defaultVal : existing !== undefined ? existing : defaultVal;
       });
       if (deepEqual(prevFuncs, nextFuncs)) {
         return prev;
@@ -473,14 +422,7 @@ const ModelConfigurationDialog = ({
       return -1;
     }
     return arr.findIndex((v) => {
-      if (
-        v &&
-        optVal &&
-        typeof v === "object" &&
-        typeof optVal === "object" &&
-        v.type &&
-        optVal.type
-      ) {
+      if (v && optVal && typeof v === 'object' && typeof optVal === 'object' && v.type && optVal.type) {
         return v.type === optVal.type;
       }
       return deepEqual(v, optVal);
@@ -492,12 +434,9 @@ const ModelConfigurationDialog = ({
     const entries = Array.isArray(currentVal) ? currentVal : [];
     const addEntry = () => {
       let initial = {};
-      if (itemsSpec?.type === "string") {
-        initial = "";
-      } else if (
-        itemsSpec?.type === "number" ||
-        itemsSpec?.type === "integer"
-      ) {
+      if (itemsSpec?.type === 'string') {
+        initial = '';
+      } else if (itemsSpec?.type === 'number' || itemsSpec?.type === 'integer') {
         initial = 0;
       }
       onChange([...(entries || []), initial]);
@@ -515,16 +454,12 @@ const ModelConfigurationDialog = ({
     return (
       <Box sx={{ pl: 1 }}>
         {entries.map((entry, idx) => (
-          <Paper
-            key={`${paramKey}-item-${idx}`}
-            variant="outlined"
-            sx={{ p: 1, mb: 1 }}
-          >
+          <Paper key={`${paramKey}-item-${idx}`} variant="outlined" sx={{ p: 1, mb: 1 }}>
             <Box
               sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
                 mb: 1,
               }}
             >
@@ -535,13 +470,9 @@ const ModelConfigurationDialog = ({
             </Box>
             {itemsSpec && itemsSpec.properties ? (
               Object.entries(itemsSpec.properties).map(([propKey, propSpec]) =>
-                renderSchemaField(
-                  propKey,
-                  propSpec,
-                  entry ? entry[propKey] : undefined,
-                  (val) =>
-                    updateEntry(idx, setByPath(entry || {}, propKey, val)),
-                ),
+                renderSchemaField(propKey, propSpec, entry ? entry[propKey] : undefined, (val) =>
+                  updateEntry(idx, setByPath(entry || {}, propKey, val))
+                )
               )
             ) : (
               <TextField
@@ -550,13 +481,9 @@ const ModelConfigurationDialog = ({
                 label={itemsSpec?.label || `${paramKey} item`}
                 value={(() => {
                   if (entry === undefined || entry === null) {
-                    return "";
+                    return '';
                   }
-                  if (
-                    typeof entry === "string" ||
-                    typeof entry === "number" ||
-                    typeof entry === "boolean"
-                  ) {
+                  if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
                     return entry;
                   }
                   try {
@@ -567,10 +494,7 @@ const ModelConfigurationDialog = ({
                 })()}
                 onChange={(e) => {
                   let val = e.target.value;
-                  if (
-                    itemsSpec?.type === "object" ||
-                    itemsSpec?.type === "array"
-                  ) {
+                  if (itemsSpec?.type === 'object' || itemsSpec?.type === 'array') {
                     try {
                       val = JSON.parse(val);
                     } catch {
@@ -584,14 +508,14 @@ const ModelConfigurationDialog = ({
           </Paper>
         ))}
         <Button size="small" onClick={addEntry}>
-          Add {spec.label || itemsSpec?.label || "entry"}
+          Add {spec.label || itemsSpec?.label || 'entry'}
         </Button>
       </Box>
     );
   };
 
   const setByPath = (obj, path, value) => {
-    const parts = path.split(".");
+    const parts = path.split('.');
     const clone = Array.isArray(obj) ? [...obj] : { ...(obj || {}) };
     let cur = clone;
     for (let i = 0; i < parts.length; i++) {
@@ -599,8 +523,7 @@ const ModelConfigurationDialog = ({
       if (i === parts.length - 1) {
         cur[p] = value;
       } else {
-        cur[p] =
-          typeof cur[p] === "object" && cur[p] !== null ? { ...cur[p] } : {};
+        cur[p] = typeof cur[p] === 'object' && cur[p] !== null ? { ...cur[p] } : {};
         cur = cur[p];
       }
     }
@@ -619,12 +542,7 @@ const ModelConfigurationDialog = ({
       if (deepEqual(opt.value, value)) {
         return true;
       }
-      if (
-        opt.value &&
-        value &&
-        typeof opt.value === "object" &&
-        typeof value === "object"
-      ) {
+      if (opt.value && value && typeof opt.value === 'object' && typeof value === 'object') {
         if (opt.value.type && value.type && opt.value.type === value.type) {
           return true;
         }
@@ -642,12 +560,7 @@ const ModelConfigurationDialog = ({
       if (deepEqual(opt.value, value)) {
         return true;
       }
-      if (
-        opt.value &&
-        value &&
-        typeof opt.value === "object" &&
-        typeof value === "object"
-      ) {
+      if (opt.value && value && typeof opt.value === 'object' && typeof value === 'object') {
         if (opt.value.type && value.type && opt.value.type === value.type) {
           return true;
         }
@@ -659,24 +572,20 @@ const ModelConfigurationDialog = ({
   const renderSchemaField = (fieldKey, fieldSpec, currentVal, onChange) => {
     const commonProps = {
       fullWidth: true,
-      size: "small",
+      size: 'small',
       label: fieldSpec.label || fieldKey,
     };
-    if (fieldSpec.type === "enum" && Array.isArray(fieldSpec.options)) {
+    if (fieldSpec.type === 'enum' && Array.isArray(fieldSpec.options)) {
       return (
         <FormControl fullWidth size="small" sx={{ mb: 1 }} key={fieldKey}>
           <InputLabel>{fieldSpec.label || fieldKey}</InputLabel>
           <Select
-            value={
-              currentVal === undefined || currentVal === null ? "" : currentVal
-            }
+            value={currentVal === undefined || currentVal === null ? '' : currentVal}
             label={fieldSpec.label || fieldKey}
-            renderValue={(selected) =>
-              optionLabelForValue(fieldSpec.options, selected) || selected
-            }
+            renderValue={(selected) => optionLabelForValue(fieldSpec.options, selected) || selected}
             onChange={(e) => {
               const valRaw = e.target.value;
-              if (valRaw === "" || valRaw === null) {
+              if (valRaw === '' || valRaw === null) {
                 onChange(undefined);
                 return;
               }
@@ -692,26 +601,18 @@ const ModelConfigurationDialog = ({
         </FormControl>
       );
     }
-    if (fieldSpec.type === "boolean") {
+    if (fieldSpec.type === 'boolean') {
       return (
-        <Box
-          key={fieldKey}
-          sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}
-        >
-          <Switch
-            checked={!!currentVal}
-            onChange={(e) => onChange(e.target.checked)}
-          />
+        <Box key={fieldKey} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+          <Switch checked={!!currentVal} onChange={(e) => onChange(e.target.checked)} />
           <Typography variant="body2">{fieldSpec.label || fieldKey}</Typography>
         </Box>
       );
     }
-    if (fieldSpec.type === "array" && fieldSpec.items) {
+    if (fieldSpec.type === 'array' && fieldSpec.items) {
       return (
         <Box key={fieldKey} sx={{ mb: 1 }}>
-          <Typography variant="subtitle2">
-            {fieldSpec.label || fieldKey}
-          </Typography>
+          <Typography variant="subtitle2">{fieldSpec.label || fieldKey}</Typography>
           {fieldSpec.description ? (
             <Typography variant="body2" color="text.secondary">
               {fieldSpec.description}
@@ -721,39 +622,31 @@ const ModelConfigurationDialog = ({
         </Box>
       );
     }
-    if (fieldSpec.type === "object" && fieldSpec.properties) {
+    if (fieldSpec.type === 'object' && fieldSpec.properties) {
       return (
         <Box key={fieldKey} sx={{ pl: 1, mb: 1 }}>
           {Object.entries(fieldSpec.properties).map(([propKey, propSpec]) =>
-            renderSchemaField(
-              propKey,
-              propSpec,
-              (currentVal || {})[propKey],
-              (val) => {
-                const base =
-                  currentVal && typeof currentVal === "object"
-                    ? { ...currentVal }
-                    : {};
-                onChange(setByPath(base, propKey, val));
-              },
-            ),
+            renderSchemaField(propKey, propSpec, (currentVal || {})[propKey], (val) => {
+              const base = currentVal && typeof currentVal === 'object' ? { ...currentVal } : {};
+              onChange(setByPath(base, propKey, val));
+            })
           )}
         </Box>
       );
     }
     const handlePrimitiveChange = (raw) => {
-      if (raw === "") {
+      if (raw === '') {
         onChange(undefined);
         return;
       }
       let nextVal = raw;
-      if (fieldSpec.type === "number") {
+      if (fieldSpec.type === 'number') {
         const n = parseFloat(raw);
         nextVal = Number.isNaN(n) ? raw : n;
-      } else if (fieldSpec.type === "integer") {
+      } else if (fieldSpec.type === 'integer') {
         const n = parseInt(raw, 10);
         nextVal = Number.isNaN(n) ? raw : n;
-      } else if (fieldSpec.type === "object" || fieldSpec.type === "array") {
+      } else if (fieldSpec.type === 'object' || fieldSpec.type === 'array') {
         try {
           nextVal = JSON.parse(raw);
         } catch {
@@ -766,17 +659,11 @@ const ModelConfigurationDialog = ({
       <TextField
         key={fieldKey}
         {...commonProps}
-        type={
-          fieldSpec.type === "number" || fieldSpec.type === "integer"
-            ? "number"
-            : "text"
-        }
+        type={fieldSpec.type === 'number' || fieldSpec.type === 'integer' ? 'number' : 'text'}
         value={
           currentVal === undefined || currentVal === null
-            ? ""
-            : typeof currentVal === "string" ||
-                typeof currentVal === "number" ||
-                typeof currentVal === "boolean"
+            ? ''
+            : typeof currentVal === 'string' || typeof currentVal === 'number' || typeof currentVal === 'boolean'
               ? currentVal
               : (() => {
                   try {
@@ -829,7 +716,7 @@ const ModelConfigurationDialog = ({
     setAdvancedJson(text);
     const parsed = safeParseJson(text);
     if (!parsed.ok) {
-      setAdvancedJsonError("Invalid JSON");
+      setAdvancedJsonError('Invalid JSON');
       return;
     }
     setAdvancedJsonError(null);
@@ -859,9 +746,7 @@ const ModelConfigurationDialog = ({
               fullWidth
               label="Configuration Name"
               value={formData.name}
-              onChange={(e) =>
-                setFormData({ ...formData, name: e.target.value })
-              }
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             />
           </Grid>
           <Grid item xs={12}>
@@ -869,9 +754,7 @@ const ModelConfigurationDialog = ({
               fullWidth
               label="Description"
               value={formData.description}
-              onChange={(e) =>
-                setFormData({ ...formData, description: e.target.value })
-              }
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               multiline
               rows={2}
             />
@@ -885,7 +768,7 @@ const ModelConfigurationDialog = ({
                   setFormData({
                     ...formData,
                     llm_provider_id: e.target.value,
-                    model_name: "",
+                    model_name: '',
                   })
                 }
                 label="LLM Provider"
@@ -903,9 +786,7 @@ const ModelConfigurationDialog = ({
               <InputLabel>Model</InputLabel>
               <Select
                 value={formData.model_name}
-                onChange={(e) =>
-                  setFormData({ ...formData, model_name: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
                 label="Model"
               >
                 {models.map((model) => (
@@ -920,7 +801,7 @@ const ModelConfigurationDialog = ({
             <FormControl fullWidth>
               <InputLabel>Prompt (Optional)</InputLabel>
               <Select
-                value={formData.prompt_id || ""}
+                value={formData.prompt_id || ''}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
@@ -931,10 +812,10 @@ const ModelConfigurationDialog = ({
                 disabled={promptsLoading}
               >
                 <MenuItem value="">
-                  <em>{promptsLoading ? "Loading prompts..." : "No Prompt"}</em>
+                  <em>{promptsLoading ? 'Loading prompts...' : 'No Prompt'}</em>
                 </MenuItem>
                 {prompts
-                  .filter((p) => p.entity_type === "llm_model")
+                  .filter((p) => p.entity_type === 'llm_model')
                   .map((prompt) => (
                     <MenuItem key={prompt.id} value={prompt.id}>
                       {prompt.name}
@@ -961,11 +842,7 @@ const ModelConfigurationDialog = ({
                 <TextField
                   {...params}
                   label="Knowledge Bases (Optional)"
-                  placeholder={
-                    knowledgeBasesLoading
-                      ? "Loading knowledge bases..."
-                      : "Select knowledge bases for RAG"
-                  }
+                  placeholder={knowledgeBasesLoading ? 'Loading knowledge bases...' : 'Select knowledge bases for RAG'}
                 />
               )}
             />
@@ -978,20 +855,14 @@ const ModelConfigurationDialog = ({
                 <Typography variant="h6" gutterBottom>
                   Knowledge Base Prompts (Optional)
                 </Typography>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mb: 2 }}
-                >
-                  Assign specific KB context prompts to individual knowledge
-                  bases. If not specified, a default RAG prompt will be used.
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Assign specific KB context prompts to individual knowledge bases. If not specified, a default RAG
+                  prompt will be used.
                 </Typography>
 
                 {formData.knowledge_base_ids.map((kbId) => {
                   const kb = knowledgeBases.find((k) => k.id === kbId);
-                  const currentAssignment = formData.kb_prompt_assignments.find(
-                    (a) => a.knowledge_base_id === kbId,
-                  );
+                  const currentAssignment = formData.kb_prompt_assignments.find((a) => a.knowledge_base_id === kbId);
 
                   return (
                     <Box
@@ -999,23 +870,22 @@ const ModelConfigurationDialog = ({
                       sx={{
                         mb: 2,
                         p: 1,
-                        border: "1px solid",
-                        borderColor: "divider",
+                        border: '1px solid',
+                        borderColor: 'divider',
                         borderRadius: 1,
                       }}
                     >
                       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                        {kb?.name || "Unknown KB"}
+                        {kb?.name || 'Unknown KB'}
                       </Typography>
                       <FormControl fullWidth size="small">
                         <InputLabel>Specific Prompt (Optional)</InputLabel>
                         <Select
-                          value={currentAssignment?.prompt_id || ""}
+                          value={currentAssignment?.prompt_id || ''}
                           onChange={(e) => {
-                            const newAssignments =
-                              formData.kb_prompt_assignments.filter(
-                                (a) => a.knowledge_base_id !== kbId,
-                              );
+                            const newAssignments = formData.kb_prompt_assignments.filter(
+                              (a) => a.knowledge_base_id !== kbId
+                            );
                             if (e.target.value) {
                               newAssignments.push({
                                 knowledge_base_id: kbId,
@@ -1029,7 +899,7 @@ const ModelConfigurationDialog = ({
                           }}
                         >
                           {prompts
-                            .filter((p) => p.entity_type === "knowledge_base")
+                            .filter((p) => p.entity_type === 'knowledge_base')
                             .map((prompt) => (
                               <MenuItem key={prompt.id} value={prompt.id}>
                                 {prompt.name}
@@ -1051,14 +921,9 @@ const ModelConfigurationDialog = ({
                 <Typography>Advanced options</Typography>
               </AccordionSummary>
               <AccordionDetails>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mb: 2 }}
-                >
-                  These fields change the way the model is called. Depending on
-                  provider and model, you may need to customize these fields.
-                  Incorrect values may cause errors or unexpected behavior.
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  These fields change the way the model is called. Depending on provider and model, you may need to
+                  customize these fields. Incorrect values may cause errors or unexpected behavior.
                 </Typography>
 
                 <Box sx={{ mb: 2 }}>
@@ -1066,95 +931,67 @@ const ModelConfigurationDialog = ({
                     {visibleParams.map(([key, spec]) => (
                       <Grid item xs={12} key={key}>
                         <Box sx={{ mb: 1 }}>
-                          <Typography variant="subtitle1">
-                            {spec.label || key}
-                          </Typography>
+                          <Typography variant="subtitle1">{spec.label || key}</Typography>
                           {spec.description ? (
                             <Typography variant="body2" color="text.secondary">
                               {spec.description}
                             </Typography>
                           ) : null}
                         </Box>
-                        {spec.type === "enum" ? (
+                        {spec.type === 'enum' ? (
                           <FormControl fullWidth size="small">
                             <InputLabel>{spec.label || key}</InputLabel>
                             <Select
                               value={
-                                paramOverrides[key] === undefined ||
-                                paramOverrides[key] === null
-                                  ? ""
+                                paramOverrides[key] === undefined || paramOverrides[key] === null
+                                  ? ''
                                   : paramOverrides[key]
                               }
                               label={spec.label || key}
                               renderValue={(selected) => {
-                                const label = optionLabelForValue(
-                                  spec.options,
-                                  selected,
-                                );
+                                const label = optionLabelForValue(spec.options, selected);
                                 if (label) {
                                   return label;
                                 }
-                                if (selected && typeof selected === "object") {
+                                if (selected && typeof selected === 'object') {
                                   try {
                                     return JSON.stringify(selected);
                                   } catch {
-                                    return "[object]";
+                                    return '[object]';
                                   }
                                 }
                                 return selected;
                               }}
                               onChange={(e) => {
                                 const selectedRaw = e.target.value;
-                                if (
-                                  selectedRaw === "" ||
-                                  selectedRaw === null
-                                ) {
+                                if (selectedRaw === '' || selectedRaw === null) {
                                   handleParamChange(key, undefined, true);
                                   return;
                                 }
-                                const chosen = optionByValue(
-                                  spec.options,
-                                  selectedRaw,
-                                );
-                                handleParamChange(
-                                  key,
-                                  chosen?.value ?? selectedRaw,
-                                );
+                                const chosen = optionByValue(spec.options, selectedRaw);
+                                handleParamChange(key, chosen?.value ?? selectedRaw);
                               }}
                             >
                               {(spec.options || []).map((opt, idx) => (
-                                <MenuItem
-                                  key={`${key}-opt-${idx}`}
-                                  value={opt.value ?? opt}
-                                >
+                                <MenuItem key={`${key}-opt-${idx}`} value={opt.value ?? opt}>
                                   {opt.label || String(opt.value ?? opt)}
                                 </MenuItem>
                               ))}
                             </Select>
                             {(() => {
-                              const chosen = optionByValue(
-                                spec.options,
-                                paramOverrides[key],
-                              );
+                              const chosen = optionByValue(spec.options, paramOverrides[key]);
                               if (!chosen) {
                                 return null;
                               }
                               const baseVal =
-                                paramOverrides[key] &&
-                                typeof paramOverrides[key] === "object"
+                                paramOverrides[key] && typeof paramOverrides[key] === 'object'
                                   ? paramOverrides[key]
-                                  : typeof chosen.value === "object"
+                                  : typeof chosen.value === 'object'
                                     ? { ...chosen.value }
                                     : {};
                               const inputFields = chosen.input_fields || [];
-                              const inputSchemaProps =
-                                (chosen.input_schema &&
-                                  chosen.input_schema.properties) ||
-                                {};
-                              if (
-                                !inputFields.length &&
-                                !Object.keys(inputSchemaProps).length
-                              ) {
+                              const inputSchemaProps = (chosen.input_schema && chosen.input_schema.properties) || {};
+                              if (!inputFields.length && !Object.keys(inputSchemaProps).length) {
                                 return null;
                               }
                               return (
@@ -1167,7 +1004,7 @@ const ModelConfigurationDialog = ({
                                       fullWidth
                                       sx={{ mb: 1 }}
                                       value={(() => {
-                                        const parts = field.path.split(".");
+                                        const parts = field.path.split('.');
                                         let cur = baseVal;
                                         for (const p of parts) {
                                           if (cur == null) {
@@ -1175,14 +1012,10 @@ const ModelConfigurationDialog = ({
                                           }
                                           cur = cur[p];
                                         }
-                                        return cur ?? "";
+                                        return cur ?? '';
                                       })()}
                                       onChange={(e) => {
-                                        const nextVal = setByPath(
-                                          baseVal,
-                                          field.path,
-                                          e.target.value,
-                                        );
+                                        const nextVal = setByPath(baseVal, field.path, e.target.value);
                                         handleParamChange(key, {
                                           ...(chosen.value || {}),
                                           ...nextVal,
@@ -1190,41 +1023,30 @@ const ModelConfigurationDialog = ({
                                       }}
                                     />
                                   ))}
-                                  {Object.entries(inputSchemaProps).map(
-                                    ([propKey, propSpec]) =>
-                                      renderSchemaField(
-                                        propKey,
-                                        propSpec,
-                                        baseVal[propKey],
-                                        (val) => {
-                                          const nextVal = setByPath(
-                                            baseVal,
-                                            propKey,
-                                            val,
-                                          );
-                                          handleParamChange(key, {
-                                            ...(chosen.value || {}),
-                                            ...nextVal,
-                                          });
-                                        },
-                                      ),
+                                  {Object.entries(inputSchemaProps).map(([propKey, propSpec]) =>
+                                    renderSchemaField(propKey, propSpec, baseVal[propKey], (val) => {
+                                      const nextVal = setByPath(baseVal, propKey, val);
+                                      handleParamChange(key, {
+                                        ...(chosen.value || {}),
+                                        ...nextVal,
+                                      });
+                                    })
                                   )}
                                 </Box>
                               );
                             })()}
                           </FormControl>
-                        ) : spec.type === "boolean" ? (
+                        ) : spec.type === 'boolean' ? (
                           <Box
                             sx={{
-                              display: "flex",
-                              alignItems: "center",
+                              display: 'flex',
+                              alignItems: 'center',
                               gap: 1,
                             }}
                           >
                             <Switch
                               checked={
-                                paramOverrides[key] === true ||
-                                paramOverrides[key] === false
+                                paramOverrides[key] === true || paramOverrides[key] === false
                                   ? !!paramOverrides[key]
                                   : false
                               }
@@ -1233,30 +1055,16 @@ const ModelConfigurationDialog = ({
                                 handleParamChange(key, val);
                               }}
                             />
-                            <Typography variant="body2">
-                              {spec.label || key}
-                            </Typography>
+                            <Typography variant="body2">{spec.label || key}</Typography>
                           </Box>
-                        ) : spec.type === "array" &&
-                          Array.isArray(spec.options) ? (
+                        ) : spec.type === 'array' && Array.isArray(spec.options) ? (
                           <Box sx={{ pl: 1 }}>
                             {(spec.options || []).map((opt, idx) => {
-                              const currentArr = Array.isArray(
-                                paramOverrides[key],
-                              )
-                                ? paramOverrides[key]
-                                : [];
-                              const existingIdx = matchOptionIndex(
-                                currentArr,
-                                opt.value,
-                              );
+                              const currentArr = Array.isArray(paramOverrides[key]) ? paramOverrides[key] : [];
+                              const existingIdx = matchOptionIndex(currentArr, opt.value);
                               const checked = existingIdx >= 0;
                               const handleToggle = (checkedVal) => {
-                                const nextArr = Array.isArray(
-                                  paramOverrides[key],
-                                )
-                                  ? [...paramOverrides[key]]
-                                  : [];
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
                                 if (checkedVal) {
                                   nextArr.push(deepClone(opt.value));
                                 } else if (existingIdx >= 0) {
@@ -1268,27 +1076,15 @@ const ModelConfigurationDialog = ({
                                 if (existingIdx < 0) {
                                   return;
                                 }
-                                const nextArr = Array.isArray(
-                                  paramOverrides[key],
-                                )
-                                  ? [...paramOverrides[key]]
-                                  : [];
-                                nextArr[existingIdx] = setByPath(
-                                  nextArr[existingIdx],
-                                  field.path,
-                                  val,
-                                );
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
+                                nextArr[existingIdx] = setByPath(nextArr[existingIdx], field.path, val);
                                 updateParamValue(key, nextArr);
                               };
                               const handleSchemaJsonChange = (val) => {
                                 if (existingIdx < 0) {
                                   return;
                                 }
-                                const nextArr = Array.isArray(
-                                  paramOverrides[key],
-                                )
-                                  ? [...paramOverrides[key]]
-                                  : [];
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
                                 nextArr[existingIdx] = {
                                   ...nextArr[existingIdx],
                                   ...(val || {}),
@@ -1296,35 +1092,19 @@ const ModelConfigurationDialog = ({
                                 updateParamValue(key, nextArr);
                               };
                               return (
-                                <Paper
-                                  key={`${key}-opt-${idx}`}
-                                  variant="outlined"
-                                  sx={{ p: 1, mb: 1 }}
-                                >
+                                <Paper key={`${key}-opt-${idx}`} variant="outlined" sx={{ p: 1, mb: 1 }}>
                                   <Box
                                     sx={{
-                                      display: "flex",
-                                      alignItems: "center",
+                                      display: 'flex',
+                                      alignItems: 'center',
                                       gap: 1,
                                     }}
                                   >
-                                    <Switch
-                                      checked={checked}
-                                      onChange={(e) =>
-                                        handleToggle(e.target.checked)
-                                      }
-                                    />
-                                    <Typography variant="body2">
-                                      {opt.label || String(opt.value)}
-                                    </Typography>
+                                    <Switch checked={checked} onChange={(e) => handleToggle(e.target.checked)} />
+                                    <Typography variant="body2">{opt.label || String(opt.value)}</Typography>
                                   </Box>
-                                  {checked &&
-                                  (opt.input_fields?.length ||
-                                    opt.input_schema) ? (
-                                    <Box
-                                      sx={{ pl: 1, pt: 1 }}
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
+                                  {checked && (opt.input_fields?.length || opt.input_schema) ? (
+                                    <Box sx={{ pl: 1, pt: 1 }} onClick={(e) => e.stopPropagation()}>
                                       {(opt.input_fields || []).map((field) => (
                                         <TextField
                                           key={`${key}-${idx}-${field.path}`}
@@ -1335,67 +1115,48 @@ const ModelConfigurationDialog = ({
                                           value={
                                             existingIdx >= 0
                                               ? (() => {
-                                                  const parts =
-                                                    field.path.split(".");
-                                                  let cur =
-                                                    paramOverrides[key][
-                                                      existingIdx
-                                                    ];
+                                                  const parts = field.path.split('.');
+                                                  let cur = paramOverrides[key][existingIdx];
                                                   for (const p of parts) {
                                                     if (cur == null) {
                                                       break;
                                                     }
                                                     cur = cur[p];
                                                   }
-                                                  return cur ?? "";
+                                                  return cur ?? '';
                                                 })()
-                                              : ""
+                                              : ''
                                           }
-                                          onChange={(e) =>
-                                            handleInputFieldChange(
-                                              field,
-                                              e.target.value,
-                                            )
-                                          }
+                                          onChange={(e) => handleInputFieldChange(field, e.target.value)}
                                         />
                                       ))}
                                       {opt.input_schema ? (
                                         <Box
                                           sx={{
-                                            display: "flex",
-                                            flexDirection: "column",
+                                            display: 'flex',
+                                            flexDirection: 'column',
                                             gap: 1,
                                           }}
                                         >
-                                          {Object.entries(
-                                            opt.input_schema.properties || {},
-                                          ).map(([propKey, propSpec]) =>
-                                            renderSchemaField(
-                                              propKey,
-                                              propSpec,
-                                              existingIdx >= 0
-                                                ? paramOverrides[key][
-                                                    existingIdx
-                                                  ]?.[propKey]
-                                                : undefined,
-                                              (val) => {
-                                                if (existingIdx < 0) {
-                                                  return;
+                                          {Object.entries(opt.input_schema.properties || {}).map(
+                                            ([propKey, propSpec]) =>
+                                              renderSchemaField(
+                                                propKey,
+                                                propSpec,
+                                                existingIdx >= 0
+                                                  ? paramOverrides[key][existingIdx]?.[propKey]
+                                                  : undefined,
+                                                (val) => {
+                                                  if (existingIdx < 0) {
+                                                    return;
+                                                  }
+                                                  const nextArr = Array.isArray(paramOverrides[key])
+                                                    ? [...paramOverrides[key]]
+                                                    : [];
+                                                  nextArr[existingIdx] = setByPath(nextArr[existingIdx], propKey, val);
+                                                  updateParamValue(key, nextArr);
                                                 }
-                                                const nextArr = Array.isArray(
-                                                  paramOverrides[key],
-                                                )
-                                                  ? [...paramOverrides[key]]
-                                                  : [];
-                                                nextArr[existingIdx] =
-                                                  setByPath(
-                                                    nextArr[existingIdx],
-                                                    propKey,
-                                                    val,
-                                                  );
-                                                updateParamValue(key, nextArr);
-                                              },
-                                            ),
+                                              )
                                           )}
                                         </Box>
                                       ) : null}
@@ -1405,35 +1166,19 @@ const ModelConfigurationDialog = ({
                               );
                             })}
                           </Box>
-                        ) : spec.type === "array" && spec.items ? (
-                          renderArrayWithItems(
-                            key,
-                            spec,
-                            paramOverrides[key],
-                            (val) => handleParamChange(key, val),
-                          )
-                        ) : spec.type === "object" && spec.properties ? (
+                        ) : spec.type === 'array' && spec.items ? (
+                          renderArrayWithItems(key, spec, paramOverrides[key], (val) => handleParamChange(key, val))
+                        ) : spec.type === 'object' && spec.properties ? (
                           <Box sx={{ pl: 1 }}>
-                            {Object.entries(spec.properties || {}).map(
-                              ([propKey, propSpec]) =>
-                                renderSchemaField(
-                                  propKey,
-                                  propSpec,
-                                  (paramOverrides[key] || {})[propKey],
-                                  (val) => {
-                                    const base =
-                                      paramOverrides[key] &&
-                                      typeof paramOverrides[key] === "object"
-                                        ? { ...paramOverrides[key] }
-                                        : {};
-                                    const nextObj = setByPath(
-                                      base,
-                                      propKey,
-                                      val,
-                                    );
-                                    updateParamValue(key, nextObj);
-                                  },
-                                ),
+                            {Object.entries(spec.properties || {}).map(([propKey, propSpec]) =>
+                              renderSchemaField(propKey, propSpec, (paramOverrides[key] || {})[propKey], (val) => {
+                                const base =
+                                  paramOverrides[key] && typeof paramOverrides[key] === 'object'
+                                    ? { ...paramOverrides[key] }
+                                    : {};
+                                const nextObj = setByPath(base, propKey, val);
+                                updateParamValue(key, nextObj);
+                              })
                             )}
                           </Box>
                         ) : spec.options && spec.options.length ? (
@@ -1441,79 +1186,53 @@ const ModelConfigurationDialog = ({
                             <InputLabel>{spec.label || key}</InputLabel>
                             <Select
                               value={
-                                paramOverrides[key] === undefined ||
-                                paramOverrides[key] === null
-                                  ? ""
+                                paramOverrides[key] === undefined || paramOverrides[key] === null
+                                  ? ''
                                   : paramOverrides[key]
                               }
                               label={spec.label || key}
                               renderValue={(selected) => {
-                                const label = optionLabelForValue(
-                                  spec.options,
-                                  selected,
-                                );
+                                const label = optionLabelForValue(spec.options, selected);
                                 if (label) {
                                   return label;
                                 }
-                                if (selected && typeof selected === "object") {
+                                if (selected && typeof selected === 'object') {
                                   try {
                                     return JSON.stringify(selected);
                                   } catch {
-                                    return "[object]";
+                                    return '[object]';
                                   }
                                 }
                                 return selected;
                               }}
                               onChange={(e) => {
                                 const selectedRaw = e.target.value;
-                                if (
-                                  selectedRaw === "" ||
-                                  selectedRaw === null
-                                ) {
+                                if (selectedRaw === '' || selectedRaw === null) {
                                   handleParamChange(key, undefined, true);
                                   return;
                                 }
-                                const chosen = optionByValue(
-                                  spec.options,
-                                  selectedRaw,
-                                );
-                                handleParamChange(
-                                  key,
-                                  chosen?.value ?? selectedRaw,
-                                );
+                                const chosen = optionByValue(spec.options, selectedRaw);
+                                handleParamChange(key, chosen?.value ?? selectedRaw);
                               }}
                             >
                               {(spec.options || []).map((opt, idx) => (
-                                <MenuItem
-                                  key={`${key}-opt-${idx}`}
-                                  value={opt.value}
-                                >
+                                <MenuItem key={`${key}-opt-${idx}`} value={opt.value}>
                                   {opt.label || String(opt.value)}
                                 </MenuItem>
                               ))}
                             </Select>
                             {(() => {
-                              const chosen = optionByValue(
-                                spec.options,
-                                paramOverrides[key],
-                              );
+                              const chosen = optionByValue(spec.options, paramOverrides[key]);
                               if (!chosen) {
                                 return null;
                               }
                               const baseVal =
-                                paramOverrides[key] &&
-                                typeof paramOverrides[key] === "object"
+                                paramOverrides[key] && typeof paramOverrides[key] === 'object'
                                   ? paramOverrides[key]
                                   : {};
                               const inputFields = chosen.input_fields || [];
-                              const inputSchemaProps =
-                                (chosen.input_schema &&
-                                  chosen.input_schema.properties) ||
-                                {};
-                              if (
-                                !inputFields.length &&
-                                !Object.keys(inputSchemaProps).length
-                              ) {
+                              const inputSchemaProps = (chosen.input_schema && chosen.input_schema.properties) || {};
+                              if (!inputFields.length && !Object.keys(inputSchemaProps).length) {
                                 return null;
                               }
                               return (
@@ -1526,7 +1245,7 @@ const ModelConfigurationDialog = ({
                                       fullWidth
                                       sx={{ mb: 1 }}
                                       value={(() => {
-                                        const parts = field.path.split(".");
+                                        const parts = field.path.split('.');
                                         let cur = baseVal;
                                         for (const p of parts) {
                                           if (cur == null) {
@@ -1534,14 +1253,10 @@ const ModelConfigurationDialog = ({
                                           }
                                           cur = cur[p];
                                         }
-                                        return cur ?? "";
+                                        return cur ?? '';
                                       })()}
                                       onChange={(e) => {
-                                        const nextVal = setByPath(
-                                          baseVal,
-                                          field.path,
-                                          e.target.value,
-                                        );
+                                        const nextVal = setByPath(baseVal, field.path, e.target.value);
                                         handleParamChange(key, {
                                           ...(chosen.value || {}),
                                           ...nextVal,
@@ -1549,24 +1264,14 @@ const ModelConfigurationDialog = ({
                                       }}
                                     />
                                   ))}
-                                  {Object.entries(inputSchemaProps).map(
-                                    ([propKey, propSpec]) =>
-                                      renderSchemaField(
-                                        propKey,
-                                        propSpec,
-                                        baseVal[propKey],
-                                        (val) => {
-                                          const nextVal = setByPath(
-                                            baseVal,
-                                            propKey,
-                                            val,
-                                          );
-                                          handleParamChange(key, {
-                                            ...(chosen.value || {}),
-                                            ...nextVal,
-                                          });
-                                        },
-                                      ),
+                                  {Object.entries(inputSchemaProps).map(([propKey, propSpec]) =>
+                                    renderSchemaField(propKey, propSpec, baseVal[propKey], (val) => {
+                                      const nextVal = setByPath(baseVal, propKey, val);
+                                      handleParamChange(key, {
+                                        ...(chosen.value || {}),
+                                        ...nextVal,
+                                      });
+                                    })
                                   )}
                                 </Box>
                               );
@@ -1577,29 +1282,22 @@ const ModelConfigurationDialog = ({
                             fullWidth
                             size="small"
                             label={spec.label || key}
-                            type={
-                              spec.type === "number" || spec.type === "integer"
-                                ? "number"
-                                : "text"
-                            }
+                            type={spec.type === 'number' || spec.type === 'integer' ? 'number' : 'text'}
                             value={parseTextFieldValue(key, spec)}
                             onChange={(e) => {
                               const raw = e.target.value;
-                              if (raw === "") {
+                              if (raw === '') {
                                 handleParamChange(key, undefined, true);
                                 return;
                               }
                               let nextVal = raw;
-                              if (spec.type === "number") {
+                              if (spec.type === 'number') {
                                 const n = parseFloat(raw);
                                 nextVal = Number.isNaN(n) ? raw : n;
-                              } else if (spec.type === "integer") {
+                              } else if (spec.type === 'integer') {
                                 const n = parseInt(raw, 10);
                                 nextVal = Number.isNaN(n) ? raw : n;
-                              } else if (
-                                spec.type === "object" ||
-                                spec.type === "array"
-                              ) {
+                              } else if (spec.type === 'object' || spec.type === 'array') {
                                 try {
                                   nextVal = JSON.parse(raw);
                                 } catch {
@@ -1630,7 +1328,7 @@ const ModelConfigurationDialog = ({
                     value={advancedJson}
                     onChange={(e) => handleAdvancedJsonChange(e.target.value)}
                     error={!!advancedJsonError}
-                    helperText={advancedJsonError || ""}
+                    helperText={advancedJsonError || ''}
                   />
                 </Box>
               </AccordionDetails>
@@ -1638,27 +1336,22 @@ const ModelConfigurationDialog = ({
           </Grid>
 
           <Grid item xs={12}>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Switch
                 checked={formData.is_active}
-                onChange={(e) =>
-                  setFormData({ ...formData, is_active: e.target.checked })
-                }
+                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
               />
               <Typography variant="body2">Active</Typography>
             </Box>
             {capabilityToggles.map(({ funcKey, value, label }) => {
               // Determine if this is a tools or vision capability
-              const isToolsCapability =
-                funcKey === "supports_tools" ||
-                funcKey === "supports_tool_calling";
-              const isVisionCapability = funcKey === "supports_vision";
-              const showWarning =
-                value && (isToolsCapability || isVisionCapability);
+              const isToolsCapability = funcKey === 'supports_tools' || funcKey === 'supports_tool_calling';
+              const isVisionCapability = funcKey === 'supports_vision';
+              const showWarning = value && (isToolsCapability || isVisionCapability);
 
               return (
                 <Box key={funcKey}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Switch
                       checked={!!value}
                       onChange={(e) =>
@@ -1677,20 +1370,16 @@ const ModelConfigurationDialog = ({
                     <Alert severity="warning" sx={{ mt: 0.5, mb: 1, py: 0.5 }}>
                       {isToolsCapability && (
                         <>
-                          <strong>Tool calling support varies by model.</strong>{" "}
-                          Not all models support function/tool calling. If your
-                          model doesn't support this feature, you may encounter
-                          errors or unexpected behavior. Use the "Verify & Save"
-                          button to test your configuration.
+                          <strong>Tool calling support varies by model.</strong> Not all models support function/tool
+                          calling. If your model doesn't support this feature, you may encounter errors or unexpected
+                          behavior. Use the "Verify & Save" button to test your configuration.
                         </>
                       )}
                       {isVisionCapability && (
                         <>
-                          <strong>Vision support varies by model.</strong> Not
-                          all models can process images. If your model doesn't
-                          support vision, image attachments will be filtered out
-                          or may cause errors. Use the "Verify & Save" button to
-                          test your configuration.
+                          <strong>Vision support varies by model.</strong> Not all models can process images. If your
+                          model doesn't support vision, image attachments will be filtered out or may cause errors. Use
+                          the "Verify & Save" button to test your configuration.
                         </>
                       )}
                     </Alert>
@@ -1698,7 +1387,7 @@ const ModelConfigurationDialog = ({
                 </Box>
               );
             })}
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Switch
                 checked={formData.is_side_call_model || false}
                 onChange={(e) =>
@@ -1714,10 +1403,9 @@ const ModelConfigurationDialog = ({
           <Grid item xs={12}>
             <Box sx={{ mt: 0.5 }}>
               <Typography variant="body2" color="text.secondary">
-                <strong>Side Calls:</strong> When enabled, this model will be
-                used for optimized LLM side-calls like prompt assistance, title
-                generation, and UI summaries. Only one model should have this
-                enabled at a time.
+                <strong>Side Calls:</strong> When enabled, this model will be used for optimized LLM side-calls like
+                prompt assistance, title generation, and UI summaries. Only one model should have this enabled at a
+                time.
               </Typography>
             </Box>
           </Grid>
@@ -1725,10 +1413,7 @@ const ModelConfigurationDialog = ({
 
         {/* Error Alert */}
         {verifyError && (
-          <Alert
-            severity="error"
-            sx={{ mt: 2, "& .MuiAlert-message": { whiteSpace: "pre-wrap" } }}
-          >
+          <Alert severity="error" sx={{ mt: 2, '& .MuiAlert-message': { whiteSpace: 'pre-wrap' } }}>
             {verifyError}
           </Alert>
         )}
@@ -1737,58 +1422,42 @@ const ModelConfigurationDialog = ({
         <Button onClick={handleCancelClick}>Cancel</Button>
         <Button
           variant="contained"
-          startIcon={
-            isVerifying ? <CircularProgress size={16} /> : <VerifyIcon />
-          }
+          startIcon={isVerifying ? <CircularProgress size={16} /> : <VerifyIcon />}
           onClick={handleVerify}
           disabled={!isFormValidForVerify || isVerifying || isSubmitting}
         >
-          {isVerifying ? "Verifying..." : "Verify & Save"}
+          {isVerifying ? 'Verifying...' : 'Verify & Save'}
         </Button>
       </DialogActions>
 
       {/* Cancel Confirmation Dialog */}
-      <Dialog
-        open={showCancelConfirm}
-        onClose={() => setShowCancelConfirm(false)}
-        maxWidth="sm"
-      >
+      <Dialog open={showCancelConfirm} onClose={() => setShowCancelConfirm(false)} maxWidth="sm">
         <DialogTitle>Discard Changes?</DialogTitle>
         <DialogContent>
           <Typography>
             {isEditMode
-              ? "Your configuration changes have not been verified. Cancelling will restore the configuration to its last working state."
-              : "Your new configuration has not been verified. Cancelling will discard it entirely."}
+              ? 'Your configuration changes have not been verified. Cancelling will restore the configuration to its last working state.'
+              : 'Your new configuration has not been verified. Cancelling will discard it entirely.'}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            To keep your changes, go back and complete a successful test, then
-            click "Save Configuration".
+            To keep your changes, go back and complete a successful test, then click "Save Configuration".
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowCancelConfirm(false)}>Go Back</Button>
-          <Button
-            onClick={handleConfirmedCancel}
-            color="error"
-            variant="contained"
-          >
-            {isEditMode ? "Restore Original" : "Discard"}
+          <Button onClick={handleConfirmedCancel} color="error" variant="contained">
+            {isEditMode ? 'Restore Original' : 'Discard'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* LLM Tester Modal for Verification */}
-      <Dialog
-        open={showLLMTester}
-        onClose={() => setShowLLMTester(false)}
-        maxWidth="xl"
-        fullWidth
-      >
+      <Dialog open={showLLMTester} onClose={() => setShowLLMTester(false)} maxWidth="xl" fullWidth>
         <DialogTitle>Verify Configuration</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Test your configuration to verify it works correctly. After a
-            successful test, click "Save Configuration" to complete.
+            Test your configuration to verify it works correctly. After a successful test, click "Save Configuration" to
+            complete.
           </Typography>
           <LLMTester
             prePopulatedConfigId={tempConfigId || existingConfigId}
@@ -1798,15 +1467,9 @@ const ModelConfigurationDialog = ({
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowLLMTester(false)}>
-            {testSucceeded ? "Close" : "Back to Edit"}
-          </Button>
+          <Button onClick={() => setShowLLMTester(false)}>{testSucceeded ? 'Close' : 'Back to Edit'}</Button>
           {testSucceeded && (
-            <Button
-              variant="contained"
-              color="success"
-              onClick={handleTestSuccess}
-            >
+            <Button variant="contained" color="success" onClick={handleTestSuccess}>
               Save Configuration
             </Button>
           )}

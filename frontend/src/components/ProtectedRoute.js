@@ -1,24 +1,14 @@
-import React from "react";
-import { Alert, Box } from "@mui/material";
-import { useAuth } from "../hooks/useAuth";
+import React from 'react';
+import { Alert, Box } from '@mui/material';
+import { useAuth } from '../hooks/useAuth';
 
-const ProtectedRoute = ({
-  children,
-  requiredRole = null,
-  requireAuth = true,
-  fallback = null,
-}) => {
+const ProtectedRoute = ({ children, requiredRole = null, requireAuth = true, fallback = null }) => {
   const { isAuthenticated, hasRole, loading } = useAuth();
 
   // Show loading state while checking authentication
   if (loading) {
     return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight="200px"
-      >
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
         Loading...
       </Box>
     );
@@ -26,23 +16,14 @@ const ProtectedRoute = ({
 
   // Check authentication requirement
   if (requireAuth && !isAuthenticated) {
-    return (
-      fallback || (
-        <Alert severity="error">
-          You must be logged in to access this page.
-        </Alert>
-      )
-    );
+    return fallback || <Alert severity="error">You must be logged in to access this page.</Alert>;
   }
 
   // Check role requirement
   if (requiredRole && !hasRole(requiredRole)) {
     return (
       fallback || (
-        <Alert severity="error">
-          You don't have permission to access this page. Required role:{" "}
-          {requiredRole}
-        </Alert>
+        <Alert severity="error">You don't have permission to access this page. Required role: {requiredRole}</Alert>
       )
     );
   }
@@ -60,12 +41,7 @@ export const withAuth = (Component, requiredRole = null) => {
 };
 
 // Component for conditionally rendering content based on roles
-export const RoleGuard = ({
-  children,
-  requiredRole,
-  fallback = null,
-  inverse = false,
-}) => {
+export const RoleGuard = ({ children, requiredRole, fallback = null, inverse = false }) => {
   const { hasRole } = useAuth();
 
   const hasPermission = hasRole(requiredRole);

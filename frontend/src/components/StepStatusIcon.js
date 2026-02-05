@@ -1,11 +1,11 @@
-import React from "react";
-import { CircularProgress } from "@mui/material";
+import React from 'react';
+import { CircularProgress } from '@mui/material';
 import {
   CheckCircle as CheckIcon,
   Error as ErrorIcon,
   RadioButtonUnchecked as PendingIcon,
   SkipNext as SkipIcon,
-} from "@mui/icons-material";
+} from '@mui/icons-material';
 
 /**
  * Renders an icon representing the status of an experience step.
@@ -21,13 +21,13 @@ export default function StepStatusIcon({ state }) {
   }
 
   switch (state.status) {
-    case "running":
+    case 'running':
       return <CircularProgress size={20} />;
-    case "succeeded":
+    case 'succeeded':
       return <CheckIcon color="success" />;
-    case "failed":
+    case 'failed':
       return <ErrorIcon color="error" />;
-    case "skipped":
+    case 'skipped':
       return <SkipIcon color="action" />;
     default:
       return <PendingIcon color="disabled" />;

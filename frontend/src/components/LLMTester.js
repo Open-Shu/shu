@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "react-query";
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation } from 'react-query';
 import {
   Box,
   Typography,
@@ -26,7 +26,7 @@ import {
   Switch,
   FormControlLabel,
   LinearProgress,
-} from "@mui/material";
+} from '@mui/material';
 import {
   PlayArrow as TestIcon,
   ContentCopy as CopyIcon,
@@ -37,7 +37,7 @@ import {
   Settings as SettingsIcon,
   Timer as TimerIcon,
   Error as ErrorIcon,
-} from "@mui/icons-material";
+} from '@mui/icons-material';
 import {
   llmAPI,
   knowledgeBaseAPI,
@@ -46,20 +46,18 @@ import {
   formatError,
   extractDataFromResponse,
   extractItemsFromResponse,
-} from "../services/api";
-import QueryConfiguration from "./QueryConfiguration";
-import SourcePreview from "./SourcePreview";
-import PageHelpHeader from "./PageHelpHeader";
-import JSONPretty from "react-json-pretty";
-import "react-json-pretty/themes/monikai.css";
+} from '../services/api';
+import QueryConfiguration from './QueryConfiguration';
+import SourcePreview from './SourcePreview';
+import PageHelpHeader from './PageHelpHeader';
+import JSONPretty from 'react-json-pretty';
+import 'react-json-pretty/themes/monikai.css';
 
-import log from "../utils/log";
+import log from '../utils/log';
 function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   // Component state
-  const [selectedConfigId, setSelectedConfigId] = useState(
-    prePopulatedConfigId || "",
-  );
-  const [userMessage, setUserMessage] = useState("");
+  const [selectedConfigId, setSelectedConfigId] = useState(prePopulatedConfigId || '');
+  const [userMessage, setUserMessage] = useState('');
   const [enablePostProcessing, setEnablePostProcessing] = useState(true);
   const [streamState, setStreamState] = useState({
     isLoading: false,
@@ -73,7 +71,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   const [testDuration, setTestDuration] = useState(null);
 
   // Query configuration state (for knowledge base search)
-  const [searchType, setSearchType] = useState("hybrid");
+  const [searchType, setSearchType] = useState('hybrid');
   const [searchLimit, setSearchLimit] = useState(10);
   const [searchThreshold, setSearchThreshold] = useState(null);
   const [titleWeightingEnabled, setTitleWeightingEnabled] = useState(true);
@@ -84,8 +82,8 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
     data: configurationsResponse,
     isLoading: configurationsLoading,
     refetch: refetchConfigurations,
-  } = useQuery(["model-configurations", { includeInactive: true }], () =>
-    modelConfigAPI.list({ include_relationships: true, active_only: false }),
+  } = useQuery(['model-configurations', { includeInactive: true }], () =>
+    modelConfigAPI.list({ include_relationships: true, active_only: false })
   );
   const configurations = extractItemsFromResponse(configurationsResponse);
 
@@ -105,9 +103,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   useEffect(() => {
     if (prePopulatedConfigId && configurations.length > 0) {
       // Check if the config exists in the loaded configurations
-      const configExists = configurations.some(
-        (c) => c.id === prePopulatedConfigId,
-      );
+      const configExists = configurations.some((c) => c.id === prePopulatedConfigId);
       if (configExists) {
         setSelectedConfigId(prePopulatedConfigId);
       }
@@ -115,17 +111,11 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   }, [prePopulatedConfigId, configurations]);
 
   // Fetch LLM providers (for display purposes only)
-  const { data: providersResponse } = useQuery(
-    "llm-providers",
-    llmAPI.getProviders,
-  );
+  const { data: providersResponse } = useQuery('llm-providers', llmAPI.getProviders);
   const providers = extractItemsFromResponse(providersResponse);
 
   // Fetch knowledge bases (for display purposes only)
-  const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery(
-    "knowledge-bases",
-    knowledgeBaseAPI.list,
-  );
+  const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledge-bases', knowledgeBaseAPI.list);
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
 
   // Query mutation for fetching sources (separate from LLM completion)
@@ -134,44 +124,40 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
       const basePayload = {
         query: params.query,
         limit: params.limit,
-        rag_rewrite_mode: "raw_query",
+        rag_rewrite_mode: 'raw_query',
       };
 
-      if (params.searchType === "similarity") {
+      if (params.searchType === 'similarity') {
         return queryAPI.search(params.kbId, {
           ...basePayload,
-          query_type: "similarity",
+          query_type: 'similarity',
           similarity_threshold: params.threshold,
         });
       }
 
-      if (params.searchType === "keyword") {
+      if (params.searchType === 'keyword') {
         return queryAPI.search(params.kbId, {
           ...basePayload,
-          query_type: "keyword",
+          query_type: 'keyword',
           similarity_threshold: params.threshold,
           title_weighting_enabled: params.titleWeightingEnabled,
-          title_weight_multiplier: params.titleWeightingEnabled
-            ? params.titleWeightMultiplier
-            : 1.0,
+          title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
         });
       }
 
       return queryAPI.search(params.kbId, {
         ...basePayload,
-        query_type: "hybrid",
+        query_type: 'hybrid',
         similarity_threshold: params.threshold,
         title_weighting_enabled: params.titleWeightingEnabled,
-        title_weight_multiplier: params.titleWeightingEnabled
-          ? params.titleWeightMultiplier
-          : 1.0,
+        title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
       });
     },
     {
       onError: (error) => {
-        log.error("Sources query error:", error);
+        log.error('Sources query error:', error);
       },
-    },
+    }
   );
 
   /**
@@ -224,9 +210,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
           data: {
             content: result.response,
             model: result.model_used,
-            provider: providers.find(
-              (p) => p.id === selectedConfig?.llm_provider_id,
-            )?.name,
+            provider: providers.find((p) => p.id === selectedConfig?.llm_provider_id)?.name,
             usage: result.token_usage,
             post_processing_applied: result.prompt_applied,
             source_metadata: [],
@@ -241,10 +225,9 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
         }
       } else {
         // Test returned an error from the provider
-        const errorMessage = result.error || "Test failed";
+        const errorMessage = result.error || 'Test failed';
         const isTimeout =
-          errorMessage.toLowerCase().includes("timeout") ||
-          errorMessage.toLowerCase().includes("timed out");
+          errorMessage.toLowerCase().includes('timeout') || errorMessage.toLowerCase().includes('timed out');
 
         setStreamState({
           isLoading: false,
@@ -262,15 +245,15 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
       setTestDuration(duration);
 
       // Check if this is a timeout error
-      const errorMessage = err?.message || "Unknown error";
+      const errorMessage = err?.message || 'Unknown error';
       const isTimeout =
-        errorMessage.toLowerCase().includes("timeout") ||
-        errorMessage.toLowerCase().includes("timed out") ||
-        err?.code === "ECONNABORTED";
+        errorMessage.toLowerCase().includes('timeout') ||
+        errorMessage.toLowerCase().includes('timed out') ||
+        err?.code === 'ECONNABORTED';
 
       // Display error without crashing component
       // Preserve the original error structure for formatError compatibility
-      log.error("LLM test error:", err);
+      log.error('LLM test error:', err);
 
       // Create an enhanced error object that preserves original error properties
       const enhancedError = Object.assign({}, err, {
@@ -294,7 +277,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
    */
   const formatDuration = (ms) => {
     if (ms === null || ms === undefined) {
-      return "N/A";
+      return 'N/A';
     }
     if (ms < 1000) {
       return `${ms}ms`;
@@ -314,8 +297,8 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   const formatLLMRequest = () => {
     if (!selectedConfig) {
       return {
-        provider: "N/A",
-        model: "N/A",
+        provider: 'N/A',
+        model: 'N/A',
         messages: [],
       };
     }
@@ -325,9 +308,9 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
     // Add model prompt if configured
     if (selectedConfig.prompt) {
       messages.push({
-        role: "system",
+        role: 'system',
         content: selectedConfig.prompt.content,
-        source: "Model Prompt",
+        source: 'Model Prompt',
       });
     }
 
@@ -336,24 +319,22 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
       selectedConfig.kb_prompt_assignments.forEach((assignment) => {
         if (assignment.prompt) {
           messages.push({
-            role: "system",
+            role: 'system',
             content: `${assignment.prompt.content}\n\n[KB Context would be inserted here]`,
-            source: `KB Prompt (${assignment.knowledge_base?.name || "KB"})`,
+            source: `KB Prompt (${assignment.knowledge_base?.name || 'KB'})`,
           });
         }
       });
     }
 
     messages.push({
-      role: "user",
+      role: 'user',
       content: userMessage,
-      source: "User Input",
+      source: 'User Input',
     });
 
     return {
-      provider:
-        providers.find((p) => p.id === selectedConfig.llm_provider_id)?.name ||
-        "Unknown",
+      provider: providers.find((p) => p.id === selectedConfig.llm_provider_id)?.name || 'Unknown',
       model: selectedConfig.model_name,
       messages: messages,
     };
@@ -368,11 +349,11 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
         description="Test LLM calls directly using existing model configurations. Use this to verify model behavior, debug prompts, and experiment with configurations before using them in production."
         icon={<PromptIcon />}
         tips={[
-          "Select a model configuration from the dropdown to test",
-          "Type a message to test the configuration with your prompt",
-          "View configuration details to see provider, model, prompts, and knowledge bases",
-          "View the Request Preview tab to see exactly what will be sent to the LLM",
-          "This creates a temporary conversation for testing—results are cleaned up automatically",
+          'Select a model configuration from the dropdown to test',
+          'Type a message to test the configuration with your prompt',
+          'View configuration details to see provider, model, prompts, and knowledge bases',
+          'View the Request Preview tab to see exactly what will be sent to the LLM',
+          'This creates a temporary conversation for testing—results are cleaned up automatically',
         ]}
       />
 
@@ -382,15 +363,13 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                <SettingsIcon sx={{ mr: 1, verticalAlign: "middle" }} />
+                <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Model Configuration
               </Typography>
 
               {/* Model Configuration Selection */}
               <FormControl fullWidth margin="normal" variant="outlined">
-                <InputLabel id="config-select-label">
-                  Model Configuration
-                </InputLabel>
+                <InputLabel id="config-select-label">Model Configuration</InputLabel>
                 <Select
                   labelId="config-select-label"
                   value={selectedConfigId}
@@ -415,82 +394,67 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                   </Divider>
 
                   {/* Provider and Model */}
-                  <Paper sx={{ p: 2, mb: 2, backgroundColor: "grey.50" }}>
+                  <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
                     <Typography variant="subtitle2" gutterBottom>
                       <ModelIcon
                         sx={{
                           mr: 1,
-                          verticalAlign: "middle",
-                          fontSize: "1rem",
+                          verticalAlign: 'middle',
+                          fontSize: '1rem',
                         }}
                       />
                       Provider & Model
                     </Typography>
-                    <Box
-                      sx={{ display: "flex", flexWrap: "wrap", gap: 1, mt: 1 }}
-                    >
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
                       <Chip
-                        label={`Provider: ${providers.find((p) => p.id === selectedConfig.llm_provider_id)?.name || "Unknown"}`}
+                        label={`Provider: ${providers.find((p) => p.id === selectedConfig.llm_provider_id)?.name || 'Unknown'}`}
                         size="small"
                         color="primary"
                       />
-                      <Chip
-                        label={`Model: ${selectedConfig.model_name}`}
-                        size="small"
-                        color="primary"
-                      />
+                      <Chip label={`Model: ${selectedConfig.model_name}`} size="small" color="primary" />
                     </Box>
                   </Paper>
 
                   {/* Model Prompt */}
                   {selectedConfig.prompt && (
-                    <Paper sx={{ p: 2, mb: 2, backgroundColor: "grey.50" }}>
+                    <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
                       <Typography variant="subtitle2" gutterBottom>
                         <PromptIcon
                           sx={{
                             mr: 1,
-                            verticalAlign: "middle",
-                            fontSize: "1rem",
+                            verticalAlign: 'middle',
+                            fontSize: '1rem',
                           }}
                         />
                         Model Prompt
                       </Typography>
-                      <Chip
-                        label={selectedConfig.prompt.name}
-                        size="small"
-                        color="secondary"
-                      />
+                      <Chip label={selectedConfig.prompt.name} size="small" color="secondary" />
                     </Paper>
                   )}
 
                   {/* Knowledge Bases */}
                   {selectedConfig.knowledge_bases?.length > 0 && (
-                    <Paper sx={{ p: 2, mb: 2, backgroundColor: "grey.50" }}>
+                    <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
                       <Typography variant="subtitle2" gutterBottom>
                         <KnowledgeBaseIcon
                           sx={{
                             mr: 1,
-                            verticalAlign: "middle",
-                            fontSize: "1rem",
+                            verticalAlign: 'middle',
+                            fontSize: '1rem',
                           }}
                         />
                         Knowledge Bases
                       </Typography>
                       <Box
                         sx={{
-                          display: "flex",
-                          flexWrap: "wrap",
+                          display: 'flex',
+                          flexWrap: 'wrap',
                           gap: 1,
                           mt: 1,
                         }}
                       >
                         {selectedConfig.knowledge_bases?.map((kb) => (
-                          <Chip
-                            key={kb.id}
-                            label={kb.name}
-                            size="small"
-                            color="info"
-                          />
+                          <Chip key={kb.id} label={kb.name} size="small" color="info" />
                         ))}
                       </Box>
                       {selectedConfig.kb_prompt_assignments?.length > 0 && (
@@ -500,23 +464,21 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                           </Typography>
                           <Box
                             sx={{
-                              display: "flex",
-                              flexWrap: "wrap",
+                              display: 'flex',
+                              flexWrap: 'wrap',
                               gap: 1,
                               mt: 0.5,
                             }}
                           >
-                            {selectedConfig.kb_prompt_assignments.map(
-                              (assignment) => (
-                                <Chip
-                                  key={assignment.id}
-                                  label={assignment.prompt?.name || "Unknown"}
-                                  size="small"
-                                  variant="outlined"
-                                  color="info"
-                                />
-                              ),
-                            )}
+                            {selectedConfig.kb_prompt_assignments.map((assignment) => (
+                              <Chip
+                                key={assignment.id}
+                                label={assignment.prompt?.name || 'Unknown'}
+                                size="small"
+                                variant="outlined"
+                                color="info"
+                              />
+                            ))}
                           </Box>
                         </Box>
                       )}
@@ -602,23 +564,13 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
               {/* Test Button */}
               <Button
                 variant="contained"
-                startIcon={
-                  streamState.isLoading ? (
-                    <CircularProgress size={20} color="inherit" />
-                  ) : (
-                    <TestIcon />
-                  )
-                }
+                startIcon={streamState.isLoading ? <CircularProgress size={20} color="inherit" /> : <TestIcon />}
                 onClick={handleTest}
-                disabled={
-                  !selectedConfigId ||
-                  !userMessage.trim() ||
-                  streamState.isLoading
-                }
+                disabled={!selectedConfigId || !userMessage.trim() || streamState.isLoading}
                 fullWidth
                 sx={{ mt: 2 }}
               >
-                {streamState.isLoading ? "Testing..." : "Test LLM Call"}
+                {streamState.isLoading ? 'Testing...' : 'Test LLM Call'}
               </Button>
 
               {/* Progress indicator while testing */}
@@ -628,7 +580,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ mt: 1, display: "block", textAlign: "center" }}
+                    sx={{ mt: 1, display: 'block', textAlign: 'center' }}
                   >
                     Waiting for LLM response...
                   </Typography>
@@ -641,26 +593,13 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                   <Typography variant="subtitle2" gutterBottom>
                     Configuration Summary:
                   </Typography>
-                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                    <Chip
-                      label={`Config: ${selectedConfig.name}`}
-                      size="small"
-                      color="primary"
-                      variant="outlined"
-                    />
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    <Chip label={`Config: ${selectedConfig.name}`} size="small" color="primary" variant="outlined" />
                     {selectedConfig.prompt && (
-                      <Chip
-                        label={`Model Prompt: ${selectedConfig.prompt.name}`}
-                        size="small"
-                        color="secondary"
-                      />
+                      <Chip label={`Model Prompt: ${selectedConfig.prompt.name}`} size="small" color="secondary" />
                     )}
                     {selectedConfig.knowledge_bases?.length > 0 && (
-                      <Chip
-                        label={`${selectedConfig.knowledge_bases.length} KB(s)`}
-                        size="small"
-                        color="info"
-                      />
+                      <Chip label={`${selectedConfig.knowledge_bases.length} KB(s)`} size="small" color="info" />
                     )}
                   </Box>
                 </Box>
@@ -678,12 +617,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
               </Typography>
 
               {streamState.isLoading && (
-                <Box
-                  display="flex"
-                  justifyContent="center"
-                  alignItems="center"
-                  minHeight="200px"
-                >
+                <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
                   <CircularProgress />
                 </Box>
               )}
@@ -692,9 +626,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                 <Alert
                   severity="error"
                   sx={{ mb: 2 }}
-                  icon={
-                    streamState.error.isTimeout ? <TimerIcon /> : <ErrorIcon />
-                  }
+                  icon={streamState.error.isTimeout ? <TimerIcon /> : <ErrorIcon />}
                 >
                   {streamState.error.isTimeout ? (
                     <Box>
@@ -702,42 +634,24 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                         Request Timed Out
                       </Typography>
                       <Typography variant="body2">
-                        The LLM request timed out after{" "}
-                        {formatDuration(
-                          streamState.error.duration || testDuration,
-                        )}
-                        . This may indicate the model is slow to respond or the
-                        server is under heavy load.
+                        The LLM request timed out after {formatDuration(streamState.error.duration || testDuration)}.
+                        This may indicate the model is slow to respond or the server is under heavy load.
                       </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ mt: 1, display: "block" }}
-                      >
-                        Suggestions: Try a simpler prompt, check your provider
-                        connection, or increase the timeout in your
-                        configuration.
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        Suggestions: Try a simpler prompt, check your provider connection, or increase the timeout in
+                        your configuration.
                       </Typography>
                     </Box>
                   ) : (
                     <Box>
-                      <Typography
-                        variant="body2"
-                        sx={{ whiteSpace: "pre-wrap" }}
-                      >
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                         {formatError(streamState.error)}
                       </Typography>
-                      {streamState.error.duration != null &&
-                        streamState.error.duration > 0 && (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ mt: 1, display: "block" }}
-                          >
-                            Failed after{" "}
-                            {formatDuration(streamState.error.duration)}
-                          </Typography>
-                        )}
+                      {streamState.error.duration != null && streamState.error.duration > 0 && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                          Failed after {formatDuration(streamState.error.duration)}
+                        </Typography>
+                      )}
                     </Box>
                   )}
                 </Alert>
@@ -751,43 +665,30 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                       sx={{
                         p: 2,
                         mb: 2,
-                        backgroundColor: "success.light",
-                        display: "flex",
-                        alignItems: "center",
+                        backgroundColor: 'success.light',
+                        display: 'flex',
+                        alignItems: 'center',
                         gap: 1,
                       }}
                     >
                       <TimerIcon color="success" />
                       <Typography variant="body2" color="success.dark">
-                        Test completed successfully in{" "}
-                        <strong>
-                          {formatDuration(llmResult.response_time_ms)}
-                        </strong>
+                        Test completed successfully in <strong>{formatDuration(llmResult.response_time_ms)}</strong>
                       </Typography>
                     </Paper>
                   )}
 
-                  <Tabs
-                    value={activeTab}
-                    onChange={(_, newValue) => setActiveTab(newValue)}
-                  >
+                  <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
                     <Tab label="Final Output" />
                     <Tab label="Request Details" />
                     <Tab label="Raw LLM Response" />
-                    {llmResult.post_processing_applied && (
-                      <Tab label="Post-processing" />
-                    )}
+                    {llmResult.post_processing_applied && <Tab label="Post-processing" />}
                   </Tabs>
 
                   {activeTab === 0 && (
                     <Box sx={{ mt: 2 }}>
-                      <Paper sx={{ p: 2, backgroundColor: "grey.50" }}>
-                        <Box
-                          display="flex"
-                          justifyContent="space-between"
-                          alignItems="flex-start"
-                          mb={1}
-                        >
+                      <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={1}>
                           <Typography variant="subtitle2" color="primary">
                             Final Output
                           </Typography>
@@ -804,17 +705,9 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                         {llmResult.post_processing_applied !== undefined && (
                           <Box sx={{ mb: 2 }}>
                             <Chip
-                              label={
-                                llmResult.post_processing_applied
-                                  ? "Post-processed"
-                                  : "No post-processing"
-                              }
+                              label={llmResult.post_processing_applied ? 'Post-processed' : 'No post-processing'}
                               size="small"
-                              color={
-                                llmResult.post_processing_applied
-                                  ? "success"
-                                  : "default"
-                              }
+                              color={llmResult.post_processing_applied ? 'success' : 'default'}
                               variant="outlined"
                             />
                             {llmResult.post_processing_reason && (
@@ -829,41 +722,30 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                           </Box>
                         )}
 
-                        <Typography
-                          variant="body1"
-                          sx={{ whiteSpace: "pre-wrap" }}
-                        >
+                        <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                           {llmResult.content}
                         </Typography>
 
                         <Box
                           sx={{
                             mt: 2,
-                            display: "flex",
+                            display: 'flex',
                             gap: 1,
-                            flexWrap: "wrap",
+                            flexWrap: 'wrap',
                           }}
                         >
-                          <Chip
-                            label={`Model: ${llmResult.model}`}
-                            size="small"
-                            variant="outlined"
-                          />
-                          <Chip
-                            label={`Provider: ${llmResult.provider}`}
-                            size="small"
-                            variant="outlined"
-                          />
+                          <Chip label={`Model: ${llmResult.model}`} size="small" variant="outlined" />
+                          <Chip label={`Provider: ${llmResult.provider}`} size="small" variant="outlined" />
                           {llmResult.usage && (
                             <Chip
-                              label={`Tokens: ${llmResult.usage.total_tokens || "N/A"}`}
+                              label={`Tokens: ${llmResult.usage.total_tokens || 'N/A'}`}
                               size="small"
                               variant="outlined"
                             />
                           )}
                           {llmResult.response_time_ms && (
                             <Chip
-                              icon={<TimerIcon sx={{ fontSize: "1rem" }} />}
+                              icon={<TimerIcon sx={{ fontSize: '1rem' }} />}
                               label={`Duration: ${formatDuration(llmResult.response_time_ms)}`}
                               size="small"
                               variant="outlined"
@@ -886,16 +768,8 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                         </AccordionSummary>
                         <AccordionDetails>
                           {formatLLMRequest().messages.map((message, index) => (
-                            <Paper
-                              key={index}
-                              sx={{ p: 2, mb: 1, backgroundColor: "grey.50" }}
-                            >
-                              <Box
-                                display="flex"
-                                justifyContent="space-between"
-                                alignItems="center"
-                                mb={1}
-                              >
+                            <Paper key={index} sx={{ p: 2, mb: 1, backgroundColor: 'grey.50' }}>
+                              <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                                 <Typography variant="subtitle2" color="primary">
                                   {message.role.toUpperCase()}
                                 </Typography>
@@ -903,18 +777,15 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                                   label={message.source}
                                   size="small"
                                   color={
-                                    message.source === "Model Prompt"
-                                      ? "secondary"
-                                      : message.source === "KB Prompt + Context"
-                                        ? "info"
-                                        : "default"
+                                    message.source === 'Model Prompt'
+                                      ? 'secondary'
+                                      : message.source === 'KB Prompt + Context'
+                                        ? 'info'
+                                        : 'default'
                                   }
                                 />
                               </Box>
-                              <Typography
-                                variant="body2"
-                                sx={{ whiteSpace: "pre-wrap" }}
-                              >
+                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                                 {message.content}
                               </Typography>
                             </Paper>
@@ -928,32 +799,25 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                           {sourcesMutation.isLoading ? (
                             <Box
                               sx={{
-                                display: "flex",
-                                alignItems: "center",
+                                display: 'flex',
+                                alignItems: 'center',
                                 gap: 1,
                               }}
                             >
                               <CircularProgress size={16} />
-                              <Typography
-                                variant="body2"
-                                color="text.secondary"
-                              >
+                              <Typography variant="body2" color="text.secondary">
                                 Fetching knowledge base sources...
                               </Typography>
                             </Box>
                           ) : sourcesMutation.data ? (
                             <SourcePreview
-                              sources={
-                                extractDataFromResponse(sourcesMutation.data)
-                                  ?.results || []
-                              }
+                              sources={extractDataFromResponse(sourcesMutation.data)?.results || []}
                               title="Knowledge Base Sources Sent to LLM"
                               searchQuery={userMessage}
                             />
                           ) : sourcesMutation.error ? (
                             <Alert severity="error" sx={{ mt: 1 }}>
-                              Failed to fetch sources:{" "}
-                              {formatError(sourcesMutation.error)}
+                              Failed to fetch sources: {formatError(sourcesMutation.error)}
                             </Alert>
                           ) : null}
                         </Box>
@@ -980,49 +844,31 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                         Raw LLM Response
                       </Typography>
                       {llmResult.raw_content ? (
-                        <Paper sx={{ p: 2, backgroundColor: "grey.50" }}>
-                          <Box
-                            display="flex"
-                            justifyContent="space-between"
-                            alignItems="flex-start"
-                            mb={1}
-                          >
+                        <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                          <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={1}>
                             <Typography variant="subtitle2" color="secondary">
                               Original LLM Output (before post-processing)
                             </Typography>
                             <IconButton
                               size="small"
-                              onClick={() =>
-                                copyToClipboard(llmResult.raw_content)
-                              }
+                              onClick={() => copyToClipboard(llmResult.raw_content)}
                               title="Copy raw response"
                             >
                               <CopyIcon />
                             </IconButton>
                           </Box>
-                          <Typography
-                            variant="body1"
-                            sx={{ whiteSpace: "pre-wrap" }}
-                          >
+                          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                             {llmResult.raw_content}
                           </Typography>
                         </Paper>
                       ) : (
-                        <Paper sx={{ p: 2, backgroundColor: "grey.50" }}>
-                          <Typography
-                            variant="body1"
-                            sx={{ whiteSpace: "pre-wrap" }}
-                          >
+                        <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                             {llmResult.content}
                           </Typography>
                           {!llmResult?.post_processing_applied && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ mt: 1, display: "block" }}
-                            >
-                              No post-processing was applied - this is the
-                              original LLM response.
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                              No post-processing was applied - this is the original LLM response.
                             </Typography>
                           )}
                         </Paper>
@@ -1037,65 +883,50 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                       </Typography>
 
                       {/* Processing Summary */}
-                      <Paper sx={{ p: 2, mb: 2, backgroundColor: "grey.50" }}>
+                      <Paper sx={{ p: 2, mb: 2, backgroundColor: 'grey.50' }}>
                         <Typography variant="h6" gutterBottom>
                           Processing Summary
                         </Typography>
-                        <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
+                        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
                           <Chip
-                            label={`Status: ${llmResult.post_processing_applied ? "Applied" : "Not Applied"}`}
-                            color={
-                              llmResult.post_processing_applied
-                                ? "success"
-                                : "default"
-                            }
+                            label={`Status: ${llmResult.post_processing_applied ? 'Applied' : 'Not Applied'}`}
+                            color={llmResult.post_processing_applied ? 'success' : 'default'}
                             size="small"
                           />
                           <Chip
-                            label={`Reason: ${llmResult.post_processing_reason || "N/A"}`}
+                            label={`Reason: ${llmResult.post_processing_reason || 'N/A'}`}
                             color="info"
                             size="small"
                           />
                         </Box>
 
                         {/* Source Metadata */}
-                        {llmResult.source_metadata &&
-                          llmResult.source_metadata.length > 0 && (
-                            <Box>
-                              <Typography variant="subtitle2" gutterBottom>
-                                Knowledge Base Sources Used (
-                                {llmResult.source_metadata.length})
-                              </Typography>
-                              {llmResult.source_metadata.map(
-                                (source, index) => (
-                                  <Paper
-                                    key={index}
-                                    sx={{
-                                      p: 1,
-                                      mb: 1,
-                                      backgroundColor: "background.paper",
-                                    }}
-                                  >
-                                    <Typography
-                                      variant="body2"
-                                      fontWeight="bold"
-                                    >
-                                      {source.document_title ||
-                                        `Source ${index + 1}`}
-                                    </Typography>
-                                    {source.source_url && (
-                                      <Typography
-                                        variant="caption"
-                                        color="primary"
-                                      >
-                                        {source.source_url}
-                                      </Typography>
-                                    )}
-                                  </Paper>
-                                ),
-                              )}
-                            </Box>
-                          )}
+                        {llmResult.source_metadata && llmResult.source_metadata.length > 0 && (
+                          <Box>
+                            <Typography variant="subtitle2" gutterBottom>
+                              Knowledge Base Sources Used ({llmResult.source_metadata.length})
+                            </Typography>
+                            {llmResult.source_metadata.map((source, index) => (
+                              <Paper
+                                key={index}
+                                sx={{
+                                  p: 1,
+                                  mb: 1,
+                                  backgroundColor: 'background.paper',
+                                }}
+                              >
+                                <Typography variant="body2" fontWeight="bold">
+                                  {source.document_title || `Source ${index + 1}`}
+                                </Typography>
+                                {source.source_url && (
+                                  <Typography variant="caption" color="primary">
+                                    {source.source_url}
+                                  </Typography>
+                                )}
+                              </Paper>
+                            ))}
+                          </Box>
+                        )}
                       </Paper>
 
                       {/* Before/After Comparison */}
@@ -1106,19 +937,15 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                           </Typography>
                           <Grid container spacing={2}>
                             <Grid item xs={6}>
-                              <Paper sx={{ p: 2, backgroundColor: "grey.50" }}>
-                                <Typography
-                                  variant="subtitle2"
-                                  color="secondary"
-                                  gutterBottom
-                                >
+                              <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                                <Typography variant="subtitle2" color="secondary" gutterBottom>
                                   Before (Raw LLM)
                                 </Typography>
                                 <Typography
                                   variant="body2"
                                   sx={{
-                                    whiteSpace: "pre-wrap",
-                                    fontSize: "0.875rem",
+                                    whiteSpace: 'pre-wrap',
+                                    fontSize: '0.875rem',
                                   }}
                                 >
                                   {llmResult.raw_content}
@@ -1126,19 +953,15 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                               </Paper>
                             </Grid>
                             <Grid item xs={6}>
-                              <Paper sx={{ p: 2, backgroundColor: "grey.50" }}>
-                                <Typography
-                                  variant="subtitle2"
-                                  color="primary"
-                                  gutterBottom
-                                >
+                              <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                                <Typography variant="subtitle2" color="primary" gutterBottom>
                                   After (Post-processed)
                                 </Typography>
                                 <Typography
                                   variant="body2"
                                   sx={{
-                                    whiteSpace: "pre-wrap",
-                                    fontSize: "0.875rem",
+                                    whiteSpace: 'pre-wrap',
+                                    fontSize: '0.875rem',
                                   }}
                                 >
                                   {llmResult.content}

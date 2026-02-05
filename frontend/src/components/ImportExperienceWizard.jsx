@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -11,33 +11,33 @@ import {
   Box,
   Typography,
   Alert,
-} from "@mui/material";
-import { Close as CloseIcon } from "@mui/icons-material";
-import YAMLProcessor from "../services/yamlProcessor";
-import { extractImportPlaceholders } from "../services/importPlaceholders";
-import { log } from "../utils/log";
+} from '@mui/material';
+import { Close as CloseIcon } from '@mui/icons-material';
+import YAMLProcessor from '../services/yamlProcessor';
+import { extractImportPlaceholders } from '../services/importPlaceholders';
+import { log } from '../utils/log';
 
 // Import wizard step components
-import YAMLInputStep from "./import-wizard/YAMLInputStep";
-import PlaceholderFormStep from "./import-wizard/PlaceholderFormStep";
-import ExperienceCreationStep from "./import-wizard/ExperienceCreationStep";
+import YAMLInputStep from './import-wizard/YAMLInputStep';
+import PlaceholderFormStep from './import-wizard/PlaceholderFormStep';
+import ExperienceCreationStep from './import-wizard/ExperienceCreationStep';
 
 // Wizard step definitions
 const STEPS = [
   {
-    key: "yaml-input",
-    label: "YAML Input",
-    description: "Provide or edit YAML configuration",
+    key: 'yaml-input',
+    label: 'YAML Input',
+    description: 'Provide or edit YAML configuration',
   },
   {
-    key: "placeholder-form",
-    label: "Configure Values",
-    description: "Fill in placeholder values",
+    key: 'placeholder-form',
+    label: 'Configure Values',
+    description: 'Fill in placeholder values',
   },
   {
-    key: "creation",
-    label: "Create Experience",
-    description: "Review and create the experience",
+    key: 'creation',
+    label: 'Create Experience',
+    description: 'Review and create the experience',
   },
 ];
 
@@ -51,16 +51,10 @@ const STEPS = [
  * @param {function} [props.onSuccess] - Callback when experience is successfully created
  * @param {function} [props.onError] - Callback when an error occurs
  */
-const ImportExperienceWizard = ({
-  open,
-  onClose,
-  prePopulatedYAML = null,
-  onSuccess,
-  onError,
-}) => {
+const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSuccess, onError }) => {
   // Wizard state management
   const [currentStep, setCurrentStep] = useState(0);
-  const [yamlContent, setYAMLContent] = useState(prePopulatedYAML || "");
+  const [yamlContent, setYAMLContent] = useState(prePopulatedYAML || '');
   const [extractedPlaceholders, setExtractedPlaceholders] = useState([]);
   const [placeholderValues, setPlaceholderValues] = useState({});
   const [validationState, setValidationState] = useState({
@@ -100,9 +94,9 @@ const ImportExperienceWizard = ({
       setPlaceholderValues({});
       setValidationState((prev) => ({ ...prev, placeholdersValid: false }));
 
-      log.debug("Extracted import placeholders from YAML", { placeholders });
+      log.debug('Extracted import placeholders from YAML', { placeholders });
     } catch (error) {
-      log.warn("Failed to extract placeholders", { error: error.message });
+      log.warn('Failed to extract placeholders', { error: error.message });
       setExtractedPlaceholders([]);
     }
   }, []);
@@ -138,7 +132,7 @@ const ImportExperienceWizard = ({
   const handleClose = useCallback(() => {
     // Reset wizard state when closing
     setCurrentStep(0);
-    setYAMLContent(prePopulatedYAML || "");
+    setYAMLContent(prePopulatedYAML || '');
     setExtractedPlaceholders([]);
     setPlaceholderValues({});
     setValidationState({ yamlValid: false, placeholdersValid: false });
@@ -154,12 +148,9 @@ const ImportExperienceWizard = ({
   const canProceed = () => {
     switch (currentStep) {
       case 0: // YAML Input step
-        return validationState.yamlValid && yamlContent.trim() !== "";
+        return validationState.yamlValid && yamlContent.trim() !== '';
       case 1: // Placeholder Form step
-        return (
-          extractedPlaceholders.length === 0 ||
-          validationState.placeholdersValid
-        );
+        return extractedPlaceholders.length === 0 || validationState.placeholdersValid;
       case 2: // Creation step - hide next button on final step
         return false;
       default:
@@ -169,7 +160,7 @@ const ImportExperienceWizard = ({
 
   // Get button text for current step
   const getNextButtonText = () => {
-    return "Next";
+    return 'Next';
   };
 
   // Render current step content
@@ -180,9 +171,7 @@ const ImportExperienceWizard = ({
           <YAMLInputStep
             yamlContent={yamlContent}
             onYAMLChange={handleYAMLChange}
-            onValidationChange={(isValid) =>
-              handleValidationChange("yaml", isValid)
-            }
+            onValidationChange={(isValid) => handleValidationChange('yaml', isValid)}
             prePopulatedYAML={prePopulatedYAML}
           />
         );
@@ -192,9 +181,7 @@ const ImportExperienceWizard = ({
             placeholders={extractedPlaceholders}
             values={placeholderValues}
             onValuesChange={handlePlaceholderValuesChange}
-            onValidationChange={(isValid) =>
-              handleValidationChange("placeholders", isValid)
-            }
+            onValidationChange={(isValid) => handleValidationChange('placeholders', isValid)}
           />
         );
       case 2:
@@ -224,17 +211,13 @@ const ImportExperienceWizard = ({
       maxWidth="md"
       fullWidth
       PaperProps={{
-        sx: { minHeight: "600px" },
+        sx: { minHeight: '600px' },
       }}
     >
       <DialogTitle>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h6">Import Experience</Typography>
-          <Button
-            onClick={handleClose}
-            size="small"
-            sx={{ minWidth: "auto", p: 1 }}
-          >
+          <Button onClick={handleClose} size="small" sx={{ minWidth: 'auto', p: 1 }}>
             <CloseIcon />
           </Button>
         </Box>
@@ -267,7 +250,7 @@ const ImportExperienceWizard = ({
         )}
 
         {/* Step content */}
-        <Box sx={{ minHeight: "300px" }}>{renderStepContent()}</Box>
+        <Box sx={{ minHeight: '300px' }}>{renderStepContent()}</Box>
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -279,11 +262,7 @@ const ImportExperienceWizard = ({
               Back
             </Button>
 
-            <Button
-              onClick={handleNext}
-              variant="contained"
-              disabled={!canProceed()}
-            >
+            <Button onClick={handleNext} variant="contained" disabled={!canProceed()}>
               {getNextButtonText()}
             </Button>
           </>

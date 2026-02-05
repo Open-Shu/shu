@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "react-query";
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
   Alert,
   Box,
@@ -18,66 +18,54 @@ import {
   ListItemIcon,
   ListItemText,
   ListItemButton,
-} from "@mui/material";
-import { Settings as SettingsIcon } from "@mui/icons-material";
-import { useNavigate, useParams, Navigate } from "react-router-dom";
-import {
-  userPreferencesAPI,
-  extractDataFromResponse,
-  formatError,
-} from "../services/api";
-import log from "../utils/log";
-import NotImplemented from "./NotImplemented";
-import { useTheme } from "../contexts/ThemeContext";
-import { buildUserPreferencesPayload } from "../utils/userPreferences";
+} from '@mui/material';
+import { Settings as SettingsIcon } from '@mui/icons-material';
+import { useNavigate, useParams, Navigate } from 'react-router-dom';
+import { userPreferencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import log from '../utils/log';
+import NotImplemented from './NotImplemented';
+import { useTheme } from '../contexts/ThemeContext';
+import { buildUserPreferencesPayload } from '../utils/userPreferences';
 
 export default function UserPreferencesPage() {
   const { themeMode, changeTheme } = useTheme();
   const navigate = useNavigate();
   const { section } = useParams();
 
-  const menuItems = [
-    { text: "General", icon: <SettingsIcon />, path: "general" },
-  ];
+  const menuItems = [{ text: 'General', icon: <SettingsIcon />, path: 'general' }];
 
   const queryClient = useQueryClient();
   const [error, setError] = useState(null);
-  const activeSection = section || "general";
+  const activeSection = section || 'general';
   const activeItem = menuItems.find((item) => item.path === activeSection);
   const [userPreferences, setUserPreferences] = useState({
     memory_depth: 5,
     memory_similarity_threshold: 0.6,
     theme: themeMode,
-    language: "en",
-    timezone: "UTC",
+    language: 'en',
+    timezone: 'UTC',
     advanced_settings: {},
   });
 
   const updatePreferencesMutation = useMutation(
-    (preferences) =>
-      userPreferencesAPI.updatePreferences(
-        buildUserPreferencesPayload(preferences),
-      ),
+    (preferences) => userPreferencesAPI.updatePreferences(buildUserPreferencesPayload(preferences)),
     {
       onSuccess: (response) => {
         const updatedPreferences = extractDataFromResponse(response);
-        if (updatedPreferences && typeof updatedPreferences === "object") {
+        if (updatedPreferences && typeof updatedPreferences === 'object') {
           setUserPreferences((prev) => ({
             ...prev,
             ...updatedPreferences,
-            advanced_settings:
-              updatedPreferences.advanced_settings ??
-              prev.advanced_settings ??
-              {},
+            advanced_settings: updatedPreferences.advanced_settings ?? prev.advanced_settings ?? {},
           }));
         }
-        queryClient.invalidateQueries("user-preferences");
+        queryClient.invalidateQueries('user-preferences');
         setError(null);
       },
       onError: (err) => {
         setError(formatError(err).message);
       },
-    },
+    }
   );
 
   const isActive = (sectionKey) => activeSection === sectionKey;
@@ -88,20 +76,19 @@ export default function UserPreferencesPage() {
     }
   };
 
-  useQuery("user-preferences", userPreferencesAPI.getPreferences, {
+  useQuery('user-preferences', userPreferencesAPI.getPreferences, {
     onSuccess: (response) => {
       const preferences = extractDataFromResponse(response);
-      if (preferences && typeof preferences === "object") {
+      if (preferences && typeof preferences === 'object') {
         setUserPreferences((prev) => ({
           ...prev,
           ...preferences,
-          advanced_settings:
-            preferences.advanced_settings ?? prev.advanced_settings ?? {},
+          advanced_settings: preferences.advanced_settings ?? prev.advanced_settings ?? {},
         }));
       }
     },
     onError: (err) => {
-      log.warn("Failed to load user preferences:", formatError(err).message);
+      log.warn('Failed to load user preferences:', formatError(err).message);
       // Don't show error to user for preferences - use defaults
     },
   });
@@ -165,27 +152,27 @@ export default function UserPreferencesPage() {
         </Grid>
       </Grid>
 
-      <Box sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}>
+      <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
         <Button
           onClick={() => updatePreferencesMutation.mutate(userPreferences)}
           variant="contained"
           disabled={updatePreferencesMutation.isLoading}
         >
-          {updatePreferencesMutation.isLoading ? "Saving..." : "Save Settings"}
+          {updatePreferencesMutation.isLoading ? 'Saving...' : 'Save Settings'}
         </Button>
       </Box>
     </>
   );
 
   const getContent = () => {
-    if (activeSection === "general") {
+    if (activeSection === 'general') {
       return generalContent();
     }
     return <Navigate to="/settings/preferences/general" replace />;
   };
 
   return (
-    <Box sx={{ display: "flex", height: "100%", overflow: "hidden" }}>
+    <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Sidebar - Conversations */}
       <Paper
         sx={{
@@ -193,20 +180,16 @@ export default function UserPreferencesPage() {
           minWidth: 300,
           maxWidth: 300,
           flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
+          display: 'flex',
+          flexDirection: 'column',
           borderRadius: 0,
           borderRight: 1,
-          borderColor: "divider",
+          borderColor: 'divider',
         }}
       >
         <List>
           {menuItems.map((item) => (
-            <ListItemButton
-              key={item.path}
-              selected={isActive(item.path)}
-              onClick={() => handleNavigation(item.path)}
-            >
+            <ListItemButton key={item.path} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
@@ -218,12 +201,12 @@ export default function UserPreferencesPage() {
       <Box
         sx={{
           flexGrow: 1,
-          bgcolor: "background.default",
+          bgcolor: 'background.default',
           p: 3,
         }}
       >
         <Typography variant="h4" component="h1" gutterBottom>
-          {activeItem?.text || "Preferences"}
+          {activeItem?.text || 'Preferences'}
         </Typography>
 
         {error && (
