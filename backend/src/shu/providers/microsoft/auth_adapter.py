@@ -197,9 +197,10 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         )
         creds = result.scalars().all()
         scopes_union: list[str] = []
+        from ...api.host_auth import normalize_microsoft_scopes
         for c in creds:
             try:
-                for s in c.scopes or []:
+                for s in normalize_microsoft_scopes(c.scopes):
                     if s not in scopes_union:
                         scopes_union.append(s)
             except Exception:

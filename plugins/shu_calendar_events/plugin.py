@@ -319,9 +319,11 @@ class CalendarEventsPlugin:
             if "HTTP 410" in msg or "status_code': 410" in msg:
                 existing_sync = None
             else:
+                # Use semantic error_category from HttpRequestFailed if available
+                error_code = getattr(e, "error_category", None) or "provider_error"
                 return _Result.err(
                     "Calendar API error during ingest",
-                    code="provider_error",
+                    code=error_code,
                     details={"message": msg[:300]},
                 )
 

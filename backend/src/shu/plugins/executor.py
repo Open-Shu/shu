@@ -1,4 +1,10 @@
-"""Plugin executor: coordinates rate limiting, schema validation (if provided), and plugin execution."""
+"""Plugin executor: coordinates rate limiting, schema validation (if provided), and plugin execution.
+
+Provider HTTP errors (HttpRequestFailed) are mapped to structured PluginResult.err() responses
+using the exception's semantic error_category (e.g., 'auth_error', 'rate_limited', 'gone',
+'not_found', 'server_error') rather than a generic code. This allows callers to handle
+specific error conditions appropriately.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +44,42 @@ _TRUSTED_MODULE_PREFIXES = (
 )
 
 
+def _is_called_from_trusted_code(frame_offset: int = 2) -> bool:
+    """Check if the import is being called from trusted host code.
+    
+    Walks the call stack to find the module that initiated the import.
+    If any frame in the stack is from a trusted module prefix, allow the import.
+    
+    Args:
+        frame_offset: Number of frames to skip from the current frame.
+            Default is 2 (skip this function and the immediate caller).
+    
+    Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
+    Short-circuits as soon as a trusted frame is found.
+
+    """
+    try:
+        frame = sys._getframe(frame_offset)
+    except ValueError:
+        return False
+
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        # Quick check: only inspect frames from shu modules
+        if "/shu/" in filename:
+            for prefix in _TRUSTED_MODULE_PREFIXES:
+                # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
+                path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
+                if path_fragment in filename:
+                    return True
+                # Also check for exact module file matches
+                path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
+                if filename.endswith(path_fragment_exact + ".py"):
+                    return True
+        frame = frame.f_back
+    return False
+
+
 class _DenyImportsFinder(MetaPathFinder):
     """Import finder that blocks certain imports during plugin execution.
 
@@ -55,40 +97,6 @@ class _DenyImportsFinder(MetaPathFinder):
     # Deny shu.* imports only from untrusted (plugin) code
     deny_from_plugins = {"shu"}
 
-    def _is_called_from_trusted_code(self) -> bool:
-        """Check if the import is being called from trusted host code.
-
-        Walks the call stack to find the module that initiated the import.
-        If any frame in the stack is from a trusted module prefix, allow the import.
-
-        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-        Short-circuits as soon as a trusted frame is found.
-        """
-        import sys
-
-        # Walk frames directly - more efficient than traceback.extract_stack()
-        # which creates FrameSummary objects for every frame
-        try:
-            frame = sys._getframe(2)  # Skip this method and find_spec/caller
-        except ValueError:
-            return False
-
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            # Quick check: only inspect frames from shu modules
-            if "/shu/" in filename:
-                for prefix in _TRUSTED_MODULE_PREFIXES:
-                    # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
-                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                    if path_fragment in filename:
-                        return True
-                    # Also check for exact module file matches
-                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                    if filename.endswith(path_fragment_exact + ".py"):
-                        return True
-            frame = frame.f_back
-        return False
-
     def find_spec(self, fullname, path, target=None):  # type: ignore[override]
         # Block exact and submodule imports under denylisted packages
         name = str(fullname)
@@ -101,8 +109,13 @@ class _DenyImportsFinder(MetaPathFinder):
         # Block shu.* imports only from plugin code, not from trusted host code
         for p in self.deny_from_plugins:
             if name == p or name.startswith(p + "."):
-                if not self._is_called_from_trusted_code():
-                    raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
+                # frame_offset=2: Frame 0 is _is_called_from_trusted_code, Frame 1 is find_spec,
+                # Frame 2 is the actual caller where we start walking the stack
+                if not _is_called_from_trusted_code(frame_offset=2):
+                    raise ImportError(
+                        f"Import of '{fullname}' is denied by host policy. Use host.http instead."
+                    )
+
 
 
 class _DenyHttpImportsCtx:
@@ -117,32 +130,6 @@ class _DenyHttpImportsCtx:
     def __init__(self):
         self._finder: _DenyImportsFinder | None = None
         self._orig_import_module = None
-
-    @staticmethod
-    def _is_called_from_trusted_code() -> bool:
-        """Check if the import is being called from trusted host code.
-
-        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-        """
-        import sys
-
-        try:
-            frame = sys._getframe(2)
-        except ValueError:
-            return False
-
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            if "/shu/" in filename:
-                for prefix in _TRUSTED_MODULE_PREFIXES:
-                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                    if path_fragment in filename:
-                        return True
-                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                    if filename.endswith(path_fragment_exact + ".py"):
-                        return True
-            frame = frame.f_back
-        return False
 
     @staticmethod
     def _is_denied(name: str) -> bool:
@@ -163,7 +150,8 @@ class _DenyHttpImportsCtx:
         # Deny shu.* only from plugin code
         for p in _DenyImportsFinder.deny_from_plugins:
             if n == p or n.startswith(p + "."):
-                if not _DenyHttpImportsCtx._is_called_from_trusted_code():
+                # frame_offset=3: skip _is_denied -> _is_called_from_trusted_code -> sys._getframe
+                if not _is_called_from_trusted_code(frame_offset=3):
                     return True
 
         return False
@@ -690,29 +678,20 @@ class Executor:
                 except Exception as e:
                     # Map host.http failures to a structured provider_error so callers get clear surfaces
                     if isinstance(e, HttpRequestFailed):
-                        try:
-                            body = e.body
-                            # Try to extract a useful provider message
-                            if isinstance(body, dict):
-                                prov_msg = (
-                                    body.get("error_description")
-                                    or body.get("error")
-                                    or body.get("message")
-                                    or str(body)
-                                )
-                            else:
-                                prov_msg = str(body)[:400] if body is not None else ""
-                        except Exception:
-                            prov_msg = str(e)
                         details = {
                             "status_code": e.status_code,
                             "url": e.url,
-                            "provider_message": prov_msg,
+                            "provider_message": e.provider_message,
+                            "is_retryable": e.is_retryable,
                         }
+                        if e.provider_error_code:
+                            details["provider_error_code"] = e.provider_error_code
+                        if e.retry_after_seconds is not None:
+                            details["retry_after_seconds"] = e.retry_after_seconds
                         return PluginResult.err(
-                            message=f"Provider HTTP error ({e.status_code})",
-                            code="provider_error",
-                            details=details,
+                            message=f"Provider HTTP error ({e.status_code}): {e.provider_message}" if e.provider_message else f"Provider HTTP error ({e.status_code})",
+                            code=e.error_category,
+                            details=details
                         )
                     logger.exception("Plugin '%s' failed: %s", plugin.name, e)
                     return PluginResult.err(message=str(e), code="plugin_execute_error")
