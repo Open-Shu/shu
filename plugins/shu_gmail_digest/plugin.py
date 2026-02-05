@@ -212,16 +212,23 @@ class GmailDigestPlugin:
             return _Result.ok({"messages": [], "note": "No messages matched the query"})
         messages: list[dict[str, Any]] = []
         for mid in ids[: min(len(ids), 50)]:
-            m = await self._http_json(
-                host,
-                "GET",
-                f"{base}/messages/{mid}",
-                headers,
-                params={
-                    "format": "metadata",
-                    "metadataHeaders": ["Subject", "From", "To", "Cc", "Date"],
-                },
-            )
+            try:
+                m = await self._http_json(
+                    host,
+                    "GET",
+                    f"{base}/messages/{mid}",
+                    headers,
+                    params={
+                        "format": "metadata",
+                        "metadataHeaders": ["Subject", "From", "To", "Cc", "Date"],
+                    },
+                )
+            except Exception as exc:
+                # Message may have been deleted between list and get (Gmail 404).
+                # Skip silently; the HTTP capability already logs the warning.
+                if getattr(exc, "status_code", None) == 404:
+                    continue
+                raise
             payload = {
                 "id": m.get("id"),
                 "thread_id": m.get("threadId"),

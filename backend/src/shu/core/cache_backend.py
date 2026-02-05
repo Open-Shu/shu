@@ -675,21 +675,27 @@ class InMemoryCacheBackend:
 
         with self._lock:
             self._maybe_cleanup()
-
-            if key not in self._data:
-                return False
-
-            value, old_expiry = self._data[key]
-
-            # Check if already expired
-            if self._is_expired(old_expiry):
-                del self._data[key]
-                return False
-
-            # Update expiry
             new_expiry = time.time() + ttl_seconds
-            self._data[key] = (value, new_expiry)
-            return True
+
+            # Check string storage
+            if key in self._data:
+                value, old_expiry = self._data[key]
+                if self._is_expired(old_expiry):
+                    del self._data[key]
+                else:
+                    self._data[key] = (value, new_expiry)
+                    return True
+
+            # Check binary storage
+            if key in self._binary_data:
+                value_b, old_expiry_b = self._binary_data[key]
+                if self._is_expired(old_expiry_b):
+                    del self._binary_data[key]
+                else:
+                    self._binary_data[key] = (value_b, new_expiry)
+                    return True
+
+            return False
 
     async def incr(self, key: str, amount: int = 1) -> int:
         """Increment a numeric value.

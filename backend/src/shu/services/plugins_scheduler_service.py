@@ -242,13 +242,15 @@ class PluginsSchedulerService:
             # Best-effort cleanup; don't fail execution if this fails
             pass
 
-    async def run_pending(
-        self, *, limit: int = 10, schedule_id: str | None = None, execution_id: str | None = None
-    ) -> dict[str, int]:
-        """Claim up to limit pending executions and run them sequentially.
-        Returns: {"attempted": n, "ran": m, "failed_owner_required": x, "skipped_disabled": y}
+    async def cleanup_stale_executions(self) -> int:
+        """Mark RUNNING executions older than the configured timeout as FAILED.
+
+        This must run BEFORE enqueue_due_schedules() so the idempotency guard
+        does not skip creating new executions for schedules whose previous
+        execution was orphaned by a server restart.
+
+        Returns the number of executions marked as stale.
         """
-        # Cleanup: mark stale RUNNING executions as failed to unblock schedules
         stale_cleaned = 0
         try:
             timeout_sec = int(getattr(self.settings, "plugins_scheduler_running_timeout_seconds", 3600))
@@ -276,7 +278,14 @@ class PluginsSchedulerService:
         except Exception:
             # Best-effort cleanup; ignore errors
             pass
+        return stale_cleaned
 
+    async def run_pending(
+        self, *, limit: int = 10, schedule_id: str | None = None, execution_id: str | None = None
+    ) -> dict[str, int]:
+        """Claim up to limit pending executions and run them sequentially.
+        Returns: {"attempted": n, "ran": m, "failed_owner_required": x, "skipped_disabled": y}
+        """
         claimed = await self._claim_pending(
             limit=max(1, int(limit)), schedule_id=schedule_id, execution_id=execution_id
         )
@@ -557,7 +566,6 @@ class PluginsSchedulerService:
             "ran": ran,
             "failed_owner_required": failed_owner_required,
             "skipped_disabled": skipped_disabled,
-            "stale_cleaned": stale_cleaned,
             "deferred_429": deferred_429,
         }
 
@@ -601,9 +609,13 @@ async def start_plugins_scheduler():
                 db = await get_db_session()
                 async with db as session:
                     svc = PluginsSchedulerService(session)
+                    # Stale cleanup MUST run before enqueue so the idempotency
+                    # guard does not skip schedules whose previous execution was
+                    # orphaned by a server restart.
+                    stale_cleaned = await svc.cleanup_stale_executions()
                     e = await svc.enqueue_due_schedules(limit=batch)
                     r = await svc.run_pending(limit=batch)
-                    if (e.get("enqueued") or 0) or (r.get("ran") or 0):
+                    if (e.get("enqueued") or 0) or (r.get("ran") or 0) or stale_cleaned:
                         logger.info(
                             "Plugins scheduler tick | due=%s enq=%s queue_enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s attempted=%s ran=%s failed_owner_required=%s skipped_disabled=%s stale_cleaned=%s deferred_429=%s",
                             e.get("due"),
@@ -616,13 +628,14 @@ async def start_plugins_scheduler():
                             r.get("ran"),
                             r.get("failed_owner_required"),
                             r.get("skipped_disabled"),
-                            r.get("stale_cleaned"),
+                            stale_cleaned,
                             r.get("deferred_429"),
                         )
                         try:
                             TICK_HISTORY.append(
                                 {
                                     "ts": datetime.now(UTC).isoformat(),
+                                    "stale_cleaned": stale_cleaned,
                                     "enqueue": e,
                                     "run": r,
                                 }
