@@ -140,7 +140,7 @@ async def _handle_ocr_job(job) -> None:
             "job_id": job.id,
             "document_id": document_id,
             "knowledge_base_id": knowledge_base_id,
-            "filename": filename,
+            "file_name": filename,
         }
     )
 
