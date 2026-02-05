@@ -73,9 +73,11 @@ class FileStagingService:
 
             logger.debug(
                 "Staged file for document",
-                document_id=document_id,
-                staging_key=staging_key,
-                file_size=len(file_bytes),
+                extra={
+                    "document_id": document_id,
+                    "staging_key": staging_key,
+                    "file_size": len(file_bytes),
+                },
             )
             return staging_key
 
@@ -119,8 +121,10 @@ class FileStagingService:
 
             logger.debug(
                 "Retrieved and cleaned up staged file",
-                staging_key=staging_key,
-                file_size=len(file_bytes),
+                extra={
+                    "staging_key": staging_key,
+                    "file_size": len(file_bytes),
+                },
             )
             return file_bytes
 
