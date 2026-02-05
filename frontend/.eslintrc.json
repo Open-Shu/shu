@@ -8,6 +8,7 @@
     "plugin:prettier/recommended"
   ],
   "plugins": ["react", "react-hooks", "prettier"],
+  "ignorePatterns": ["*.json", "node_modules/", "build/", "coverage/"],
   "rules": {
     "prettier/prettier": "error",
     "react/no-unescaped-entities": "off",
