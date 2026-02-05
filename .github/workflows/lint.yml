@@ -126,12 +126,12 @@ jobs:
           files: |
             frontend/**/*.{js,jsx,ts,tsx,json,css,md}
 
-      - name: Run ESLint on changed files
+      - name: Run ESLint on changed files (includes Prettier)
         if: steps.changed-frontend-files.outputs.any_changed == 'true'
         working-directory: frontend
         run: |
           echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
-          echo "Running ESLint on changed files..."
+          echo "Running ESLint on changed files (with Prettier integration)..."
           FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
           # Remove 'frontend/' prefix from paths since we're in frontend directory
           FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
@@ -142,6 +142,7 @@ jobs:
         working-directory: frontend
         run: |
           echo "Checking Prettier formatting on changed files..."
+          echo "Note: Prettier is also enforced via ESLint (prettier/prettier rule)"
           FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
           # Remove 'frontend/' prefix from paths since we're in frontend directory
           FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')

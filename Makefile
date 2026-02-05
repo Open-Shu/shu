@@ -112,15 +112,18 @@ format-python:
 format-frontend:
 	@echo "Running Prettier..."
 	cd frontend && npm run format
+	@echo "Running ESLint fix..."
+	cd frontend && npm run lint:fix
 
 # Auto-fix linting issues
 lint-fix:
 	@echo "Auto-fixing Python issues..."
 	ruff check --fix backend/
 	ruff format backend/
-	@echo "Auto-fixing frontend issues..."
-	cd frontend && npm run lint:fix
+	@echo "Formatting frontend with Prettier..."
 	cd frontend && npm run format
+	@echo "Auto-fixing frontend ESLint issues..."
+	cd frontend && npm run lint:fix
 
 # Check only uncommitted changes (modified/untracked files)
 lint-uncommitted:
