@@ -123,6 +123,42 @@ class HttpCapability(ImmutableCapabilityMixin):
             raise HttpRequestFailed(status, url, body=body, headers=result["headers"])
         return result
 
+    async def fetch_or_none(self, method: str, url: str, **kwargs: Any) -> dict[str, Any] | None:
+        """Fetch a URL, returning None on 4xx errors instead of raising.
+
+        This is useful for optional lookups where a 404 or 403 is expected
+        and should not be treated as an error. Server errors (5xx) still raise.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: The URL to fetch
+            **kwargs: Additional arguments passed to fetch()
+
+        Returns:
+            The response dict on success, or None on 4xx errors.
+
+        Raises:
+            HttpRequestFailed: On 5xx server errors
+            EgressDenied: If the URL is not allowed by policy
+
+        Example:
+            # Optional user profile lookup
+            data = await host.http.fetch_or_none("GET", f"{api}/users/{user_id}")
+            if data:
+                profile = data["body"]
+            else:
+                profile = {"name": "Unknown"}
+
+        """
+        try:
+            return await self.fetch(method, url, **kwargs)
+        except HttpRequestFailed as e:
+            if e.status_code < 500:
+                # 4xx errors return None
+                return None
+            # 5xx errors still raise
+            raise
+
     async def fetch_bytes(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
             logger.warning(
@@ -166,3 +202,29 @@ class HttpCapability(ImmutableCapabilityMixin):
                 pass
             raise HttpRequestFailed(status, url, body=None, headers=result["headers"])
         return result
+
+    async def fetch_bytes_or_none(self, method: str, url: str, **kwargs: Any) -> dict[str, Any] | None:
+        """Fetch bytes from a URL, returning None on 4xx errors instead of raising.
+
+        This is the bytes variant of fetch_or_none(). Useful for optional
+        file downloads where a 404 is expected.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: The URL to fetch
+            **kwargs: Additional arguments passed to fetch_bytes()
+
+        Returns:
+            The response dict on success, or None on 4xx errors.
+
+        Raises:
+            HttpRequestFailed: On 5xx server errors
+            EgressDenied: If the URL is not allowed by policy
+
+        """
+        try:
+            return await self.fetch_bytes(method, url, **kwargs)
+        except HttpRequestFailed as e:
+            if e.status_code < 500:
+                return None
+            raise

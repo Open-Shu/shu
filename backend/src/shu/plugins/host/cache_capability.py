@@ -108,6 +108,22 @@ class CacheCapability(ImmutableCapabilityMixin):
             object.__setattr__(self, "_backend", backend)
         return self._backend
 
+    async def _serialize_and_set(self, namespaced_key: str, value: Any, ttl_seconds: int) -> None:
+        """Serialize value and write to cache backend.
+
+        This is the shared implementation for set() and set_safe().
+        Exceptions are not caught here - callers handle errors differently.
+
+        Args:
+            namespaced_key: The fully namespaced cache key.
+            value: The value to store (must be JSON-serializable).
+            ttl_seconds: Time-to-live in seconds.
+
+        """
+        backend = await self._get_backend()
+        serialized = json.dumps(value, default=str)
+        await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
+
     async def set(self, key: str, value: Any, ttl_seconds: int = 300) -> None:
         """Store a value in the cache with optional TTL.
 
@@ -130,9 +146,7 @@ class CacheCapability(ImmutableCapabilityMixin):
         """
         namespaced_key = self._make_namespaced_key(key)
         try:
-            backend = await self._get_backend()
-            serialized = json.dumps(value, default=str)
-            await backend.set(namespaced_key, serialized, ttl_seconds=max(1, int(ttl_seconds)))
+            await self._serialize_and_set(namespaced_key, value, ttl_seconds)
         except Exception as e:
             # Best-effort; do not crash tool
             logger.warning(
@@ -216,3 +230,71 @@ class CacheCapability(ImmutableCapabilityMixin):
                     "error": str(e),
                 },
             )
+
+    async def set_safe(self, key: str, value: Any, ttl_seconds: int = 300) -> bool:
+        """Store a value in the cache, returning success status.
+
+        This is similar to set() but returns a boolean indicating success.
+        On error, logs a warning and returns False instead of silently failing.
+
+        Args:
+            key: The cache key (will be namespaced automatically).
+            value: The value to store (must be JSON-serializable).
+            ttl_seconds: Time-to-live in seconds. Default is 300 (5 minutes).
+
+        Returns:
+            True if the value was stored successfully, False on any error.
+
+        Example:
+            success = await cache.set_safe("user_prefs", {"theme": "dark"})
+            if not success:
+                host.log.warning("Failed to cache user preferences")
+
+        """
+        namespaced_key = self._make_namespaced_key(key)
+        try:
+            await self._serialize_and_set(namespaced_key, value, ttl_seconds)
+            return True
+        except Exception as e:
+            logger.warning(
+                f"CacheCapability.set_safe failed for key '{key}': {e}",
+                extra={
+                    "plugin_name": self._plugin_name,
+                    "user_id": self._user_id,
+                    "key": key,
+                    "error": str(e),
+                },
+            )
+            return False
+
+    async def delete_safe(self, key: str) -> bool:
+        """Delete a value from the cache, returning success status.
+
+        This is similar to delete() but returns a boolean indicating success.
+
+        Args:
+            key: The cache key (will be namespaced automatically).
+
+        Returns:
+            True if the value was deleted successfully, False on any error.
+
+        Example:
+            success = await cache.delete_safe("user_prefs")
+
+        """
+        namespaced_key = self._make_namespaced_key(key)
+        try:
+            backend = await self._get_backend()
+            await backend.delete(namespaced_key)
+            return True
+        except Exception as e:
+            logger.warning(
+                f"CacheCapability.delete_safe failed for key '{key}': {e}",
+                extra={
+                    "plugin_name": self._plugin_name,
+                    "user_id": self._user_id,
+                    "key": key,
+                    "error": str(e),
+                },
+            )
+            return False
