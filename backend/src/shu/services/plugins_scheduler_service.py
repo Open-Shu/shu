@@ -68,7 +68,7 @@ class PluginsSchedulerService:
         from ..core.queue_backend import get_queue_backend
         from ..core.workload_routing import WorkloadType, enqueue_job
         
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Claim due schedules with row-level locks to avoid duplicates across workers
         q = (
             select(PluginFeed)
