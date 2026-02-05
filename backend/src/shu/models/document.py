@@ -50,6 +50,28 @@ class RelationalContext(TypedDict, total=False):
     interaction_signals: list[str]  # e.g., "meeting", "decision", "request"
 
 
+# Document pipeline status enum (Queue-Based Ingestion Pipeline)
+# NOTE: This enum must be defined before the Document class since it's used in column defaults
+class DocumentStatus(str, Enum):
+    """Status values for document ingestion pipeline.
+
+    Tracks the document's progress through the async ingestion pipeline:
+    - PENDING: Document created, awaiting OCR/extraction
+    - EXTRACTING: OCR/text extraction in progress
+    - EMBEDDING: Chunking and embedding in progress
+    - PROFILING: LLM profiling in progress (if enabled)
+    - READY: Document fully processed and searchable
+    - FAILED: Processing failed (see error_message for details)
+    """
+
+    PENDING = "pending"
+    EXTRACTING = "extracting"
+    EMBEDDING = "embedding"
+    PROFILING = "profiling"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class Document(BaseModel):
     """Document metadata and content.
 
@@ -81,9 +103,14 @@ class Document(BaseModel):
         String(64), nullable=True, index=True
     )  # Hash of original source content (md5Checksum, etag, etc.)
 
-    # Processing information
+    # Processing information (legacy fields - kept for backward compatibility)
     processing_status = Column(String(50), default="pending", nullable=False)  # 'pending', 'processed', 'error'
     processing_error = Column(Text, nullable=True)
+
+    # Pipeline status tracking (Queue-Based Ingestion Pipeline)
+    # Tracks document progress through async ingestion: PENDING → EXTRACTING → EMBEDDING → PROFILING → READY
+    status = Column(String(20), default=DocumentStatus.READY.value, nullable=False, index=True)
+    error_message = Column(Text, nullable=True)  # Error details when status is FAILED
 
     # Extraction metadata (for OCR verification and tracking)
     extraction_method = Column(String(50), nullable=True)  # 'ocr', 'text', 'pdfplumber', 'pymupdf', etc.
@@ -143,6 +170,9 @@ class Document(BaseModel):
                 "processing_status": self.processing_status,
                 "processed_at": self.processed_at.isoformat() if self.processed_at else None,
                 "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
+                # Pipeline status (Queue-Based Ingestion Pipeline)
+                "status": self.status,
+                "error_message": self.error_message,
                 # Profile fields (SHU-342)
                 "synopsis": self.synopsis,
                 "document_type": self.document_type,
@@ -177,6 +207,56 @@ class Document(BaseModel):
         self.processing_status = "error"
         self.processing_error = error_message
         self.processed_at = datetime.now(UTC)
+
+    # Pipeline status helpers (Queue-Based Ingestion Pipeline)
+    def update_status(self, new_status: "DocumentStatus") -> None:
+        """Update document pipeline status and synchronize with processing_status.
+
+        This method ensures backward compatibility by keeping processing_status
+        in sync with the new status field:
+        - READY status → processing_status = 'processed'
+        - FAILED status → processing_status = 'error'
+        - Other statuses → processing_status = 'pending'
+
+        Args:
+            new_status: The new DocumentStatus value
+        """
+        self.status = new_status.value
+
+        # Synchronize with legacy processing_status field
+        if new_status == DocumentStatus.READY:
+            self.processing_status = "processed"
+            self.processed_at = datetime.now(UTC)
+        elif new_status == DocumentStatus.FAILED:
+            self.processing_status = "error"
+            self.processed_at = datetime.now(UTC)
+        else:
+            self.processing_status = "pending"
+
+    def mark_failed(self, error_msg: str) -> None:
+        """Mark document as failed with error message.
+
+        Sets status to FAILED and synchronizes with processing_status.
+
+        Args:
+            error_msg: Description of the failure
+        """
+        self.status = DocumentStatus.FAILED.value
+        self.error_message = error_msg
+        # Synchronize with legacy fields
+        self.processing_status = "error"
+        self.processing_error = error_msg
+        self.processed_at = datetime.now(UTC)
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if document is ready (fully processed)."""
+        return self.status == DocumentStatus.READY.value
+
+    @property
+    def is_failed(self) -> bool:
+        """Check if document processing failed."""
+        return self.status == DocumentStatus.FAILED.value
 
     def update_content_stats(self, word_count: int, character_count: int, chunk_count: int) -> None:
         """Update content statistics."""

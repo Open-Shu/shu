@@ -26,12 +26,22 @@ Shu uses a **custom integration test framework** for API/database integration te
 
 ### When to Use Unit Tests (pytest)
 
-Unit tests are appropriate for:
-- **SQLAlchemy models**: Testing model instantiation, helper methods, computed properties
-- **Pure functions**: Data transformations, validation logic, utility functions
-- **Schemas and serialization**: Pydantic model validation, to_dict/from_dict methods
-- **Business logic**: Calculations, state machines, decision logic without DB dependencies
-- **Enums and constants**: Verifying enum values, backward compatibility
+**The core question**: Will this unit test catch a bug that integration tests won't?
+
+Unit tests add value when they test:
+- **Error handling paths** that integration tests won't exercise (e.g., validation errors, edge cases)
+- **Conditional branching logic** where integration tests only cover one path (e.g., "if profiling enabled" vs "if profiling disabled")
+- **Complex pure functions** with many input combinations (calculations, transformations, parsing)
+- **State synchronization** between fields that must stay consistent (real bug source)
+- **Serialization round-trips** where data could be lost or corrupted
+
+Unit tests do NOT add value when they:
+- **Verify enum values exist** — if `Status.PENDING` is misspelled, the code using it fails immediately
+- **Test default values** — covered by integration tests that create and retrieve objects
+- **Duplicate happy-path behavior** — if integration tests exercise the same code path, the unit test is redundant
+- **Test framework behavior** — don't test that SQLAlchemy defaults work or that Pydantic validates types
+
+**Rule of thumb**: If deleting the unit test wouldn't reduce your confidence in the code (because integration tests cover it), delete the unit test.
 
 Unit tests should NOT:
 - Require a running database

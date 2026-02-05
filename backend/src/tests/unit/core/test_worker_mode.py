@@ -209,7 +209,7 @@ def test_parse_workload_types_all():
 
     Validates: Requirements 7.4
     """
-    result = parse_workload_types("INGESTION,LLM_WORKFLOW,MAINTENANCE,PROFILING")
+    result = parse_workload_types("INGESTION,INGESTION_OCR,INGESTION_EMBED,LLM_WORKFLOW,MAINTENANCE,PROFILING")
     assert result == set(WorkloadType)
 
 
@@ -283,6 +283,7 @@ async def test_workers_enabled_starts_with_api():
     creates worker tasks when workers are enabled.
     """
     from fastapi import FastAPI
+    from shu.main import lifespan
 
     # Create app with workers enabled (concurrency=1 default)
     with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'true'}, clear=False):
