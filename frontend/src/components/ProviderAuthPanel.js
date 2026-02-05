@@ -114,7 +114,9 @@ export default function ProviderAuthPanel({
       if (typeof prov.impersonate_email === 'string' && prov.impersonate_email) {
         setProbeSubject(prov.impersonate_email);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Ignore error
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialOverlay, provider]);
 
@@ -206,7 +208,9 @@ export default function ProviderAuthPanel({
         ok = !!(googleStatus && googleStatus.service_account_configured);
       }
       onGateChange(ok);
-    } catch (_) {}
+    } catch (_) {
+      // Ignore error
+    }
   }, [effMode, identitiesOk, probeSubject, googleStatus, onGateChange]);
 
   const [probeLoading, setProbeLoading] = useState(false);
@@ -264,7 +268,9 @@ export default function ProviderAuthPanel({
         overlay.auth = { google: payload };
       }
       onAuthOverlayChange(overlay);
-    } catch (_) {}
+    } catch (_) {
+      // Ignore error
+    }
   }, [provider, effMode, probeSubject, onAuthOverlayChange]);
 
   const showIdentityGate = effMode === 'user' && requiredIdentities.length > 0;
@@ -466,13 +472,17 @@ function SubscriptionControls({ provider, pluginName, requiredScopes = [] }) {
         if (!isSubscribed) {
           try {
             await subscribeMut.mutateAsync();
-          } catch (_) {}
+          } catch (_) {
+            // Ignore error
+          }
         }
         try {
           qc.invalidateQueries(['hostAuth', 'status']);
           qc.invalidateQueries(['hostAuth', 'subscriptions', provider]);
           qc.invalidateQueries(['hostAuth', 'consentScopes', provider]);
-        } catch (_) {}
+        } catch (_) {
+          // Ignore error
+        }
       },
       onError: (e) => {
         /* eslint-disable-next-line no-console */ console.error('Authorize failed:', formatError(e));

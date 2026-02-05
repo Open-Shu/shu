@@ -187,7 +187,9 @@ export default function FeedDialog({
         if (allowedFeedOps.length > 0 && !merged.op && defaultFeedOp) {
           merged = { ...merged, op: defaultFeedOp };
         }
-      } catch (_) {}
+      } catch (_) {
+        // Ignore error
+      }
       setSchema(selectedPlugin.input_schema);
       setValues(merged);
     } else {

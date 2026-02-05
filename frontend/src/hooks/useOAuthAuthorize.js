@@ -39,7 +39,9 @@ export default function useOAuthAuthorize() {
             let expectedApi = expectedFrontend;
             try {
               expectedApi = new URL(getApiBaseUrl()).origin;
-            } catch (_) {}
+            } catch (_) {
+              // Ignore error
+            }
             if (event.origin !== expectedFrontend && event.origin !== expectedApi) {
               return;
             }
@@ -67,7 +69,9 @@ export default function useOAuthAuthorize() {
             try {
               qc.invalidateQueries(['hostAuth', 'status']);
               qc.invalidateQueries(['hostAuth', 'consentScopes', prov]);
-            } catch (_) {}
+            } catch (_) {
+              // Ignore error
+            }
 
             if (typeof onAfterExchange === 'function') {
               await onAfterExchange();
@@ -87,7 +91,9 @@ export default function useOAuthAuthorize() {
           if (popup && popup.closed) {
             try {
               window.removeEventListener('message', listener);
-            } catch (_) {}
+            } catch (_) {
+              // Ignore error
+            }
             onDone && onDone();
             clearInterval(timer);
           }

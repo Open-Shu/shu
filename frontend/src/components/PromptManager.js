@@ -64,7 +64,7 @@ function PromptManager({
   showEntityFilter = true,
   onPromptSelect = null,
   open = true,
-  onClose = null,
+  onClose: _onClose = null,
 }) {
   // Handle legacy knowledgeBaseId prop
   const actualEntityType = entityType || (knowledgeBaseId ? ENTITY_TYPES.KNOWLEDGE_BASE : null);

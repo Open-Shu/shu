@@ -10,14 +10,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControl,
   Grid,
   IconButton,
-  InputLabel,
-  MenuItem,
-  Select,
   Stack,
-  TextField,
   Tooltip,
   Typography,
   Alert,
@@ -516,10 +511,6 @@ export default function ExperiencesAdmin() {
         onClose={handleImportClose}
         onSuccess={handleImportSuccess}
         prePopulatedYAML={prePopulatedYAML}
-        onError={(error) => {
-          console.error('Import failed:', error);
-          // Keep wizard open to show error - the wizard handles error display
-        }}
       />
     </Box>
   );

@@ -218,7 +218,9 @@ const useMessageRegeneration = ({
                 );
                 return rebuildCache(oldData, updated);
               });
-            } catch (_) {}
+            } catch (_) {
+              // Ignore error
+            }
 
             markCompleted();
             return;

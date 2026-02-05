@@ -145,8 +145,12 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
         }
         try {
           popupRef.current && popupRef.current.close();
-        } catch (_) {}
-      } catch (_) {}
+        } catch (_) {
+          // Ignore error
+        }
+      } catch (_) {
+        // Ignore error
+      }
     };
   }, []);
 
@@ -196,7 +200,9 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
           }
           try {
             popupRef.current && popupRef.current.close();
-          } catch (_) {}
+          } catch (_) {
+            // Ignore error
+          }
 
           const resp = await authAPI.exchangeGoogleLogin(data.code);
           const payload = extractDataFromResponse(resp);
@@ -230,7 +236,9 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
           }
           try {
             popupRef.current && popupRef.current.close();
-          } catch (_) {}
+          } catch (_) {
+            // Ignore error
+          }
         } finally {
           setLoading(false);
           setError('Login window timed out. Please try again or use the primary Google button.');

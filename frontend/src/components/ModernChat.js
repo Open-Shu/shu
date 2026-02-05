@@ -252,7 +252,9 @@ const ModernChat = () => {
       if (stored && RAG_REWRITE_OPTIONS.some((opt) => opt.value === stored)) {
         return stored;
       }
-    } catch (_) {}
+    } catch (_) {
+      // Ignore error
+    }
     return 'raw_query';
   });
 

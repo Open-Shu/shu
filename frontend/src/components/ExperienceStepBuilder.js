@@ -18,7 +18,6 @@ import {
   Typography,
 } from '@mui/material';
 import {
-  Add as AddIcon,
   Delete as DeleteIcon,
   DragIndicator as DragIcon,
   ExpandMore as ExpandIcon,
@@ -30,7 +29,7 @@ import {
 } from '@mui/icons-material';
 import { pluginsAPI } from '../services/pluginsApi';
 import { knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
-import SchemaForm, { buildDefaultValues } from './SchemaForm';
+import SchemaForm from './SchemaForm';
 
 const StepTypeChip = ({ type }) => {
   const isPlugin = type === 'plugin';

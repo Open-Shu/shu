@@ -185,12 +185,7 @@ const ExperienceResultCard = ({ experience, onClick }) => {
   );
 };
 
-export default function ExperienceDashboard({
-  onStartChat,
-  onCreateConversation,
-  createConversationDisabled,
-  onExperienceClick,
-}) {
+export default function ExperienceDashboard({ onCreateConversation, createConversationDisabled, onExperienceClick }) {
   // Fetch user's experience results
   const {
     data: results,

@@ -19,7 +19,6 @@ const useChatComposer = ({
   pluginsEnabled,
   selectedPlugin,
   onSlashCommand,
-  inputRef,
   fileInputRef,
   scheduleScrollToBottom,
   ragRewriteMode,

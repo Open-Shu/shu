@@ -45,7 +45,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
       try {
         const obj = JSON.parse(rawJson || '{}');
         return String(obj?.op || '').toLowerCase();
-      } catch (_) {}
+      } catch (_) {
+        // Ignore error
+      }
     }
     return String(values?.op || '').toLowerCase();
   }, [rawMode, rawJson, values]);
@@ -80,7 +82,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
           if (typeof onResult === 'function') {
             onResult(data, { mode: 'run', plugin: pluginDef });
           }
-        } catch {}
+        } catch {
+          // Ignore error
+        }
       },
       onError: (err) => {
         try {
@@ -114,7 +118,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
           if (typeof onResult === 'function') {
             onResult(data, { mode: 'preview', plugin: pluginDef });
           }
-        } catch {}
+        } catch {
+          // Ignore error
+        }
       },
       onError: (err) => {
         try {
@@ -179,7 +185,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
       if (typeof onStart === 'function') {
         onStart({ mode: 'run', plugin: pluginDef, params });
       }
-    } catch {}
+    } catch {
+      // Ignore error
+    }
     execMut.mutate({
       name: pluginDef?.name,
       params,
@@ -212,7 +220,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
       if (typeof onStart === 'function') {
         onStart({ mode: 'preview', plugin: pluginDef, params });
       }
-    } catch {}
+    } catch {
+      // Ignore error
+    }
     previewMut.mutate({
       name: pluginDef?.name,
       params,
@@ -245,7 +255,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
       if (typeof onStart === 'function') {
         onStart({ mode: 'approve', plugin: pluginDef, params });
       }
-    } catch {}
+    } catch {
+      // Ignore error
+    }
     execMut.mutate({
       name: pluginDef?.name,
       params,
@@ -300,7 +312,9 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
                   const next = { ...(prev || {}), kb_id: val };
                   try {
                     setRawJson(JSON.stringify(next, null, 2));
-                  } catch {}
+                  } catch {
+                    // Ignore error
+                  }
                   return next;
                 });
               }}

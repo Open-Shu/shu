@@ -13,7 +13,6 @@ import {
   Alert,
 } from '@mui/material';
 import { Close as CloseIcon } from '@mui/icons-material';
-import YAMLProcessor from '../services/yamlProcessor';
 import { extractImportPlaceholders } from '../services/importPlaceholders';
 import { log } from '../utils/log';
 
@@ -49,9 +48,8 @@ const STEPS = [
  * @param {function} props.onClose - Callback when wizard is closed
  * @param {string} [props.prePopulatedYAML] - Pre-populated YAML content (e.g., from Quick Start)
  * @param {function} [props.onSuccess] - Callback when experience is successfully created
- * @param {function} [props.onError] - Callback when an error occurs
  */
-const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSuccess, onError }) => {
+const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSuccess }) => {
   // Wizard state management
   const [currentStep, setCurrentStep] = useState(0);
   const [yamlContent, setYAMLContent] = useState(prePopulatedYAML || '');
@@ -63,9 +61,6 @@ const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSucc
   });
   const [wizardError, setWizardError] = useState(null);
 
-  // Experience creation state
-  const [createdExperienceId, setCreatedExperienceId] = useState(null);
-
   // Initialize YAML content when prePopulatedYAML changes
   useEffect(() => {
     if (prePopulatedYAML && prePopulatedYAML !== yamlContent) {
@@ -76,7 +71,6 @@ const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSucc
       setPlaceholderValues({});
       setValidationState({ yamlValid: false, placeholdersValid: false });
       setWizardError(null);
-      setCreatedExperienceId(null);
     }
   }, [prePopulatedYAML, yamlContent]);
 
@@ -137,7 +131,6 @@ const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSucc
     setPlaceholderValues({});
     setValidationState({ yamlValid: false, placeholdersValid: false });
     setWizardError(null);
-    setCreatedExperienceId(null);
 
     if (onClose) {
       onClose();
@@ -190,7 +183,6 @@ const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSucc
             yamlContent={yamlContent}
             resolvedValues={placeholderValues}
             onCreationComplete={(createdExperience) => {
-              setCreatedExperienceId(createdExperience.id);
               if (onSuccess) {
                 onSuccess(createdExperience);
               }
@@ -227,7 +219,7 @@ const ImportExperienceWizard = ({ open, onClose, prePopulatedYAML = null, onSucc
         {/* Stepper */}
         <Box sx={{ mb: 4 }}>
           <Stepper activeStep={currentStep} alternativeLabel>
-            {STEPS.map((step, index) => (
+            {STEPS.map((step, _index) => (
               <Step key={step.key}>
                 <StepLabel>
                   <Typography variant="body2" fontWeight="medium">

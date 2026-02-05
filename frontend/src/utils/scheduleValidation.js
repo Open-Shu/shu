@@ -283,7 +283,8 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
     return { isValid: true, warnings };
   }
 
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  // eslint-disable-next-line no-unused-vars
+  const [_minute, _hour, dayOfMonth, month, dayOfWeek] = parts;
 
   // Skip validation if day-of-month is wildcard or if day-of-week is specified
   if (dayOfMonth === '*' || dayOfWeek !== '*') {
@@ -350,7 +351,7 @@ export function validateDayOfMonthEdgeCases(cronExpression) {
 
       // Check each month
       const monthsWith30Days = [4, 6, 9, 11]; // April, June, September, November
-      const monthsWith31Days = [1, 3, 5, 7, 8, 10, 12]; // Jan, Mar, May, Jul, Aug, Oct, Dec
+      // const monthsWith31Days = [1, 3, 5, 7, 8, 10, 12]; // Jan, Mar, May, Jul, Aug, Oct, Dec
 
       monthValues.forEach((monthNum) => {
         if (monthNum === 2) {

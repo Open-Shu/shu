@@ -231,13 +231,6 @@ const LLMProviderForm = ({
                   const eff = getEffectiveEndpoint(epKey);
                   const b = base[epKey] || {};
                   const cur = (endpointsOverride || {})[epKey] || {};
-                  const qdStr = (() => {
-                    try {
-                      return eff.query_defaults ? JSON.stringify(eff.query_defaults) : '';
-                    } catch {
-                      return '';
-                    }
-                  })();
                   return (
                     <Box
                       key={epKey}

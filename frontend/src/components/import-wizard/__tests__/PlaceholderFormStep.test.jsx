@@ -62,7 +62,9 @@ const createWrapper = () => {
     },
   });
 
-  return ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  const TestWrapper = ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  TestWrapper.displayName = 'TestWrapper';
+  return TestWrapper;
 };
 
 describe('PlaceholderFormStep', () => {

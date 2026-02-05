@@ -73,7 +73,9 @@ export const buildStreamingParentIds = (messages) => {
             suppressed,
           });
         }
-      } catch (_) {}
+      } catch (_) {
+        // Ignore error
+      }
     }
   }
   return ids;

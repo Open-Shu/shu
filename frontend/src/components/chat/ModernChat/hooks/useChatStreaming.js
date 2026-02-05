@@ -222,7 +222,9 @@ const useChatStreaming = ({
                 });
                 return rebuildCache(oldData, updated);
               });
-            } catch (_) {}
+            } catch (_) {
+              // Ignore error
+            }
 
             if (!isMountedRef.current) {
               return;

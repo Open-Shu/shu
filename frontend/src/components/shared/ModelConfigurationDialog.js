@@ -48,8 +48,6 @@ const ModelConfigurationDialog = ({
   setAdvancedJson,
   advancedJsonError,
   setAdvancedJsonError,
-  onSubmit,
-  submitLabel,
   isSubmitting,
   submitError,
   // New props for verification workflow
@@ -163,7 +161,7 @@ const ModelConfigurationDialog = ({
    * Handle dialog close (backdrop click or escape key).
    * Shows confirmation if needed. Blocks closing if verification is in progress.
    */
-  const handleDialogClose = (event, reason) => {
+  const handleDialogClose = (_event, _reason) => {
     // Block closing if verification is in progress
     if (isVerifying) {
       setVerifyError('Please wait for verification to complete before closing.');
@@ -335,11 +333,6 @@ const ModelConfigurationDialog = ({
     }
     // otherwise it’s already a string (user typed) or primitive
     return String(val);
-  };
-
-  // Invalidate side-call config query after successful save to refresh the chip
-  const handleSaveSuccess = () => {
-    queryClient.invalidateQueries('side-call-config');
   };
 
   // Keep typed parameters and Advanced JSON in sync
@@ -1007,7 +1000,7 @@ const ModelConfigurationDialog = ({
                                         const parts = field.path.split('.');
                                         let cur = baseVal;
                                         for (const p of parts) {
-                                          if (cur == null) {
+                                          if (cur === null || cur === undefined) {
                                             break;
                                           }
                                           cur = cur[p];
@@ -1080,17 +1073,6 @@ const ModelConfigurationDialog = ({
                                 nextArr[existingIdx] = setByPath(nextArr[existingIdx], field.path, val);
                                 updateParamValue(key, nextArr);
                               };
-                              const handleSchemaJsonChange = (val) => {
-                                if (existingIdx < 0) {
-                                  return;
-                                }
-                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                nextArr[existingIdx] = {
-                                  ...nextArr[existingIdx],
-                                  ...(val || {}),
-                                };
-                                updateParamValue(key, nextArr);
-                              };
                               return (
                                 <Paper key={`${key}-opt-${idx}`} variant="outlined" sx={{ p: 1, mb: 1 }}>
                                   <Box
@@ -1118,7 +1100,7 @@ const ModelConfigurationDialog = ({
                                                   const parts = field.path.split('.');
                                                   let cur = paramOverrides[key][existingIdx];
                                                   for (const p of parts) {
-                                                    if (cur == null) {
+                                                    if (cur === null || cur === undefined) {
                                                       break;
                                                     }
                                                     cur = cur[p];
@@ -1248,7 +1230,7 @@ const ModelConfigurationDialog = ({
                                         const parts = field.path.split('.');
                                         let cur = baseVal;
                                         for (const p of parts) {
-                                          if (cur == null) {
+                                          if (cur === null || cur === undefined) {
                                             break;
                                           }
                                           cur = cur[p];

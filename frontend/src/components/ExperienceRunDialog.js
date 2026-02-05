@@ -6,7 +6,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   List,
   ListItem,
   ListItemIcon,
@@ -17,7 +16,6 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import { PlayArrow as RunIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { experiencesAPI } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
@@ -28,7 +26,6 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
   const isDarkMode = theme.palette.mode === 'dark';
 
   const [status, setStatus] = useState('pending'); // pending, running, completed, failed
-  const [logs, setLogs] = useState([]); // List of parsed events for debugging
   const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error } }
   const [llmContent, setLlmContent] = useState('');
   const [error, setError] = useState(null);
@@ -54,6 +51,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
       let buffer = '';
 
       try {
+        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { value, done } = await reader.read();
           if (done) {
@@ -74,7 +72,6 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
 
               try {
                 const event = JSON.parse(jsonStr);
-                setLogs((prev) => [...prev, event]);
 
                 // Process events for state updates
                 if (event.type === 'run_started') {
@@ -143,7 +140,6 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
   useEffect(() => {
     if (open) {
       setStatus('running');
-      setLogs([]);
       setStepStates({});
       setLlmContent('');
       setError(null);

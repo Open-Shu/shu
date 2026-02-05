@@ -67,7 +67,6 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   const [activeTab, setActiveTab] = useState(0);
 
   // Timing state for test duration tracking
-  const [testStartTime, setTestStartTime] = useState(null);
   const [testDuration, setTestDuration] = useState(null);
 
   // Query configuration state (for knowledge base search)
@@ -188,7 +187,6 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
     // Capture start time in local variable to avoid stale state
     const localStartTime = Date.now();
     setStreamState({ isLoading: true, error: null, data: null });
-    setTestStartTime(localStartTime);
     setTestDuration(null);
 
     try {
@@ -647,7 +645,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                         {formatError(streamState.error)}
                       </Typography>
-                      {streamState.error.duration != null && streamState.error.duration > 0 && (
+                      {streamState.error.duration !== null && streamState.error.duration > 0 && (
                         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                           Failed after {formatDuration(streamState.error.duration)}
                         </Typography>

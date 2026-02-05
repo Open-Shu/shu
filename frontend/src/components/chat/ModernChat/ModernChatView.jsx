@@ -47,7 +47,6 @@ const ModernChatView = ({
   createConversationButtonDisabled,
   mobileSidebarOpen,
   onCloseMobileSidebar,
-  onToggleMobileSidebar,
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));

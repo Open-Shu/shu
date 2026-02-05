@@ -8,7 +8,7 @@
  * @returns {string} Formatted size string (e.g., "1.5 MB")
  */
 export const formatFileSize = (bytes) => {
-  if (bytes == null || isNaN(bytes)) {
+  if (bytes === null || bytes === undefined || isNaN(bytes)) {
     return '0 B';
   }
   if (bytes < 1024) {

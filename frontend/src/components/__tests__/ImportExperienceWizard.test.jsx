@@ -113,7 +113,6 @@ describe('ImportExperienceWizard', () => {
     open: true,
     onClose: jest.fn(),
     onSuccess: jest.fn(),
-    onError: jest.fn(),
   };
 
   beforeEach(() => {

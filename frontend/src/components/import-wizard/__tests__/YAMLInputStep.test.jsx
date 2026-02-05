@@ -191,7 +191,6 @@ describe('YAMLInputStep', () => {
     render(<YAMLInputStep {...defaultProps} />);
 
     const textarea = screen.getByPlaceholderText('Paste your YAML configuration here...');
-    const styles = window.getComputedStyle(textarea);
 
     // Note: jsdom doesn't fully compute styles, but we can check that the component renders
     expect(textarea).toBeInTheDocument();

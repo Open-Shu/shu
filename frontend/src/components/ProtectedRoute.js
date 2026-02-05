@@ -33,11 +33,13 @@ const ProtectedRoute = ({ children, requiredRole = null, requireAuth = true, fal
 
 // Higher-order component for protecting routes
 export const withAuth = (Component, requiredRole = null) => {
-  return (props) => (
+  const WithAuthComponent = (props) => (
     <ProtectedRoute requiredRole={requiredRole}>
       <Component {...props} />
     </ProtectedRoute>
   );
+  WithAuthComponent.displayName = `withAuth(${Component.displayName || Component.name || 'Component'})`;
+  return WithAuthComponent;
 };
 
 // Component for conditionally rendering content based on roles

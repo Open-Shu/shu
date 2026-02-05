@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Box, Typography, TextField, Alert, Paper, Chip, Stack, Divider } from '@mui/material';
+import { Alert, Box, Chip, Paper, Stack, TextField, Typography } from '@mui/material';
 import { CheckCircle as CheckCircleIcon, Error as ErrorIcon, Info as InfoIcon } from '@mui/icons-material';
 import YAMLProcessor from '../../services/yamlProcessor';
 import { extractImportPlaceholders } from '../../services/importPlaceholders';
@@ -19,7 +19,6 @@ const YAMLInputStep = ({ yamlContent, onYAMLChange, onValidationChange, prePopul
     isValid: false,
     errors: [],
   });
-  const [placeholders, setPlaceholders] = useState([]);
   const [isPrePopulated, setIsPrePopulated] = useState(false);
   const initializedRef = useRef(false);
 
@@ -48,7 +47,6 @@ const YAMLInputStep = ({ yamlContent, onYAMLChange, onValidationChange, prePopul
     if (!content || content.trim() === '') {
       const result = { isValid: false, errors: ['YAML content is required'] };
       setValidationResult(result);
-      setPlaceholders([]);
       onValidationChange(false);
       return;
     }
@@ -60,7 +58,6 @@ const YAMLInputStep = ({ yamlContent, onYAMLChange, onValidationChange, prePopul
 
       // Extract placeholders for display (only supported ones)
       const extractedPlaceholders = extractImportPlaceholders(content);
-      setPlaceholders(extractedPlaceholders);
 
       // Notify parent of validation state
       onValidationChange(validation.isValid);
@@ -80,7 +77,6 @@ const YAMLInputStep = ({ yamlContent, onYAMLChange, onValidationChange, prePopul
         errors: [`Validation error: ${error.message}`],
       };
       setValidationResult(result);
-      setPlaceholders([]);
       onValidationChange(false);
       log.error('YAML validation error', { error: error.message });
     }
