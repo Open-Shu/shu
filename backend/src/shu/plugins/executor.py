@@ -505,7 +505,7 @@ class Executor:
         # Resolve effective limits/quotas (per-tool overrides -> global defaults)
         limits = limits or {}
         try:
-            s = get_settings_instance()
+            s = self._settings
             # Quotas
             daily = int(limits.get("quota_daily_requests") or s.plugin_quota_daily_requests_default or 0)
             monthly = int(limits.get("quota_monthly_requests") or s.plugin_quota_monthly_requests_default or 0)

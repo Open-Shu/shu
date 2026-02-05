@@ -281,7 +281,10 @@ async def lifespan(app: FastAPI):
 
             for i in range(concurrency):
                 worker_id = f"{i + 1}/{concurrency}"
-                worker = Worker(backend, config, job_handler=process_job, worker_id=worker_id)
+                worker = Worker(
+                    backend, config, job_handler=process_job,
+                    worker_id=worker_id, install_signal_handlers=False,
+                )
 
                 async def run_inline_worker(w=worker, wid=worker_id):
                     try:

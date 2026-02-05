@@ -463,7 +463,15 @@ async def _handle_profiling_job(job) -> None:
                 }
             )
         else:
-            # Log error but raise exception to trigger retry
+            # Mark document as FAILED before raising to trigger retry
+            error_msg = f"Profiling failed: {result.error}"
+            stmt = select(Document).where(Document.id == document_id)
+            doc_result = await session.execute(stmt)
+            document = doc_result.scalar_one_or_none()
+            if document:
+                document.mark_failed(error_msg)
+                await session.commit()
+
             logger.error(
                 "Profiling job failed",
                 extra={
@@ -512,6 +520,10 @@ async def process_job(job):
     
     elif workload_type == WorkloadType.MAINTENANCE:
         # TODO: Implement in task 11.2 (scheduler migration)
+        # IMPORTANT: When implementing, the handler MUST check PluginExecution.status
+        # before processing. There is a race condition where run_pending() can claim
+        # the same PENDING execution that was already enqueued here. The handler
+        # should skip executions that are no longer PENDING.
         logger.warning(
             "MAINTENANCE workload handler not yet implemented",
             extra={

@@ -613,14 +613,16 @@ class InMemoryCacheBackend:
     async def exists(self, key: str) -> bool:
         """Check if a key exists in the cache.
 
-        Performs lazy expiration check - if the key exists but has expired,
-        it will be deleted and False will be returned.
+        Checks both string and binary storage. Performs lazy expiration check -
+        if the key exists but has expired, it will be deleted and False will be
+        returned.
 
         Args:
             key: The cache key to check. Must be a non-empty string.
 
         Returns:
-            True if the key exists and is not expired, False otherwise.
+            True if the key exists (in either string or binary storage) and
+            is not expired, False otherwise.
 
         Raises:
             CacheKeyError: If the key is empty.
@@ -632,17 +634,23 @@ class InMemoryCacheBackend:
         with self._lock:
             self._maybe_cleanup()
 
-            if key not in self._data:
-                return False
-
-            _, expiry = self._data[key]
-
-            # Lazy expiration check
-            if self._is_expired(expiry):
+            # Check string storage
+            if key in self._data:
+                _, expiry = self._data[key]
+                if not self._is_expired(expiry):
+                    return True
+                # Expired - clean up
                 del self._data[key]
-                return False
 
-            return True
+            # Check binary storage
+            if key in self._binary_data:
+                _, expiry = self._binary_data[key]
+                if not self._is_expired(expiry):
+                    return True
+                # Expired - clean up
+                del self._binary_data[key]
+
+            return False
 
     async def expire(self, key: str, ttl_seconds: int) -> bool:
         """Set or update the TTL for an existing key.

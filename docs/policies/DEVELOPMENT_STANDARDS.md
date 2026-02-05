@@ -781,7 +781,7 @@ class MyCustomQueue:  # NEVER DO THIS
 ### **26.3. WorkloadType Routing (REQUIRED)**
 - **ALWAYS use WorkloadType** when enqueuing jobs - never hardcode queue names
 - **Use the `enqueue_job` helper** from `workload_routing.py`
-- **Available WorkloadTypes**: INGESTION, LLM_WORKFLOW, MAINTENANCE, PROFILING
+- **Available WorkloadTypes**: INGESTION, INGESTION_OCR, INGESTION_EMBED, LLM_WORKFLOW, MAINTENANCE, PROFILING
 
 ```python
 from shu.core.workload_routing import WorkloadType, enqueue_job, get_queue_name

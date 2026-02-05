@@ -168,6 +168,7 @@ class Worker:
         config: WorkerConfig,
         job_handler: Callable[[Job], Awaitable[None]],
         worker_id: Optional[str] = None,
+        install_signal_handlers: bool = True,
     ):
         """Initialize the worker.
 
@@ -180,11 +181,16 @@ class Worker:
                 acknowledgment/rejection based on success/failure.
             worker_id: Optional identifier for this worker instance (e.g., "1/4").
                 Used in logs to distinguish concurrent workers in the same process.
+            install_signal_handlers: Whether to install SIGTERM/SIGINT handlers.
+                Set to False when running multiple workers in the same process
+                (e.g., inline workers in the API server) to avoid overwriting
+                each other's handlers. Default is True for standalone workers.
         """
         self._backend = backend
         self._config = config
         self._handler = job_handler
         self._worker_id = worker_id
+        self._install_signal_handlers = install_signal_handlers
         self._running = False
         self._current_job: Job | None = None
         self._queue_index: int = 0  # Round-robin index for fair queue polling
@@ -227,7 +233,8 @@ class Worker:
 
         """
         self._running = True
-        self._setup_signal_handlers()
+        if self._install_signal_handlers:
+            self._setup_signal_handlers()
 
         # Get queue names for configured workload types
         # Sort to ensure deterministic polling order across runs

@@ -281,9 +281,11 @@ async def _upsert_document_record(
         return UpsertResult(document=document, extraction=extraction_data, skipped=False)
 
     # Existing document - check if content is unchanged
+    # Only skip if document is in a terminal successful state (READY or legacy processed).
+    # Documents that are PENDING, in-progress, or FAILED should be re-processed.
     if not force_reingest:
         match, matched_hash = _hashes_match(source_hash, content_hash, existing)
-        if match:
+        if match and (existing.is_ready or existing.is_processed):
             logger.info(
                 "Skipping unchanged document",
                 extra={
@@ -383,8 +385,15 @@ async def ingest_document(
     force_reingest = bool(attrs.get("force_reingest"))
 
     if existing is not None and not force_reingest:
-        # Check if content is unchanged using source_hash
-        if source_hash and existing.source_hash and source_hash == existing.source_hash:
+        # Check if content is unchanged using source_hash.
+        # Only skip if document is in a terminal successful state (READY or legacy processed).
+        # Documents that are PENDING, in-progress, or FAILED should be re-queued.
+        if (
+            source_hash
+            and existing.source_hash
+            and source_hash == existing.source_hash
+            and (existing.is_ready or existing.is_processed)
+        ):
             logger.info(
                 "Skipping unchanged document",
                 extra={
@@ -659,8 +668,13 @@ async def ingest_text(
     existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
 
     if existing is not None and not force_reingest:
-        # Check if content is unchanged using content hash
-        if existing.content_hash and content_hash == existing.content_hash:
+        # Check if content is unchanged using content hash.
+        # Only skip if document is in a terminal successful state (READY or legacy processed).
+        if (
+            existing.content_hash
+            and content_hash == existing.content_hash
+            and (existing.is_ready or existing.is_processed)
+        ):
             logger.info(
                 "Skipping unchanged document",
                 extra={
@@ -805,8 +819,13 @@ async def ingest_thread(
     existing = await svc.get_document_by_source_id(knowledge_base_id, thread_id)
 
     if existing is not None and not force_reingest:
-        # Check if content is unchanged using content hash
-        if existing.content_hash and content_hash == existing.content_hash:
+        # Check if content is unchanged using content hash.
+        # Only skip if document is in a terminal successful state (READY or legacy processed).
+        if (
+            existing.content_hash
+            and content_hash == existing.content_hash
+            and (existing.is_ready or existing.is_processed)
+        ):
             logger.info(
                 "Skipping unchanged thread",
                 extra={

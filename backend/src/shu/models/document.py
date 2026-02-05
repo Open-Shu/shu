@@ -201,12 +201,18 @@ class Document(BaseModel):
         self.processing_status = "processed"
         self.processed_at = datetime.now(UTC)
         self.processing_error = None
+        self.error_message = None
+        # Sync with pipeline status
+        self.status = DocumentStatus.READY.value
 
     def mark_error(self, error_message: str) -> None:
         """Mark document as having a processing error."""
         self.processing_status = "error"
         self.processing_error = error_message
         self.processed_at = datetime.now(UTC)
+        # Sync with pipeline status
+        self.status = DocumentStatus.FAILED.value
+        self.error_message = error_message
 
     # Pipeline status helpers (Queue-Based Ingestion Pipeline)
     def update_status(self, new_status: "DocumentStatus") -> None:
@@ -227,11 +233,16 @@ class Document(BaseModel):
         if new_status == DocumentStatus.READY:
             self.processing_status = "processed"
             self.processed_at = datetime.now(UTC)
+            self.processing_error = None
+            self.error_message = None
         elif new_status == DocumentStatus.FAILED:
             self.processing_status = "error"
             self.processed_at = datetime.now(UTC)
         else:
             self.processing_status = "pending"
+            # Clear stale error fields when moving back to non-terminal states
+            self.processing_error = None
+            self.error_message = None
 
     def mark_failed(self, error_msg: str) -> None:
         """Mark document as failed with error message.
