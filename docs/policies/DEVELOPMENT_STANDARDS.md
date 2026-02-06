@@ -178,8 +178,8 @@ select(Model).where(Model.column != None)  # Also works
 
 **Prevention**: This pattern is difficult to catch with linters. Code reviews must check for this pattern in all SQLAlchemy queries.
 
-
 ### 4.2. Time & Timezones (REQUIRED)
+
 - Always use timezone-aware datetimes in backend code (tzinfo set) and normalize to UTC.
 - When generating timestamps, use `datetime.now(timezone.utc)`.
 - When parsing external timestamps, preserve timezone if present; if a naive datetime is encountered, explicitly set it to UTC immediately.

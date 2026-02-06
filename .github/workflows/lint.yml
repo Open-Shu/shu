@@ -53,8 +53,9 @@ jobs:
           files: |
             **/*.py
           files_ignore: |
-            tests/**
+            backend/src/tests/**
             backend/migrations/**
+            backend/scripts/**
 
       - name: Run Ruff linter on changed files
         if: steps.changed-py-files.outputs.any_changed == 'true'

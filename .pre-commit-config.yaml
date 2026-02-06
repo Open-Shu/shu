@@ -53,13 +53,12 @@ repos:
 
   # Frontend: ESLint
   - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v9.17.0
+    rev: v8.56.0  # Match ESLint 8 used in frontend (latest ESLint 8 mirror)
     hooks:
       - id: eslint
         files: \.(js|jsx|ts|tsx)$
         args: [--fix, --max-warnings=0]
         additional_dependencies:
-          - eslint@8.57.0
           - eslint-plugin-react@7.33.2
           - eslint-plugin-react-hooks@4.6.0
         exclude: ^(?!frontend/)

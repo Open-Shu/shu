@@ -19,9 +19,9 @@ async def test_sqlalchemy_null_check_generates_correct_sql() -> None:
     - plugins_scheduler_service.py (is None -> .is_(None))
     - attachment_cleanup.py (is not None -> .is_not(None))
     """
-    Base = declarative_base()
+    base = declarative_base()
 
-    class TestModel(Base):
+    class TestModel(base):
         """Test model for SQL generation verification."""
 
         __tablename__ = "test_model"
