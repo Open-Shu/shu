@@ -1652,9 +1652,8 @@ async def get_queue_backend() -> QueueBackend:
     """Get the configured queue backend (singleton).
 
     Selection logic:
-    1. If SHU_REDIS_URL is set and Redis is reachable -> RedisQueueBackend
-    2. If SHU_REDIS_URL is set but unreachable and fallback enabled -> InMemoryQueueBackend (with warning)
-    3. If SHU_REDIS_URL is not set -> InMemoryQueueBackend
+    1. If SHU_REDIS_URL is set -> RedisQueueBackend (connection failure is fatal)
+    2. If SHU_REDIS_URL is not set -> InMemoryQueueBackend
 
     This function is suitable for use in background tasks, schedulers, and
     other non-FastAPI code. For FastAPI endpoints, prefer using
@@ -1664,7 +1663,7 @@ async def get_queue_backend() -> QueueBackend:
         The configured QueueBackend instance.
 
     Raises:
-        QueueConnectionError: If Redis is required but unavailable.
+        QueueConnectionError: If SHU_REDIS_URL is set but Redis is unreachable.
 
     Example:
         backend = await get_queue_backend()
@@ -1681,51 +1680,16 @@ async def get_queue_backend() -> QueueBackend:
 
     settings = get_settings_instance()
 
-    # Check if Redis URL is configured
-    redis_url = settings.redis_url
-    if not redis_url or redis_url == "redis://localhost:6379":  # noqa: SIM102
-        # Check if this is a default/unconfigured value
-        # If redis_required is False and no explicit URL, use in-memory
-        if not settings.redis_required:
-            logger.info("No Redis URL configured, using InMemoryQueueBackend")
-            _queue_backend = InMemoryQueueBackend()
-            return _queue_backend
-
-    # Try to connect to Redis
-    try:
-        redis_client = await _get_shared_redis_client()
-        _queue_backend = RedisQueueBackend(redis_client)
-        logger.info("Using RedisQueueBackend")
-        return _queue_backend
-
-    except QueueConnectionError as e:
-        if settings.redis_required:
-            logger.error(
-                "Redis is required but connection failed",
-                extra={"redis_url": settings.redis_url, "error": str(e)},
-            )
-            raise QueueConnectionError(
-                f"Redis is required but connection failed: {e}. "
-                f"Please ensure Redis is running and accessible at {settings.redis_url}"
-            ) from e
-
-        if not settings.redis_fallback_enabled:
-            logger.error(
-                "Redis fallback is disabled and Redis connection failed",
-                extra={"redis_url": settings.redis_url, "error": str(e)},
-            )
-            raise QueueConnectionError(
-                f"Redis connection failed and fallback is disabled: {e}. "
-                f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
-            ) from e
-
-        # Fall back to in-memory
-        logger.warning(
-            "Redis connection failed, falling back to InMemoryQueueBackend",
-            extra={"redis_url": settings.redis_url, "error": str(e)},
-        )
+    if not settings.redis_enabled:
+        logger.info("SHU_REDIS_URL not configured, using InMemoryQueueBackend")
         _queue_backend = InMemoryQueueBackend()
         return _queue_backend
+
+    # Redis is enabled — connection failure is fatal
+    redis_client = await _get_shared_redis_client()
+    _queue_backend = RedisQueueBackend(redis_client)
+    logger.info("Using RedisQueueBackend")
+    return _queue_backend
 
 
 def get_queue_backend_dependency() -> QueueBackend:

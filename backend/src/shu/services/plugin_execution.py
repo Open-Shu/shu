@@ -181,6 +181,10 @@ async def execute_plugin(
     params = _coerce_params(plugin, params)
     params["op"] = operation
 
+    # DEBUG: Log params for gchat_digest to diagnose experience execution issue
+    if plugin_name == "gchat_digest":
+        logger.info(f"execute_plugin | plugin={plugin_name} op={operation} params={params}")
+
     try:
         await ensure_user_identity_for_plugin(
             db_session,

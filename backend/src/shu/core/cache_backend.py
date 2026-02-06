@@ -5,7 +5,7 @@ for key-value caching operations. It supports two interchangeable implementation
 - RedisCacheBackend: For scaled multi-node deployments
 - InMemoryCacheBackend: For single-node/development deployments
 
-Backend selection is automatic based on the SHU_REDIS_URL configuration.
+Backend selection is automatic: set SHU_REDIS_URL to use Redis, omit it for in-memory.
 
 The CacheBackend protocol supports both string and binary data:
 - String methods (get, set, delete, etc.): For text and JSON data
@@ -1426,9 +1426,8 @@ async def get_cache_backend() -> CacheBackend:
     """Get the configured cache backend (singleton).
 
     Selection logic:
-    1. If SHU_REDIS_URL is set and Redis is reachable -> RedisCacheBackend
-    2. If SHU_REDIS_URL is set but unreachable and fallback enabled -> InMemoryCacheBackend (with warning)
-    3. If SHU_REDIS_URL is not set -> InMemoryCacheBackend
+    1. If SHU_REDIS_URL is set -> RedisCacheBackend (connection failure is fatal)
+    2. If SHU_REDIS_URL is not set -> InMemoryCacheBackend
 
     This function is suitable for use in background tasks, schedulers, and
     other non-FastAPI code. For FastAPI endpoints, prefer using
@@ -1438,7 +1437,7 @@ async def get_cache_backend() -> CacheBackend:
         The configured CacheBackend instance.
 
     Raises:
-        CacheConnectionError: If Redis is required but unavailable.
+        CacheConnectionError: If SHU_REDIS_URL is set but Redis is unreachable.
 
     Example:
         backend = await get_cache_backend()
@@ -1454,60 +1453,27 @@ async def get_cache_backend() -> CacheBackend:
 
     settings = get_settings_instance()
 
-    # Check if Redis URL is configured and check if this is a default/unconfigured value
-    # If redis_required is False and no explicit URL, use in-memory
-    redis_url = settings.redis_url
-    if (not redis_url or redis_url == "redis://localhost:6379") and not settings.redis_required:
-        logger.info("No Redis URL configured, using InMemoryCacheBackend")
+    if not settings.redis_enabled:
+        logger.info("SHU_REDIS_URL not configured, using InMemoryCacheBackend")
         _cache_backend = InMemoryCacheBackend()
         return _cache_backend
 
-    # Try to connect to Redis
+    # Redis is enabled — connection failure is fatal
+    redis_client = await _get_redis_client()
+
+    # Try to get binary client, but don't fail if it's not available
+    redis_binary_client = None
     try:
-        redis_client = await _get_redis_client()
-
-        # Try to get binary client, but don't fail if it's not available
-        redis_binary_client = None
-        try:
-            redis_binary_client = await _get_redis_binary_client()
-            logger.info("Using RedisCacheBackend with binary support")
-        except CacheConnectionError as binary_error:
-            logger.warning(
-                f"Binary Redis client initialization failed, binary operations will not be available: {binary_error}"
-            )
-            logger.info("Using RedisCacheBackend without binary support")
-
-        _cache_backend = RedisCacheBackend(redis_client, redis_binary_client)
-        return _cache_backend
-
-    except CacheConnectionError as e:
-        if settings.redis_required:
-            logger.error(
-                "Redis is required but connection failed",
-                extra={"redis_url": settings.redis_url, "error": str(e)},
-            )
-            raise CacheConnectionError(
-                f"Redis is required but connection failed: {e}. "
-                f"Please ensure Redis is running and accessible at {settings.redis_url}"
-            ) from e
-
-        if not settings.redis_fallback_enabled:
-            logger.error(
-                "Redis fallback is disabled and Redis connection failed",
-                extra={"redis_url": settings.redis_url, "error": str(e)},
-            )
-            raise CacheConnectionError(
-                f"Redis connection failed and fallback is disabled: {e}. "
-                f"Please enable Redis fallback or ensure Redis is running at {settings.redis_url}"
-            ) from e
-
-        # Fall back to in-memory
+        redis_binary_client = await _get_redis_binary_client()
+        logger.info("Using RedisCacheBackend with binary support")
+    except CacheConnectionError as binary_error:
         logger.warning(
-            "Redis connection failed, falling back to InMemoryCacheBackend",
-            extra={"redis_url": settings.redis_url, "error": str(e)},
+            f"Binary Redis client initialization failed, binary operations will not be available: {binary_error}"
         )
-        _cache_backend = InMemoryCacheBackend()
-        return _cache_backend
+        logger.info("Using RedisCacheBackend without binary support")
+
+    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client)
+    return _cache_backend
 
 
 def get_cache_backend_dependency() -> CacheBackend:

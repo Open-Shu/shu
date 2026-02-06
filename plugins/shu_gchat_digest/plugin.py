@@ -189,21 +189,27 @@ class GChatDigestPlugin:
         base = "https://chat.googleapis.com/v1"
         tmin_iso = self._window(since_hours)
 
+        # Use Google Chat API filter to only fetch messages within the time window
+        # This avoids fetching old messages and then filtering them client-side
+        time_filter = f'createTime > "{tmin_iso}"'
+
         spaces = await self._list_spaces(host, headers, max_spaces)
+
         out: list[dict[str, Any]] = []
         for sp in spaces:
             page: str | None = None
             fetched = 0
             while True and fetched < max_messages_per_space:
-                q: dict[str, Any] = {"pageSize": min(100, max_messages_per_space - fetched)}
+                q: dict[str, Any] = {
+                    "pageSize": min(100, max_messages_per_space - fetched),
+                    "filter": time_filter,
+                }
                 if page:
                     q["pageToken"] = page
                 data = await self._http_json(host, "GET", f"{base}/{sp}/messages", headers, params=q)
                 msgs = data.get("messages") or []
                 for m in msgs:
                     ctime = m.get("createTime")
-                    if ctime and ctime < tmin_iso:
-                        continue
                     sender = await self._resolve_sender(host, m.get("sender") or {})
                     out.append(
                         {
