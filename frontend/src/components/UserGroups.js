@@ -68,7 +68,7 @@ const UserGroups = () => {
   // Fetch groups
   const { data: groupsResponse, isLoading } = useQuery('userGroups', groupsAPI.list, {
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 
@@ -90,7 +90,7 @@ const UserGroups = () => {
     {
       enabled: !!selectedGroup?.id && membersDialogOpen,
       onError: (err) => {
-        setError(formatError(err).message);
+        setError(formatError(err));
       },
     }
   );
@@ -106,7 +106,7 @@ const UserGroups = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 
@@ -119,7 +119,7 @@ const UserGroups = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 
@@ -132,7 +132,7 @@ const UserGroups = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 
@@ -145,7 +145,7 @@ const UserGroups = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 
@@ -157,7 +157,7 @@ const UserGroups = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 

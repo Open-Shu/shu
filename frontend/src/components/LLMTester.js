@@ -777,7 +777,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                                   color={
                                     message.source === 'Model Prompt'
                                       ? 'secondary'
-                                      : message.source === 'KB Prompt + Context'
+                                      : message.source.startsWith('KB Prompt')
                                         ? 'info'
                                         : 'default'
                                   }

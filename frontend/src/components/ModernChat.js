@@ -270,7 +270,7 @@ const ModernChat = () => {
 
   const { isLoading: loadingModels } = useQuery('llm-models', () => llmAPI.getModels(), {
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
     },
   });
 

@@ -96,7 +96,9 @@ const PasswordLogin = ({
       const { access_token, refresh_token } = responseData;
 
       localStorage.setItem('shu_token', access_token);
-      localStorage.setItem('shu_refresh_token', refresh_token);
+      if (refresh_token) {
+        localStorage.setItem('shu_refresh_token', refresh_token);
+      }
 
       window.location.href = '/';
     } catch (err) {

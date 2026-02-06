@@ -98,6 +98,7 @@ const ExportExperienceButton = ({
             onClick={handleExport}
             disabled={disabled || exportMutation.isLoading}
             color={error ? 'error' : 'default'}
+            aria-label={error || 'Export experience as YAML'}
           >
             {exportMutation.isLoading ? <CircularProgress size={16} /> : <DownloadIcon fontSize="small" />}
           </IconButton>

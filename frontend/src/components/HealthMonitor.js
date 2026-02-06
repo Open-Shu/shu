@@ -198,16 +198,18 @@ function HealthMonitor() {
       </Alert>
 
       {/* Debug Information */}
-      <Alert severity="info" sx={{ mb: 3 }}>
-        <Typography variant="body2">
-          <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}
-          {kbLoading ? 'Yes' : 'No'} | Response: {knowledgeBasesResponse ? 'Present' : 'Missing'} | Items:{' '}
-          {knowledgeBases ? 'Present' : 'Missing'} | Raw Response Type: {typeof knowledgeBasesResponse} | Raw Response
-          Keys: {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'} | Readiness:{' '}
-          {readiness ? JSON.stringify(readiness) : 'Missing'} | Liveness:{' '}
-          {liveness ? JSON.stringify(liveness) : 'Missing'}
-        </Typography>
-      </Alert>
+      {process.env.NODE_ENV !== 'production' && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}
+            {kbLoading ? 'Yes' : 'No'} | Response: {knowledgeBasesResponse ? 'Present' : 'Missing'} | Items:{' '}
+            {knowledgeBases ? 'Present' : 'Missing'} | Raw Response Type: {typeof knowledgeBasesResponse} | Raw Response
+            Keys: {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'} | Readiness:{' '}
+            {readiness ? JSON.stringify(readiness) : 'Missing'} | Liveness:{' '}
+            {liveness ? JSON.stringify(liveness) : 'Missing'}
+          </Typography>
+        </Alert>
+      )}
 
       <Grid container spacing={3}>
         {/* API Health */}

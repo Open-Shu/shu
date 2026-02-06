@@ -103,15 +103,17 @@ function Dashboard() {
       )}
 
       {/* Debug Information */}
-      <Alert severity="info" sx={{ mb: 3 }}>
-        <Typography variant="body2">
-          <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}
-          {kbLoading ? 'Yes' : 'No'} | Error: {kbError ? 'Yes' : 'No'} | Response:{' '}
-          {knowledgeBasesResponse ? 'Present' : 'Missing'} | Items: {knowledgeBases ? 'Present' : 'Missing'} | Total:{' '}
-          {knowledgeBasesData?.total || 0} | Raw Response Type: {typeof knowledgeBasesResponse} | Raw Response Keys:{' '}
-          {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'}
-        </Typography>
-      </Alert>
+      {process.env.NODE_ENV !== 'production' && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}
+            {kbLoading ? 'Yes' : 'No'} | Error: {kbError ? 'Yes' : 'No'} | Response:{' '}
+            {knowledgeBasesResponse ? 'Present' : 'Missing'} | Items: {knowledgeBases ? 'Present' : 'Missing'} | Total:{' '}
+            {knowledgeBasesData?.total || 0} | Raw Response Type: {typeof knowledgeBasesResponse} | Raw Response Keys:{' '}
+            {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'}
+          </Typography>
+        </Alert>
+      )}
 
       <Grid container spacing={3}>
         {/* System Health */}

@@ -57,11 +57,13 @@ function QueryConfiguration({
   useQuery(['kb-config', selectedKB], () => (selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null), {
     enabled: !!selectedKB,
     onSuccess: (data) => {
-      if (data && threshold === null) {
+      if (data) {
         const config = extractDataFromResponse(data);
-        if (onThresholdChange) {
+        // Only set threshold if not yet initialized
+        if (onThresholdChange && threshold === null) {
           onThresholdChange(config.search_threshold || 0.7);
         }
+        // Always update title weighting settings from KB config
         if (onTitleWeightingEnabledChange) {
           onTitleWeightingEnabledChange(config.title_weighting_enabled ?? true);
         }
