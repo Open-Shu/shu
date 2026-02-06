@@ -153,8 +153,33 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 - Use **context managers** or explicit connection cleanup
 - **No schema dropping** in tests - use targeted cleanup instead
 
+### 4.1. SQLAlchemy NULL Checks (CRITICAL)
+**NEVER use Python's `is None` or `is not None` in SQLAlchemy queries** - it doesn't generate proper SQL.
 
-### 4.1. Time & Timezones (REQUIRED)
+```python
+# WRONG: Python 'is None' doesn't generate SQL IS NULL
+select(Model).where(Model.column is None)
+select(Model).where(or_(Model.column is None, Model.column <= value))
+
+# CORRECT: Use .is_(None) or == None for proper SQL generation
+select(Model).where(Model.column.is_(None))
+select(Model).where(Model.column == None)  # Also works
+select(Model).where(or_(Model.column.is_(None), Model.column <= value))
+
+# WRONG: Python 'is not None' doesn't generate SQL IS NOT NULL
+select(Model).where(Model.column is not None)
+
+# CORRECT: Use .is_not(None) or != None
+select(Model).where(Model.column.is_not(None))
+select(Model).where(Model.column != None)  # Also works
+```
+
+**Why this matters**: Python's `is` operator checks object identity, not value equality. SQLAlchemy needs to intercept the comparison to generate SQL, which only works with `.is_()`, `.is_not()`, `==`, or `!=`.
+
+**Prevention**: This pattern is difficult to catch with linters. Code reviews must check for this pattern in all SQLAlchemy queries.
+
+
+### 4.2. Time & Timezones (REQUIRED)
 - Always use timezone-aware datetimes in backend code (tzinfo set) and normalize to UTC.
 - When generating timestamps, use `datetime.now(timezone.utc)`.
 - When parsing external timestamps, preserve timezone if present; if a naive datetime is encountered, explicitly set it to UTC immediately.

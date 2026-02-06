@@ -77,7 +77,7 @@ class PluginsSchedulerService:
             .where(
                 and_(
                     PluginFeed.enabled == True,  # noqa: E712
-                    or_(PluginFeed.next_run_at is None, PluginFeed.next_run_at <= now),
+                    or_(PluginFeed.next_run_at.is_(None), PluginFeed.next_run_at <= now),
                 )
             )
             .with_for_update(skip_locked=True)

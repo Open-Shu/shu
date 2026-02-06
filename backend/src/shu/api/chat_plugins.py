@@ -77,7 +77,7 @@ async def get_plugin_and_schema(name: str, db: AsyncSession) -> tuple[Plugin | N
     return plugin, schema
 
 
-def get_enum_labels(schema: dict[str, Any] | None) -> dict[str, str]:
+def get_enum_labels(schema: dict[str, Any] | None) -> dict[str, str] | None:
     try:
         return ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get("enum_labels")
     except Exception:

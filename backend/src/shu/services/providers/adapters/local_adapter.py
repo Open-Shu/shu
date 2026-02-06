@@ -45,7 +45,7 @@ class LocalAdapter(BaseProviderAdapter):
         payload["messages"] = self._flatten_chat_context(messages)
         return payload
 
-    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         pass
 
     async def finalize_provider_events(self) -> list[ProviderEventResult]:

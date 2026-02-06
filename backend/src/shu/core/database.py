@@ -276,7 +276,7 @@ class DatabaseManager:
 _db_manager = None
 
 
-def get_db_manager() -> DatabaseManager | None:
+def get_db_manager() -> DatabaseManager:
     """Get or create the database manager instance."""
     global _db_manager  # noqa: PLW0603 # This is currently working, so we'll leave it as is
     if _db_manager is None:
