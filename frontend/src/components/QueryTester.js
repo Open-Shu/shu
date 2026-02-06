@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "react-query";
+import { useState } from 'react';
+import { useQuery, useMutation } from 'react-query';
 import {
   Box,
   Typography,
@@ -21,108 +21,97 @@ import {
   Switch,
   Slider,
   Divider,
-} from "@mui/material";
-import { Search as SearchIcon } from "@mui/icons-material";
+} from '@mui/material';
+import { Search as SearchIcon } from '@mui/icons-material';
 import {
   knowledgeBaseAPI,
   queryAPI,
   formatError,
   extractDataFromResponse,
   extractItemsFromResponse,
-} from "../services/api";
-import SourcePreview from "./SourcePreview";
-import PageHelpHeader from "./PageHelpHeader";
-import JSONPretty from "react-json-pretty";
-import "react-json-pretty/themes/monikai.css";
+} from '../services/api';
+import SourcePreview from './SourcePreview';
+import PageHelpHeader from './PageHelpHeader';
+import JSONPretty from 'react-json-pretty';
+import 'react-json-pretty/themes/monikai.css';
 
-import { log } from "../utils/log";
+import { log } from '../utils/log';
 
 const RAG_MODE_OPTIONS = [
-  { value: "no_rag", label: "No RAG (model only)" },
-  { value: "raw_query", label: "Raw Query (pass-through)" },
-  { value: "distill_context", label: "Distill Query (key facts only)" },
-  { value: "rewrite_enhanced", label: "Rewrite & Enhance (LLM optimized)" },
+  { value: 'no_rag', label: 'No RAG (model only)' },
+  { value: 'raw_query', label: 'Raw Query (pass-through)' },
+  { value: 'distill_context', label: 'Distill Query (key facts only)' },
+  { value: 'rewrite_enhanced', label: 'Rewrite & Enhance (LLM optimized)' },
 ];
 
 function QueryTester() {
-  const [selectedKB, setSelectedKB] = useState("");
-  const [queryText, setQueryText] = useState("");
-  const [searchType, setSearchType] = useState("similarity");
+  const [selectedKB, setSelectedKB] = useState('');
+  const [queryText, setQueryText] = useState('');
+  const [searchType, setSearchType] = useState('similarity');
   const [limit, setLimit] = useState(10);
   const [threshold, setThreshold] = useState(null); // Will be set from KB config
   const [titleWeightingEnabled, setTitleWeightingEnabled] = useState(true);
   const [titleWeightMultiplier, setTitleWeightMultiplier] = useState(3.0);
   const [activeTab, setActiveTab] = useState(0);
-  const [ragRewriteMode, setRagRewriteMode] = useState("raw_query");
+  const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
 
-  const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery(
-    "knowledgeBases",
-    knowledgeBaseAPI.list,
-  );
+  const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
   // Extract knowledge bases data from envelope format
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
 
   // Fetch KB config when selectedKB changes to get default threshold and title weighting
-  useQuery(
-    ["kb-config", selectedKB],
-    () => (selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null),
-    {
-      enabled: !!selectedKB,
-      onSuccess: (data) => {
-        if (data && threshold === null) {
-          const config = extractDataFromResponse(data);
-          setThreshold(config.search_threshold || 0.7);
-          setTitleWeightingEnabled(config.title_weighting_enabled ?? true);
-          setTitleWeightMultiplier(config.title_weight_multiplier || 3.0);
-        }
-      },
+  useQuery(['kb-config', selectedKB], () => (selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null), {
+    enabled: !!selectedKB,
+    onSuccess: (data) => {
+      if (data && threshold === null) {
+        const config = extractDataFromResponse(data);
+        setThreshold(config.search_threshold || 0.7);
+        setTitleWeightingEnabled(config.title_weighting_enabled ?? true);
+        setTitleWeightMultiplier(config.title_weight_multiplier || 3.0);
+      }
     },
-  );
+  });
 
   const queryMutation = useMutation(
     (params) => {
       const basePayload = {
         query: params.query,
         limit: params.limit,
-        rag_rewrite_mode: params.ragRewriteMode || "raw_query",
+        rag_rewrite_mode: params.ragRewriteMode || 'raw_query',
       };
 
-      if (params.searchType === "similarity") {
+      if (params.searchType === 'similarity') {
         return queryAPI.search(params.kbId, {
           ...basePayload,
-          query_type: "similarity",
+          query_type: 'similarity',
           similarity_threshold: params.threshold,
         });
       }
 
-      if (params.searchType === "keyword") {
+      if (params.searchType === 'keyword') {
         return queryAPI.search(params.kbId, {
           ...basePayload,
-          query_type: "keyword",
+          query_type: 'keyword',
           similarity_threshold: params.threshold,
           title_weighting_enabled: params.titleWeightingEnabled,
-          title_weight_multiplier: params.titleWeightingEnabled
-            ? params.titleWeightMultiplier
-            : 1.0,
+          title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
         });
       }
 
       return queryAPI.search(params.kbId, {
         ...basePayload,
-        query_type: "hybrid",
+        query_type: 'hybrid',
         similarity_threshold: params.threshold,
         title_weighting_enabled: params.titleWeightingEnabled,
-        title_weight_multiplier: params.titleWeightingEnabled
-          ? params.titleWeightMultiplier
-          : 1.0,
+        title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
       });
     },
     {
       onError: (error) => {
-        log.error("Query error:", error);
+        log.error('Query error:', error);
       },
-    },
+    }
   );
 
   const handleSearch = () => {
@@ -149,31 +138,27 @@ function QueryTester() {
       rag_rewrite_mode: ragRewriteMode,
     };
 
-    if (searchType === "similarity") {
+    if (searchType === 'similarity') {
       return {
         ...baseRequest,
-        query_type: "similarity",
+        query_type: 'similarity',
         similarity_threshold: parseFloat(threshold),
       };
-    } else if (searchType === "keyword") {
+    } else if (searchType === 'keyword') {
       return {
         ...baseRequest,
-        query_type: "keyword",
+        query_type: 'keyword',
         similarity_threshold: parseFloat(threshold),
         title_weighting_enabled: titleWeightingEnabled,
-        title_weight_multiplier: titleWeightingEnabled
-          ? titleWeightMultiplier
-          : 1.0,
+        title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
       };
     } else {
       return {
         ...baseRequest,
-        query_type: "hybrid",
+        query_type: 'hybrid',
         similarity_threshold: parseFloat(threshold),
         title_weighting_enabled: titleWeightingEnabled,
-        title_weight_multiplier: titleWeightingEnabled
-          ? titleWeightMultiplier
-          : 1.0,
+        title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
       };
     }
   };
@@ -188,11 +173,11 @@ function QueryTester() {
         description="Test vector search and retrieval against your Knowledge Bases. Use this tool to debug search quality, tune thresholds, and understand how RAG retrieval works."
         icon={<SearchIcon />}
         tips={[
-          "Select a Knowledge Base, enter a query, and click Search to see retrieved chunks",
-          "Similarity search uses pure vector matching; Hybrid adds keyword boosting",
-          "Lower the similarity threshold to retrieve more (but potentially less relevant) results",
-          "Enable title weighting to boost chunks from documents with matching titles",
-          "Use RAG rewrite modes to see how query preprocessing affects results",
+          'Select a Knowledge Base, enter a query, and click Search to see retrieved chunks',
+          'Similarity search uses pure vector matching; Hybrid adds keyword boosting',
+          'Lower the similarity threshold to retrieve more (but potentially less relevant) results',
+          'Enable title weighting to boost chunks from documents with matching titles',
+          'Use RAG rewrite modes to see how query preprocessing affects results',
         ]}
       />
 
@@ -208,20 +193,16 @@ function QueryTester() {
               <FormControl fullWidth sx={{ mb: 2 }}>
                 <InputLabel
                   sx={{
-                    backgroundColor: "background.paper",
+                    backgroundColor: 'background.paper',
                     px: 0.5,
-                    "&.Mui-focused": {
-                      backgroundColor: "background.paper",
+                    '&.Mui-focused': {
+                      backgroundColor: 'background.paper',
                     },
                   }}
                 >
                   Knowledge Base
                 </InputLabel>
-                <Select
-                  value={selectedKB}
-                  onChange={(e) => setSelectedKB(e.target.value)}
-                  disabled={kbLoading}
-                >
+                <Select value={selectedKB} onChange={(e) => setSelectedKB(e.target.value)} disabled={kbLoading}>
                   {knowledgeBases?.map((kb) => (
                     <MenuItem key={kb.id} value={kb.id}>
                       {kb.name}
@@ -233,19 +214,16 @@ function QueryTester() {
               <FormControl fullWidth sx={{ mb: 2 }}>
                 <InputLabel
                   sx={{
-                    backgroundColor: "background.paper",
+                    backgroundColor: 'background.paper',
                     px: 0.5,
-                    "&.Mui-focused": {
-                      backgroundColor: "background.paper",
+                    '&.Mui-focused': {
+                      backgroundColor: 'background.paper',
                     },
                   }}
                 >
                   Search Type
                 </InputLabel>
-                <Select
-                  value={searchType}
-                  onChange={(e) => setSearchType(e.target.value)}
-                >
+                <Select value={searchType} onChange={(e) => setSearchType(e.target.value)}>
                   <MenuItem value="similarity">Similarity Search</MenuItem>
                   <MenuItem value="keyword">Keyword Search</MenuItem>
                   <MenuItem value="hybrid">Hybrid Search</MenuItem>
@@ -262,10 +240,10 @@ function QueryTester() {
                 placeholder="Enter your search query..."
                 sx={{
                   mb: 2,
-                  "& .MuiInputBase-input::placeholder": {
-                    color: "#9ca3af",
+                  '& .MuiInputBase-input::placeholder': {
+                    color: '#9ca3af',
                     opacity: 0.7,
-                    fontStyle: "italic",
+                    fontStyle: 'italic',
                   },
                 }}
               />
@@ -280,23 +258,21 @@ function QueryTester() {
                 inputProps={{ min: 1, max: 100 }}
               />
 
-              {(searchType === "similarity" ||
-                searchType === "keyword" ||
-                searchType === "hybrid") && (
+              {(searchType === 'similarity' || searchType === 'keyword' || searchType === 'hybrid') && (
                 <TextField
                   fullWidth
                   type="number"
-                  value={threshold || ""}
+                  value={threshold || ''}
                   onChange={(e) => setThreshold(e.target.value)}
                   placeholder="Threshold (e.g., 0.7)"
                   sx={{ mb: 2 }}
                   inputProps={{ min: 0, max: 1, step: 0.1 }}
                   helperText={
-                    searchType === "similarity"
-                      ? "Similarity threshold (0.0 - 1.0)"
-                      : searchType === "keyword"
-                        ? "Score threshold (0.0 - 1.0)"
-                        : "Score threshold (0.0 - 1.0)"
+                    searchType === 'similarity'
+                      ? 'Similarity threshold (0.0 - 1.0)'
+                      : searchType === 'keyword'
+                        ? 'Score threshold (0.0 - 1.0)'
+                        : 'Score threshold (0.0 - 1.0)'
                   }
                 />
               )}
@@ -305,10 +281,10 @@ function QueryTester() {
                 <InputLabel
                   id="query-tester-rag-mode-label"
                   sx={{
-                    backgroundColor: "background.paper",
+                    backgroundColor: 'background.paper',
                     px: 0.5,
-                    "&.Mui-focused": {
-                      backgroundColor: "background.paper",
+                    '&.Mui-focused': {
+                      backgroundColor: 'background.paper',
                     },
                   }}
                 >
@@ -330,7 +306,7 @@ function QueryTester() {
               </FormControl>
 
               {/* Title Weighting Controls */}
-              {(searchType === "keyword" || searchType === "hybrid") && (
+              {(searchType === 'keyword' || searchType === 'hybrid') && (
                 <Box sx={{ mb: 2 }}>
                   <Divider sx={{ mb: 2 }}>
                     <Typography variant="caption" color="text.secondary">
@@ -342,45 +318,36 @@ function QueryTester() {
                     control={
                       <Switch
                         checked={titleWeightingEnabled}
-                        onChange={(e) =>
-                          setTitleWeightingEnabled(e.target.checked)
-                        }
+                        onChange={(e) => setTitleWeightingEnabled(e.target.checked)}
                         color="primary"
                       />
                     }
                     label="Enable Title Weighting"
-                    sx={{ mb: 2, display: "block" }}
+                    sx={{ mb: 2, display: 'block' }}
                   />
 
                   {titleWeightingEnabled && (
                     <Box sx={{ px: 1 }}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        gutterBottom
-                      >
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
                         Title Weight Multiplier: {titleWeightMultiplier}x
                       </Typography>
                       <Slider
                         value={titleWeightMultiplier}
-                        onChange={(_, newValue) =>
-                          setTitleWeightMultiplier(newValue)
-                        }
+                        onChange={(_, newValue) => setTitleWeightMultiplier(newValue)}
                         min={1.0}
                         max={10.0}
                         step={0.5}
                         marks={[
-                          { value: 1.0, label: "1x" },
-                          { value: 3.0, label: "3x" },
-                          { value: 5.0, label: "5x" },
-                          { value: 10.0, label: "10x" },
+                          { value: 1.0, label: '1x' },
+                          { value: 3.0, label: '3x' },
+                          { value: 5.0, label: '5x' },
+                          { value: 10.0, label: '10x' },
                         ]}
                         valueLabelDisplay="auto"
                         sx={{ mb: 1 }}
                       />
                       <Typography variant="caption" color="text.secondary">
-                        Higher values boost documents with matching titles more
-                        strongly
+                        Higher values boost documents with matching titles more strongly
                       </Typography>
                     </Box>
                   )}
@@ -392,15 +359,9 @@ function QueryTester() {
                 variant="contained"
                 startIcon={<SearchIcon />}
                 onClick={handleSearch}
-                disabled={
-                  !selectedKB || !queryText.trim() || queryMutation.isLoading
-                }
+                disabled={!selectedKB || !queryText.trim() || queryMutation.isLoading}
               >
-                {queryMutation.isLoading ? (
-                  <CircularProgress size={20} />
-                ) : (
-                  "Search"
-                )}
+                {queryMutation.isLoading ? <CircularProgress size={20} /> : 'Search'}
               </Button>
             </CardContent>
           </Card>
@@ -410,19 +371,10 @@ function QueryTester() {
         <Grid item xs={12} md={8}>
           <Card>
             <CardContent>
-              <Box
-                display="flex"
-                justifyContent="space-between"
-                alignItems="center"
-                mb={2}
-              >
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="h6">Results</Typography>
                 {queryResults && (
-                  <Chip
-                    label={`${queryResults.results?.length || 0} results`}
-                    color="primary"
-                    size="small"
-                  />
+                  <Chip label={`${queryResults.results?.length || 0} results`} color="primary" size="small" />
                 )}
               </Box>
 
@@ -441,39 +393,22 @@ function QueryTester() {
               {queryResults && !queryMutation.isLoading && (
                 <Box>
                   {queryResults.rag_query && (
-                    <Alert
-                      severity={
-                        queryResults.rag_query.used ? "info" : "warning"
-                      }
-                      sx={{ mb: 2 }}
-                    >
-                      <Typography variant="subtitle2">
-                        RAG Query Diagnostics
-                      </Typography>
+                    <Alert severity={queryResults.rag_query.used ? 'info' : 'warning'} sx={{ mb: 2 }}>
+                      <Typography variant="subtitle2">RAG Query Diagnostics</Typography>
                       <Typography variant="body2" sx={{ mt: 0.5 }}>
-                        <strong>Original:</strong>{" "}
-                        {queryResults.rag_query.original || "(empty)"}
+                        <strong>Original:</strong> {queryResults.rag_query.original || '(empty)'}
                       </Typography>
                       <Typography variant="body2">
-                        <strong>Rewritten:</strong>{" "}
-                        {queryResults.rag_query.rewritten || "(empty)"}
+                        <strong>Rewritten:</strong> {queryResults.rag_query.rewritten || '(empty)'}
                       </Typography>
-                      <Typography
-                        variant="caption"
-                        display="block"
-                        sx={{ mt: 0.5 }}
-                      >
+                      <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                         {queryResults.rag_query.used
-                          ? "Rewritten query was sent to the retriever."
-                          : "Original query was used (rewrite disabled or failed)."}
+                          ? 'Rewritten query was sent to the retriever.'
+                          : 'Original query was used (rewrite disabled or failed).'}
                       </Typography>
                     </Alert>
                   )}
-                  <Tabs
-                    value={activeTab}
-                    onChange={(_, newValue) => setActiveTab(newValue)}
-                    sx={{ mb: 2 }}
-                  >
+                  <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
                     <Tab label="Results" />
                     <Tab label="Request" />
                     <Tab label="Response" />
@@ -481,17 +416,10 @@ function QueryTester() {
 
                   {activeTab === 0 && (
                     <Box>
-                      {queryResults.results &&
-                      queryResults.results.length > 0 ? (
-                        <SourcePreview
-                          sources={queryResults.results}
-                          title="Query Results"
-                          searchQuery={queryText}
-                        />
+                      {queryResults.results && queryResults.results.length > 0 ? (
+                        <SourcePreview sources={queryResults.results} title="Query Results" searchQuery={queryText} />
                       ) : (
-                        <Alert severity="info">
-                          No results found for this query.
-                        </Alert>
+                        <Alert severity="info">No results found for this query.</Alert>
                       )}
                     </Box>
                   )}

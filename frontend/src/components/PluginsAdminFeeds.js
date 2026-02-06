@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -11,53 +11,47 @@ import {
   InputLabel,
   Select,
   MenuItem,
-} from "@mui/material";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import AddIcon from "@mui/icons-material/Add";
-import { useMutation, useQuery, useQueryClient } from "react-query";
+} from '@mui/material';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import AddIcon from '@mui/icons-material/Add';
+import { useMutation, useQuery, useQueryClient } from 'react-query';
 import {
   extractDataFromResponse,
   extractItemsFromResponse,
   formatError,
   authAPI,
   knowledgeBaseAPI,
-} from "../services/api";
-import { schedulesAPI } from "../services/schedulesApi";
-import { pluginsAPI } from "../services/pluginsApi";
-import FeedCreateDialog from "./FeedCreateDialog";
-import FeedEditDialog from "./FeedEditDialog";
-import FeedTable from "./FeedTable";
-import RecentRunsDialog from "./RecentRunsDialog";
-import PageHelpHeader from "./PageHelpHeader";
-import ScheduleIcon from "@mui/icons-material/Schedule";
+} from '../services/api';
+import { schedulesAPI } from '../services/schedulesApi';
+import { pluginsAPI } from '../services/pluginsApi';
+import FeedCreateDialog from './FeedCreateDialog';
+import FeedEditDialog from './FeedEditDialog';
+import FeedTable from './FeedTable';
+import RecentRunsDialog from './RecentRunsDialog';
+import PageHelpHeader from './PageHelpHeader';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 
 export default function PluginsAdminFeeds() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
-  const [pluginFilter, setPluginFilter] = useState("");
+  const [pluginFilter, setPluginFilter] = useState('');
 
-  const [ownerFilter, setOwnerFilter] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState('');
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [runsOpenFor, setRunsOpenFor] = useState(null);
 
-  const [kbFilter, setKbFilter] = useState("");
+  const [kbFilter, setKbFilter] = useState('');
 
-  const pluginsQ = useQuery(
-    ["plugins", "list"],
-    () => pluginsAPI.list().then(extractDataFromResponse),
-    { staleTime: 10000 },
-  );
-  const usersQ = useQuery(
-    ["users", "list"],
-    () => authAPI.getUsers().then(extractDataFromResponse),
-    { staleTime: 10000 },
-  );
-  const kbsQ = useQuery(
-    ["kbs", "list"],
-    () => knowledgeBaseAPI.list().then(extractItemsFromResponse),
-    { staleTime: 10000 },
-  );
+  const pluginsQ = useQuery(['plugins', 'list'], () => pluginsAPI.list().then(extractDataFromResponse), {
+    staleTime: 10000,
+  });
+  const usersQ = useQuery(['users', 'list'], () => authAPI.getUsers().then(extractDataFromResponse), {
+    staleTime: 10000,
+  });
+  const kbsQ = useQuery(['kbs', 'list'], () => knowledgeBaseAPI.list().then(extractItemsFromResponse), {
+    staleTime: 10000,
+  });
   const users = Array.isArray(usersQ.data) ? usersQ.data : [];
   const getUserLabel = (u) => u.email || u.name || u.user_id || u.id;
   const userOptions = users.map((u) => ({
@@ -67,7 +61,7 @@ export default function PluginsAdminFeeds() {
   const intervalOptions = [900, 3600, 21600, 86400];
 
   const { data, isLoading, isFetching, error, refetch } = useQuery(
-    ["schedules", "list", { pluginFilter, ownerFilter, kbFilter }],
+    ['schedules', 'list', { pluginFilter, ownerFilter, kbFilter }],
     () =>
       schedulesAPI
         .list({
@@ -76,35 +70,26 @@ export default function PluginsAdminFeeds() {
           ...(kbFilter ? { kb_id: kbFilter } : {}),
         })
         .then(extractDataFromResponse),
-    { staleTime: 5000 },
+    { staleTime: 5000 }
   );
 
   const schedules = useMemo(() => {
     const raw = Array.isArray(data) ? data : [];
     // Sort by creation time (stable order) to prevent rows jumping around on edits
-    return raw.sort((a, b) =>
-      (a.created_at || "").localeCompare(b.created_at || ""),
-    );
+    return raw.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
   }, [data]);
 
-  const patchMut = useMutation(
-    ({ id, payload }) =>
-      schedulesAPI.update(id, payload).then(extractDataFromResponse),
-    { onSuccess: () => qc.invalidateQueries(["schedules", "list"]) },
-  );
+  const patchMut = useMutation(({ id, payload }) => schedulesAPI.update(id, payload).then(extractDataFromResponse), {
+    onSuccess: () => qc.invalidateQueries(['schedules', 'list']),
+  });
 
-  const deleteMut = useMutation(
-    (id) => schedulesAPI.delete(id).then(extractDataFromResponse),
-    { onSuccess: () => qc.invalidateQueries(["schedules", "list"]) },
-  );
+  const deleteMut = useMutation((id) => schedulesAPI.delete(id).then(extractDataFromResponse), {
+    onSuccess: () => qc.invalidateQueries(['schedules', 'list']),
+  });
 
-  const runDueMut = useMutation(() =>
-    schedulesAPI.runDue().then(extractDataFromResponse),
-  );
+  const runDueMut = useMutation(() => schedulesAPI.runDue().then(extractDataFromResponse));
 
-  const runPendingMut = useMutation((opts) =>
-    schedulesAPI.runPending(opts).then(extractDataFromResponse),
-  );
+  const runPendingMut = useMutation((opts) => schedulesAPI.runPending(opts).then(extractDataFromResponse));
 
   const handleToggleEnabled = (row) => {
     patchMut.mutate({ id: row.id, payload: { enabled: !row.enabled } });
@@ -119,9 +104,8 @@ export default function PluginsAdminFeeds() {
         runPendingMut.mutate(
           { limit: 1, schedule_id: row.id },
           {
-            onSuccess: () =>
-              qc.invalidateQueries(["executions", "schedule", row.id]),
-          },
+            onSuccess: () => qc.invalidateQueries(['executions', 'schedule', row.id]),
+          }
         );
       });
   };
@@ -130,9 +114,7 @@ export default function PluginsAdminFeeds() {
     if (!row?.id) {
       return;
     }
-    const ok = window.confirm(
-      `Delete feed "${row.name}"? This detaches existing run history but does not delete it.`,
-    );
+    const ok = window.confirm(`Delete feed "${row.name}"? This detaches existing run history but does not delete it.`);
     if (!ok) {
       return;
     }
@@ -146,40 +128,26 @@ export default function PluginsAdminFeeds() {
         description="Plugin Feeds automate data synchronization by running plugin operations on a schedule. Feeds pull data from external services (email, calendar, drive, etc.) and ingest it into Knowledge Bases for searchable retrieval."
         icon={<ScheduleIcon />}
         tips={[
-          "Create a feed by selecting a plugin, operation, target KB, and schedule interval",
+          'Create a feed by selecting a plugin, operation, target KB, and schedule interval',
           'Use "Run Now" to manually trigger a feed execution for testing',
           'Use "Run Due" to trigger all feeds that are past their scheduled time',
-          "Each feed runs as a specific user—ensure that user has authorized the required plugin",
-          "View recent runs by clicking the clock icon to troubleshoot execution issues",
+          'Each feed runs as a specific user—ensure that user has authorized the required plugin',
+          'View recent runs by clicking the clock icon to troubleshoot execution issues',
         ]}
       />
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        mb={2}
-      >
+      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
         <Box />
         <Stack direction="row" spacing={1}>
           <Tooltip title="Reload list">
             <span>
-              <Button
-                variant="outlined"
-                startIcon={<RefreshIcon />}
-                onClick={() => refetch()}
-                disabled={isFetching}
-              >
+              <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => refetch()} disabled={isFetching}>
                 Refresh
               </Button>
             </span>
           </Tooltip>
           <Tooltip title="Enqueue due feeds">
             <span>
-              <Button
-                variant="outlined"
-                onClick={() => runDueMut.mutate()}
-                disabled={runDueMut.isLoading}
-              >
+              <Button variant="outlined" onClick={() => runDueMut.mutate()} disabled={runDueMut.isLoading}>
                 Run Due
               </Button>
             </span>
@@ -195,11 +163,7 @@ export default function PluginsAdminFeeds() {
               </Button>
             </span>
           </Tooltip>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setCreateOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
             Create Feed
           </Button>
         </Stack>
@@ -299,7 +263,7 @@ export default function PluginsAdminFeeds() {
       <FeedCreateDialog
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={() => qc.invalidateQueries(["schedules", "list"])}
+        onCreated={() => qc.invalidateQueries(['schedules', 'list'])}
       />
       <FeedEditDialog
         open={editOpen}
@@ -310,11 +274,7 @@ export default function PluginsAdminFeeds() {
         schedule={editing}
       />
 
-      <RecentRunsDialog
-        open={!!runsOpenFor}
-        schedule={runsOpenFor}
-        onClose={() => setRunsOpenFor(null)}
-      />
+      <RecentRunsDialog open={!!runsOpenFor} schedule={runsOpenFor} onClose={() => setRunsOpenFor(null)} />
     </Box>
   );
 }

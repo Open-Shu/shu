@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "react-query";
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
   Alert,
   Box,
@@ -21,25 +21,17 @@ import {
   Tab,
   Switch,
   FormControlLabel,
-} from "@mui/material";
-import {
-  ArrowBack as BackIcon,
-  Save as SaveIcon,
-  PlayArrow as RunIcon,
-} from "@mui/icons-material";
-import {
-  experiencesAPI,
-  extractDataFromResponse,
-  formatError,
-} from "../services/api";
-import { promptAPI } from "../api/prompts";
-import ExperienceStepBuilder from "./ExperienceStepBuilder";
-import ExperienceRunDialog from "./ExperienceRunDialog";
-import ExperienceRunsList from "./ExperienceRunsList";
-import ExportExperienceButton from "./ExportExperienceButton";
-import TemplateVariableHints from "./TemplateVariableHints";
-import TriggerConfiguration from "./shared/TriggerConfiguration";
-import ModelConfigurationSelector from "./shared/ModelConfigurationSelector";
+} from '@mui/material';
+import { ArrowBack as BackIcon, Save as SaveIcon, PlayArrow as RunIcon } from '@mui/icons-material';
+import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import { promptAPI } from '../api/prompts';
+import ExperienceStepBuilder from './ExperienceStepBuilder';
+import ExperienceRunDialog from './ExperienceRunDialog';
+import ExperienceRunsList from './ExperienceRunsList';
+import ExportExperienceButton from './ExportExperienceButton';
+import TemplateVariableHints from './TemplateVariableHints';
+import TriggerConfiguration from './shared/TriggerConfiguration';
+import ModelConfigurationSelector from './shared/ModelConfigurationSelector';
 
 export default function ExperienceEditor() {
   const { experienceId } = useParams();
@@ -48,14 +40,14 @@ export default function ExperienceEditor() {
   const isNew = !experienceId;
 
   // Form state
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [visibility, setVisibility] = useState("draft");
-  const [triggerType, setTriggerType] = useState("manual");
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState('draft');
+  const [triggerType, setTriggerType] = useState('manual');
   const [triggerConfig, setTriggerConfig] = useState({});
-  const [modelConfigurationId, setModelConfigurationId] = useState("");
-  const [promptId, setPromptId] = useState("");
-  const [inlinePromptTemplate, setInlinePromptTemplate] = useState("");
+  const [modelConfigurationId, setModelConfigurationId] = useState('');
+  const [promptId, setPromptId] = useState('');
+  const [inlinePromptTemplate, setInlinePromptTemplate] = useState('');
   const [steps, setSteps] = useState([]);
   const [maxRunSeconds, setMaxRunSeconds] = useState(120);
   const [includePreviousRun, setIncludePreviousRun] = useState(false);
@@ -68,33 +60,33 @@ export default function ExperienceEditor() {
 
   // Read tab from URL query parameter
   const [searchParams] = useSearchParams();
-  const initialTab = parseInt(searchParams.get("tab") || "0", 10);
+  const initialTab = parseInt(searchParams.get('tab') || '0', 10);
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isDirty, setIsDirty] = useState(false);
   const [snackbar, setSnackbar] = useState({
     open: false,
-    message: "",
-    severity: "success",
+    message: '',
+    severity: 'success',
   });
 
   // Fetch existing experience for edit mode
   const experienceQuery = useQuery(
-    ["experiences", "detail", experienceId],
+    ['experiences', 'detail', experienceId],
     () => experiencesAPI.get(experienceId).then(extractDataFromResponse),
     {
       enabled: !isNew && !!experienceId,
       staleTime: 0,
-    },
+    }
   );
 
   // Fetch prompts for selector
   const promptsQuery = useQuery(
-    ["prompts", "list"],
+    ['prompts', 'list'],
     async () => {
       const result = await promptAPI.list();
       return result?.data?.items || result?.items || [];
     },
-    { staleTime: 30000 },
+    { staleTime: 30000 }
   );
 
   const prompts = useMemo(() => {
@@ -106,15 +98,15 @@ export default function ExperienceEditor() {
   useEffect(() => {
     if (experienceQuery.data) {
       const exp = experienceQuery.data;
-      setName(exp.name || "");
-      setDescription(exp.description || "");
-      setVisibility(exp.visibility || "draft");
-      setTriggerType(exp.trigger_type || "manual");
+      setName(exp.name || '');
+      setDescription(exp.description || '');
+      setVisibility(exp.visibility || 'draft');
+      setTriggerType(exp.trigger_type || 'manual');
       setTriggerConfig(exp.trigger_config || {});
       // Use model configuration only (no legacy fields)
-      setModelConfigurationId(exp.model_configuration_id || "");
-      setPromptId(exp.prompt_id || "");
-      setInlinePromptTemplate(exp.inline_prompt_template || "");
+      setModelConfigurationId(exp.model_configuration_id || '');
+      setPromptId(exp.prompt_id || '');
+      setInlinePromptTemplate(exp.inline_prompt_template || '');
       setSteps(exp.steps || []);
       setMaxRunSeconds(exp.max_run_seconds || 120);
       setIncludePreviousRun(exp.include_previous_run || false);
@@ -123,37 +115,33 @@ export default function ExperienceEditor() {
   }, [experienceQuery.data]);
 
   // Create mutation
-  const createMutation = useMutation(
-    (data) => experiencesAPI.create(data).then(extractDataFromResponse),
-    {
-      onSuccess: (result) => {
-        queryClient.invalidateQueries(["experiences", "list"]);
-        setSnackbar({
-          open: true,
-          message: "Experience created successfully!",
-          severity: "success",
-        });
-        navigate(`/admin/experiences/${result.id}/edit`);
-      },
+  const createMutation = useMutation((data) => experiencesAPI.create(data).then(extractDataFromResponse), {
+    onSuccess: (result) => {
+      queryClient.invalidateQueries(['experiences', 'list']);
+      setSnackbar({
+        open: true,
+        message: 'Experience created successfully!',
+        severity: 'success',
+      });
+      navigate(`/admin/experiences/${result.id}/edit`);
     },
-  );
+  });
 
   // Update mutation
   const updateMutation = useMutation(
-    (data) =>
-      experiencesAPI.update(experienceId, data).then(extractDataFromResponse),
+    (data) => experiencesAPI.update(experienceId, data).then(extractDataFromResponse),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(["experiences", "list"]);
-        queryClient.invalidateQueries(["experiences", "detail", experienceId]);
+        queryClient.invalidateQueries(['experiences', 'list']);
+        queryClient.invalidateQueries(['experiences', 'detail', experienceId]);
         setIsDirty(false);
         setSnackbar({
           open: true,
-          message: "Changes saved successfully!",
-          severity: "success",
+          message: 'Changes saved successfully!',
+          severity: 'success',
         });
       },
-    },
+    }
   );
 
   const handleFieldChange = (setter, fieldName) => (e) => {
@@ -193,10 +181,7 @@ export default function ExperienceEditor() {
     // Restore cursor position after the inserted text
     setTimeout(() => {
       textarea.focus();
-      textarea.setSelectionRange(
-        start + variableText.length,
-        start + variableText.length,
-      );
+      textarea.setSelectionRange(start + variableText.length, start + variableText.length);
     }, 0);
   };
 
@@ -204,27 +189,27 @@ export default function ExperienceEditor() {
     // Validation
     const errors = {};
     if (!name.trim()) {
-      errors.name = "Name is required";
+      errors.name = 'Name is required';
     }
 
-    if (triggerType === "scheduled" && !triggerConfig.scheduled_at) {
-      errors.scheduled_at = "Scheduled date/time is required";
+    if (triggerType === 'scheduled' && !triggerConfig.scheduled_at) {
+      errors.scheduled_at = 'Scheduled date/time is required';
     }
 
-    if (triggerType === "cron") {
+    if (triggerType === 'cron') {
       if (!triggerConfig.cron) {
-        errors.cron = "Cron expression is required";
+        errors.cron = 'Cron expression is required';
       }
       if (!triggerConfig.timezone) {
-        errors.timezone = "Timezone is required for recurring schedules";
+        errors.timezone = 'Timezone is required for recurring schedules';
       }
     }
 
     // Validate model configuration - only validate if user has selected something
     // Empty string is valid (means no LLM synthesis)
-    if (modelConfigurationId && modelConfigurationId.trim() === "") {
+    if (modelConfigurationId && modelConfigurationId.trim() === '') {
       // This shouldn't happen with the selector, but just in case
-      errors.model_configuration_id = "Invalid model configuration selection";
+      errors.model_configuration_id = 'Invalid model configuration selection';
     }
 
     if (Object.keys(errors).length > 0) {
@@ -234,9 +219,7 @@ export default function ExperienceEditor() {
 
     // Validate and coerce maxRunSeconds to prevent NaN
     const parsedMaxRunSeconds = parseInt(maxRunSeconds, 10);
-    const safeMaxRunSeconds = Number.isFinite(parsedMaxRunSeconds)
-      ? parsedMaxRunSeconds
-      : null;
+    const safeMaxRunSeconds = Number.isFinite(parsedMaxRunSeconds) ? parsedMaxRunSeconds : null;
 
     const payload = {
       name,
@@ -272,15 +255,11 @@ export default function ExperienceEditor() {
 
   const handleBack = () => {
     if (isDirty) {
-      if (
-        !window.confirm(
-          "You have unsaved changes. Are you sure you want to leave?",
-        )
-      ) {
+      if (!window.confirm('You have unsaved changes. Are you sure you want to leave?')) {
         return;
       }
     }
-    navigate("/admin/experiences");
+    navigate('/admin/experiences');
   };
 
   const isLoading = experienceQuery.isLoading;
@@ -303,21 +282,18 @@ export default function ExperienceEditor() {
   if (experienceQuery.isError) {
     return (
       <Box p={3} display="flex" justifyContent="center">
-        <Paper sx={{ p: 4, maxWidth: 600, textAlign: "center" }}>
+        <Paper sx={{ p: 4, maxWidth: 600, textAlign: 'center' }}>
           <Typography variant="h6" color="error" gutterBottom>
             Error Loading Experience
           </Typography>
           <Typography variant="body1" color="text.secondary" paragraph>
-            {formatError(experienceQuery.error || "Unknown error")}
+            {formatError(experienceQuery.error || 'Unknown error')}
           </Typography>
           <Stack direction="row" spacing={2} justifyContent="center" mt={2}>
             <Button variant="outlined" onClick={handleBack}>
               Back to List
             </Button>
-            <Button
-              variant="contained"
-              onClick={() => experienceQuery.refetch()}
-            >
+            <Button variant="contained" onClick={() => experienceQuery.refetch()}>
               Retry
             </Button>
           </Stack>
@@ -329,22 +305,13 @@ export default function ExperienceEditor() {
   return (
     <Box p={3}>
       {/* Header */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        mb={3}
-      >
+      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
         <Stack direction="row" alignItems="center" spacing={2}>
-          <Button
-            variant="outlined"
-            startIcon={<BackIcon />}
-            onClick={handleBack}
-          >
+          <Button variant="outlined" startIcon={<BackIcon />} onClick={handleBack}>
             Back
           </Button>
           <Typography variant="h4" sx={{ fontWeight: 600 }}>
-            {isNew ? "New Experience" : "Edit Experience"}
+            {isNew ? 'New Experience' : 'Edit Experience'}
           </Typography>
         </Stack>
         <Stack direction="row" alignItems="center" spacing={2}>
@@ -357,12 +324,7 @@ export default function ExperienceEditor() {
             />
           )}
           {!isNew && (
-            <ExportExperienceButton
-              experienceId={experienceId}
-              experienceName={name}
-              variant="button"
-              size="medium"
-            />
+            <ExportExperienceButton experienceId={experienceId} experienceName={name} variant="button" size="medium" />
           )}
           <Button
             variant="outlined"
@@ -371,23 +333,18 @@ export default function ExperienceEditor() {
             disabled={isNew || isDirty || isSaving}
             title={
               isNew
-                ? "Save the experience first"
+                ? 'Save the experience first'
                 : isDirty
-                  ? "Save changes first"
+                  ? 'Save changes first'
                   : isSaving
-                    ? "Saving in progress"
-                    : "Run this experience now"
+                    ? 'Saving in progress'
+                    : 'Run this experience now'
             }
           >
             Run Now
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<SaveIcon />}
-            onClick={handleSave}
-            disabled={!name.trim() || isSaving}
-          >
-            {isSaving ? "Saving..." : "Save"}
+          <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={!name.trim() || isSaving}>
+            {isSaving ? 'Saving...' : 'Save'}
           </Button>
         </Stack>
       </Stack>
@@ -399,7 +356,7 @@ export default function ExperienceEditor() {
         </Alert>
       )}
 
-      <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
           <Tab label="Configuration" />
           <Tab label="Run History" disabled={isNew} />
@@ -420,7 +377,7 @@ export default function ExperienceEditor() {
                   <TextField
                     label="Name"
                     value={name}
-                    onChange={handleFieldChange(setName, "name")}
+                    onChange={handleFieldChange(setName, 'name')}
                     fullWidth
                     required
                     error={!!validationErrors.name}
@@ -429,7 +386,7 @@ export default function ExperienceEditor() {
                   <TextField
                     label="Description"
                     value={description}
-                    onChange={handleFieldChange(setDescription, "description")}
+                    onChange={handleFieldChange(setDescription, 'description')}
                     fullWidth
                     multiline
                     rows={3}
@@ -440,10 +397,7 @@ export default function ExperienceEditor() {
                       <Select
                         value={visibility}
                         label="Visibility"
-                        onChange={handleFieldChange(
-                          setVisibility,
-                          "visibility",
-                        )}
+                        onChange={handleFieldChange(setVisibility, 'visibility')}
                       >
                         <MenuItem value="draft">Draft</MenuItem>
                         <MenuItem value="admin_only">Admin Only</MenuItem>
@@ -454,10 +408,7 @@ export default function ExperienceEditor() {
                       label="Max Run Time (s)"
                       type="number"
                       value={maxRunSeconds}
-                      onChange={handleFieldChange(
-                        setMaxRunSeconds,
-                        "max_run_seconds",
-                      )}
+                      onChange={handleFieldChange(setMaxRunSeconds, 'max_run_seconds')}
                       fullWidth
                       inputProps={{ min: 10, max: 600 }}
                     />
@@ -493,11 +444,7 @@ export default function ExperienceEditor() {
                     setTriggerConfig(newConfig);
                     setIsDirty(true);
                     // Clear validation errors for trigger config fields when they change
-                    if (
-                      validationErrors.scheduled_at ||
-                      validationErrors.cron ||
-                      validationErrors.timezone
-                    ) {
+                    if (validationErrors.scheduled_at || validationErrors.cron || validationErrors.timezone) {
                       const newErrors = { ...validationErrors };
                       delete newErrors.scheduled_at;
                       delete newErrors.cron;
@@ -516,14 +463,9 @@ export default function ExperienceEditor() {
                 <Typography variant="h6" gutterBottom>
                   LLM Configuration (Optional)
                 </Typography>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mb: 2 }}
-                >
-                  Configure the LLM to process step outputs and generate final
-                  results. Leave empty if you only want to collect data without
-                  AI synthesis.
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Configure the LLM to process step outputs and generate final results. Leave empty if you only want to
+                  collect data without AI synthesis.
                 </Typography>
                 <Stack spacing={2}>
                   <ModelConfigurationSelector
@@ -554,7 +496,7 @@ export default function ExperienceEditor() {
                         <Select
                           value={promptId}
                           label="Prompt Template"
-                          onChange={handleFieldChange(setPromptId, "prompt_id")}
+                          onChange={handleFieldChange(setPromptId, 'prompt_id')}
                         >
                           <MenuItem value="">
                             <em>Use model configuration prompt</em>
@@ -571,10 +513,7 @@ export default function ExperienceEditor() {
                           <TextField
                             label="Inline Prompt Template"
                             value={inlinePromptTemplate}
-                            onChange={handleFieldChange(
-                              setInlinePromptTemplate,
-                              "inline_prompt_template",
-                            )}
+                            onChange={handleFieldChange(setInlinePromptTemplate, 'inline_prompt_template')}
                             fullWidth
                             multiline
                             rows={20}
@@ -595,8 +534,8 @@ export default function ExperienceEditor() {
                   {/* Show helpful message when no model configuration is selected */}
                   {!modelConfigurationId && (
                     <Alert severity="info" sx={{ mt: 1 }}>
-                      No LLM synthesis configured. This experience will only
-                      collect and return step outputs without AI processing.
+                      No LLM synthesis configured. This experience will only collect and return step outputs without AI
+                      processing.
                     </Alert>
                   )}
                 </Stack>
@@ -611,25 +550,16 @@ export default function ExperienceEditor() {
                 Experience Steps
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Define the steps that gather data for this experience. Steps
-                execute in order and their outputs are available to subsequent
-                steps and the final prompt.
+                Define the steps that gather data for this experience. Steps execute in order and their outputs are
+                available to subsequent steps and the final prompt.
               </Typography>
-              <ExperienceStepBuilder
-                steps={steps}
-                onChange={handleStepsChange}
-              />
+              <ExperienceStepBuilder steps={steps} onChange={handleStepsChange} />
             </Paper>
           </Grid>
         </Grid>
       )}
 
-      {activeTab === 1 && (
-        <ExperienceRunsList
-          experienceId={experienceId}
-          timezone={triggerConfig?.timezone}
-        />
-      )}
+      {activeTab === 1 && <ExperienceRunsList experienceId={experienceId} timezone={triggerConfig?.timezone} />}
 
       <ExperienceRunDialog
         open={runDialogOpen}

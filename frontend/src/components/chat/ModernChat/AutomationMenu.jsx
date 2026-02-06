@@ -1,10 +1,10 @@
-import React from "react";
-import { useNavigate } from "react-router-dom";
-import { Divider, Menu, MenuItem, ListItemIcon } from "@mui/material";
-import LockIcon from "@mui/icons-material/Lock";
-import LockOpenIcon from "@mui/icons-material/LockOpen";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import DashboardIcon from "@mui/icons-material/Dashboard";
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Divider, Menu, MenuItem, ListItemIcon } from '@mui/material';
+import LockIcon from '@mui/icons-material/Lock';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 
 const AutomationMenu = React.memo(function AutomationMenu({
   anchorEl,
@@ -19,7 +19,7 @@ const AutomationMenu = React.memo(function AutomationMenu({
 
   const handleDashboardClick = () => {
     onClose();
-    navigate("/dashboard");
+    navigate('/dashboard');
   };
 
   return (
@@ -27,8 +27,8 @@ const AutomationMenu = React.memo(function AutomationMenu({
       anchorEl={anchorEl}
       open={Boolean(anchorEl)}
       onClose={onClose}
-      anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      transformOrigin={{ vertical: "top", horizontal: "left" }}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      transformOrigin={{ vertical: 'top', horizontal: 'left' }}
     >
       <MenuItem onClick={handleDashboardClick}>
         <ListItemIcon>

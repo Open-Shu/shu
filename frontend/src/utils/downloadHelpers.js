@@ -12,11 +12,11 @@
  */
 export const downloadBlobAsFile = (blob, filename, mimeType = null) => {
   if (!blob || !(blob instanceof Blob)) {
-    throw new Error("Invalid blob data provided");
+    throw new Error('Invalid blob data provided');
   }
 
-  if (!filename || typeof filename !== "string") {
-    throw new Error("Valid filename is required");
+  if (!filename || typeof filename !== 'string') {
+    throw new Error('Valid filename is required');
   }
 
   try {
@@ -27,10 +27,10 @@ export const downloadBlobAsFile = (blob, filename, mimeType = null) => {
     const url = window.URL.createObjectURL(downloadBlob);
 
     // Create temporary download link
-    const link = document.createElement("a");
+    const link = document.createElement('a');
     link.href = url;
     link.download = filename;
-    link.style.display = "none"; // Hide the link
+    link.style.display = 'none'; // Hide the link
 
     // Add to DOM, trigger download, then cleanup
     document.body.appendChild(link);
@@ -52,20 +52,16 @@ export const downloadBlobAsFile = (blob, filename, mimeType = null) => {
  * @param {string} [extension=''] - Optional file extension to append
  * @returns {string} Safe filename
  */
-export const generateSafeFilename = (
-  name,
-  fallback = "file",
-  extension = "",
-) => {
-  if (!name || typeof name !== "string") {
+export const generateSafeFilename = (name, fallback = 'file', extension = '') => {
+  if (!name || typeof name !== 'string') {
     return extension ? `${fallback}.${extension}` : fallback;
   }
 
   // Convert to lowercase and replace invalid characters with hyphens
   const safeName = name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-") // Replace non-alphanumeric with hyphens
-    .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+    .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+    .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
 
   // Use fallback if result is empty
   const finalName = safeName || fallback;
@@ -81,13 +77,9 @@ export const generateSafeFilename = (
  * @param {string} [defaultMimeType='application/octet-stream'] - Default MIME type if not specified
  * @throws {Error} If response is invalid or download fails
  */
-export const downloadResponseAsFile = (
-  response,
-  filename,
-  defaultMimeType = "application/octet-stream",
-) => {
+export const downloadResponseAsFile = (response, filename, defaultMimeType = 'application/octet-stream') => {
   if (!response || !response.data) {
-    throw new Error("Invalid response data");
+    throw new Error('Invalid response data');
   }
 
   let blob;
@@ -95,14 +87,14 @@ export const downloadResponseAsFile = (
   // Handle different response data types
   if (response.data instanceof Blob) {
     blob = response.data;
-  } else if (typeof response.data === "string") {
+  } else if (typeof response.data === 'string') {
     // Convert string to blob
-    const mimeType = response.headers?.["content-type"] || defaultMimeType;
+    const mimeType = response.headers?.['content-type'] || defaultMimeType;
     blob = new Blob([response.data], { type: mimeType });
   } else {
     // Convert other data types to JSON blob
     const jsonString = JSON.stringify(response.data, null, 2);
-    blob = new Blob([jsonString], { type: "application/json" });
+    blob = new Blob([jsonString], { type: 'application/json' });
   }
 
   downloadBlobAsFile(blob, filename);

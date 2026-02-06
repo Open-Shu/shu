@@ -1,11 +1,5 @@
-import React from "react";
-import {
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  FormHelperText,
-} from "@mui/material";
+import React from 'react';
+import { FormControl, InputLabel, Select, MenuItem, FormHelperText } from '@mui/material';
 
 /**
  * StyledSelect - A properly configured Select component that prevents common styling issues
@@ -38,15 +32,15 @@ function StyledSelect({
   options = [],
   disabled = false,
   allowEmpty = false,
-  emptyLabel = "None",
-  emptyValue = "",
+  emptyLabel = 'None',
+  emptyValue = '',
   fullWidth = true,
-  margin = "normal",
-  variant = "outlined",
+  margin = 'normal',
+  variant = 'outlined',
   required = false,
   helperText,
   error = false,
-  size = "medium",
+  size = 'medium',
   ...otherProps
 }) {
   // Generate unique IDs for accessibility
@@ -69,29 +63,17 @@ function StyledSelect({
       {...otherProps}
     >
       <InputLabel id={labelId}>{label}</InputLabel>
-      <Select
-        labelId={labelId}
-        value={value}
-        onChange={handleChange}
-        disabled={disabled}
-      >
+      <Select labelId={labelId} value={value} onChange={handleChange} disabled={disabled}>
         {allowEmpty && (
           <MenuItem value={emptyValue}>
-            <span style={{ color: "#999", fontStyle: "italic" }}>
-              {emptyLabel}
-            </span>
+            <span style={{ color: '#999', fontStyle: 'italic' }}>{emptyLabel}</span>
           </MenuItem>
         )}
         {options.map((option, index) => {
           // Handle both object and primitive options
-          const optionValue =
-            typeof option === "object" ? option.value : option;
-          const optionLabel =
-            typeof option === "object" ? option.label : option;
-          const optionKey =
-            typeof option === "object" && option.key
-              ? option.key
-              : `option-${index}`;
+          const optionValue = typeof option === 'object' ? option.value : option;
+          const optionLabel = typeof option === 'object' ? option.label : option;
+          const optionKey = typeof option === 'object' && option.key ? option.key : `option-${index}`;
 
           return (
             <MenuItem key={optionKey} value={optionValue}>

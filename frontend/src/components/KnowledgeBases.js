@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "react-query";
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
   Box,
   Typography,
@@ -20,7 +20,7 @@ import {
   Chip,
   Alert,
   CircularProgress,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -30,20 +30,16 @@ import {
   Description as DocumentsIcon,
   RssFeed as FeedsIcon,
   Storage as KBIcon,
-} from "@mui/icons-material";
-import PageHelpHeader from "./PageHelpHeader";
+} from '@mui/icons-material';
+import PageHelpHeader from './PageHelpHeader';
 
-import {
-  knowledgeBaseAPI,
-  formatError,
-  extractItemsFromResponse,
-} from "../services/api";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { keyframes } from "@mui/system";
+import { knowledgeBaseAPI, formatError, extractItemsFromResponse } from '../services/api';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { keyframes } from '@mui/system';
 
-import KBConfigDialog from "./KBConfigDialog";
-import JSONPretty from "react-json-pretty";
-import "react-json-pretty/themes/monikai.css";
+import KBConfigDialog from './KBConfigDialog';
+import JSONPretty from 'react-json-pretty';
+import 'react-json-pretty/themes/monikai.css';
 
 // Pulsing animation for highlighting the documents button
 const pulseAnimation = keyframes`
@@ -55,7 +51,7 @@ const pulseAnimation = keyframes`
 function KnowledgeBases() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const highlightDocs = searchParams.get("action") === "add-documents";
+  const highlightDocs = searchParams.get('action') === 'add-documents';
 
   const [selectedKB, setSelectedKB] = useState(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -65,46 +61,38 @@ function KnowledgeBases() {
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
   const [selectedKBForManagement, setSelectedKBForManagement] = useState(null);
   const [formData, setFormData] = useState({
-    name: "",
-    description: "",
+    name: '',
+    description: '',
   });
 
   const queryClient = useQueryClient();
 
-  const {
-    data: knowledgeBasesResponse,
-    isLoading,
-    error,
-    refetch,
-  } = useQuery("knowledgeBases", knowledgeBaseAPI.list);
+  const { data: knowledgeBasesResponse, isLoading, error, refetch } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
   // Extract data from envelope format
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
 
   const createMutation = useMutation(knowledgeBaseAPI.create, {
     onSuccess: () => {
-      queryClient.invalidateQueries("knowledgeBases");
+      queryClient.invalidateQueries('knowledgeBases');
       setIsCreateDialogOpen(false);
       setFormData({
-        name: "",
-        description: "",
+        name: '',
+        description: '',
       });
     },
   });
 
-  const updateMutation = useMutation(
-    ({ id, data }) => knowledgeBaseAPI.update(id, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("knowledgeBases");
-        setIsEditDialogOpen(false);
-      },
+  const updateMutation = useMutation(({ id, data }) => knowledgeBaseAPI.update(id, data), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('knowledgeBases');
+      setIsEditDialogOpen(false);
     },
-  );
+  });
 
   const deleteMutation = useMutation(knowledgeBaseAPI.delete, {
     onSuccess: () => {
-      queryClient.invalidateQueries("knowledgeBases");
+      queryClient.invalidateQueries('knowledgeBases');
     },
   });
 
@@ -117,9 +105,7 @@ function KnowledgeBases() {
   };
 
   const handleDelete = (id) => {
-    if (
-      window.confirm("Are you sure you want to delete this knowledge base?")
-    ) {
+    if (window.confirm('Are you sure you want to delete this knowledge base?')) {
       deleteMutation.mutate(id);
     }
   };
@@ -152,23 +138,14 @@ function KnowledgeBases() {
 
   if (isLoading) {
     return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight="400px"
-      >
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
         <CircularProgress />
       </Box>
     );
   }
 
   if (error) {
-    return (
-      <Alert severity="error">
-        Error loading knowledge bases: {formatError(error).message}
-      </Alert>
-    );
+    return <Alert severity="error">Error loading knowledge bases: {formatError(error).message}</Alert>;
   }
 
   return (
@@ -179,23 +156,15 @@ function KnowledgeBases() {
         icon={<KBIcon />}
         tips={[
           'Create a KB first, then click "Docs" to upload documents or "Feeds" to set up automated ingestion',
-          "Configure retrieval settings via the gear icon to tune chunk size, overlap, and search behavior",
-          "Use KB Permissions (Access Control menu) to control who can access each knowledge base",
-          "Documents are automatically chunked and embedded for vector search",
+          'Configure retrieval settings via the gear icon to tune chunk size, overlap, and search behavior',
+          'Use KB Permissions (Access Control menu) to control who can access each knowledge base',
+          'Documents are automatically chunked and embedded for vector search',
         ]}
       />
       {highlightDocs && (
-        <Alert
-          severity="info"
-          sx={{ mb: 2 }}
-          onClose={() => setSearchParams({})}
-        >
-          Click the pulsing{" "}
-          <DocumentsIcon
-            fontSize="small"
-            sx={{ verticalAlign: "middle", mx: 0.5 }}
-          />{" "}
-          button on any Knowledge Base to add documents.
+        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setSearchParams({})}>
+          Click the pulsing <DocumentsIcon fontSize="small" sx={{ verticalAlign: 'middle', mx: 0.5 }} /> button on any
+          Knowledge Base to add documents.
         </Alert>
       )}
       <Box display="flex" justifyContent="flex-end" alignItems="center" mb={2}>
@@ -203,11 +172,7 @@ function KnowledgeBases() {
           <Button variant="outlined" onClick={() => refetch()} sx={{ mr: 2 }}>
             Refresh
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setIsCreateDialogOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setIsCreateDialogOpen(true)}>
             Create Knowledge Base
           </Button>
         </Box>
@@ -223,14 +188,11 @@ function KnowledgeBases() {
           Error loading knowledge bases: {formatError(error).message}
         </Alert>
       )}
-      {!isLoading &&
-        !error &&
-        (!knowledgeBases || knowledgeBases.length === 0) && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            No knowledge bases found. Create your first knowledge base to get
-            started.
-          </Alert>
-        )}
+      {!isLoading && !error && (!knowledgeBases || knowledgeBases.length === 0) && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          No knowledge bases found. Create your first knowledge base to get started.
+        </Alert>
+      )}
 
       {knowledgeBases && knowledgeBases.length > 0 && (
         <TableContainer component={Paper}>
@@ -256,53 +218,37 @@ function KnowledgeBases() {
                         {kb.name}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        {kb.description || "No description"}
+                        {kb.description || 'No description'}
                       </Typography>
                     </Box>
                   </TableCell>
                   <TableCell>
+                    <Chip label={kb.status} color={kb.status === 'active' ? 'success' : 'default'} size="small" />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{kb.document_count || 0}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{kb.total_chunks || 0}</Typography>
+                  </TableCell>
+                  <TableCell>
                     <Chip
-                      label={kb.status}
-                      color={kb.status === "active" ? "success" : "default"}
+                      label={kb.sync_enabled ? 'Enabled' : 'Disabled'}
+                      color={kb.sync_enabled ? 'success' : 'error'}
                       size="small"
                     />
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2">
-                      {kb.document_count || 0}
-                    </Typography>
+                    <Typography variant="body2">{new Date(kb.created_at).toLocaleDateString()}</Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2">
-                      {kb.total_chunks || 0}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={kb.sync_enabled ? "Enabled" : "Disabled"}
-                      color={kb.sync_enabled ? "success" : "error"}
-                      size="small"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {new Date(kb.created_at).toLocaleDateString()}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {kb.last_sync_at
-                        ? new Date(kb.last_sync_at).toLocaleDateString()
-                        : "Never"}
+                      {kb.last_sync_at ? new Date(kb.last_sync_at).toLocaleDateString() : 'Never'}
                     </Typography>
                   </TableCell>
                   <TableCell align="right">
                     <Box display="flex" gap={0.5}>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleView(kb)}
-                        title="View Details"
-                      >
+                      <IconButton size="small" onClick={() => handleView(kb)} title="View Details">
                         <ViewIcon />
                       </IconButton>
                       <IconButton
@@ -314,20 +260,16 @@ function KnowledgeBases() {
                           }
                           handleViewDocuments(kb);
                         }}
-                        title={
-                          highlightDocs
-                            ? "Click to add documents to this Knowledge Base"
-                            : "View Documents"
-                        }
+                        title={highlightDocs ? 'Click to add documents to this Knowledge Base' : 'View Documents'}
                         color="primary"
                         sx={
                           highlightDocs
                             ? {
                                 animation: `${pulseAnimation} 1.5s ease-in-out infinite`,
-                                bgcolor: "primary.light",
-                                color: "primary.contrastText",
-                                "&:hover": {
-                                  bgcolor: "primary.main",
+                                bgcolor: 'primary.light',
+                                color: 'primary.contrastText',
+                                '&:hover': {
+                                  bgcolor: 'primary.main',
                                 },
                               }
                             : {}
@@ -335,11 +277,7 @@ function KnowledgeBases() {
                       >
                         <DocumentsIcon />
                       </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleEdit(kb)}
-                        title="Edit"
-                      >
+                      <IconButton size="small" onClick={() => handleEdit(kb)} title="Edit">
                         <EditIcon />
                       </IconButton>
                       <IconButton
@@ -359,12 +297,7 @@ function KnowledgeBases() {
                       >
                         <ConfigIcon />
                       </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDelete(kb.id)}
-                        title="Delete"
-                        color="error"
-                      >
+                      <IconButton size="small" onClick={() => handleDelete(kb.id)} title="Delete" color="error">
                         <DeleteIcon />
                       </IconButton>
                     </Box>
@@ -377,12 +310,7 @@ function KnowledgeBases() {
       )}
 
       {/* Create Dialog */}
-      <Dialog
-        open={isCreateDialogOpen}
-        onClose={() => setIsCreateDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
+      <Dialog open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Create Knowledge Base</DialogTitle>
         <DialogContent>
           <TextField
@@ -398,32 +326,21 @@ function KnowledgeBases() {
             multiline
             rows={3}
             value={formData.description}
-            onChange={(e) =>
-              setFormData({ ...formData, description: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             sx={{ mb: 2 }}
             helperText="After creating the knowledge base, use Plugin Feeds to configure data ingestion"
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleCreate}
-            variant="contained"
-            disabled={createMutation.isLoading || !formData.name}
-          >
-            {createMutation.isLoading ? "Creating..." : "Create"}
+          <Button onClick={handleCreate} variant="contained" disabled={createMutation.isLoading || !formData.name}>
+            {createMutation.isLoading ? 'Creating...' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog
-        open={isEditDialogOpen}
-        onClose={() => setIsEditDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
+      <Dialog open={isEditDialogOpen} onClose={() => setIsEditDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Edit Knowledge Base</DialogTitle>
         <DialogContent>
           <TextField
@@ -439,38 +356,23 @@ function KnowledgeBases() {
             multiline
             rows={3}
             value={formData.description}
-            onChange={(e) =>
-              setFormData({ ...formData, description: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             sx={{ mb: 2 }}
             helperText="Use Plugin Feeds to configure data ingestion for this knowledge base"
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleUpdate}
-            variant="contained"
-            disabled={updateMutation.isLoading || !formData.name}
-          >
-            {updateMutation.isLoading ? "Updating..." : "Update"}
+          <Button onClick={handleUpdate} variant="contained" disabled={updateMutation.isLoading || !formData.name}>
+            {updateMutation.isLoading ? 'Updating...' : 'Update'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* View Dialog */}
-      <Dialog
-        open={isViewDialogOpen}
-        onClose={() => setIsViewDialogOpen(false)}
-        maxWidth="lg"
-        fullWidth
-      >
+      <Dialog open={isViewDialogOpen} onClose={() => setIsViewDialogOpen(false)} maxWidth="lg" fullWidth>
         <DialogTitle>
-          <Box
-            display="flex"
-            justifyContent="space-between"
-            alignItems="center"
-          >
+          <Box display="flex" justifyContent="space-between" alignItems="center">
             <Typography variant="h6">{selectedKB?.name} - Details</Typography>
           </Box>
         </DialogTitle>
@@ -486,16 +388,13 @@ function KnowledgeBases() {
                   <strong>Name:</strong> {selectedKB.name}
                 </Typography>
                 <Typography variant="body1" paragraph>
-                  <strong>Description:</strong>{" "}
-                  {selectedKB.description || "No description"}
+                  <strong>Description:</strong> {selectedKB.description || 'No description'}
                 </Typography>
                 <Typography variant="body1" paragraph>
-                  <strong>Sync Enabled:</strong>{" "}
-                  {selectedKB.sync_enabled ? "Yes" : "No"}
+                  <strong>Sync Enabled:</strong> {selectedKB.sync_enabled ? 'Yes' : 'No'}
                 </Typography>
                 <Typography variant="body1" paragraph>
-                  <strong>Created:</strong>{" "}
-                  {new Date(selectedKB.created_at).toLocaleString()}
+                  <strong>Created:</strong> {new Date(selectedKB.created_at).toLocaleString()}
                 </Typography>
               </Box>
 

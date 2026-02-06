@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from 'react';
 
 const useConversationAutomation = ({
   selectedConversation,
@@ -37,13 +37,9 @@ const useConversationAutomation = ({
 
     const isFreshConversation = isConversationFresh(convoId);
     const isTitleLocked = Boolean(selectedConversation?.meta?.title_locked);
-    const shouldRunSummaryOnly =
-      automationSettings.firstAssistantSummary && assistantReplyCount === 1;
+    const shouldRunSummaryOnly = automationSettings.firstAssistantSummary && assistantReplyCount === 1;
     const interval = Number(automationSettings.cadenceInterval) || 0;
-    const hitsInterval =
-      interval > 0 &&
-      assistantReplyCount >= interval &&
-      assistantReplyCount % interval === 0;
+    const hitsInterval = interval > 0 && assistantReplyCount >= interval && assistantReplyCount % interval === 0;
     const shouldRunBoth = hitsInterval;
 
     const run = async () => {
@@ -59,17 +55,11 @@ const useConversationAutomation = ({
           }
         }
 
-        const shouldRenameAfterSummary =
-          summaryRan && !isTitleLocked && lastAssistantMessageId;
-        const shouldRenameCadence =
-          shouldRunBoth && !isTitleLocked && lastAssistantMessageId;
+        const shouldRenameAfterSummary = summaryRan && !isTitleLocked && lastAssistantMessageId;
+        const shouldRenameCadence = shouldRunBoth && !isTitleLocked && lastAssistantMessageId;
         const allowRename = !isFreshConversation || summaryRan;
 
-        if (
-          (shouldRenameAfterSummary || shouldRenameCadence) &&
-          allowRename &&
-          !autoRenameIsLoading
-        ) {
+        if ((shouldRenameAfterSummary || shouldRenameCadence) && allowRename && !autoRenameIsLoading) {
           await runAutoRenameAsync({
             conversationId: convoId,
             payload: {
@@ -83,10 +73,7 @@ const useConversationAutomation = ({
       } finally {
         // Mark this assistant reply count as processed even when side-calls
         // fail, so we don't spam retries for the same message.
-        lastProcessedAssistantCountRef.current.set(
-          convoId,
-          assistantReplyCount,
-        );
+        lastProcessedAssistantCountRef.current.set(convoId, assistantReplyCount);
       }
     };
 

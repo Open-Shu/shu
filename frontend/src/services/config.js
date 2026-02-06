@@ -2,9 +2,9 @@
  * Configuration service for fetching app config from backend
  */
 
-import { getApiBaseUrl } from "./baseUrl";
+import { getApiBaseUrl } from './baseUrl';
 
-import { log } from "../utils/log";
+import { log } from '../utils/log';
 
 const API_BASE_URL = getApiBaseUrl();
 const API_KEY = process.env.REACT_APP_API_KEY; // Optional API key
@@ -34,25 +34,20 @@ class ConfigService {
 
     try {
       const headers = {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       };
 
       // Add API key if configured
       if (API_KEY) {
-        headers["Authorization"] = `Bearer ${API_KEY}`;
+        headers['Authorization'] = `Bearer ${API_KEY}`;
       }
 
-      const response = await fetch(
-        `${API_BASE_URL.replace(/\/$/, "")}/api/v1/config/public`,
-        {
-          headers,
-        },
-      );
+      const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/api/v1/config/public`, {
+        headers,
+      });
 
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch config: ${response.status} ${response.statusText}`,
-        );
+        throw new Error(`Failed to fetch config: ${response.status} ${response.statusText}`);
       }
 
       const result = await response.json();
@@ -61,11 +56,11 @@ class ConfigService {
         this.config = result.data;
         return this.config;
       } else {
-        throw new Error("Invalid config response format - missing data field");
+        throw new Error('Invalid config response format - missing data field');
       }
     } catch (error) {
       this.error = error.message;
-      log.error("Failed to fetch app config:", error);
+      log.error('Failed to fetch app config:', error);
       throw error;
     } finally {
       this.loading = false;
@@ -78,7 +73,7 @@ class ConfigService {
 
   isGoogleSsoEnabled() {
     const clientId = this.getGoogleClientId();
-    return typeof clientId === "string" && clientId.trim().length > 0;
+    return typeof clientId === 'string' && clientId.trim().length > 0;
   }
 
   getMicrosoftClientId() {
@@ -87,20 +82,20 @@ class ConfigService {
 
   isMicrosoftSsoEnabled() {
     const clientId = this.getMicrosoftClientId();
-    return typeof clientId === "string" && clientId.trim().length > 0;
+    return typeof clientId === 'string' && clientId.trim().length > 0;
   }
 
   getAppName() {
     // Fallback to backend default to avoid stale hardcoding
-    return this.config?.app_name || "Shu";
+    return this.config?.app_name || 'Shu';
   }
 
   getVersion() {
-    return this.config?.version || "1.0.0";
+    return this.config?.version || '1.0.0';
   }
 
   getEnvironment() {
-    return this.config?.environment || "development";
+    return this.config?.environment || 'development';
   }
 
   /**
@@ -110,17 +105,7 @@ class ConfigService {
   getUploadRestrictions() {
     return (
       this.config?.upload_restrictions || {
-        allowed_types: [
-          "pdf",
-          "docx",
-          "txt",
-          "md",
-          "png",
-          "jpg",
-          "jpeg",
-          "gif",
-          "webp",
-        ],
+        allowed_types: ['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
         max_size_bytes: 20 * 1024 * 1024, // 20MB default
       }
     );
@@ -133,21 +118,7 @@ class ConfigService {
   getKbUploadRestrictions() {
     return (
       this.config?.kb_upload_restrictions || {
-        allowed_types: [
-          "pdf",
-          "docx",
-          "doc",
-          "txt",
-          "md",
-          "rtf",
-          "html",
-          "htm",
-          "csv",
-          "py",
-          "js",
-          "xlsx",
-          "pptx",
-        ],
+        allowed_types: ['pdf', 'docx', 'doc', 'txt', 'md', 'rtf', 'html', 'htm', 'csv', 'py', 'js', 'xlsx', 'pptx'],
         max_size_bytes: 50 * 1024 * 1024, // 50MB default
       }
     );

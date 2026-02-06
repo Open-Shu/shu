@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { systemAPI, extractDataFromResponse } from "../services/api";
+import { useEffect, useState } from 'react';
+import { systemAPI, extractDataFromResponse } from '../services/api';
 
 export default function useVersion() {
   const [version, setVersion] = useState(null);
@@ -22,8 +22,6 @@ export default function useVersion() {
     };
   }, []);
 
-  const displayVersion = version
-    ? `v${version}${gitSha ? " • " + gitSha.slice(0, 7) : ""}`
-    : "";
+  const displayVersion = version ? `v${version}${gitSha ? ' • ' + gitSha.slice(0, 7) : ''}` : '';
   return { version, gitSha, displayVersion };
 }

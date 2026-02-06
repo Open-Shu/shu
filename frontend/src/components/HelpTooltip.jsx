@@ -1,6 +1,6 @@
-import React from "react";
-import { Tooltip, IconButton } from "@mui/material";
-import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import React from 'react';
+import { Tooltip, IconButton } from '@mui/material';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 /**
  * HelpTooltip: standardized help icon with tooltip
@@ -9,11 +9,7 @@ import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
  *  - placement?: MUI placement (default: 'right')
  *  - ariaLabel?: string
  */
-export default function HelpTooltip({
-  title,
-  placement = "right",
-  ariaLabel = "help",
-}) {
+export default function HelpTooltip({ title, placement = 'right', ariaLabel = 'help' }) {
   return (
     <Tooltip title={title} placement={placement}>
       <IconButton size="small" aria-label={ariaLabel}>

@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from "react";
-import { useQuery } from "react-query";
-import { useNavigate } from "react-router-dom";
+import React, { useMemo, useState } from 'react';
+import { useQuery } from 'react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -8,7 +8,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   Grid,
   List,
   ListItem,
@@ -20,30 +19,20 @@ import {
   CircularProgress,
   Alert,
   Chip,
-} from "@mui/material";
-import { Chat as ChatIcon } from "@mui/icons-material";
-import { useTheme } from "@mui/material/styles";
-import { format } from "date-fns";
-import {
-  chatAPI,
-  experiencesAPI,
-  extractDataFromResponse,
-  formatError,
-} from "../services/api";
-import StepStatusIcon from "./StepStatusIcon";
-import MarkdownRenderer from "./shared/MarkdownRenderer";
-import { formatDateTimeFull } from "../utils/timezoneFormatter";
-import log from "../utils/log";
+} from '@mui/material';
+import { Chat as ChatIcon } from '@mui/icons-material';
+import { useTheme } from '@mui/material/styles';
+import { format } from 'date-fns';
+import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import StepStatusIcon from './StepStatusIcon';
+import MarkdownRenderer from './shared/MarkdownRenderer';
+import { formatDateTimeFull } from '../utils/timezoneFormatter';
+import log from '../utils/log';
 
-export default function ExperienceRunDetailDialog({
-  open,
-  onClose,
-  runId,
-  timezone,
-}) {
+export default function ExperienceRunDetailDialog({ open, onClose, runId, timezone }) {
   const theme = useTheme();
   const navigate = useNavigate();
-  const isDarkMode = theme.palette.mode === "dark";
+  const isDarkMode = theme.palette.mode === 'dark';
 
   // State for conversation creation
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
@@ -53,13 +42,9 @@ export default function ExperienceRunDetailDialog({
     data: run,
     isLoading,
     error,
-  } = useQuery(
-    ["experience-run", runId],
-    () => experiencesAPI.getRun(runId).then(extractDataFromResponse),
-    {
-      enabled: !!runId && open,
-    },
-  );
+  } = useQuery(['experience-run', runId], () => experiencesAPI.getRun(runId).then(extractDataFromResponse), {
+    enabled: !!runId && open,
+  });
 
   const steps = useMemo(() => {
     if (!run?.step_states) {
@@ -83,7 +68,7 @@ export default function ExperienceRunDetailDialog({
 
   const handleStartConversation = async () => {
     if (!runId || !run?.result_content) {
-      setConversationError("No result content available to start conversation");
+      setConversationError('No result content available to start conversation');
       return;
     }
 
@@ -95,14 +80,14 @@ export default function ExperienceRunDetailDialog({
       const response = await chatAPI.createConversationFromExperience(runId);
       const conversation = extractDataFromResponse(response);
 
-      log.info("Started conversation from experience run", {
+      log.info('Started conversation from experience run', {
         conversationId: conversation.id,
         runId: runId,
       });
 
       // Navigate to chat with conversation ID as query parameter
       const targetUrl = `/chat?conversationId=${conversation.id}`;
-      log.info("Navigating to conversation", {
+      log.info('Navigating to conversation', {
         targetUrl,
         conversationId: conversation.id,
       });
@@ -111,10 +96,8 @@ export default function ExperienceRunDetailDialog({
       navigate(targetUrl);
       onClose();
     } catch (error) {
-      log.error("Failed to start conversation from experience:", error);
-      setConversationError(
-        formatError(error) || "Failed to start conversation. Please try again.",
-      );
+      log.error('Failed to start conversation from experience:', error);
+      setConversationError(formatError(error) || 'Failed to start conversation. Please try again.');
     } finally {
       setIsCreatingConversation(false);
     }
@@ -128,15 +111,13 @@ export default function ExperienceRunDetailDialog({
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         Run Details
-        {run &&
-          run.started_at &&
-          !isNaN(new Date(run.started_at).getTime()) && (
-            <Typography variant="body2" color="text.secondary">
-              {timezone
-                ? formatDateTimeFull(run.started_at, timezone)
-                : format(new Date(run.started_at), "MMMM d, yyyy HH:mm:ss")}
-            </Typography>
-          )}
+        {run && run.started_at && !isNaN(new Date(run.started_at).getTime()) && (
+          <Typography variant="body2" color="text.secondary">
+            {timezone
+              ? formatDateTimeFull(run.started_at, timezone)
+              : format(new Date(run.started_at), 'MMMM d, yyyy HH:mm:ss')}
+          </Typography>
+        )}
       </DialogTitle>
       <DialogContent dividers>
         {isLoading && (
@@ -151,16 +132,13 @@ export default function ExperienceRunDetailDialog({
           <Stack spacing={3}>
             {/* Conversation Error Alert */}
             {conversationError && (
-              <Alert
-                severity="error"
-                onClose={() => setConversationError(null)}
-              >
+              <Alert severity="error" onClose={() => setConversationError(null)}>
                 {conversationError}
               </Alert>
             )}
 
             {/* Status Banner */}
-            <Paper variant="outlined" sx={{ p: 2, bgcolor: "grey.50" }}>
+            <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
               <Grid container spacing={2} alignItems="center">
                 <Grid item xs={12} sm={6}>
                   <Stack direction="row" spacing={1} alignItems="center">
@@ -169,13 +147,7 @@ export default function ExperienceRunDetailDialog({
                     </Typography>
                     <Chip
                       label={run.status}
-                      color={
-                        run.status === "succeeded"
-                          ? "success"
-                          : run.status === "failed"
-                            ? "error"
-                            : "default"
-                      }
+                      color={run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'error' : 'default'}
                       size="small"
                     />
                   </Stack>
@@ -216,29 +188,20 @@ export default function ExperienceRunDetailDialog({
                           primary={step.step_key}
                           secondary={
                             <React.Fragment>
-                              {step.status === "failed" &&
-                                `Error: ${step.error || "Unknown error"}`}
-                              {step.status === "skipped" &&
-                                `Skipped: ${step.reason || "No reason provided"}`}
-                              {step.status === "succeeded" &&
+                              {step.status === 'failed' && `Error: ${step.error || 'Unknown error'}`}
+                              {step.status === 'skipped' && `Skipped: ${step.reason || 'No reason provided'}`}
+                              {step.status === 'succeeded' &&
                                 // If we have output summary we could show it, but usually not in state.
                                 // We rely on status.
                                 `Duration: ${
                                   step.finished_at && step.started_at
-                                    ? (
-                                        (new Date(step.finished_at) -
-                                          new Date(step.started_at)) /
-                                        1000
-                                      ).toFixed(2) + "s"
-                                    : "-"
+                                    ? ((new Date(step.finished_at) - new Date(step.started_at)) / 1000).toFixed(2) + 's'
+                                    : '-'
                                 }`}
                             </React.Fragment>
                           }
                           primaryTypographyProps={{
-                            color:
-                              step.status === "failed"
-                                ? "error"
-                                : "textPrimary",
+                            color: step.status === 'failed' ? 'error' : 'textPrimary',
                           }}
                         />
                       </ListItem>
@@ -257,23 +220,16 @@ export default function ExperienceRunDetailDialog({
                 variant="outlined"
                 sx={{
                   p: 2,
-                  bgcolor: "grey.50",
+                  bgcolor: 'grey.50',
                   minHeight: 200,
                   maxHeight: 400,
-                  overflowY: "auto",
+                  overflowY: 'auto',
                 }}
               >
                 {run.result_content ? (
-                  <MarkdownRenderer
-                    content={run.result_content}
-                    isDarkMode={isDarkMode}
-                  />
+                  <MarkdownRenderer content={run.result_content} isDarkMode={isDarkMode} />
                 ) : (
-                  <Typography
-                    color="text.secondary"
-                    variant="body2"
-                    fontStyle="italic"
-                  >
+                  <Typography color="text.secondary" variant="body2" fontStyle="italic">
                     No result content.
                   </Typography>
                 )}
@@ -286,10 +242,8 @@ export default function ExperienceRunDetailDialog({
                 <Typography variant="subtitle2" gutterBottom>
                   Metadata
                 </Typography>
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: "grey.50" }}>
-                  <pre
-                    style={{ margin: 0, fontSize: "0.8rem", overflowX: "auto" }}
-                  >
+                <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+                  <pre style={{ margin: 0, fontSize: '0.8rem', overflowX: 'auto' }}>
                     {JSON.stringify(run.result_metadata, null, 2)}
                   </pre>
                 </Paper>
@@ -307,7 +261,7 @@ export default function ExperienceRunDetailDialog({
             onClick={handleStartConversation}
             disabled={isCreatingConversation}
           >
-            {isCreatingConversation ? "Starting..." : "Start Conversation"}
+            {isCreatingConversation ? 'Starting...' : 'Start Conversation'}
           </Button>
         )}
       </DialogActions>

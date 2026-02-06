@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -11,18 +11,18 @@ import {
   ListItemText,
   CircularProgress,
   Tooltip,
-} from "@mui/material";
-import { useQuery } from "react-query";
-import { pluginsAPI } from "../services/pluginsApi";
-import { extractDataFromResponse, formatError } from "../services/api";
-import { pluginDisplayName, pluginPrimaryLabel } from "../utils/plugins";
+} from '@mui/material';
+import { useQuery } from 'react-query';
+import { pluginsAPI } from '../services/pluginsApi';
+import { extractDataFromResponse, formatError } from '../services/api';
+import { pluginDisplayName, pluginPrimaryLabel } from '../utils/plugins';
 
 export default function PluginPickerDialog({ open, onClose, onSelect }) {
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState('');
   const { data, isLoading, isFetching, error } = useQuery(
-    ["plugins", "list"],
+    ['plugins', 'list'],
     () => pluginsAPI.list().then(extractDataFromResponse),
-    { enabled: open, staleTime: 10000 },
+    { enabled: open, staleTime: 10000 }
   );
 
   const tools = useMemo(() => (Array.isArray(data) ? data : []), [data]);
@@ -32,9 +32,7 @@ export default function PluginPickerDialog({ open, onClose, onSelect }) {
       return tools;
     }
     return tools.filter(
-      (t) =>
-        (pluginDisplayName(t) || "").toLowerCase().includes(f) ||
-        (t.name || "").toLowerCase().includes(f),
+      (t) => (pluginDisplayName(t) || '').toLowerCase().includes(f) || (t.name || '').toLowerCase().includes(f)
     );
   }, [tools, filter]);
 
@@ -45,7 +43,7 @@ export default function PluginPickerDialog({ open, onClose, onSelect }) {
         {isLoading || isFetching ? (
           <CircularProgress size={20} />
         ) : error ? (
-          <div style={{ color: "red" }}>{formatError(error)}</div>
+          <div style={{ color: 'red' }}>{formatError(error)}</div>
         ) : (
           <>
             <Tooltip title="Type to filter by plugin name. Use slash-command in chat input: e.g., /gmail_digest">
@@ -60,13 +58,10 @@ export default function PluginPickerDialog({ open, onClose, onSelect }) {
             </Tooltip>
             <List dense>
               {filtered.map((t) => (
-                <ListItemButton
-                  key={t.name}
-                  onClick={() => onSelect && onSelect(t)}
-                >
+                <ListItemButton key={t.name} onClick={() => onSelect && onSelect(t)}>
                   <ListItemText
                     primary={pluginPrimaryLabel(t)}
-                    secondary={`/${t.name} • version: ${t.version || "n/a"}${t.capabilities?.length ? " • " + t.capabilities.join(", ") : ""}`}
+                    secondary={`/${t.name} • version: ${t.version || 'n/a'}${t.capabilities?.length ? ' • ' + t.capabilities.join(', ') : ''}`}
                   />
                 </ListItemButton>
               ))}

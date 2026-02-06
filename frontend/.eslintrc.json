@@ -4,10 +4,15 @@
     "react-app/jest",
     "eslint:recommended",
     "plugin:react/recommended",
-    "plugin:react-hooks/recommended"
+    "plugin:react-hooks/recommended",
+    "plugin:prettier/recommended"
   ],
-  "plugins": ["react", "react-hooks"],
+  "plugins": ["react", "react-hooks", "prettier"],
+  "ignorePatterns": ["*.json", "node_modules/", "build/", "coverage/"],
   "rules": {
+    "prettier/prettier": "error",
+    "react/no-unescaped-entities": "off",
+    "no-empty": "off",
     "no-console": [
       "warn",
       {
@@ -53,6 +58,22 @@
       }
     ]
   },
+  "overrides": [
+    {
+      "files": ["**/__tests__/**/*", "**/*.test.js", "**/*.test.jsx"],
+      "rules": {
+        "no-import-assign": "off",
+        "testing-library/no-node-access": "warn",
+        "testing-library/prefer-screen-queries": "warn",
+        "testing-library/no-wait-for-multiple-assertions": "warn",
+        "testing-library/no-container": "warn",
+        "jest/no-conditional-expect": "warn",
+        "no-magic-numbers": "off",
+        "max-lines-per-function": "off",
+        "max-lines": "off"
+      }
+    }
+  ],
   "settings": {
     "react": {
       "version": "detect"

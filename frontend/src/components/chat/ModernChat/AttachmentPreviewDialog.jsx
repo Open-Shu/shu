@@ -1,19 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  IconButton,
-  Box,
-  Typography,
-  CircularProgress,
-} from "@mui/material";
-import {
-  Close as CloseIcon,
-  Download as DownloadIcon,
-  OpenInNew as OpenInNewIcon,
-} from "@mui/icons-material";
-import { chatAPI } from "../../../services/api";
+import React, { useState, useEffect, useRef } from 'react';
+import { Dialog, DialogTitle, DialogContent, IconButton, Box, Typography, CircularProgress } from '@mui/material';
+import { Close as CloseIcon, Download as DownloadIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material';
+import { chatAPI } from '../../../services/api';
 
 /**
  * AttachmentPreviewDialog - Shows attachment content in a modal dialog.
@@ -52,12 +40,8 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
         setBlobUrl(url);
         setContent({ blob, url });
       } catch (err) {
-        console.error("Error fetching attachment:", err);
-        setError(
-          err.response?.status
-            ? `Failed to fetch attachment: ${err.response.status}`
-            : err.message,
-        );
+        console.error('Error fetching attachment:', err);
+        setError(err.response?.status ? `Failed to fetch attachment: ${err.response.status}` : err.message);
       } finally {
         setLoading(false);
       }
@@ -74,7 +58,7 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
 
   const handleDownload = () => {
     if (blobUrl && attachment) {
-      const a = document.createElement("a");
+      const a = document.createElement('a');
       a.href = blobUrl;
       a.download = attachment.original_filename;
       document.body.appendChild(a);
@@ -85,7 +69,7 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
 
   const handleOpenInNewTab = () => {
     if (blobUrl) {
-      window.open(blobUrl, "_blank");
+      window.open(blobUrl, '_blank');
     }
   };
 
@@ -94,9 +78,9 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
       return (
         <Box
           sx={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
             minHeight: 300,
           }}
         >
@@ -107,7 +91,7 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
 
     if (error) {
       return (
-        <Box sx={{ textAlign: "center", py: 4 }}>
+        <Box sx={{ textAlign: 'center', py: 4 }}>
           <Typography color="error">{error}</Typography>
         </Box>
       );
@@ -117,19 +101,19 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
       return null;
     }
 
-    const mimeType = attachment.mime_type || "";
+    const mimeType = attachment.mime_type || '';
 
     // Images
-    if (mimeType.startsWith("image/")) {
+    if (mimeType.startsWith('image/')) {
       return (
-        <Box sx={{ textAlign: "center" }}>
+        <Box sx={{ textAlign: 'center' }}>
           <img
             src={content.url}
             alt={attachment.original_filename}
             style={{
-              maxWidth: "100%",
-              maxHeight: "70vh",
-              objectFit: "contain",
+              maxWidth: '100%',
+              maxHeight: '70vh',
+              objectFit: 'contain',
             }}
           />
         </Box>
@@ -137,25 +121,22 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
     }
 
     // PDFs
-    if (mimeType === "application/pdf") {
+    if (mimeType === 'application/pdf') {
       return (
-        <Box sx={{ height: "70vh" }}>
+        <Box sx={{ height: '70vh' }}>
           <iframe
             src={content.url}
             title={attachment.original_filename}
-            style={{ width: "100%", height: "100%", border: "none" }}
+            style={{ width: '100%', height: '100%', border: 'none' }}
           />
         </Box>
       );
     }
 
     // Text files
-    if (
-      mimeType.startsWith("text/") ||
-      ["application/json", "application/xml"].includes(mimeType)
-    ) {
+    if (mimeType.startsWith('text/') || ['application/json', 'application/xml'].includes(mimeType)) {
       return (
-        <Box sx={{ maxHeight: "70vh", overflow: "auto" }}>
+        <Box sx={{ maxHeight: '70vh', overflow: 'auto' }}>
           <TextFileViewer blob={content.blob} />
         </Box>
       );
@@ -163,10 +144,8 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
 
     // Unsupported - offer download
     return (
-      <Box sx={{ textAlign: "center", py: 4 }}>
-        <Typography sx={{ mb: 2 }}>
-          Preview not available for this file type ({mimeType})
-        </Typography>
+      <Box sx={{ textAlign: 'center', py: 4 }}>
+        <Typography sx={{ mb: 2 }}>Preview not available for this file type ({mimeType})</Typography>
         <Typography variant="body2" color="text.secondary">
           Click the download button to save the file.
         </Typography>
@@ -181,40 +160,20 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
       maxWidth="lg"
       fullWidth
       PaperProps={{
-        sx: { minHeight: "50vh" },
+        sx: { minHeight: '50vh' },
       }}
     >
-      <DialogTitle
-        sx={{ display: "flex", alignItems: "center", gap: 1, pr: 6 }}
-      >
-        <Typography
-          variant="h6"
-          component="span"
-          sx={{ flexGrow: 1, overflow: "hidden", textOverflow: "ellipsis" }}
-        >
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, pr: 6 }}>
+        <Typography variant="h6" component="span" sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {attachment?.original_filename}
         </Typography>
-        <IconButton
-          size="small"
-          onClick={handleDownload}
-          title="Download"
-          disabled={!blobUrl}
-        >
+        <IconButton size="small" onClick={handleDownload} title="Download" disabled={!blobUrl}>
           <DownloadIcon fontSize="small" />
         </IconButton>
-        <IconButton
-          size="small"
-          onClick={handleOpenInNewTab}
-          title="Open in new tab"
-          disabled={!blobUrl}
-        >
+        <IconButton size="small" onClick={handleOpenInNewTab} title="Open in new tab" disabled={!blobUrl}>
           <OpenInNewIcon fontSize="small" />
         </IconButton>
-        <IconButton
-          aria-label="close"
-          onClick={onClose}
-          sx={{ position: "absolute", right: 8, top: 8 }}
-        >
+        <IconButton aria-label="close" onClick={onClose} sx={{ position: 'absolute', right: 8, top: 8 }}>
           <CloseIcon />
         </IconButton>
       </DialogTitle>
@@ -225,7 +184,7 @@ const AttachmentPreviewDialog = ({ open, onClose, attachment }) => {
 
 // Helper component to read and display text files
 const TextFileViewer = ({ blob }) => {
-  const [text, setText] = useState("");
+  const [text, setText] = useState('');
 
   useEffect(() => {
     const reader = new FileReader();
@@ -236,11 +195,11 @@ const TextFileViewer = ({ blob }) => {
   return (
     <pre
       style={{
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
         margin: 0,
-        fontFamily: "monospace",
-        fontSize: "0.9rem",
+        fontFamily: 'monospace',
+        fontSize: '0.9rem',
       }}
     >
       {text}

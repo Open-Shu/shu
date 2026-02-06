@@ -1,18 +1,7 @@
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  useMemo,
-  useCallback,
-} from "react";
-import { createTheme } from "@mui/material/styles";
-import { useAuth } from "../hooks/useAuth";
-import {
-  userPreferencesAPI,
-  brandingAPI,
-  extractDataFromResponse,
-} from "../services/api";
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import { createTheme } from '@mui/material/styles';
+import { useAuth } from '../hooks/useAuth';
+import { userPreferencesAPI, brandingAPI, extractDataFromResponse } from '../services/api';
 import {
   defaultBranding,
   resolveBranding,
@@ -21,26 +10,24 @@ import {
   getBrandingFaviconUrl,
   getBrandingLogoUrl,
   getBrandingAppName,
-} from "../utils/constants";
-import log from "../utils/log";
+} from '../utils/constants';
+import log from '../utils/log';
 
 const ThemeContext = createContext();
 
 export const useTheme = () => {
   const context = useContext(ThemeContext);
   if (!context) {
-    throw new Error("useTheme must be used within a ThemeProvider");
+    throw new Error('useTheme must be used within a ThemeProvider');
   }
   return context;
 };
 
 export const ThemeProvider = ({ children }) => {
   const { user, isAuthenticated } = useAuth();
-  const [themeMode, setThemeMode] = useState("light"); // 'light', 'dark', 'auto'
-  const [resolvedMode, setResolvedMode] = useState("light"); // actual mode after resolving 'auto'
-  const [branding, setBrandingState] = useState(() =>
-    resolveBranding(defaultBranding),
-  );
+  const [themeMode, setThemeMode] = useState('light'); // 'light', 'dark', 'auto'
+  const [resolvedMode, setResolvedMode] = useState('light'); // actual mode after resolving 'auto'
+  const [branding, setBrandingState] = useState(() => resolveBranding(defaultBranding));
   const [brandingLoaded, setBrandingLoaded] = useState(false);
 
   const setBranding = useCallback(
@@ -48,7 +35,7 @@ export const ThemeProvider = ({ children }) => {
       setBrandingState(resolveBranding(nextBranding));
       setBrandingLoaded(true);
     },
-    [setBrandingLoaded],
+    [setBrandingLoaded]
   );
 
   const refreshBranding = useCallback(async () => {
@@ -58,7 +45,7 @@ export const ThemeProvider = ({ children }) => {
       const data = extractDataFromResponse(response);
       setBranding(data);
     } catch (error) {
-      log.warn("Failed to load branding, using defaults:", error);
+      log.warn('Failed to load branding, using defaults:', error);
       setBranding(defaultBranding);
     }
   }, [setBranding, setBrandingLoaded]);
@@ -73,31 +60,31 @@ export const ThemeProvider = ({ children }) => {
         .getPreferences()
         .then((response) => {
           const prefs = extractDataFromResponse(response);
-          setThemeMode(prefs.theme || "light");
+          setThemeMode(prefs.theme || 'light');
         })
         .catch((err) => {
-          log.warn("Failed to load theme preference, using default:", err);
-          setThemeMode("light");
+          log.warn('Failed to load theme preference, using default:', err);
+          setThemeMode('light');
         });
     } else {
       // Use localStorage for non-authenticated users
-      const savedTheme = localStorage.getItem("shu-theme") || "light";
+      const savedTheme = localStorage.getItem('shu-theme') || 'light';
       setThemeMode(savedTheme);
     }
   }, [isAuthenticated, user]);
 
   // Resolve 'auto' mode based on system preference
   useEffect(() => {
-    if (themeMode === "auto") {
-      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-      setResolvedMode(mediaQuery.matches ? "dark" : "light");
+    if (themeMode === 'auto') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      setResolvedMode(mediaQuery.matches ? 'dark' : 'light');
 
       const handleChange = (e) => {
-        setResolvedMode(e.matches ? "dark" : "light");
+        setResolvedMode(e.matches ? 'dark' : 'light');
       };
 
-      mediaQuery.addEventListener("change", handleChange);
-      return () => mediaQuery.removeEventListener("change", handleChange);
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
     } else {
       setResolvedMode(themeMode);
     }
@@ -110,7 +97,7 @@ export const ThemeProvider = ({ children }) => {
 
   // Insert branding information into DOM dynamicalls
   useEffect(() => {
-    if (typeof document === "undefined") {
+    if (typeof document === 'undefined') {
       return;
     }
 
@@ -126,24 +113,21 @@ export const ThemeProvider = ({ children }) => {
 
       let link = document.querySelector(selector);
       if (!link) {
-        link = document.createElement("link");
-        link.setAttribute("rel", rel);
+        link = document.createElement('link');
+        link.setAttribute('rel', rel);
         document.head.appendChild(link);
       }
 
-      link.setAttribute("href", href);
+      link.setAttribute('href', href);
     };
 
-    upsertLink('link[rel="icon"]', "icon", faviconUrl);
-    upsertLink('link[rel="shortcut icon"]', "shortcut icon", faviconUrl);
-    upsertLink('link[rel="apple-touch-icon"]', "apple-touch-icon", logoUrl);
+    upsertLink('link[rel="icon"]', 'icon', faviconUrl);
+    upsertLink('link[rel="shortcut icon"]', 'shortcut icon', faviconUrl);
+    upsertLink('link[rel="apple-touch-icon"]', 'apple-touch-icon', logoUrl);
 
     const themeMeta = document.querySelector('meta[name="theme-color"]');
     if (themeMeta) {
-      themeMeta.setAttribute(
-        "content",
-        getPrimaryColor(resolvedMode, resolved),
-      );
+      themeMeta.setAttribute('content', getPrimaryColor(resolvedMode, resolved));
     }
 
     if (appName) {
@@ -156,19 +140,19 @@ export const ThemeProvider = ({ children }) => {
       setThemeMode(newTheme);
 
       // Save to localStorage for non-authenticated users
-      localStorage.setItem("shu-theme", newTheme);
+      localStorage.setItem('shu-theme', newTheme);
 
       // Save to backend if authenticated
       if (isAuthenticated) {
         try {
           await userPreferencesAPI.patchPreferences({ theme: newTheme });
-          log.info("Theme preference saved:", newTheme);
+          log.info('Theme preference saved:', newTheme);
         } catch (error) {
-          log.warn("Failed to save theme preference:", error);
+          log.warn('Failed to save theme preference:', error);
         }
       }
     },
-    [isAuthenticated],
+    [isAuthenticated]
   );
 
   const value = {
@@ -176,14 +160,12 @@ export const ThemeProvider = ({ children }) => {
     themeMode,
     resolvedMode,
     changeTheme,
-    isDark: resolvedMode === "dark",
+    isDark: resolvedMode === 'dark',
     branding,
     brandingLoaded,
     refreshBranding,
     setBranding,
   };
 
-  return (
-    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 };

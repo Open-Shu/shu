@@ -1,37 +1,35 @@
 /**
  * @jest-environment jsdom
  */
-import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import "@testing-library/jest-dom";
-import { QueryClient, QueryClientProvider } from "react-query";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import { QueryClient, QueryClientProvider } from 'react-query';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+
+// Import the component AFTER mocking its dependencies
+import ExportExperienceButton from '../ExportExperienceButton';
+import { experiencesAPI } from '../../services/api';
 
 // Mock the API and utils BEFORE importing the component
-jest.mock("../../services/api", () => ({
+jest.mock('../../services/api', () => ({
   experiencesAPI: {
     export: jest.fn(),
   },
-  formatError: jest.fn((error) => error.message || "Unknown error"),
+  formatError: jest.fn((error) => error.message || 'Unknown error'),
 }));
 
-jest.mock("../../utils/downloadHelpers", () => ({
+jest.mock('../../utils/downloadHelpers', () => ({
   downloadResponseAsFile: jest.fn(),
-  generateSafeFilename: jest.fn((name) =>
-    name.toLowerCase().replace(/\s+/g, "-"),
-  ),
+  generateSafeFilename: jest.fn((name) => name.toLowerCase().replace(/\s+/g, '-')),
 }));
 
-jest.mock("../../utils/log", () => ({
+jest.mock('../../utils/log', () => ({
   log: {
     info: jest.fn(),
     error: jest.fn(),
   },
 }));
-
-// Import the component AFTER mocking its dependencies
-import ExportExperienceButton from "../ExportExperienceButton";
-import { experiencesAPI } from "../../services/api";
 
 const createTestQueryClient = () =>
   new QueryClient({
@@ -52,76 +50,62 @@ const TestWrapper = ({ children }) => {
   );
 };
 
-describe("ExportExperienceButton", () => {
+describe('ExportExperienceButton', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("renders icon button by default", () => {
+  it('renders icon button by default', () => {
     render(
       <TestWrapper>
-        <ExportExperienceButton
-          experienceId="test-id"
-          experienceName="Test Experience"
-        />
-      </TestWrapper>,
+        <ExportExperienceButton experienceId="test-id" experienceName="Test Experience" />
+      </TestWrapper>
     );
 
-    const button = screen.getByRole("button");
+    const button = screen.getByRole('button');
     expect(button).toBeInTheDocument();
   });
 
-  it("renders button variant when specified", () => {
+  it('renders button variant when specified', () => {
     render(
       <TestWrapper>
-        <ExportExperienceButton
-          experienceId="test-id"
-          experienceName="Test Experience"
-          variant="button"
-        />
-      </TestWrapper>,
+        <ExportExperienceButton experienceId="test-id" experienceName="Test Experience" variant="button" />
+      </TestWrapper>
     );
 
-    const button = screen.getByRole("button", { name: /export/i });
+    const button = screen.getByRole('button', { name: /export/i });
     expect(button).toBeInTheDocument();
-    expect(button).toHaveTextContent("Export");
+    expect(button).toHaveTextContent('Export');
   });
 
-  it("calls export API on click", async () => {
-    const mockBlob = new Blob(["test yaml content"], {
-      type: "application/x-yaml",
+  it('calls export API on click', async () => {
+    const mockBlob = new Blob(['test yaml content'], {
+      type: 'application/x-yaml',
     });
     experiencesAPI.export.mockResolvedValue({ data: mockBlob });
 
     render(
       <TestWrapper>
-        <ExportExperienceButton
-          experienceId="test-id"
-          experienceName="Test Experience"
-        />
-      </TestWrapper>,
+        <ExportExperienceButton experienceId="test-id" experienceName="Test Experience" />
+      </TestWrapper>
     );
 
-    const button = screen.getByRole("button");
+    const button = screen.getByRole('button');
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(experiencesAPI.export).toHaveBeenCalledWith("test-id");
+      expect(experiencesAPI.export).toHaveBeenCalledWith('test-id');
     });
   });
 
-  it("is disabled when disabled prop is true", () => {
+  it('is disabled when disabled prop is true', () => {
     render(
       <TestWrapper>
-        <ExportExperienceButton
-          experienceId="test-id"
-          experienceName="Test Experience"
-          disabled={true}
-        />
-      </TestWrapper>,
+        <ExportExperienceButton experienceId="test-id" experienceName="Test Experience" disabled={true} />
+      </TestWrapper>
     );
 
-    const button = screen.getByRole("button");
+    const button = screen.getByRole('button');
     expect(button).toBeDisabled();
   });
 });

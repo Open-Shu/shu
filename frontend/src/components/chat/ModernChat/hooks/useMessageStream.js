@@ -1,33 +1,25 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useQuery } from "react-query";
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useQuery } from 'react-query';
 
-import {
-  chatAPI,
-  extractDataFromResponse,
-  formatError,
-} from "../../../../services/api";
-import log from "../../../../utils/log";
-import { CHAT_PAGE_SIZE } from "../utils/chatConfig";
+import { chatAPI, extractDataFromResponse, formatError } from '../../../../services/api';
+import log from '../../../../utils/log';
+import { CHAT_PAGE_SIZE } from '../utils/chatConfig';
 
 const normalizeMessagesResponse = async (conversationId) => {
   const response = await chatAPI.getMessages(conversationId, {
     limit: CHAT_PAGE_SIZE,
     offset: 0,
-    order: "desc",
+    order: 'desc',
     include_total: true,
   });
 
   const payload = extractDataFromResponse(response);
-  const rawMessages = Array.isArray(payload?.messages)
-    ? payload.messages
-    : Array.isArray(payload)
-      ? payload
-      : [];
+  const rawMessages = Array.isArray(payload?.messages) ? payload.messages : Array.isArray(payload) ? payload : [];
   const chatOrderMessages = [...rawMessages].reverse();
   const totalCount =
-    typeof payload?.total_count === "number"
+    typeof payload?.total_count === 'number'
       ? payload.total_count
-      : typeof response?.data?.meta?.total_count === "number"
+      : typeof response?.data?.meta?.total_count === 'number'
         ? response.data.meta.total_count
         : null;
 
@@ -35,7 +27,7 @@ const normalizeMessagesResponse = async (conversationId) => {
   const normalizedMeta = {
     ...(responseData.meta || {}),
     total_count: totalCount,
-    order: "asc",
+    order: 'asc',
     page_size: CHAT_PAGE_SIZE,
   };
 
@@ -71,16 +63,13 @@ const useMessageStream = ({
     isLoading: loadingMessages,
     isFetching: fetchingMessages,
   } = useQuery(
-    ["conversation-messages", selectedConversation?.id],
+    ['conversation-messages', selectedConversation?.id],
     async () => {
       if (!selectedConversation?.id) {
         return null;
       }
-      const { response, totalCount } = await normalizeMessagesResponse(
-        selectedConversation.id,
-      );
-      totalMessagesRef.current =
-        typeof totalCount === "number" ? totalCount : null;
+      const { response, totalCount } = await normalizeMessagesResponse(selectedConversation.id);
+      totalMessagesRef.current = typeof totalCount === 'number' ? totalCount : null;
       return response;
     },
     {
@@ -89,15 +78,12 @@ const useMessageStream = ({
       onError: (err) => {
         setError(formatError(err).message);
       },
-    },
+    }
   );
 
   const messages = useMemo(
-    () =>
-      selectedConversation?.id
-        ? extractDataFromResponse(messagesResponse) || []
-        : [],
-    [messagesResponse, selectedConversation?.id],
+    () => (selectedConversation?.id ? extractDataFromResponse(messagesResponse) || [] : []),
+    [messagesResponse, selectedConversation?.id]
   );
 
   const resetConversationState = useCallback(() => {
@@ -111,14 +97,9 @@ const useMessageStream = ({
     resetConversationState();
     if (selectedConversation?.id) {
       setIsPinnedToBottom(true);
-      scheduleScrollToBottom("auto");
+      scheduleScrollToBottom('auto');
     }
-  }, [
-    selectedConversation?.id,
-    resetConversationState,
-    setIsPinnedToBottom,
-    scheduleScrollToBottom,
-  ]);
+  }, [selectedConversation?.id, resetConversationState, setIsPinnedToBottom, scheduleScrollToBottom]);
 
   useEffect(() => {
     if (!selectedConversation?.id || !messagesResponse) {
@@ -126,28 +107,21 @@ const useMessageStream = ({
     }
 
     const totalCount =
-      typeof messagesResponse?.data?.meta?.total_count === "number"
-        ? messagesResponse.data.meta.total_count
-        : null;
-    if (typeof totalCount === "number") {
+      typeof messagesResponse?.data?.meta?.total_count === 'number' ? messagesResponse.data.meta.total_count : null;
+    if (typeof totalCount === 'number') {
       totalMessagesRef.current = totalCount;
     }
 
     const currentMessages = extractDataFromResponse(messagesResponse);
     const currentArray = Array.isArray(currentMessages) ? currentMessages : [];
-    const persistedCount = currentArray.filter(
-      (msg) => !msg?.isPlaceholder,
-    ).length;
+    const persistedCount = currentArray.filter((msg) => !msg?.isPlaceholder).length;
     const moreAvailable =
-      typeof totalCount === "number"
-        ? persistedCount < totalCount
-        : persistedCount >= CHAT_PAGE_SIZE;
+      typeof totalCount === 'number' ? persistedCount < totalCount : persistedCount >= CHAT_PAGE_SIZE;
     setHasMoreMessages(moreAvailable);
 
     if (!loadingMessages) {
       const hasSummary =
-        Boolean(selectedConversation?.summary_text) ||
-        Boolean(selectedConversation?.meta?.summary_last_message_id);
+        Boolean(selectedConversation?.summary_text) || Boolean(selectedConversation?.meta?.summary_last_message_id);
       if (persistedCount > 0 || hasSummary) {
         clearFreshConversation(selectedConversation.id);
       } else {
@@ -157,7 +131,7 @@ const useMessageStream = ({
 
     if (isInitialLoad && currentArray.length > 0 && !loadingMessages) {
       setIsInitialLoad(false);
-      scheduleScrollToBottom("auto");
+      scheduleScrollToBottom('auto');
     }
   }, [
     messagesResponse,
@@ -180,34 +154,26 @@ const useMessageStream = ({
         return;
       }
 
-      const cacheKey = ["conversation-messages", selectedConversation.id];
+      const cacheKey = ['conversation-messages', selectedConversation.id];
       const snapshot = captureScrollSnapshot?.();
       setIsPinnedToBottom(false);
 
       const cached = queryClient.getQueryData(cacheKey);
       const existingMessages = extractDataFromResponse(cached);
-      const existingArray = Array.isArray(existingMessages)
-        ? existingMessages
-        : [];
-      const persistedCount = existingArray.filter(
-        (msg) => !msg?.isPlaceholder,
-      ).length;
+      const existingArray = Array.isArray(existingMessages) ? existingMessages : [];
+      const persistedCount = existingArray.filter((msg) => !msg?.isPlaceholder).length;
 
       setLoadingOlderMessages(true);
       try {
         const response = await chatAPI.getMessages(selectedConversation.id, {
           limit: CHAT_PAGE_SIZE,
           offset: persistedCount,
-          order: "desc",
+          order: 'desc',
           include_total: false,
         });
 
         const payload = extractDataFromResponse(response);
-        const rawMessages = Array.isArray(payload?.messages)
-          ? payload.messages
-          : Array.isArray(payload)
-            ? payload
-            : [];
+        const rawMessages = Array.isArray(payload?.messages) ? payload.messages : Array.isArray(payload) ? payload : [];
         const olderMessages = [...rawMessages].reverse();
 
         if (olderMessages.length === 0) {
@@ -224,11 +190,11 @@ const useMessageStream = ({
           const currentArray = Array.isArray(current) ? current : [];
           const merged = [...olderMessages, ...currentArray];
 
-          if (oldData && typeof oldData === "object" && "data" in oldData) {
+          if (oldData && typeof oldData === 'object' && 'data' in oldData) {
             const outer = { ...oldData };
             const inner = { ...(outer.data || {}) };
             const meta = { ...(inner.meta || {}) };
-            if (typeof meta.total_count === "number") {
+            if (typeof meta.total_count === 'number') {
               totalMessagesRef.current = meta.total_count;
             }
             inner.meta = meta;
@@ -243,9 +209,7 @@ const useMessageStream = ({
         const mergedCount = persistedCount + olderMessages.length;
         const totalCount = totalMessagesRef.current;
         const moreAvailable =
-          typeof totalCount === "number"
-            ? mergedCount < totalCount
-            : olderMessages.length === CHAT_PAGE_SIZE;
+          typeof totalCount === 'number' ? mergedCount < totalCount : olderMessages.length === CHAT_PAGE_SIZE;
         setHasMoreMessages(moreAvailable);
         expandWindow?.(olderMessages.length);
         if (snapshot) {
@@ -254,7 +218,7 @@ const useMessageStream = ({
           });
         }
       } catch (err) {
-        log.error("Failed to load older messages", err);
+        log.error('Failed to load older messages', err);
       } finally {
         setLoadingOlderMessages(false);
       }
@@ -266,7 +230,7 @@ const useMessageStream = ({
       fetchingMessages,
       queryClient,
       setIsPinnedToBottom,
-    ],
+    ]
   );
 
   return {

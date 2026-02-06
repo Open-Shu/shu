@@ -1,8 +1,8 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "react-query";
-import { AuthProvider } from "./hooks/useAuth";
-import App from "./App";
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from 'react-query';
+import { AuthProvider } from './hooks/useAuth';
+import App from './App';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -14,7 +14,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
+const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
@@ -22,5 +22,5 @@ root.render(
         <App />
       </AuthProvider>
     </QueryClientProvider>
-  </React.StrictMode>,
+  </React.StrictMode>
 );

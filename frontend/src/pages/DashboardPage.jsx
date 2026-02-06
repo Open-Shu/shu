@@ -1,7 +1,7 @@
-import React from "react";
-import { useNavigate } from "react-router-dom";
-import { Box } from "@mui/material";
-import ExperienceDashboard from "../components/ExperienceDashboard";
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Box } from '@mui/material';
+import ExperienceDashboard from '../components/ExperienceDashboard';
 
 /**
  * Standalone Dashboard page that displays experience results.
@@ -11,7 +11,7 @@ const DashboardPage = () => {
   const navigate = useNavigate();
 
   const handleCreateConversation = () => {
-    navigate("/chat");
+    navigate('/chat');
   };
 
   const handleExperienceClick = (experienceId) => {
@@ -19,7 +19,7 @@ const DashboardPage = () => {
   };
 
   return (
-    <Box sx={{ height: "100%", overflow: "auto" }}>
+    <Box sx={{ height: '100%', overflow: 'auto' }}>
       <ExperienceDashboard
         onCreateConversation={handleCreateConversation}
         createConversationDisabled={false}

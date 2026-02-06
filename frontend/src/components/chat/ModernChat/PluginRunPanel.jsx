@@ -1,16 +1,7 @@
-import React from "react";
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Paper,
-  Typography,
-} from "@mui/material";
+import React from 'react';
+import { Box, Button, CircularProgress, Paper, Typography } from '@mui/material';
 
-const PluginRunPanel = React.memo(function PluginRunPanel({
-  pluginRun,
-  onClear,
-}) {
+const PluginRunPanel = React.memo(function PluginRunPanel({ pluginRun, onClear }) {
   if (!pluginRun) {
     return null;
   }
@@ -19,20 +10,18 @@ const PluginRunPanel = React.memo(function PluginRunPanel({
     <Paper variant="outlined" sx={{ m: 1, p: 1 }}>
       <Box
         sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
         }}
       >
-        <Typography variant="subtitle2">
-          Plugin execution: {pluginRun.plugin?.name}
-        </Typography>
+        <Typography variant="subtitle2">Plugin execution: {pluginRun.plugin?.name}</Typography>
         <Button size="small" onClick={onClear}>
           Clear
         </Button>
       </Box>
-      {pluginRun.status === "running" ? (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+      {pluginRun.status === 'running' ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
           <CircularProgress size={16} />
           <Typography variant="body2">Running…</Typography>
         </Box>
@@ -41,8 +30,8 @@ const PluginRunPanel = React.memo(function PluginRunPanel({
           <Typography variant="caption">Result</Typography>
           <pre
             style={{
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
               margin: 0,
             }}
           >

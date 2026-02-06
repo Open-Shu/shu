@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "react-query";
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
   Box,
   Paper,
@@ -26,22 +26,22 @@ import {
   Alert,
   CircularProgress,
   TextField,
-} from "@mui/material";
-import EditIcon from "@mui/icons-material/Edit";
-import DeleteIcon from "@mui/icons-material/Delete";
-import AddIcon from "@mui/icons-material/Add";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import BlockIcon from "@mui/icons-material/Block";
-import PeopleIcon from "@mui/icons-material/People";
-import { authAPI, extractDataFromResponse, formatError } from "../services/api";
-import { useAuth } from "../hooks/useAuth";
-import PageHelpHeader from "./PageHelpHeader";
+} from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import BlockIcon from '@mui/icons-material/Block';
+import PeopleIcon from '@mui/icons-material/People';
+import { authAPI, extractDataFromResponse, formatError } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
+import PageHelpHeader from './PageHelpHeader';
 
 const resolveUserId = (user) => {
   if (!user) {
-    return "";
+    return '';
   }
-  return user.user_id || user.id || "";
+  return user.user_id || user.id || '';
 };
 
 const UserManagement = () => {
@@ -52,113 +52,92 @@ const UserManagement = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
   const [newUser, setNewUser] = useState({
-    email: "",
-    name: "",
-    password: "",
-    role: "regular_user",
-    auth_method: "password",
+    email: '',
+    name: '',
+    password: '',
+    role: 'regular_user',
+    auth_method: 'password',
   });
   const [error, setError] = useState(null);
   const queryClient = useQueryClient();
 
   // Fetch users
-  const { data: usersResponse, isLoading } = useQuery(
-    "users",
-    authAPI.getUsers,
-    {
-      enabled: canManageUsers(),
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const { data: usersResponse, isLoading } = useQuery('users', authAPI.getUsers, {
+    enabled: canManageUsers(),
+    onError: (err) => {
+      setError(formatError(err).message);
     },
-  );
+  });
 
   // Update user mutation
-  const updateUserMutation = useMutation(
-    ({ userId, data }) => authAPI.updateUser(userId, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("users");
-        setEditDialogOpen(false);
-        setEditUser(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const updateUserMutation = useMutation(({ userId, data }) => authAPI.updateUser(userId, data), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      setEditDialogOpen(false);
+      setEditUser(null);
+      setError(null);
     },
-  );
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Create user mutation
-  const createUserMutation = useMutation(
-    (userData) => authAPI.createUser(userData),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("users");
-        setCreateDialogOpen(false);
-        setNewUser({
-          email: "",
-          name: "",
-          password: "",
-          role: "regular_user",
-          auth_method: "password",
-        });
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const createUserMutation = useMutation((userData) => authAPI.createUser(userData), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      setCreateDialogOpen(false);
+      setNewUser({
+        email: '',
+        name: '',
+        password: '',
+        role: 'regular_user',
+        auth_method: 'password',
+      });
+      setError(null);
     },
-  );
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Delete user mutation
-  const deleteUserMutation = useMutation(
-    (userId) => authAPI.deleteUser(userId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("users");
-        setDeleteDialogOpen(false);
-        setUserToDelete(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const deleteUserMutation = useMutation((userId) => authAPI.deleteUser(userId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+      setError(null);
     },
-  );
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Activate user mutation
-  const activateUserMutation = useMutation(
-    (userId) => authAPI.activateUser(userId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("users");
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const activateUserMutation = useMutation((userId) => authAPI.activateUser(userId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      setError(null);
     },
-  );
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Deactivate user mutation
-  const deactivateUserMutation = useMutation(
-    (userId) => authAPI.deactivateUser(userId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("users");
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const deactivateUserMutation = useMutation((userId) => authAPI.deactivateUser(userId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      setError(null);
     },
-  );
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   if (!canManageUsers()) {
-    return (
-      <Alert severity="error">You don't have permission to manage users.</Alert>
-    );
+    return <Alert severity="error">You don't have permission to manage users.</Alert>;
   }
 
   const users = extractDataFromResponse(usersResponse) || [];
@@ -166,14 +145,14 @@ const UserManagement = () => {
   const handleEditUser = (user) => {
     const userId = resolveUserId(user);
     if (!userId) {
-      setError("Unable to edit user: missing user identifier");
+      setError('Unable to edit user: missing user identifier');
       return;
     }
     setEditUser({
       ...user,
       id: userId,
       // Ensure all form fields have defined values
-      role: user.role || "regular_user",
+      role: user.role || 'regular_user',
       is_active: user.is_active !== undefined ? user.is_active : true,
     });
     setEditDialogOpen(true);
@@ -183,7 +162,7 @@ const UserManagement = () => {
     if (editUser) {
       const userId = resolveUserId(editUser);
       if (!userId) {
-        setError("Unable to update user: missing user identifier");
+        setError('Unable to update user: missing user identifier');
         return;
       }
       updateUserMutation.mutate({
@@ -205,7 +184,7 @@ const UserManagement = () => {
   const handleDeleteUser = (user) => {
     const userId = resolveUserId(user);
     if (!userId) {
-      setError("Unable to delete user: missing user identifier");
+      setError('Unable to delete user: missing user identifier');
       return;
     }
     setUserToDelete({ ...user, id: userId });
@@ -216,7 +195,7 @@ const UserManagement = () => {
     if (userToDelete) {
       const userId = resolveUserId(userToDelete);
       if (!userId) {
-        setError("Unable to delete user: missing user identifier");
+        setError('Unable to delete user: missing user identifier');
         return;
       }
       deleteUserMutation.mutate(userId);
@@ -225,11 +204,11 @@ const UserManagement = () => {
 
   const handleOpenCreateDialog = () => {
     setNewUser({
-      email: "",
-      name: "",
-      password: "",
-      role: "regular_user",
-      auth_method: "password",
+      email: '',
+      name: '',
+      password: '',
+      role: 'regular_user',
+      auth_method: 'password',
     });
     setCreateDialogOpen(true);
     setError(null);
@@ -237,18 +216,18 @@ const UserManagement = () => {
 
   const getRoleColor = (role) => {
     const colors = {
-      admin: "error",
-      power_user: "warning",
-      regular_user: "primary",
+      admin: 'error',
+      power_user: 'warning',
+      regular_user: 'primary',
     };
-    return colors[role] || "default";
+    return colors[role] || 'default';
   };
 
   const getRoleLabel = (role) => {
     const labels = {
-      admin: "Admin",
-      power_user: "Power User",
-      regular_user: "Regular User",
+      admin: 'Admin',
+      power_user: 'Power User',
+      regular_user: 'Regular User',
     };
     return labels[role] || role;
   };
@@ -262,24 +241,20 @@ const UserManagement = () => {
   }
 
   return (
-    <Box sx={{ position: "relative" }}>
+    <Box sx={{ position: 'relative' }}>
       <PageHelpHeader
         title="User Management"
         description="Manage user accounts, roles, and access. Create new users, assign roles (Admin, Power User, Regular User), and activate or deactivate accounts as needed."
         icon={<PeopleIcon />}
         tips={[
-          "Admins have full access to all admin features including user management",
-          "Power Users can manage prompts, models, and knowledge bases but not users",
-          "Regular Users can only access the chat interface and their own settings",
-          "Deactivated users cannot log in but their data is preserved",
-          "Users can authenticate via password or Google SSO depending on auth method",
+          'Admins have full access to all admin features including user management',
+          'Power Users can manage prompts, models, and knowledge bases but not users',
+          'Regular Users can only access the chat interface and their own settings',
+          'Deactivated users cannot log in but their data is preserved',
+          'Users can authenticate via password or Google SSO depending on auth method',
         ]}
         actions={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleOpenCreateDialog}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateDialog}>
             Create User
           </Button>
         }
@@ -312,24 +287,16 @@ const UserManagement = () => {
                     <TableCell>{user.name}</TableCell>
                     <TableCell>{user.email}</TableCell>
                     <TableCell>
-                      <Chip
-                        label={getRoleLabel(user.role)}
-                        color={getRoleColor(user.role)}
-                        size="small"
-                      />
+                      <Chip label={getRoleLabel(user.role)} color={getRoleColor(user.role)} size="small" />
                     </TableCell>
                     <TableCell>
                       <Chip
-                        label={user.is_active ? "Active" : "Inactive"}
-                        color={user.is_active ? "success" : "default"}
+                        label={user.is_active ? 'Active' : 'Inactive'}
+                        color={user.is_active ? 'success' : 'default'}
                         size="small"
                       />
                     </TableCell>
-                    <TableCell>
-                      {user.last_login
-                        ? new Date(user.last_login).toLocaleDateString()
-                        : "Never"}
-                    </TableCell>
+                    <TableCell>{user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</TableCell>
                     <TableCell>
                       {!user.is_active ? (
                         <IconButton
@@ -392,11 +359,9 @@ const UserManagement = () => {
               <FormControl fullWidth sx={{ mt: 2 }}>
                 <InputLabel>Role</InputLabel>
                 <Select
-                  value={editUser?.role || ""}
+                  value={editUser?.role || ''}
                   label="Role"
-                  onChange={(e) =>
-                    setEditUser({ ...editUser, role: e.target.value })
-                  }
+                  onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}
                 >
                   <MenuItem value="regular_user">Regular User</MenuItem>
                   <MenuItem value="power_user">Power User</MenuItem>
@@ -408,9 +373,7 @@ const UserManagement = () => {
                 control={
                   <Switch
                     checked={editUser?.is_active || false}
-                    onChange={(e) =>
-                      setEditUser({ ...editUser, is_active: e.target.checked })
-                    }
+                    onChange={(e) => setEditUser({ ...editUser, is_active: e.target.checked })}
                   />
                 }
                 label="Active"
@@ -421,23 +384,14 @@ const UserManagement = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleSaveUser}
-            variant="contained"
-            disabled={updateUserMutation.isLoading}
-          >
-            {updateUserMutation.isLoading ? "Saving..." : "Save"}
+          <Button onClick={handleSaveUser} variant="contained" disabled={updateUserMutation.isLoading}>
+            {updateUserMutation.isLoading ? 'Saving...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Create User Dialog */}
-      <Dialog
-        open={createDialogOpen}
-        onClose={() => setCreateDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
+      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Create New User</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
@@ -455,9 +409,7 @@ const UserManagement = () => {
               label="Email Address"
               type="email"
               value={newUser.email}
-              onChange={(e) =>
-                setNewUser({ ...newUser, email: e.target.value })
-              }
+              onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
               margin="normal"
               required
             />
@@ -467,9 +419,7 @@ const UserManagement = () => {
               label="Password"
               type="password"
               value={newUser.password}
-              onChange={(e) =>
-                setNewUser({ ...newUser, password: e.target.value })
-              }
+              onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
               margin="normal"
               required
               helperText="Password must be at least 8 characters long"
@@ -480,9 +430,7 @@ const UserManagement = () => {
               <Select
                 value={newUser.role}
                 label="Role"
-                onChange={(e) =>
-                  setNewUser({ ...newUser, role: e.target.value })
-                }
+                onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
               >
                 <MenuItem value="regular_user">Regular User</MenuItem>
                 <MenuItem value="power_user">Power User</MenuItem>
@@ -495,26 +443,22 @@ const UserManagement = () => {
               <Select
                 value={newUser.auth_method}
                 label="Authentication Method"
-                onChange={(e) =>
-                  setNewUser({ ...newUser, auth_method: e.target.value })
-                }
+                onChange={(e) => setNewUser({ ...newUser, auth_method: e.target.value })}
               >
                 <MenuItem value="password">Password</MenuItem>
                 <MenuItem value="google">Google OAuth</MenuItem>
               </Select>
             </FormControl>
 
-            {newUser.auth_method === "google" && (
+            {newUser.auth_method === 'google' && (
               <Alert severity="info" sx={{ mt: 2 }}>
-                Google OAuth users will need to sign in with their Google
-                account. No password is required.
+                Google OAuth users will need to sign in with their Google account. No password is required.
               </Alert>
             )}
 
             <Alert severity="warning" sx={{ mt: 2 }}>
-              <strong>Security Note:</strong> Admin-created users are
-              automatically activated. Self-registered users require manual
-              activation for security.
+              <strong>Security Note:</strong> Admin-created users are automatically activated. Self-registered users
+              require manual activation for security.
             </Alert>
           </Box>
         </DialogContent>
@@ -527,19 +471,16 @@ const UserManagement = () => {
               createUserMutation.isLoading ||
               !newUser.email ||
               !newUser.name ||
-              (newUser.auth_method === "password" && !newUser.password)
+              (newUser.auth_method === 'password' && !newUser.password)
             }
           >
-            {createUserMutation.isLoading ? "Creating..." : "Create User"}
+            {createUserMutation.isLoading ? 'Creating...' : 'Create User'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Delete User Confirmation Dialog */}
-      <Dialog
-        open={deleteDialogOpen}
-        onClose={() => setDeleteDialogOpen(false)}
-      >
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>Delete User</DialogTitle>
         <DialogContent>
           {userToDelete && (
@@ -554,8 +495,8 @@ const UserManagement = () => {
                 <strong>Email:</strong> {userToDelete.email}
               </Typography>
               <Alert severity="warning" sx={{ mt: 2 }}>
-                <strong>Warning:</strong> This action cannot be undone. All user
-                data and access will be permanently removed.
+                <strong>Warning:</strong> This action cannot be undone. All user data and access will be permanently
+                removed.
               </Alert>
             </Box>
           )}
@@ -568,7 +509,7 @@ const UserManagement = () => {
             color="error"
             disabled={deleteUserMutation.isLoading}
           >
-            {deleteUserMutation.isLoading ? "Deleting..." : "Delete User"}
+            {deleteUserMutation.isLoading ? 'Deleting...' : 'Delete User'}
           </Button>
         </DialogActions>
       </Dialog>

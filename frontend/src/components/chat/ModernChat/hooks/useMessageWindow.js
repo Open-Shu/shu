@@ -1,20 +1,14 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { CHAT_WINDOW_SIZE, CHAT_OVERSCAN } from "../utils/chatConfig";
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { CHAT_WINDOW_SIZE, CHAT_OVERSCAN } from '../utils/chatConfig';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
 
 const useMessageWindow = (
   messages,
-  {
-    windowSize = CHAT_WINDOW_SIZE,
-    overscan = CHAT_OVERSCAN,
-    pinned = true,
-  } = {},
+  { windowSize = CHAT_WINDOW_SIZE, overscan = CHAT_OVERSCAN, pinned = true } = {}
 ) => {
   const total = Array.isArray(messages) ? messages.length : 0;
-  const [startIndex, setStartIndex] = useState(() =>
-    Math.max(total - windowSize, 0),
-  );
+  const [startIndex, setStartIndex] = useState(() => Math.max(total - windowSize, 0));
   const prevLengthRef = useRef(total);
 
   useEffect(() => {
@@ -46,7 +40,7 @@ const useMessageWindow = (
       const length = Array.isArray(messages) ? messages.length : 0;
       setStartIndex((prev) => clamp(prev + count, 0, Math.max(length - 1, 0)));
     },
-    [messages],
+    [messages]
   );
 
   const visibleRange = useMemo(() => {

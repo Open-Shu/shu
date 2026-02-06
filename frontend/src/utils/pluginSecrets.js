@@ -9,8 +9,8 @@
  * @returns {boolean} True if users can configure this secret (user or system_or_user scope)
  */
 export function isUserConfigurableScope(allowedScope) {
-  const scope = allowedScope || "system_or_user";
-  return scope === "user" || scope === "system_or_user";
+  const scope = allowedScope || 'system_or_user';
+  return scope === 'user' || scope === 'system_or_user';
 }
 
 /**
@@ -21,14 +21,14 @@ export function isUserConfigurableScope(allowedScope) {
  */
 export function extractUserConfigurableSecretKeys(opAuth) {
   const secretKeys = new Set();
-  if (!opAuth || typeof opAuth !== "object") {
+  if (!opAuth || typeof opAuth !== 'object') {
     return secretKeys;
   }
 
   for (const op of Object.keys(opAuth)) {
     const spec = opAuth[op];
     const secrets = spec?.secrets;
-    if (secrets && typeof secrets === "object") {
+    if (secrets && typeof secrets === 'object') {
       for (const key of Object.keys(secrets)) {
         const secretSpec = secrets[key];
         if (isUserConfigurableScope(secretSpec?.allowed_scope)) {

@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   Box,
   Button,
@@ -10,27 +10,22 @@ import {
   Stack,
   Typography,
   Chip,
-} from "@mui/material";
-import { useQuery } from "react-query";
-import { extractDataFromResponse, formatError } from "../services/api";
-import { schedulesAPI } from "../services/schedulesApi";
-import { formatLocalShort } from "../utils/datetime";
+} from '@mui/material';
+import { useQuery } from 'react-query';
+import { extractDataFromResponse, formatError } from '../services/api';
+import { schedulesAPI } from '../services/schedulesApi';
+import { formatLocalShort } from '../utils/datetime';
 
 export default function RecentRunsDialog({ open, schedule, onClose }) {
   const runsQ = useQuery(
-    ["executions", "schedule", schedule?.id || null],
-    () =>
-      schedulesAPI
-        .listExecutions({ schedule_id: schedule.id, limit: 10 })
-        .then(extractDataFromResponse),
-    { enabled: !!schedule && open, staleTime: 2000 },
+    ['executions', 'schedule', schedule?.id || null],
+    () => schedulesAPI.listExecutions({ schedule_id: schedule.id, limit: 10 }).then(extractDataFromResponse),
+    { enabled: !!schedule && open, staleTime: 2000 }
   );
 
   return (
     <Dialog open={!!open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>
-        Recent Runs {schedule ? `(${schedule.name})` : ""}
-      </DialogTitle>
+      <DialogTitle>Recent Runs {schedule ? `(${schedule.name})` : ''}</DialogTitle>
       <DialogContent dividers>
         {!schedule ? null : (
           <>
@@ -39,9 +34,7 @@ export default function RecentRunsDialog({ open, schedule, onClose }) {
                 <CircularProgress size={18} /> Loading…
               </Box>
             )}
-            {runsQ.isError && (
-              <Typography color="error">{formatError(runsQ.error)}</Typography>
-            )}
+            {runsQ.isError && <Typography color="error">{formatError(runsQ.error)}</Typography>}
             {Array.isArray(runsQ.data) && runsQ.data.length === 0 && (
               <Typography color="text.secondary">No runs yet.</Typography>
             )}
@@ -52,32 +45,19 @@ export default function RecentRunsDialog({ open, schedule, onClose }) {
                   sx={{
                     mb: 1,
                     p: 1,
-                    border: "1px solid #eee",
+                    border: '1px solid #eee',
                     borderRadius: 1,
                   }}
                 >
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    alignItems="center"
-                    justifyContent="space-between"
-                  >
+                  <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Chip
                         size="small"
                         label={r.status}
-                        color={
-                          r.status === "completed"
-                            ? "success"
-                            : r.status === "failed"
-                              ? "error"
-                              : "default"
-                        }
+                        color={r.status === 'completed' ? 'success' : r.status === 'failed' ? 'error' : 'default'}
                       />
                       <Typography variant="body2">
-                        {formatLocalShort(
-                          r.completed_at || r.started_at || r.created_at,
-                        )}
+                        {formatLocalShort(r.completed_at || r.started_at || r.created_at)}
                       </Typography>
                     </Stack>
                     <Stack direction="row" spacing={1}>
@@ -93,9 +73,7 @@ export default function RecentRunsDialog({ open, schedule, onClose }) {
                       <Typography variant="caption" color="text.secondary">
                         Result
                       </Typography>
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-                        {JSON.stringify(r.result, null, 2)}
-                      </pre>
+                      <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(r.result, null, 2)}</pre>
                     </Box>
                   )}
                 </Box>
@@ -104,10 +82,7 @@ export default function RecentRunsDialog({ open, schedule, onClose }) {
         )}
       </DialogContent>
       <DialogActions>
-        <Button
-          onClick={() => schedule && runsQ.refetch()}
-          disabled={!schedule || runsQ.isFetching}
-        >
+        <Button onClick={() => schedule && runsQ.refetch()} disabled={!schedule || runsQ.isFetching}>
           Refresh
         </Button>
         <Button onClick={onClose}>Close</Button>

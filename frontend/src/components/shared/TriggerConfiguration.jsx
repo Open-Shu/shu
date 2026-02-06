@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   FormControl,
   InputLabel,
@@ -10,10 +10,10 @@ import {
   FormHelperText,
   Box,
   Typography,
-} from "@mui/material";
-import { Public as TimezoneIcon } from "@mui/icons-material";
-import RecurringScheduleBuilder from "./RecurringScheduleBuilder";
-import TimezoneSelector from "./TimezoneSelector";
+} from '@mui/material';
+import { Public as TimezoneIcon } from '@mui/icons-material';
+import RecurringScheduleBuilder from './RecurringScheduleBuilder';
+import TimezoneSelector from './TimezoneSelector';
 
 /**
  * TriggerConfiguration - Shared component for trigger type and configuration
@@ -28,7 +28,7 @@ import TimezoneSelector from "./TimezoneSelector";
  * @param {boolean} props.showHelperText - Whether to show helper text
  */
 const TriggerConfiguration = ({
-  triggerType = "manual",
+  triggerType = 'manual',
   triggerConfig = {},
   onTriggerTypeChange,
   onTriggerConfigChange,
@@ -51,49 +51,41 @@ const TriggerConfiguration = ({
   return (
     <Stack spacing={2}>
       <FormControl fullWidth error={!!validationErrors.trigger_type}>
-        <InputLabel>Trigger Type {required ? "*" : ""}</InputLabel>
-        <Select
-          value={triggerType}
-          label={`Trigger Type ${required ? "*" : ""}`}
-          onChange={handleTriggerTypeChange}
-        >
+        <InputLabel>Trigger Type {required ? '*' : ''}</InputLabel>
+        <Select value={triggerType} label={`Trigger Type ${required ? '*' : ''}`} onChange={handleTriggerTypeChange}>
           <MenuItem value="manual">Manual</MenuItem>
           <MenuItem value="scheduled">Scheduled</MenuItem>
           {/* We do not call it cron on the frontend to avoid confusion */}
           <MenuItem value="cron">Recurring</MenuItem>
         </Select>
-        {validationErrors.trigger_type && (
-          <FormHelperText>{validationErrors.trigger_type}</FormHelperText>
-        )}
+        {validationErrors.trigger_type && <FormHelperText>{validationErrors.trigger_type}</FormHelperText>}
       </FormControl>
 
-      {triggerType === "scheduled" && (
+      {triggerType === 'scheduled' && (
         <>
           <TextField
             label="Scheduled Date/Time"
             type="datetime-local"
-            value={triggerConfig.scheduled_at || ""}
-            onChange={(e) => handleConfigChange("scheduled_at", e.target.value)}
+            value={triggerConfig.scheduled_at || ''}
+            onChange={(e) => handleConfigChange('scheduled_at', e.target.value)}
             fullWidth
             InputLabelProps={{ shrink: true }}
             error={!!validationErrors.scheduled_at}
             helperText={
               validationErrors.scheduled_at ||
-              (showHelperText
-                ? "One-time execution at the specified date and time"
-                : undefined)
+              (showHelperText ? 'One-time execution at the specified date and time' : undefined)
             }
           />
           <Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
               <TimezoneIcon color="primary" />
               <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                 Timezone
               </Typography>
             </Box>
             <TimezoneSelector
-              value={triggerConfig.timezone || ""}
-              onChange={(timezone) => handleConfigChange("timezone", timezone)}
+              value={triggerConfig.timezone || ''}
+              onChange={(timezone) => handleConfigChange('timezone', timezone)}
               error={validationErrors.timezone}
               helperText="Choose the timezone for the scheduled execution"
             />
@@ -101,7 +93,7 @@ const TriggerConfiguration = ({
         </>
       )}
 
-      {triggerType === "cron" && (
+      {triggerType === 'cron' && (
         <RecurringScheduleBuilder
           value={triggerConfig}
           onChange={onTriggerConfigChange}
@@ -109,10 +101,8 @@ const TriggerConfiguration = ({
         />
       )}
 
-      {triggerType === "manual" && showHelperText && (
-        <Alert severity="info">
-          Manual trigger selected - no additional configuration needed.
-        </Alert>
+      {triggerType === 'manual' && showHelperText && (
+        <Alert severity="info">Manual trigger selected - no additional configuration needed.</Alert>
       )}
     </Stack>
   );
