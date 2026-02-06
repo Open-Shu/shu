@@ -31,7 +31,7 @@ import signal
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .queue_backend import Job, QueueBackend
 from .workload_routing import WorkloadType
@@ -167,9 +167,9 @@ class Worker:
         backend: QueueBackend,
         config: WorkerConfig,
         job_handler: Callable[[Job], Awaitable[None]],
-        worker_id: Optional[str] = None,
+        worker_id: str | None = None,
         install_signal_handlers: bool = True,
-    ):
+    ) -> None:
         """Initialize the worker.
 
 
@@ -185,6 +185,7 @@ class Worker:
                 Set to False when running multiple workers in the same process
                 (e.g., inline workers in the API server) to avoid overwriting
                 each other's handlers. Default is True for standalone workers.
+
         """
         self._backend = backend
         self._config = config
@@ -196,7 +197,7 @@ class Worker:
         self._queue_index: int = 0  # Round-robin index for fair queue polling
 
     def _setup_signal_handlers(self) -> None:
-        """Setup graceful shutdown on SIGTERM and SIGINT.
+        """Set up graceful shutdown on SIGTERM and SIGINT.
 
         When a shutdown signal is received, the worker stops accepting
         new jobs and finishes the current job before exiting.
@@ -239,7 +240,7 @@ class Worker:
         # Get queue names for configured workload types
         # Sort to ensure deterministic polling order across runs
         queue_names = sorted([wt.queue_name for wt in self._config.workload_types])
-        
+
         worker_label = f"Worker[{self._worker_id}]" if self._worker_id else "Worker"
         logger.info(
             f"{worker_label} starting",
@@ -252,11 +253,9 @@ class Worker:
             },
         )
 
-
         while self._running:
             # Try to dequeue from any of the configured queues
             job = await self._dequeue_from_any(queue_names)
-
 
             if job:
                 await self._process_job(job)
@@ -265,7 +264,7 @@ class Worker:
                 await asyncio.sleep(self._config.poll_interval)
 
         logger.info(f"{worker_label} stopped", extra={"worker_id": self._worker_id})
-    
+
     async def _dequeue_from_any(
         self,
         queue_names: list[str],

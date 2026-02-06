@@ -23,13 +23,13 @@ def add_trailing_slash_variants(router: APIRouter) -> None:
     original_routes: list[APIRoute] = [r for r in router.routes if isinstance(r, APIRoute)]
 
     # Build a quick lookup of existing paths to avoid duplicates
-    existing_paths = set(r.path for r in original_routes)
+    existing_paths = {r.path for r in original_routes}
 
     for r in original_routes:
         path = r.path  # This is the route's subpath within the router (may be '' or start with '/')
 
         # Special-case the router root path (empty string) to also create '/'
-        if path == "" or path == "/":
+        if path in {"", "/"}:
             # Add the '/'
             if "/" not in existing_paths:
                 router.add_api_route(

@@ -12,13 +12,13 @@ from ..models.provider_type_definition import ProviderTypeDefinition
 
 
 class ProviderTypeDefinitionsService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def list(self, include_inactive: bool = False) -> list[ProviderTypeDefinition]:
         stmt = select(ProviderTypeDefinition)
         if not include_inactive:
-            stmt = stmt.where(ProviderTypeDefinition.is_active == True)
+            stmt = stmt.where(ProviderTypeDefinition.is_active)
         res = await self.db.execute(stmt)
         return res.scalars().all()
 

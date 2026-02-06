@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, *, max_bytes: int, path_prefix: str | None = None):
+    def __init__(self, app, *, max_bytes: int, path_prefix: str | None = None) -> None:
         super().__init__(app)
         self.max_bytes = int(max_bytes)
         self.path_prefix = path_prefix.rstrip("/") if path_prefix else None

@@ -89,6 +89,7 @@ class ModelConfiguration(BaseModel):
     functionalities = Column(JSON, nullable=True)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ModelConfiguration(id={self.id}, name='{self.name}', provider='{self.llm_provider_id}')>"
 
     @property
@@ -101,7 +102,7 @@ class ModelConfiguration(BaseModel):
         """Check if this configuration has any KB-specific prompts assigned."""
         return len([assignment for assignment in self.kb_prompt_assignments if assignment.is_active]) > 0
 
-    def get_kb_prompt(self, knowledge_base_id: str) -> Optional["Prompt"]:
+    def get_kb_prompt(self, knowledge_base_id: str) -> Optional["Prompt"]:  # noqa: F821 # indirect typing is fine
         """Get the prompt assigned to a specific knowledge base for this model configuration.
 
         Args:
@@ -134,11 +135,11 @@ class ModelConfiguration(BaseModel):
         """Get list of knowledge base IDs attached to this configuration."""
         return [kb.id for kb in self.knowledge_bases]
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this model configuration."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this model configuration."""
         self.is_active = False
 

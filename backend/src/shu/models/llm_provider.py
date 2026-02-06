@@ -49,14 +49,14 @@ class LLMProvider(BaseModel):
 
     def __init__(
         self,
-        *args,
+        *args: Any,
         api_endpoint: str | None = None,
         supports_streaming: bool | None = None,
         supports_functions: bool | None = None,
         supports_vision: bool | None = None,
         config: dict[str, Any] | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, config=config, **kwargs)
 
         cfg = self._config_dict()
@@ -70,7 +70,7 @@ class LLMProvider(BaseModel):
         if not isinstance(capabilities, dict):
             capabilities = {}
 
-        def _set_capability(key: str, value: bool | None, label: str):
+        def _set_capability(key: str, value: bool | None, label: str) -> None:
             nonlocal updated, capabilities
             if value is None:
                 return
@@ -116,6 +116,7 @@ class LLMProvider(BaseModel):
         return self._capability_value("vision")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<LLMProvider(name='{self.name}', type='{self.provider_type}', active={self.is_active})>"
 
 
@@ -152,6 +153,7 @@ class LLMModel(BaseModel):
     usage_records = relationship("LLMUsage", back_populates="model")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<LLMModel(name='{self.model_name}', provider='{self.provider.name if self.provider else 'Unknown'}')>"
 
 
@@ -191,6 +193,7 @@ class LLMUsage(BaseModel):
     model = relationship("LLMModel", back_populates="usage_records")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<LLMUsage(model='{self.model.model_name if self.model else 'Unknown'}', tokens={self.total_tokens}, cost=${self.total_cost})>"
 
 
@@ -228,6 +231,7 @@ class Conversation(BaseModel):
     attachments = relationship("Attachment", back_populates="conversation", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Conversation(title='{self.title}', user_id='{self.user_id}')>"
 
 
@@ -263,4 +267,5 @@ class Message(BaseModel):
     attachments = relationship("Attachment", secondary="message_attachments", lazy="selectin")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Message(role='{self.role}', conversation_id='{self.conversation_id}')>"

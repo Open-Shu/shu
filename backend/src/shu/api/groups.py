@@ -295,13 +295,11 @@ async def delete_user_group(
     try:
         rbac_service = RBACService(db)
 
-        # Get group name for response message
         group = await rbac_service.get_user_group(group_id)
-        group_name = group.name
 
         await rbac_service.delete_user_group(group_id)
 
-        return ShuResponse.success(data={"deleted_group_id": group_id})
+        return ShuResponse.success(data={"deleted_group_id": group_id, "group_name": group.name})
 
     except RBACServiceError as e:
         logger.error(f"RBAC service error deleting group: {e}")

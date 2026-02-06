@@ -4,7 +4,7 @@ This module provides business logic for managing knowledge bases,
 including CRUD operations, statistics, and configuration management.
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 class KnowledgeBaseService:
     """Service for managing knowledge bases."""
 
-    def __init__(self, db: AsyncSession, config_manager=None):
+    def __init__(self, db: AsyncSession, config_manager=None) -> None:
         self.db = db
         # Use dependency injection for ConfigurationManager
         if config_manager is None:
@@ -37,12 +37,12 @@ class KnowledgeBaseService:
         self._config_manager = config_manager
 
     @property
-    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:
+    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:  # noqa: N802 # i think this can be removed, but needs verified
         """Get default RAG configuration from ConfigurationManager."""
         return self._config_manager.get_rag_config_dict()
 
     # Default templates for different use cases
-    DEFAULT_TEMPLATES = {
+    DEFAULT_TEMPLATES: ClassVar[dict[str, dict[str, Any]]] = {
         "academic": {
             "include_references": True,
             "reference_format": "markdown",
@@ -398,12 +398,12 @@ class KnowledgeBaseService:
 
             # Get sync enabled count
             sync_enabled_result = await self.db.execute(
-                select(func.count(KnowledgeBase.id)).where(KnowledgeBase.sync_enabled == True)
+                select(func.count(KnowledgeBase.id)).where(KnowledgeBase.sync_enabled)
             )
             sync_enabled_count = sync_enabled_result.scalar() or 0
 
             # Mock other statistics for now
-            stats = {
+            return {
                 "total_knowledge_bases": total_kbs,
                 "active_knowledge_bases": active_kbs,
                 "total_documents": 0,  # Would need to count from documents table
@@ -412,8 +412,6 @@ class KnowledgeBaseService:
                 "source_type_breakdown": {},  # Would need to analyze documents
                 "status_breakdown": {"active": active_kbs, "inactive": total_kbs - active_kbs},
             }
-
-            return stats
 
         except Exception as e:
             logger.error(f"Failed to get knowledge base statistics: {e}", exc_info=True)
@@ -478,7 +476,7 @@ class KnowledgeBaseService:
         kb_id: str,
         limit: int = 50,
         offset: int = 0,
-        search_query: str = None,
+        search_query: str | None = None,
         filter_by: str = "all",
     ) -> tuple[list[Document], int]:
         """Get documents for a knowledge base with pagination.

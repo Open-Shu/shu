@@ -32,9 +32,11 @@ class ImmutableCapabilityMixin:
     """
 
     def __setattr__(self, name: str, value: Any) -> None:
+        """Invalidate set attribute op."""
         raise AttributeError(f"{self.__class__.__name__} attributes are immutable")
 
     def __delattr__(self, name: str) -> None:
+        """Invalidate del attribute op."""
         raise AttributeError(f"{self.__class__.__name__} attributes are immutable")
 
 

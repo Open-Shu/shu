@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 class ModelConfigurationService:
     """Service for managing model configurations."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def create_model_configuration(
@@ -64,7 +64,7 @@ class ModelConfigurationService:
                     and_(
                         LLMModel.provider_id == config_data.llm_provider_id,
                         LLMModel.model_name == config_data.model_name,
-                        LLMModel.is_active == True,
+                        LLMModel.is_active,
                     )
                 )
             )
@@ -78,7 +78,7 @@ class ModelConfigurationService:
             # Validate prompt if provided
             if config_data.prompt_id:
                 prompt_result = await self.db.execute(
-                    select(Prompt).where(and_(Prompt.id == config_data.prompt_id, Prompt.is_active == True))
+                    select(Prompt).where(and_(Prompt.id == config_data.prompt_id, Prompt.is_active))
                 )
                 prompt = prompt_result.scalar_one_or_none()
                 if not prompt:
@@ -107,7 +107,7 @@ class ModelConfigurationService:
                 select(ModelConfiguration).where(
                     and_(
                         ModelConfiguration.name == config_data.name,
-                        ModelConfiguration.is_active == True,
+                        ModelConfiguration.is_active,
                     )
                 )
             )
@@ -260,7 +260,7 @@ class ModelConfigurationService:
                 filters.append(ModelConfiguration.is_active == is_active_filter)
             elif active_only:
                 # Fall back to active_only behavior (only show active)
-                filters.append(ModelConfiguration.is_active == True)
+                filters.append(ModelConfiguration.is_active)
             # If neither is specified or active_only=False, show all
 
             if created_by:
@@ -567,7 +567,7 @@ class ModelConfigurationService:
                 select(ModelConfiguration)
                 .where(
                     and_(
-                        ModelConfiguration.is_active == True,
+                        ModelConfiguration.is_active,
                         or_(
                             ModelConfiguration.created_by == user_id,
                             # Add logic here for shared configurations if needed
@@ -623,9 +623,7 @@ class ModelConfigurationService:
                 )
 
             # Validate prompt exists and is active (any entity type can be used for KB prompts)
-            prompt_result = await self.db.execute(
-                select(Prompt).where(and_(Prompt.id == prompt_id, Prompt.is_active == True))
-            )
+            prompt_result = await self.db.execute(select(Prompt).where(and_(Prompt.id == prompt_id, Prompt.is_active)))
             prompt = prompt_result.scalar_one_or_none()
             if not prompt:
                 raise ShuException(f"Prompt {prompt_id} not found or inactive", "PROMPT_NOT_FOUND")
@@ -698,7 +696,7 @@ class ModelConfigurationService:
                     and_(
                         ModelConfigurationKBPrompt.model_configuration_id == model_config_id,
                         ModelConfigurationKBPrompt.knowledge_base_id == knowledge_base_id,
-                        ModelConfigurationKBPrompt.is_active == True,
+                        ModelConfigurationKBPrompt.is_active,
                     )
                 )
             )
@@ -747,7 +745,7 @@ class ModelConfigurationService:
                 .where(
                     and_(
                         ModelConfigurationKBPrompt.model_configuration_id == model_config_id,
-                        ModelConfigurationKBPrompt.is_active == True,
+                        ModelConfigurationKBPrompt.is_active,
                     )
                 )
             )
@@ -781,7 +779,7 @@ class ModelConfigurationService:
     async def _get_and_validate_llm_provider(self, llm_provider_id: str) -> LLMProvider:
         provider_result = await self.db.execute(
             select(LLMProvider)
-            .where(and_(LLMProvider.id == llm_provider_id, LLMProvider.is_active == True))
+            .where(and_(LLMProvider.id == llm_provider_id, LLMProvider.is_active))
             .options(selectinload(LLMProvider.provider_definition))
         )
         provider = provider_result.scalar_one_or_none()
@@ -891,3 +889,4 @@ class ModelConfigurationService:
                     )
                 except ValidationError as ve:
                     raise ShuException(str(ve), "PARAM_VALIDATION_ERROR")
+        return None

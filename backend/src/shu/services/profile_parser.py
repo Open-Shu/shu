@@ -132,16 +132,13 @@ class ProfileParser:
         if content.startswith("```"):
             lines = content.split("\n")
             # Remove first and last lines (code fence)
-            if lines[-1].strip() == "```":
-                lines = lines[1:-1]
-            else:
-                lines = lines[1:]
+            lines = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
             content = "\n".join(lines)
         return content.strip()
 
     @staticmethod
     def create_failed_chunk_result(chunk: ChunkData, error: str) -> ChunkProfileResult:
-        """Factory method for creating failed chunk results.
+        """Create failed chunk results.
 
         Args:
             chunk: The chunk that failed profiling

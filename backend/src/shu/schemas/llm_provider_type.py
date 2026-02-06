@@ -1,6 +1,6 @@
 """Pydantic schemas for Provider Type Definitions (read-only API exposure)."""
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +34,7 @@ class ProviderTypeDefinitionSchema(BaseModel):
     rate_limit_tpm_default: int = 0
 
     @classmethod
-    def build_from_default(cls, record: ProviderTypeDefinition, adapter: BaseProviderAdapter):
+    def build_from_default(cls, record: ProviderTypeDefinition, adapter: BaseProviderAdapter) -> Self:
         settings = get_settings()
         return ProviderTypeDefinitionSchema(
             id=record.id,
@@ -53,7 +53,7 @@ class ProviderTypeDefinitionSchema(BaseModel):
         )
 
     @classmethod
-    def build_from_existing(cls, db_session: AsyncSession, provider: LLMProvider):
+    def build_from_existing(cls, db_session: AsyncSession, provider: LLMProvider) -> Self:
         settings = get_settings()
         adapter = get_adapter_from_provider(db_session, provider)
         capabilities = adapter.get_field_with_override("get_capabilities")
@@ -76,7 +76,7 @@ class ProviderTypeDefinitionSchema(BaseModel):
         cls,
         provider_settings: dict[str, Any],
         default_capabilities: ProviderCapabilities | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         provider_capabilities = kwargs.pop("provider_capabilities", {}) or {}
         if isinstance(default_capabilities, ProviderCapabilities) and not provider_capabilities:
@@ -101,7 +101,7 @@ class ProviderTypeDefinitionListItem(BaseModel):
     is_active: bool
 
     @classmethod
-    def from_provider_type_definition(cls, row: ProviderTypeDefinitionSchema):
+    def from_provider_type_definition(cls, row: ProviderTypeDefinitionSchema) -> Self:
         return cls(
             key=row.key,
             display_name=row.display_name,
@@ -110,5 +110,5 @@ class ProviderTypeDefinitionListItem(BaseModel):
         )
 
     @classmethod
-    def from_provider_type_definitions(cls, rows: list[ProviderTypeDefinitionSchema]):
+    def from_provider_type_definitions(cls, rows: list[ProviderTypeDefinitionSchema]) -> list[Self]:
         return [cls.from_provider_type_definition(row) for row in rows]

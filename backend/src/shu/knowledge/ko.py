@@ -30,6 +30,8 @@ class KnowledgeObject(BaseModel):
     lineage: dict[str, Any] | None = Field(default=None, description="Provenance and version info")
 
     class Config:
+        """Do not allow extra fields being sent in."""
+
         extra = "ignore"
 
 

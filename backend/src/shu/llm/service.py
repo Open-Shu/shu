@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class LLMService:
     """Service for managing LLM providers and operations."""
 
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession) -> None:
         self.db = db_session
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
@@ -47,7 +47,7 @@ class LLMService:
         """Get all active LLM providers."""
         stmt = (
             select(LLMProvider)
-            .where(LLMProvider.is_active == True)
+            .where(LLMProvider.is_active)
             .options(selectinload(LLMProvider.models), selectinload(LLMProvider.provider_definition))
             .order_by(LLMProvider.name)
         )
@@ -80,7 +80,7 @@ class LLMService:
         api_endpoint: str,
         api_key: str | None = None,
         organization_id: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> LLMProvider:
         """Create a new LLM provider."""
         provider_type_definition = await self.provider_type.get(provider_type)
@@ -124,7 +124,7 @@ class LLMService:
         logger.info(f"Created LLM provider: {name} ({provider_type})")
         return provider
 
-    async def update_provider(self, provider_id: str, **updates) -> LLMProvider:
+    async def update_provider(self, provider_id: str, **updates: Any) -> LLMProvider:
         """Update an existing LLM provider."""
         provider = await self.get_provider_by_id(provider_id)
         if not provider:
@@ -181,7 +181,7 @@ class LLMService:
 
     async def get_available_models(self, provider_id: str | None = None) -> list[LLMModel]:
         """Get available LLM models, optionally filtered by provider."""
-        stmt = select(LLMModel).where(LLMModel.is_active == True)
+        stmt = select(LLMModel).where(LLMModel.is_active)
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -193,7 +193,7 @@ class LLMService:
 
     async def get_model_by_name(self, model_name: str, provider_id: str | None = None) -> LLMModel | None:
         """Get LLM model by name, optionally filtered by provider."""
-        stmt = select(LLMModel).where(and_(LLMModel.model_name == model_name, LLMModel.is_active == True))
+        stmt = select(LLMModel).where(and_(LLMModel.model_name == model_name, LLMModel.is_active))
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -204,7 +204,7 @@ class LLMService:
         return result.scalar_one_or_none()
 
     async def create_model(
-        self, provider_id: str, model_name: str, display_name: str | None = None, **kwargs
+        self, provider_id: str, model_name: str, display_name: str | None = None, **kwargs: Any
     ) -> LLMModel:
         """Create a new LLM model configuration."""
         provider = await self.get_provider_by_id(provider_id)
@@ -276,7 +276,7 @@ class LLMService:
             logger.error(f"Model discovery failed for provider {provider_id}: {e}")
             raise LLMProviderError(f"Failed to discover models: {e!s}")
 
-    async def sync_provider_models(self, provider_id: str, selected_models: list[str] = None) -> list[LLMModel]:
+    async def sync_provider_models(self, provider_id: str, selected_models: list[str] | None = None) -> list[LLMModel]:
         """Sync discovered models with database, enabling only selected models.
 
         Args:

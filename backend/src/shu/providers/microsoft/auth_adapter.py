@@ -63,8 +63,8 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
 
             # Validate required scopes if provided
             try:
-                req = set([str(s) for s in (required_scopes or []) if s])
-                granted = set([str(s) for s in (getattr(row, "scopes", None) or []) if s])
+                req = {str(s) for s in (required_scopes or []) if s}
+                granted = {str(s) for s in (getattr(row, "scopes", None) or []) if s}
                 if req and not req.issubset(granted):
                     return None
             except Exception:
@@ -198,6 +198,7 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         creds = result.scalars().all()
         scopes_union: list[str] = []
         from ...api.host_auth import normalize_microsoft_scopes
+
         for c in creds:
             try:
                 for s in normalize_microsoft_scopes(c.scopes):
@@ -220,8 +221,8 @@ class MicrosoftAuthAdapter(BaseAuthAdapter):
         )
 
     async def get_user_info(
-        self, *, access_token: Optional[str] = None, id_token: Optional[str] = None, db=None
-    ) -> Dict[str, Any]:
+        self, *, access_token: str | None = None, id_token: str | None = None, db=None
+    ) -> dict[str, Any]:
         """Get Microsoft user info via Graph API and return normalized user info.
 
         Args:

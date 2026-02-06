@@ -15,7 +15,7 @@ from ..processors.text_extractor import TextExtractor
 
 
 class AttachmentService:
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession) -> None:
         self.db = db_session
         self.settings = get_settings_instance()
         # Ensure storage directory exists
@@ -147,10 +147,7 @@ class AttachmentService:
             return []
         stmt = select(Attachment).where(Attachment.id.in_(ids))
         result = await self.db.execute(stmt)
-        attachments = [
-            a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id
-        ]
-        return attachments
+        return [a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id]
 
     async def get_conversation_attachments_with_links(
         self, conversation_id: str, user_id: str

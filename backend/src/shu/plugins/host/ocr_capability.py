@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from ...processors.text_extractor import TextExtractor
 from .base import ImmutableCapabilityMixin
@@ -24,7 +25,7 @@ class OcrCapability(ImmutableCapabilityMixin):
     _user_id: str
     _ocr_mode: str | None
 
-    def __init__(self, *, plugin_name: str, user_id: str, ocr_mode: str | None = None):
+    def __init__(self, *, plugin_name: str, user_id: str, ocr_mode: str | None = None) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         mode = (ocr_mode or "").strip().lower()

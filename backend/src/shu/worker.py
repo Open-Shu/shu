@@ -70,7 +70,7 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
 
     workload_types = set()
     for name in workload_types_str.split(","):
-        name = name.strip().upper()
+        name = name.strip().upper()  # noqa: PLW2901
         if not name:
             continue
 
@@ -79,7 +79,7 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
             workload_types.add(workload_type)
         except KeyError as err:
             valid_types = [wt.name for wt in WorkloadType]
-            raise ValueError(f"Invalid workload type: {name}. " f"Valid types are: {', '.join(valid_types)}") from err
+            raise ValueError(f"Invalid workload type: {name}. Valid types are: {', '.join(valid_types)}") from err
 
     if not workload_types:
         raise ValueError("At least one workload type must be specified")
@@ -87,7 +87,8 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
     return workload_types
 
 
-async def _handle_ocr_job(job) -> None:
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
     """Handle an INGESTION_OCR workload job.
 
     Retrieves file bytes from staging, extracts text using OCR/text extraction,
@@ -102,6 +103,7 @@ async def _handle_ocr_job(job) -> None:
         ValueError: If required fields are missing from payload.
         FileStagingError: If staged file cannot be retrieved.
         Exception: If text extraction fails (triggers retry).
+
     """
     from .core.cache_backend import get_cache_backend
     from .core.database import get_async_session_local
@@ -141,7 +143,7 @@ async def _handle_ocr_job(job) -> None:
             "document_id": document_id,
             "knowledge_base_id": knowledge_base_id,
             "file_name": filename,
-        }
+        },
     )
 
     session_local = get_async_session_local()
@@ -151,9 +153,8 @@ async def _handle_ocr_job(job) -> None:
     async with session_local() as session:
         # Get document and update status to EXTRACTING
         from sqlalchemy import select
-        result = await session.execute(
-            select(Document).where(Document.id == document_id)
-        )
+
+        result = await session.execute(select(Document).where(Document.id == document_id))
         document = result.scalar_one_or_none()
 
         if not document:
@@ -172,7 +173,7 @@ async def _handle_ocr_job(job) -> None:
                     "job_id": job.id,
                     "document_id": document_id,
                     "file_size": len(file_bytes),
-                }
+                },
             )
 
             # Extract text using TextExtractor
@@ -198,7 +199,7 @@ async def _handle_ocr_job(job) -> None:
                     "text_length": len(extracted_text),
                     "extraction_method": extraction_metadata.get("method"),
                     "extraction_engine": extraction_metadata.get("engine"),
-                }
+                },
             )
 
             # Update document with extracted content and metadata
@@ -235,7 +236,7 @@ async def _handle_ocr_job(job) -> None:
                 extra={
                     "job_id": job.id,
                     "document_id": document_id,
-                }
+                },
             )
 
         except FileStagingError as e:
@@ -246,7 +247,7 @@ async def _handle_ocr_job(job) -> None:
                     "job_id": job.id,
                     "document_id": document_id,
                     "error": str(e),
-                }
+                },
             )
             document.mark_error(f"File staging failed: {e}")
             await session.commit()
@@ -263,7 +264,7 @@ async def _handle_ocr_job(job) -> None:
                         "attempts": job.attempts,
                         "max_attempts": job.max_attempts,
                         "error": str(e),
-                    }
+                    },
                 )
                 document.mark_error(f"Text extraction failed after {job.attempts} attempts: {e}")
                 await session.commit()
@@ -282,6 +283,7 @@ async def _handle_embed_job(job) -> None:
     Raises:
         ValueError: If required fields are missing from payload.
         Exception: If embedding generation fails (triggers retry).
+
     """
     from sqlalchemy import select
 
@@ -307,16 +309,14 @@ async def _handle_embed_job(job) -> None:
             "job_id": job.id,
             "document_id": document_id,
             "knowledge_base_id": knowledge_base_id,
-        }
+        },
     )
 
     session_local = get_async_session_local()
 
     async with session_local() as session:
         # Get document from database
-        result = await session.execute(
-            select(Document).where(Document.id == document_id)
-        )
+        result = await session.execute(select(Document).where(Document.id == document_id))
         document = result.scalar_one_or_none()
 
         if not document:
@@ -340,7 +340,7 @@ async def _handle_embed_job(job) -> None:
                     "word_count": word_count,
                     "character_count": char_count,
                     "chunk_count": chunk_count,
-                }
+                },
             )
 
             # Check if profiling is enabled
@@ -369,7 +369,7 @@ async def _handle_embed_job(job) -> None:
                     extra={
                         "job_id": job.id,
                         "document_id": document_id,
-                    }
+                    },
                 )
             else:
                 # Profiling disabled - set status to PROCESSED
@@ -381,7 +381,7 @@ async def _handle_embed_job(job) -> None:
                     extra={
                         "job_id": job.id,
                         "document_id": document_id,
-                    }
+                    },
                 )
 
         except Exception as e:
@@ -395,7 +395,7 @@ async def _handle_embed_job(job) -> None:
                         "attempts": job.attempts,
                         "max_attempts": job.max_attempts,
                         "error": str(e),
-                    }
+                    },
                 )
                 document.mark_error(f"Embedding generation failed after {job.attempts} attempts: {e}")
                 await session.commit()
@@ -414,15 +414,13 @@ async def _handle_profiling_job(job) -> None:
     Raises:
         ValueError: If document_id is missing from payload.
         Exception: If profiling fails (triggers retry).
+
     """
     document_id = job.payload.get("document_id")
     if not document_id:
         raise ValueError("PROFILING job missing document_id in payload")
 
-    logger.info(
-        "Processing profiling job",
-        extra={"job_id": job.id, "document_id": document_id}
-    )
+    logger.info("Processing profiling job", extra={"job_id": job.id, "document_id": document_id})
 
     from sqlalchemy import select
 
@@ -463,7 +461,7 @@ async def _handle_profiling_job(job) -> None:
                     "tokens_used": result.tokens_used,
                     "duration_ms": result.duration_ms,
                     "status": DocumentStatus.PROCESSED.value,
-                }
+                },
             )
         else:
             # Only mark ERROR when retries are exhausted (mirrors OCR/EMBED pattern)
@@ -484,7 +482,7 @@ async def _handle_profiling_job(job) -> None:
                         "attempts": job.attempts,
                         "max_attempts": job.max_attempts,
                         "error": result.error,
-                    }
+                    },
                 )
             else:
                 logger.warning(
@@ -495,7 +493,7 @@ async def _handle_profiling_job(job) -> None:
                         "attempts": job.attempts,
                         "max_attempts": job.max_attempts,
                         "error": result.error,
-                    }
+                    },
                 )
             raise Exception(f"Profiling failed for document {document_id}: {result.error}")
 
@@ -534,7 +532,7 @@ async def process_job(job):
 
     elif workload_type == WorkloadType.INGESTION_EMBED:
         await _handle_embed_job(job)
-    
+
     elif workload_type == WorkloadType.MAINTENANCE:
         # TODO: Implement in task 11.2 (scheduler migration)
         # IMPORTANT: When implementing, the handler MUST check PluginExecution.status
@@ -587,6 +585,7 @@ async def run_worker(
         poll_interval: Seconds between dequeue attempts when idle.
         shutdown_timeout: Seconds to wait for current job on shutdown.
         concurrency: Number of concurrent worker tasks to run.
+
     """
     # Initialize database connection
     try:
@@ -603,7 +602,6 @@ async def run_worker(
     except Exception as e:
         logger.error(f"Failed to initialize queue backend: {e}", exc_info=True)
         sys.exit(1)
-
 
     # Create worker configuration
     config = WorkerConfig(
@@ -630,13 +628,12 @@ async def run_worker(
         },
     )
 
-
     try:
         # Run all workers concurrently, logging failures immediately via done callbacks
         tasks = []
         for i, w in enumerate(workers):
             task = asyncio.create_task(w.run())
-            wid = w.worker_id if hasattr(w, 'worker_id') else f"{i + 1}/{len(workers)}"
+            wid = w.worker_id if hasattr(w, "worker_id") else f"{i + 1}/{len(workers)}"
 
             def _on_done(t: asyncio.Task, worker_id: str = wid) -> None:
                 if t.cancelled():
@@ -658,7 +655,7 @@ async def run_worker(
 
 
 def main() -> None:
-    """Main entrypoint for the worker process."""
+    """Start worker process."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Shu dedicated worker process",
@@ -706,14 +703,14 @@ Valid workload types:
         "--shutdown-timeout",
         type=float,
         default=settings.worker_shutdown_timeout,
-        help=f"Seconds to wait for current job on shutdown (default: {settings.worker_shutdown_timeout})"
+        help=f"Seconds to wait for current job on shutdown (default: {settings.worker_shutdown_timeout})",
     )
 
     parser.add_argument(
         "--concurrency",
         type=int,
         default=settings.worker_concurrency,
-        help=f"Number of concurrent worker tasks (default: {settings.worker_concurrency})"
+        help=f"Number of concurrent worker tasks (default: {settings.worker_concurrency})",
     )
 
     args = parser.parse_args()
@@ -721,16 +718,14 @@ Valid workload types:
     # Setup logging
     setup_logging()
 
-
     logger.info(
         "Worker entrypoint starting",
         extra={
             "version": settings.version,
             "environment": settings.environment,
             "concurrency": args.concurrency,
-        }
+        },
     )
-
 
     # Parse workload types
     try:
@@ -743,7 +738,6 @@ Valid workload types:
     except ValueError as e:
         logger.error(f"Invalid workload types: {e}")
         sys.exit(1)
-
 
     # Run worker
     try:

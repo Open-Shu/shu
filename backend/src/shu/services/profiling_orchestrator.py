@@ -40,7 +40,7 @@ class ProfilingOrchestrator:
         db: AsyncSession,
         settings: Settings,
         side_call_service: SideCallService,
-    ):
+    ) -> None:
         self.db = db
         self.settings = settings
         self.profiling_service = ProfilingService(side_call_service, settings)

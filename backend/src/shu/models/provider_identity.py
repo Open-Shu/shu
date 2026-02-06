@@ -6,8 +6,6 @@ optionally associated to a stored credential record via credential_id.
 
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy import JSON, Column, ForeignKey, Index, String
 
 from .base import BaseModel
@@ -50,8 +48,3 @@ class ProviderIdentity(BaseModel):
             unique=True,
         ),
     )
-
-    def to_public_dict(self) -> dict[str, Any]:
-        d = self.to_dict()
-        # Nothing secret here, return as-is
-        return d

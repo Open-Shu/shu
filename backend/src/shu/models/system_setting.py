@@ -20,4 +20,5 @@ class SystemSetting(TimestampMixin, Base):
     value = Column(MutableDict.as_mutable(JSON), nullable=False, default=dict)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<SystemSetting(key='{self.key}')>"

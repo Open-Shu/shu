@@ -1,7 +1,7 @@
 """HostAuthService: extracts business logic from host_auth API endpoints.
 - Compute consent scope unions from plugin manifests honoring subscriptions
 - CRUD helpers for PluginSubscription with validation against PluginDefinition
-- Read helpers for listing subscriptions
+- Read helpers for listing subscriptions.
 
 This keeps API controllers thin and maintains provider-agnostic behavior.
 """
@@ -26,7 +26,7 @@ class HostAuthService:
         provider: str,
         plugin_name: str,
         account_id: str | None = None,
-    ):
+    ) -> tuple[str, str, PluginSubscription | None]:
         from sqlalchemy import and_, select  # local import
 
         prov = (provider or "").strip().lower()
@@ -60,8 +60,9 @@ class HostAuthService:
         except Exception:
             pass
 
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
     @staticmethod
-    async def compute_consent_scopes(db: AsyncSession, user_id: str, provider: str) -> list[str]:
+    async def compute_consent_scopes(db: AsyncSession, user_id: str, provider: str) -> list[str]:  # noqa: PLR0912
         """Compute union of delegated scopes for provider from plugin manifests, honoring subscriptions.
         If the user has no subscriptions for the provider, return an empty list (request nothing).
         """
@@ -127,6 +128,13 @@ class HostAuthService:
                                     if sv and sv not in union_scopes:
                                         union_scopes.append(sv)
                 except Exception:
+                    logger.error(
+                        "consent_scopes.compute.failed | user=%s provider=%s plugin=%s",
+                        str(user_id),
+                        provider_key,
+                        name,
+                        exc_info=True,
+                    )
                     continue
         except Exception:
             # Log at caller
@@ -134,7 +142,9 @@ class HostAuthService:
         return union_scopes
 
     @staticmethod
-    async def list_subscriptions(db: AsyncSession, user_id: str, provider: str, account_id: str | None = None):
+    async def list_subscriptions(
+        db: AsyncSession, user_id: str, provider: str, account_id: str | None = None
+    ) -> list[PluginSubscription]:
         from sqlalchemy import and_, select  # local import
 
         prov = (provider or "").strip().lower()
@@ -156,7 +166,7 @@ class HostAuthService:
         provider: str,
         plugin_name: str,
         account_id: str | None = None,
-    ):
+    ) -> PluginSubscription:
         from sqlalchemy import select  # local import
 
         from ..models.plugin_registry import PluginDefinition

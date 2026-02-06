@@ -1,4 +1,4 @@
-"""User Service Module
+"""User Service Module.
 
 This module contains the UserService class and related helper functions for user
 management operations. It is separated from the API layer (api/auth.py) to follow
@@ -56,26 +56,26 @@ def _redact_email(email: str) -> str:
 
 
 class UserService:
-    """Service for user management operations"""
+    """Service for user management operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.jwt_manager = JWTManager()
         self.settings = get_settings_instance()
 
     async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User | None:
-        """Get user by ID"""
+        """Get user by ID."""
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_all_users(self, db: AsyncSession) -> list[User]:
-        """Get all users (admin only)"""
+        """Get all users (admin only)."""
         stmt = select(User).order_by(User.is_active.desc(), User.name.asc())
         result = await db.execute(stmt)
         return result.scalars().all()
 
     async def update_user_role(self, user_id: str, new_role: str, db: AsyncSession) -> User:
-        """Update user role (admin only)"""
+        """Update user role (admin only)."""
         stmt = select(User).where(User.id == user_id)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -95,7 +95,7 @@ class UserService:
         return user
 
     async def delete_user(self, user_id: str, current_user_id: str, db: AsyncSession) -> bool:
-        """Delete user (admin only)"""
+        """Delete user (admin only)."""
         # Prevent self-deletion
         if user_id == current_user_id:
             raise ValueError("Cannot delete your own account")
@@ -232,9 +232,7 @@ class UserService:
             .where(ProviderIdentity.provider_key == provider_key, ProviderIdentity.account_id == provider_id)
         )
         result = await db.execute(stmt)
-        user = result.scalar_one_or_none()
-
-        return user
+        return result.scalar_one_or_none()
 
     async def _ensure_provider_identity(self, user: User, provider_info: dict[str, Any], db: AsyncSession) -> None:
         """Ensure ProviderIdentity exists for user, create if missing (migration on login).

@@ -119,12 +119,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class AuthenticationMiddleware(BaseHTTPMiddleware):
     """Global authentication middleware to enforce auth on protected endpoints."""
 
-    def __init__(self, app):
+    def __init__(self, app) -> None:
         super().__init__(app)
         self.jwt_manager = JWTManager()
 
         # Public endpoints that don't require authentication
-        self.public_paths: Set[str] = {
+        self.public_paths: set[str] = {
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -160,11 +160,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/static/",  # Self-hosted static assets (e.g., ReDoc JS)
             "/api/v1/settings/branding/assets/",
         ]
-        for prefix in public_prefixes:
-            if path.startswith(prefix):
-                return True
-
-        return False
+        return any(path.startswith(prefix) for prefix in public_prefixes)
 
     async def _update_daily_login(self, db, user) -> None:
         """Update last_login if this is the user's first request of the day.
@@ -183,7 +179,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             await db.commit()
             logger.debug(f"Updated daily login for user {user.id}")
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:  # noqa: PLR0912, PLR0915
         # Skip authentication for public endpoints
         """Authenticate incoming requests, validate user status against the database, and attach the resolved user context to request.state for downstream authorization.
 
@@ -206,7 +203,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
         # Accept either Bearer <jwt> or ApiKey <key>
-        is_api_key_auth = False
         token = None
         user_data = None
         if auth_header.startswith("Bearer "):
@@ -226,7 +222,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
             # Mark request as API key authenticated; RBAC will resolve user context
             request.state.api_key_authenticated = True
-            is_api_key_auth = True
         else:
             logger.warning(f"Unsupported Authorization scheme for {request.method} {request.url.path}")
             return JSONResponse(status_code=401, content={"detail": "Unsupported Authorization scheme"})
@@ -403,10 +398,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         if path in self.excluded_paths:
             return True
-        for prefix in self.excluded_prefixes:
-            if path.startswith(prefix):
-                return True
-        return False
+        return any(path.startswith(prefix) for prefix in self.excluded_prefixes)
 
     def _get_user_id(self, request: Request) -> str | None:
         """Extract user ID from request state."""

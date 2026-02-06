@@ -1,4 +1,4 @@
-"""User models for Shu authentication system"""
+"""User models for Shu authentication system."""
 
 from enum import Enum
 
@@ -10,7 +10,7 @@ from ..models.base import BaseModel
 
 
 class UserRole(Enum):
-    """User roles for role-based access control"""
+    """User roles for role-based access control."""
 
     ADMIN = "admin"  # Full system access, user management
     POWER_USER = "power_user"  # Access to multiple KBs, advanced features
@@ -18,7 +18,7 @@ class UserRole(Enum):
 
 
 class User(BaseModel):
-    """User model with SSO integration via ProviderIdentity"""
+    """User model with SSO integration via ProviderIdentity."""
 
     __tablename__ = "users"
 
@@ -63,16 +63,17 @@ class User(BaseModel):
         cascade="all, delete-orphan",
     )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Represent user as string."""
         return f"<User(email='{self.email}', role='{self.role}')>"
 
     @property
     def role_enum(self) -> UserRole:
-        """Get role as enum"""
+        """Get role as enum."""
         return UserRole(self.role)
 
     def has_role(self, required_role: UserRole) -> bool:
-        """Check if user has at least the required role level"""
+        """Check if user has at least the required role level."""
         role_hierarchy = {UserRole.REGULAR_USER: 1, UserRole.POWER_USER: 2, UserRole.ADMIN: 3}
 
         user_level = role_hierarchy.get(self.role_enum, 0)
@@ -81,15 +82,15 @@ class User(BaseModel):
         return user_level >= required_level
 
     def can_manage_users(self) -> bool:
-        """Check if user can manage other users"""
+        """Check if user can manage other users."""
         return self.role_enum == UserRole.ADMIN
 
     def can_access_admin_panel(self) -> bool:
-        """Check if user can access admin panel"""
+        """Check if user can access admin panel."""
         return self.role_enum in [UserRole.ADMIN, UserRole.POWER_USER]
 
     def to_dict(self) -> dict:
-        """Convert user to dictionary for API responses"""
+        """Convert user to dictionary for API responses."""
         return {
             "user_id": self.id,
             "email": self.email,

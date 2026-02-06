@@ -110,6 +110,8 @@ class ConversationResponse(BaseModel):
     updated_at: datetime
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -153,6 +155,8 @@ class MessageResponse(BaseModel):
     attachments: list[MessageAttachmentInfo] = []
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -229,6 +233,8 @@ class SendMessageRequest(BaseModel):
     attachment_ids: list[str] | None = Field(None, description="List of attachment IDs to include with this message")
 
     class Config:
+        """No extra fields accepted."""
+
         extra = "forbid"
 
 

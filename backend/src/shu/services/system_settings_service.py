@@ -15,7 +15,7 @@ from ..models.system_setting import SystemSetting
 class SystemSettingsService:
     """Persistence helpers for the SystemSetting table."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def get_setting(self, key: str) -> SystemSetting | None:

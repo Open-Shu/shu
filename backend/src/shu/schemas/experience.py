@@ -86,7 +86,7 @@ class ExperienceStepBase(BaseModel):
 
     @field_validator("step_key")
     @classmethod
-    def validate_step_key(cls, v):
+    def validate_step_key(cls, v: str) -> str:
         """Validate step key format."""
         v = v.strip()
         if not v:
@@ -167,7 +167,7 @@ class ExperienceBase(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v):
+    def validate_name(cls, v: str) -> str:
         """Validate experience name."""
         if not v.strip():
             raise ValueError("Experience name cannot be empty")
@@ -202,7 +202,7 @@ class ExperienceUpdate(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v):
+    def validate_name(cls, v: str) -> str:
         """Validate experience name."""
         if v is not None and not v.strip():
             raise ValueError("Experience name cannot be empty")

@@ -133,8 +133,8 @@ class ShuResponse:
         return Response(content=b"", status_code=status.HTTP_204_NO_CONTENT, headers=headers)
 
 
-def create_success_response(data: Any, **kwargs) -> JSONResponse:
-    """Convenience function for creating success responses.
+def create_success_response(data: Any, **kwargs: Any) -> JSONResponse:
+    """Create success responses convenience function.
 
     Args:
         data: The response data
@@ -147,8 +147,8 @@ def create_success_response(data: Any, **kwargs) -> JSONResponse:
     return ShuResponse.success(data, **kwargs)
 
 
-def create_error_response(message: str, code: str = "API_ERROR", **kwargs) -> JSONResponse:
-    """Convenience function for creating error responses.
+def create_error_response(message: str, code: str = "API_ERROR", **kwargs: Any) -> JSONResponse:
+    """Create error responses convenience function.
 
     Args:
         message: Error message

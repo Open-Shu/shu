@@ -11,10 +11,9 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from ..core.config import get_settings_instance
+from .document import DocumentChunkWithScore
 
 settings = get_settings_instance()
-
-from .document import DocumentChunkWithScore
 
 
 class QueryType(str, Enum):
@@ -61,7 +60,7 @@ class QueryRequest(BaseModel):
 
     @field_validator("query")
     @classmethod
-    def validate_query(cls, v):
+    def validate_query(cls, v: str) -> str:
         """Validate query string."""
         if not v.strip():
             raise ValueError("Query cannot be empty")
@@ -69,7 +68,7 @@ class QueryRequest(BaseModel):
 
     @field_validator("query_type")
     @classmethod
-    def validate_query_type(cls, v):
+    def validate_query_type(cls, v: str) -> str:
         """Validate query type."""
         valid_types = ["similarity", "keyword", "hybrid"]
         if v not in valid_types:
@@ -105,6 +104,8 @@ class QueryResult(BaseModel):
     created_at: datetime = Field(..., description="Document creation timestamp")
 
     class Config:
+        """Pydantic configuration."""
+
         from_attributes = True
 
 

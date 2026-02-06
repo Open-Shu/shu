@@ -35,7 +35,7 @@ logger = get_logger(__name__)
 
 
 class GeminiAdapter(BaseProviderAdapter):
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         super().__init__(context)
         self._latest_usage_event: dict[str, Any] | None = None
         self._stream_content: list[str] = []
@@ -391,7 +391,8 @@ class GeminiAdapter(BaseProviderAdapter):
     def _sanitize_schema_for_gemini(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Strip unsupported keys and coerce schema to Gemini's limited Schema shape."""
 
-        def _clean(obj: Any) -> dict[str, Any]:
+        # TODO: Refactor this function. It's too complex (number of branches and statements).
+        def _clean(obj: Any) -> dict[str, Any]:  # noqa: PLR0912
             if not isinstance(obj, dict):
                 return {}
 
@@ -544,7 +545,7 @@ class GeminiAdapter(BaseProviderAdapter):
     def get_model_information_path(self) -> str:
         return "models[?contains(supportedGenerationMethods, 'generateContent')].{id: name, name: displayName}"
 
-    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         parts = jmespath.search("candidates[0].content.parts", chunk) or []
         if not parts:
             return None
@@ -564,6 +565,7 @@ class GeminiAdapter(BaseProviderAdapter):
                     part.get("functionCall", {}),
                     thought_signature=part.get("thoughtSignature"),
                 )
+        return None
 
     async def finalize_provider_events(self) -> list[ProviderEventResult]:
         self._extract_usage(self._latest_usage_event)
@@ -585,10 +587,11 @@ class GeminiAdapter(BaseProviderAdapter):
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=[m for m in [assistant_message] + result_messages if m],
+                additional_messages=[m for m in [assistant_message, *result_messages] if m],
                 content="",
-            )
-        ] + final_event
+            ),
+            *final_event,
+        ]
 
     async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
         candidates = data.get("candidates") or []
@@ -620,7 +623,7 @@ class GeminiAdapter(BaseProviderAdapter):
 
         events: list[ProviderEventResult] = []
         if tool_calls:
-            additional_messages = [m for m in [assistant_message] + result_messages if m]
+            additional_messages = [m for m in [assistant_message, *result_messages] if m]
             events.append(
                 ProviderToolCallEventResult(
                     tool_calls=tool_calls,

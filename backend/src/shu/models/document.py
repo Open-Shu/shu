@@ -6,7 +6,7 @@ document metadata, content, and vector embeddings.
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -17,7 +17,9 @@ try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
     # Fallback for development without pgvector
-    Vector = lambda dim: Text
+    def Vector(dim):  # noqa: N802
+        return Text
+
 
 from .base import BaseModel
 
@@ -154,6 +156,7 @@ class Document(BaseModel):
     projects = relationship("DocumentProject", back_populates="document", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Document(id={self.id}, title='{self.title}', kb_id='{self.knowledge_base_id}')>"
 
     def to_dict(self) -> dict[str, Any]:
@@ -206,6 +209,7 @@ class Document(BaseModel):
 
         Args:
             new_status: The new DocumentStatus value
+
         """
         self.processing_status = new_status.value
 
@@ -218,8 +222,6 @@ class Document(BaseModel):
             # Clear stale timestamps and error fields when moving to non-terminal states
             self.processed_at = None
             self.processing_error = None
-
-
 
     def update_content_stats(self, word_count: int, character_count: int, chunk_count: int) -> None:
         """Update content statistics."""
@@ -243,7 +245,7 @@ class Document(BaseModel):
         self.profiling_status = "in_progress"
 
     # Valid document types for profiling (must match schemas.profiling.DocumentType)
-    VALID_DOCUMENT_TYPES = {"narrative", "transactional", "technical", "conversational"}
+    VALID_DOCUMENT_TYPES: ClassVar[set[str]] = {"narrative", "transactional", "technical", "conversational"}
 
     def mark_profiling_complete(
         self,
@@ -333,6 +335,7 @@ class DocumentChunk(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<DocumentChunk(id={self.id}, doc_id='{self.document_id}', chunk_index={self.chunk_index})>"
 
     def to_dict(self) -> dict[str, Any]:
@@ -436,7 +439,7 @@ class DocumentChunk(BaseModel):
         end_char: int | None = None,
     ) -> "DocumentChunk":
         """Create a document chunk from text content."""
-        chunk = cls(
+        return cls(
             document_id=document_id,
             knowledge_base_id=knowledge_base_id,
             chunk_index=chunk_index,
@@ -446,7 +449,6 @@ class DocumentChunk(BaseModel):
             start_char=start_char,
             end_char=end_char,
         )
-        return chunk
 
 
 class DocumentQuery(BaseModel):
@@ -489,6 +491,7 @@ class DocumentQuery(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         if self.query_text:
             preview = self.query_text[:50] + "..." if len(self.query_text) > 50 else self.query_text
         else:
@@ -607,6 +610,7 @@ class DocumentParticipant(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<DocumentParticipant(id={self.id}, entity='{self.entity_name}', role='{self.role}')>"
 
     def to_dict(self) -> dict[str, Any]:
@@ -680,6 +684,7 @@ class DocumentProject(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<DocumentProject(id={self.id}, project='{self.project_name}')>"
 
     def to_dict(self) -> dict[str, Any]:

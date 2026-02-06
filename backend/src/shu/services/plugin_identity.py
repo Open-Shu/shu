@@ -21,12 +21,17 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
 # Models are imported lazily inside functions to avoid circulars in some import contexts
 
 
 async def get_provider_identities_map(db: AsyncSession, user_id: str) -> dict[str, list[dict[str, Any]]]:
     """Return provider identities grouped by provider_key for the given user.
-    Shape matches what host.identity expects: {provider_key: [identity_dict, ...]}
+    Shape matches what host.identity expects: {provider_key: [identity_dict, ...]}.
     """
     try:
         from ..models.provider_identity import ProviderIdentity  # local import
@@ -109,14 +114,15 @@ async def has_provider_identity(db: AsyncSession, user_id: str, provider_key: st
         return False
 
 
-def resolve_auth_requirements(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def resolve_auth_requirements(  # noqa: PLR0912, PLR0915
     plugin: Any, params: dict[str, Any] | None = None
 ) -> tuple[str | None, str | None, str | None, list[str] | None]:
     """Resolve (provider, mode, subject, scopes) from plugin manifest and params.
     - Prefer plugin._op_auth[op] if present
     - Overlay with params provider/mode/scopes/subject when explicitly provided
     - Do not infer defaults; if not provided, return None for those fields
-    - If provider is None, treat as no identity required (caller may interpret as allowed)
+    - If provider is None, treat as no identity required (caller may interpret as allowed).
     """
     p = dict(params or {})
     op = str(p.get("op") or "").lower()
@@ -157,7 +163,7 @@ def resolve_auth_requirements(
         if auth_block:
             # If provider not declared yet and exactly one provider present, adopt it (still not a guess)
             if provider is None and len(list(auth_block.keys())) == 1:
-                k = list(auth_block.keys())[0]
+                k = next(iter(auth_block.keys()))
                 if isinstance(k, str) and k.strip():
                     provider = k
             prov_key = provider
@@ -288,7 +294,7 @@ async def ensure_secrets_for_plugin(
 class PluginIdentityError(Exception):
     """Raised when plugin execution is blocked due to missing subscriptions or identities."""
 
-    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
+    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.details = details or {}
@@ -347,7 +353,7 @@ async def ensure_user_identity_for_plugin(
 
 async def compute_identity_status(db: AsyncSession, owner_user_id: str | None, params: dict[str, Any] | None) -> str:
     """Compute identity status for a feed row using params and host overlay.
-    Returns one of: 'no_owner' | 'delegation' | 'delegation_subject_missing' | 'connected' | 'missing_identity' | 'unknown'
+    Returns one of: 'no_owner' | 'delegation' | 'delegation_subject_missing' | 'connected' | 'missing_identity' | 'unknown'.
     """
     try:
         p = dict(params or {})

@@ -41,7 +41,7 @@ class PromptCreate(PromptBase):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v):
+    def validate_name(cls, v: str) -> str:
         """Validate prompt name."""
         if not v or not v.strip():
             raise ValueError("Prompt name cannot be empty")
@@ -49,7 +49,7 @@ class PromptCreate(PromptBase):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v):
+    def validate_content(cls, v: str) -> str:
         """Validate prompt content."""
         if not v or not v.strip():
             raise ValueError("Prompt content cannot be empty")
@@ -66,7 +66,7 @@ class PromptUpdate(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v):
+    def validate_name(cls, v: str) -> str:
         """Validate prompt name if provided."""
         if v is not None and (not v or not v.strip()):
             raise ValueError("Prompt name cannot be empty")
@@ -74,7 +74,7 @@ class PromptUpdate(BaseModel):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v):
+    def validate_content(cls, v: str) -> str:
         """Validate prompt content if provided."""
         if v is not None and (not v or not v.strip()):
             raise ValueError("Prompt content cannot be empty")
@@ -109,6 +109,8 @@ class PromptAssignmentResponse(PromptAssignmentBase):
     assigned_at: datetime
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -122,6 +124,8 @@ class PromptResponse(PromptBase):
     assignments: list[PromptAssignmentResponse] = Field(default_factory=list)
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
     @property

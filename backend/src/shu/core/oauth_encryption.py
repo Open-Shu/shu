@@ -1,4 +1,4 @@
-"""OAuth Token Encryption Service
+"""OAuth Token Encryption Service.
 
 Provides secure encryption/decryption for OAuth tokens stored in the database.
 Uses Fernet symmetric encryption for secure token storage.
@@ -22,7 +22,7 @@ class OAuthEncryptionError(Exception):
 class OAuthEncryptionService:
     """Service for encrypting and decrypting OAuth tokens."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the encryption service with the configured key."""
         settings = get_settings_instance()
 
@@ -124,7 +124,7 @@ def get_oauth_encryption_service() -> OAuthEncryptionService:
         OAuthEncryptionError: If the service cannot be initialized
 
     """
-    global _oauth_encryption_service
+    global _oauth_encryption_service  # noqa: PLW0603 # works for now
 
     if _oauth_encryption_service is None:
         _oauth_encryption_service = OAuthEncryptionService()
@@ -133,7 +133,7 @@ def get_oauth_encryption_service() -> OAuthEncryptionService:
 
 
 def encrypt_oauth_token(token: str) -> str:
-    """Convenience function to encrypt an OAuth token.
+    """Encrypt an OAuth token convenience function.
 
     Args:
         token: The plaintext OAuth token
@@ -147,7 +147,7 @@ def encrypt_oauth_token(token: str) -> str:
 
 
 def decrypt_oauth_token(encrypted_token: str) -> str:
-    """Convenience function to decrypt an OAuth token.
+    """Decrypt an OAuth token convenience function.
 
     Args:
         encrypted_token: The encrypted token

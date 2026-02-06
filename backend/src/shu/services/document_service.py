@@ -29,7 +29,7 @@ logger = get_logger(__name__)
 class DocumentService:
     """Service class for document operations."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def create_document(self, doc_data: DocumentCreate) -> DocumentResponse:
@@ -46,7 +46,7 @@ class DocumentService:
         # Validate knowledge base exists
         from ..utils import KnowledgeBaseVerifier
 
-        kb = await KnowledgeBaseVerifier.verify_exists(self.db, doc_data.knowledge_base_id)
+        await KnowledgeBaseVerifier.verify_exists(self.db, doc_data.knowledge_base_id)
 
         # Legacy SourceType validation removed; source_type is now a free-form string tied to plugin or system-defined source families.
 

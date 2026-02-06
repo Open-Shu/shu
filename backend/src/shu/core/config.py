@@ -155,7 +155,9 @@ class Settings(BaseSettings):
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
     # File staging configuration (for document ingestion pipeline)
-    file_staging_ttl: int = Field(3600, alias="SHU_FILE_STAGING_TTL")  # TTL in seconds for staged files (default: 1 hour)
+    file_staging_ttl: int = Field(
+        3600, alias="SHU_FILE_STAGING_TTL"
+    )  # TTL in seconds for staged files (default: 1 hour)
 
     # API Rate Limiting (HTTP request throttling, not LLM-specific)
     enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
@@ -409,7 +411,7 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def validate_database_url(cls, v):
+    def validate_database_url(cls, v: str) -> str:
         """Validate database URL format."""
         if not v.startswith(("postgresql://", "postgresql+psycopg2://", "postgresql+asyncpg://")):
             raise ValueError("Database URL must be PostgreSQL")
@@ -417,7 +419,7 @@ class Settings(BaseSettings):
 
     @field_validator("log_level")
     @classmethod
-    def validate_log_level(cls, v):
+    def validate_log_level(cls, v: str) -> str:
         """Validate log level."""
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if v.upper() not in valid_levels:
@@ -426,7 +428,7 @@ class Settings(BaseSettings):
 
     @field_validator("log_format")
     @classmethod
-    def validate_log_format(cls, v):
+    def validate_log_format(cls, v: str) -> str:
         """Validate log format."""
         valid_formats = ["text", "json"]
         if v.lower() not in valid_formats:
@@ -435,7 +437,7 @@ class Settings(BaseSettings):
 
     @field_validator("environment")
     @classmethod
-    def validate_environment(cls, v):
+    def validate_environment(cls, v: str) -> str:
         """Validate environment setting."""
         valid_environments = ["development", "staging", "production"]
         if v.lower() not in valid_environments:
@@ -444,7 +446,7 @@ class Settings(BaseSettings):
 
     @field_validator("vector_index_type")
     @classmethod
-    def validate_vector_index_type(cls, v):
+    def validate_vector_index_type(cls, v: str) -> str:
         """Validate vector index type."""
         valid_types = ["ivfflat", "hnsw"]
         if v.lower() not in valid_types:
@@ -453,7 +455,7 @@ class Settings(BaseSettings):
 
     @field_validator("google_service_account_json")
     @classmethod
-    def validate_google_credentials(cls, v):
+    def validate_google_credentials(cls, v: str) -> str | None:
         """Validate Google service account credentials."""
         if v and not v.strip():
             return None
@@ -461,7 +463,7 @@ class Settings(BaseSettings):
 
     @field_validator("http_egress_allowlist", mode="before")
     @classmethod
-    def validate_http_allowlist(cls, v):
+    def validate_http_allowlist(cls, v: str | list) -> list | None:
         """Allow comma-separated string or list for egress allowlist. Empty => None (allow all)."""
         if v is None:
             return None
@@ -478,7 +480,7 @@ class Settings(BaseSettings):
 
     @field_validator("admin_emails", mode="before")
     @classmethod
-    def validate_admin_emails(cls, v):
+    def validate_admin_emails(cls, v: str | list) -> list:
         """Parse admin emails from comma-separated string or list."""
         if isinstance(v, str):
             if not v.strip():
@@ -534,7 +536,7 @@ settings = None
 
 def get_settings_instance() -> Settings:
     """Get the global settings instance, creating it if necessary."""
-    global settings
+    global settings  # noqa: PLW0603 # It is currently working, so we'll leave it as is
     if settings is None:
         settings = get_settings()
     return settings
@@ -542,7 +544,7 @@ def get_settings_instance() -> Settings:
 
 class ConfigurationManager:
     """Centralized configuration manager that handles the priority cascade:
-    User Preferences → Model Config → KB Config → Global Defaults
+    User Preferences → Model Config → KB Config → Global Defaults.
 
     This replaces hardcoded values throughout the codebase and ensures
     consistent configuration resolution following the established hierarchy.
@@ -551,7 +553,7 @@ class ConfigurationManager:
     and loose coupling. Use get_config_manager() dependency in FastAPI endpoints.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     # RAG Configuration Resolution
@@ -1033,7 +1035,7 @@ def get_config_manager() -> ConfigurationManager:
     Note: This function provides backward compatibility for existing code.
     For new code, prefer dependency injection using get_config_manager_dependency().
     """
-    global _config_manager
+    global _config_manager  # noqa: PLW0603 # This is currently working, so we'll leave it as is
     if _config_manager is None:
         _config_manager = ConfigurationManager(get_settings_instance())
     return _config_manager

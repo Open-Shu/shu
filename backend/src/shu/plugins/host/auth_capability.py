@@ -45,7 +45,7 @@ class AuthCapability(ImmutableCapabilityMixin):
         http: HttpCapability | None = None,
         context: dict[str, Any] | None = None,
         provider_primary_emails: dict[str, str | None] | None = None,
-    ):
+    ) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_http", http or HttpCapability(plugin_name=plugin_name, user_id=user_id))
@@ -152,7 +152,8 @@ class AuthCapability(ImmutableCapabilityMixin):
             data.update({k: str(v) for k, v in extra_params.items() if v is not None})
         return await self._post_form(token_url, data)
 
-    async def user_google_token(self, *, required_scopes: list[str] | None = None) -> str | None:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def user_google_token(self, *, required_scopes: list[str] | None = None) -> str | None:  # noqa: PLR0912, PLR0915
         """Return an access token for the connected Google account of the current user (via ProviderCredential).
         - If required_scopes is provided, ensure the stored grant includes all of them; otherwise return None
         - Uses the stored refresh_token in provider_credentials and refreshes via Google's token endpoint.
@@ -165,7 +166,7 @@ class AuthCapability(ImmutableCapabilityMixin):
                     and_(
                         ProviderCredential.user_id == self._user_id,
                         ProviderCredential.provider_key == "google",
-                        ProviderCredential.is_active == True,
+                        ProviderCredential.is_active,
                     )
                 )
                 .order_by(ProviderCredential.updated_at.desc())
@@ -176,8 +177,8 @@ class AuthCapability(ImmutableCapabilityMixin):
 
             # Validate scopes first if caller provided requirements
             try:
-                req = set([str(s) for s in (required_scopes or []) if s])
-                granted = set([str(s) for s in (getattr(row, "scopes", None) or []) if s])
+                req = {str(s) for s in (required_scopes or []) if s}
+                granted = {str(s) for s in (getattr(row, "scopes", None) or []) if s}
                 if req and not req.issubset(granted):
                     logger.warning(
                         "user_google_token: insufficient scopes; required=%s granted=%s",
@@ -240,7 +241,7 @@ class AuthCapability(ImmutableCapabilityMixin):
                     )
                     body_ti = ti.get("body") if isinstance(ti, dict) else None
                     scope_str = body_ti.get("scope") if isinstance(body_ti, dict) else None
-                    token_scopes = set([s for s in str(scope_str or "").split() if s])
+                    token_scopes = {s for s in str(scope_str or "").split() if s}
                     if req_scopes and token_scopes and not req_scopes.issubset(token_scopes):
                         logger.warning(
                             "user_google_token: refreshed access token lacks required scopes; required=%s token_scopes=%s",

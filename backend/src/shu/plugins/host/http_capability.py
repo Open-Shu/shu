@@ -21,7 +21,7 @@ def _is_allowed_url(url: str, allowlist: list[str] | None) -> bool:
         return False
     host = host.lower()
     for pat in allowlist:
-        pat = (pat or "").lower().strip()
+        pat = (pat or "").lower().strip()  # noqa: PLW2901 # not fixing, since this is currently working as intended
         if not pat:
             continue
         # simple suffix match for domains, exact for hosts
@@ -44,7 +44,7 @@ class HttpCapability(ImmutableCapabilityMixin):
     _allowlist: list[str] | None
     _default_timeout: float
 
-    def __init__(self, *, plugin_name: str, user_id: str):
+    def __init__(self, *, plugin_name: str, user_id: str) -> None:
         s = get_settings_instance()
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
@@ -52,7 +52,7 @@ class HttpCapability(ImmutableCapabilityMixin):
         object.__setattr__(self, "_allowlist", getattr(s, "http_egress_allowlist", None))
         object.__setattr__(self, "_default_timeout", float(getattr(s, "http_default_timeout", 30.0)))
 
-    async def fetch(self, method: str, url: str, **kwargs) -> dict[str, Any]:
+    async def fetch(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
             logger.warning(
                 "Egress denied by allowlist",
@@ -123,7 +123,7 @@ class HttpCapability(ImmutableCapabilityMixin):
             raise HttpRequestFailed(status, url, body=body, headers=result["headers"])
         return result
 
-    async def fetch_or_none(self, method: str, url: str, **kwargs) -> dict[str, Any] | None:
+    async def fetch_or_none(self, method: str, url: str, **kwargs: Any) -> dict[str, Any] | None:
         """Fetch a URL, returning None on 4xx errors instead of raising.
 
         This is useful for optional lookups where a 404 or 403 is expected
@@ -159,7 +159,7 @@ class HttpCapability(ImmutableCapabilityMixin):
             # 5xx errors still raise
             raise
 
-    async def fetch_bytes(self, method: str, url: str, **kwargs) -> dict[str, Any]:
+    async def fetch_bytes(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         if not _is_allowed_url(url, self._allowlist):
             logger.warning(
                 "Egress denied by allowlist",
@@ -203,7 +203,7 @@ class HttpCapability(ImmutableCapabilityMixin):
             raise HttpRequestFailed(status, url, body=None, headers=result["headers"])
         return result
 
-    async def fetch_bytes_or_none(self, method: str, url: str, **kwargs) -> dict[str, Any] | None:
+    async def fetch_bytes_or_none(self, method: str, url: str, **kwargs: Any) -> dict[str, Any] | None:
         """Fetch bytes from a URL, returning None on 4xx errors instead of raising.
 
         This is the bytes variant of fetch_or_none(). Useful for optional
@@ -228,4 +228,3 @@ class HttpCapability(ImmutableCapabilityMixin):
             if e.status_code < 500:
                 return None
             raise
-

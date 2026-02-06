@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from .cache_backend import CacheBackend, get_cache_backend
 
@@ -54,7 +54,7 @@ class RateLimitResult:
     reset_seconds: int = 0
 
     def to_headers(self) -> dict[str, str]:
-        """Builds HTTP rate limit headers representing the current rate limit state.
+        """Build HTTP rate limit headers representing the current rate limit state.
 
         Includes `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`; adds `Retry-After` when the request was denied.
 
@@ -111,7 +111,7 @@ class TokenBucketRateLimiter:
         namespace: str = "rl",
         capacity: int = 60,
         refill_per_second: float = 1.0,
-    ):
+    ) -> None:
         """Initialize rate limiter.
 
         Args:
@@ -262,7 +262,7 @@ class RateLimitService:
     All rate limiting uses fixed-window algorithm via CacheBackend.
     """
 
-    def __init__(self, settings: Any | None = None):
+    def __init__(self, settings: Any | None = None) -> None:
         """Initialize rate limit service.
 
         Args:
@@ -484,7 +484,7 @@ def get_rate_limit_service() -> RateLimitService:
         RateLimitService: The shared RateLimitService instance used by the application.
 
     """
-    global _rate_limit_service
+    global _rate_limit_service  # noqa: PLW0603 # works for now
     if _rate_limit_service is None:
         _rate_limit_service = RateLimitService()
     return _rate_limit_service

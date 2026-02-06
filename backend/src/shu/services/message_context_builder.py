@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +53,7 @@ class MessageContextBuilder:
         self.diagnostics_target = diagnostics_target
 
     @classmethod
-    def init(cls, db_session: AsyncSession, config_manager: ConfigurationManager, diagnostics_target: Any):
+    def init(cls, db_session: AsyncSession, config_manager: ConfigurationManager, diagnostics_target: Any) -> Self:
         llm_service = LLMService(db_session)
         side_call_service = SideCallService(db_session, config_manager)
         return MessageContextBuilder(
@@ -170,7 +170,6 @@ class MessageContextBuilder:
             if not rows:
                 return [ChatMessage.from_message(m, []) for m in messages]
 
-            msg_by_id = {m.id: m for m in messages if getattr(m, "id", None)}
             msg_to_atts: dict[str, list[Any]] = {}
             for msg_id, att in rows:
                 if msg_id:
@@ -217,7 +216,8 @@ class MessageContextBuilder:
 
         return None
 
-    async def _get_rag_sections(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _get_rag_sections(  # noqa: PLR0912, PLR0915
         self,
         conversation: Conversation,
         user_message: str,
@@ -279,7 +279,7 @@ class MessageContextBuilder:
                 rag_rewrite_mode=rag_rewrite_mode,
             )
 
-        rewritten_query, rewrite_diagnostics, query_results = await execute_rag_queries(
+        _rewritten_query, rewrite_diagnostics, query_results = await execute_rag_queries(
             db_session=self.db_session,
             config_manager=self.config_manager,
             query_service=self.query_service,
@@ -439,7 +439,6 @@ class MessageContextBuilder:
             return "", []
 
         context_format = rag_config.get("context_format", "detailed")
-        include_references = rag_config.get("include_references", True)
 
         context_parts = []
         source_metadata = []
@@ -517,7 +516,8 @@ class MessageContextBuilder:
         # The decision to add system references will be made after getting the LLM response
         return rag_content, source_metadata
 
-    async def _post_process_references(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _post_process_references(  # noqa: PLR0912, PLR0915
         self,
         response_content: str,
         source_metadata: list[dict],

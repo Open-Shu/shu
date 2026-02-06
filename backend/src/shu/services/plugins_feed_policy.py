@@ -1,6 +1,6 @@
 """Feed op policy enforcement for plugin feeds.
 - Reads allowed_feed_ops and default_feed_op from registry manifest
-- Validates/sets params["op"] accordingly
+- Validates/sets params["op"] accordingly.
 """
 
 from __future__ import annotations

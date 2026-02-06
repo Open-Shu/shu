@@ -29,7 +29,7 @@ class ContextWindowManager:
             "{conversation_text}\n\nSummary:"
         ),
         token_estimator: Callable[[str], int] | None = None,
-    ):
+    ) -> None:
         self.llm_service = llm_service
         self.db_session = db_session
         self.config_manager = config_manager
@@ -57,9 +57,8 @@ class ContextWindowManager:
                 # Multimodal content - extract text from text parts
                 text_parts = []
                 for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text" or "text" in part:
-                            text_parts.append(part.get("text", ""))
+                    if isinstance(part, dict) and (part.get("type") == "text" or "text" in part):
+                        text_parts.append(part.get("text", ""))
                 return " ".join(text_parts)
             return ""
 

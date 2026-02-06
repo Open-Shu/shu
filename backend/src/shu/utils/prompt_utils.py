@@ -46,11 +46,7 @@ def has_citation_instructions(prompt_content: str) -> bool:
     ]
 
     # Check each pattern
-    for pattern in citation_patterns:
-        if re.search(pattern, prompt_content, flags=re.IGNORECASE | re.MULTILINE):
-            return True
-
-    return False
+    return any(re.search(pattern, prompt_content, flags=re.IGNORECASE | re.MULTILINE) for pattern in citation_patterns)
 
 
 def should_disable_system_references(prompt_content: str) -> bool:
@@ -86,7 +82,8 @@ def get_effective_reference_setting(kb_include_references: bool, prompt_content:
     return kb_include_references, "kb_setting"
 
 
-def analyze_response_references(response_content: str, available_sources: list = None) -> dict:
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def analyze_response_references(response_content: str, available_sources: list | None = None) -> dict:  # noqa: PLR0912
     """Analyze an LLM response to detect existing references and citation patterns.
 
     Args:

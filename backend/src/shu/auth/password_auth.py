@@ -19,23 +19,23 @@ logger = logging.getLogger(__name__)
 
 
 class PasswordAuthService:
-    """Service for password-based user authentication and management"""
+    """Service for password-based user authentication and management."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.settings = get_settings_instance()
         # Dummy hash for constant-time authentication (prevents timing attacks)
         # This is a bcrypt hash of "dummy_password_for_timing_attack_prevention"
         self._dummy_hash = "$2b$12$rQx8vQx8vQx8vQx8vQx8vOx8vQx8vQx8vQx8vQx8vQx8vQx8vQx8vQ"
 
     def _hash_password(self, password: str) -> str:
-        """Hash a password using bcrypt"""
+        """Hash a password using bcrypt."""
         # Generate salt and hash password
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode("utf-8"), salt)
         return password_hash.decode("utf-8")
 
     def _verify_password(self, password: str, password_hash: str) -> bool:
-        """Verify a password against its hash"""
+        """Verify a password against its hash."""
         return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
     async def create_user(
@@ -47,7 +47,7 @@ class PasswordAuthService:
         db: AsyncSession = None,
         admin_created: bool = False,
     ) -> User:
-        """Create a new user with password authentication"""
+        """Create a new user with password authentication."""
         # Check if user already exists
         stmt = select(User).where(User.email == email)
         result = await db.execute(stmt)
@@ -110,10 +110,7 @@ class PasswordAuthService:
 
         # Always perform password verification to prevent timing attacks
         # Use dummy hash if user doesn't exist or doesn't have password hash
-        if user and user.password_hash:
-            password_hash = user.password_hash
-        else:
-            password_hash = self._dummy_hash
+        password_hash = user.password_hash if user and user.password_hash else self._dummy_hash
 
         # Always perform bcrypt verification (constant time regardless of user existence)
         password_valid = self._verify_password(password, password_hash)
@@ -149,10 +146,7 @@ class PasswordAuthService:
         user = result.scalar_one_or_none()
 
         # Always perform password verification to prevent timing attacks
-        if user and user.password_hash:
-            password_hash = user.password_hash
-        else:
-            password_hash = self._dummy_hash
+        password_hash = user.password_hash if user and user.password_hash else self._dummy_hash
 
         # Always perform bcrypt verification (constant time)
         password_valid = self._verify_password(old_password, password_hash)
@@ -176,7 +170,7 @@ class PasswordAuthService:
         return True
 
     async def reset_password(self, email: str, new_password: str, db: AsyncSession) -> bool:
-        """Reset a user's password (admin function)"""
+        """Reset a user's password (admin function)."""
         # Find user
         stmt = select(User).where(User.email == email)
         result = await db.execute(stmt)

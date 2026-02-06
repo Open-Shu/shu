@@ -5,7 +5,7 @@ including CRUD operations, template validation, and required scopes computation.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 import yaml
@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 class ExperienceService:
     """Service for managing experiences and their execution."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         # Create sandboxed Jinja2 environment for template validation
         self._jinja_env = SandboxedEnvironment(
@@ -239,7 +239,8 @@ class ExperienceService:
 
         return self._experience_to_response(experience)
 
-    async def update_experience(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def update_experience(  # noqa: PLR0912
         self,
         experience_id: str,
         update_data: ExperienceUpdate,
@@ -276,9 +277,8 @@ class ExperienceService:
             self._validate_template_syntax(update_data.inline_prompt_template, "inline_prompt_template")
 
         # Validate model configuration if being updated (with user access check)
-        if update_data.model_configuration_id is not None:
-            if update_data.model_configuration_id:  # Not empty string or None
-                await self._validate_model_configuration(update_data.model_configuration_id, current_user)
+        if update_data.model_configuration_id is not None and update_data.model_configuration_id:
+            await self._validate_model_configuration(update_data.model_configuration_id, current_user)
 
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={"steps"})
@@ -477,7 +477,7 @@ class ExperienceService:
             "input": {},
             "steps": {},
             "previous_run": None,
-            "now": datetime.now(),
+            "now": datetime.now(UTC),
         }
 
     # =========================================================================
@@ -615,7 +615,7 @@ class ExperienceService:
         if step_data.step_type == StepType.PLUGIN and step_data.plugin_name:
             required_scopes = await self.compute_required_scopes_for_step(step_data.plugin_name, step_data.plugin_op)
 
-        step = ExperienceStep(
+        return ExperienceStep(
             id=str(uuid.uuid4()),
             experience_id=experience_id,
             order=step_data.order,
@@ -629,8 +629,6 @@ class ExperienceService:
             condition_template=step_data.condition_template,
             required_scopes=required_scopes,
         )
-
-        return step
 
     # =========================================================================
     # Run History
@@ -669,7 +667,7 @@ class ExperienceService:
         )
 
         # Fetch user info for all runs
-        user_ids = list(set(run.user_id for run in runs if run.user_id))
+        user_ids = list({run.user_id for run in runs if run.user_id})
         users_by_id = await self._fetch_users_by_ids(user_ids)
 
         items = [self._run_to_response(run, users_by_id.get(run.user_id)) for run in runs]
@@ -822,7 +820,7 @@ class ExperienceService:
     # Export Functionality
     # =========================================================================
 
-    def generate_safe_file_name(self, experience: ExperienceResponse):
+    def generate_safe_file_name(self, experience: ExperienceResponse) -> str:
         # Create filename based on experience name
         safe_name = "".join(c for c in experience.name if c.isalnum() or c in (" ", "-", "_")).rstrip()
         safe_name = "-".join(word for word in safe_name.split() if word)  # Handle multiple spaces
@@ -913,7 +911,7 @@ class ExperienceService:
 
         # Add header comment
         header = f"""# Experience Export: {experience.name}
-# Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+# Generated on: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}
 #
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)

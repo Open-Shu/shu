@@ -1,4 +1,4 @@
-"""Configuration API endpoints for Shu"""
+"""Configuration API endpoints for Shu."""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -67,7 +67,7 @@ async def get_setup_status(
     llm_providers_count = (
         select(func.count())
         .select_from(LLMProvider)
-        .where(LLMProvider.is_active == True)
+        .where(LLMProvider.is_active)
         .correlate(None)
         .scalar_subquery()
         .label("llm_providers")
@@ -76,7 +76,7 @@ async def get_setup_status(
     model_configs_count = (
         select(func.count())
         .select_from(ModelConfiguration)
-        .where(ModelConfiguration.is_active == True)
+        .where(ModelConfiguration.is_active)
         .correlate(None)
         .scalar_subquery()
         .label("model_configs")
@@ -91,7 +91,7 @@ async def get_setup_status(
     plugins_count = (
         select(func.count())
         .select_from(PluginDefinition)
-        .where(PluginDefinition.enabled == True)
+        .where(PluginDefinition.enabled)
         .correlate(None)
         .scalar_subquery()
         .label("plugins")

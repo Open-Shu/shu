@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 import certifi
@@ -22,7 +23,8 @@ class GoogleAuthAdapter(BaseAuthAdapter):
     step we can migrate logic into the adapter itself if needed.
     """
 
-    async def user_token(self, *, required_scopes: list[str] | None = None) -> str | None:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def user_token(self, *, required_scopes: list[str] | None = None) -> str | None:  # noqa: PLR0912, PLR0915
         """Fetch a Google user access token from ProviderCredential, refreshing via OAuth if needed.
         Returns None if no credential or required scopes are not granted.
         """
@@ -60,7 +62,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
 
             # Validate required scopes if provided
             try:
-                req = set([str(s) for s in (required_scopes or []) if s])
+                req = {str(s) for s in (required_scopes or []) if s}
                 granted_list = [str(s) for s in (getattr(row, "scopes", None) or []) if s]
                 granted = set(granted_list)
                 try:
@@ -93,8 +95,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             # If no refresh token, return current access token best-effort
             if not refresh_token:
                 try:
-                    token = row.get_access_token()
-                    return token
+                    return row.get_access_token()
                 except Exception:
                     return None
 
@@ -131,7 +132,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                     )
                     body_ti = ti.get("body") if isinstance(ti, dict) else None
                     scope_str = body_ti.get("scope") if isinstance(body_ti, dict) else None
-                    token_scopes = set([s for s in str(scope_str or "").split() if s])
+                    token_scopes = {s for s in str(scope_str or "").split() if s}
                     if token_scopes and not set(req_scopes_list).issubset(token_scopes):
                         return None
             except Exception:
@@ -219,8 +220,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         )
         if not resp.ok:
             raise RuntimeError(f"Provider token exchange failed: {resp.text[:300]}")
-        tok = resp.json() or {}
-        return tok
+        return resp.json() or {}
 
     async def status(self, *, user_id: str, db) -> dict[str, Any]:
         from sqlalchemy import and_, select  # type: ignore

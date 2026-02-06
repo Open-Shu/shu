@@ -1,4 +1,4 @@
-"""Shu - FastAPI Application
+"""Shu - FastAPI Application.
 
 This module creates and configures the FastAPI application for Shu.
 """
@@ -65,7 +65,7 @@ class StripAPITrailingSlashMiddleware(BaseHTTPMiddleware):
     so both '/foo' and '/foo/' resolve to the same handler without redirects.
     """
 
-    def __init__(self, app, api_prefix: str):
+    def __init__(self, app, api_prefix: str) -> None:
         super().__init__(app)
         self.api_prefix = api_prefix.rstrip("/")
 
@@ -143,8 +143,9 @@ def log_exception_details(exc: Exception, request: Request, error_id: str, inclu
         logger.error("Unhandled exception", extra=exception_details)
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     """Application lifespan manager."""
     # Setup logging first
     setup_logging()
@@ -266,14 +267,12 @@ async def lifespan(app: FastAPI):
             # Get queue backend (shared by all workers)
             backend = await get_queue_backend()
 
-
             # Configure worker to consume all workload types
             config = WorkerConfig(
                 workload_types=set(WorkloadType),
                 poll_interval=settings.worker_poll_interval,
                 shutdown_timeout=settings.worker_shutdown_timeout,
             )
-
 
             # Create N concurrent workers
             concurrency = max(1, settings.worker_concurrency)
@@ -282,8 +281,11 @@ async def lifespan(app: FastAPI):
             for i in range(concurrency):
                 worker_id = f"{i + 1}/{concurrency}"
                 worker = Worker(
-                    backend, config, job_handler=process_job,
-                    worker_id=worker_id, install_signal_handlers=False,
+                    backend,
+                    config,
+                    job_handler=process_job,
+                    worker_id=worker_id,
+                    install_signal_handlers=False,
                 )
 
                 async def run_inline_worker(w=worker, wid=worker_id):
@@ -295,9 +297,7 @@ async def lifespan(app: FastAPI):
                 task = asyncio.create_task(run_inline_worker())
                 app.state.inline_worker_tasks.append(task)
 
-            logger.info(
-                f"Inline workers started (concurrency={concurrency}, consuming all workload types)"
-            )
+            logger.info(f"Inline workers started (concurrency={concurrency}, consuming all workload types)")
         else:
             logger.info("Workers disabled (SHU_WORKERS_ENABLED=false), skipping inline worker startup")
     except Exception as e:
@@ -322,9 +322,9 @@ async def lifespan(app: FastAPI):
 
     # Cancel and await background schedulers for clean shutdown
     task_attrs = [
-        ('attachments_cleanup', 'attachments_cleanup_task'),
-        ('plugins_scheduler', 'plugins_scheduler_task'),
-        ('experiences_scheduler', 'experiences_scheduler_task'),
+        ("attachments_cleanup", "attachments_cleanup_task"),
+        ("plugins_scheduler", "plugins_scheduler_task"),
+        ("experiences_scheduler", "experiences_scheduler_task"),
     ]
     tasks_to_cancel = []
     for name, attr in task_attrs:
@@ -333,15 +333,14 @@ async def lifespan(app: FastAPI):
             tasks_to_cancel.append((name, task))
 
     # Add inline worker tasks (list of concurrent workers)
-    inline_worker_tasks = getattr(app.state, 'inline_worker_tasks', [])
+    inline_worker_tasks = getattr(app.state, "inline_worker_tasks", [])
     for i, task in enumerate(inline_worker_tasks):
         if task and not task.done():
-            tasks_to_cancel.append((f'inline_worker_{i + 1}', task))
+            tasks_to_cancel.append((f"inline_worker_{i + 1}", task))
 
     # Cancel all tasks
-    for name, task in tasks_to_cancel:
+    for _, task in tasks_to_cancel:
         task.cancel()
-
 
     # Wait for all tasks to complete cancellation
     if tasks_to_cancel:
@@ -732,7 +731,7 @@ def setup_routes(app: FastAPI) -> None:
             side_call_router.prefix,
         ]
         base = settings.api_v1_prefix.rstrip("/")
-        app.state.api_root_paths = set(base + p for p in router_prefixes)
+        app.state.api_root_paths = {base + p for p in router_prefixes}
         logger.info("Registered API router roots", extra={"api_root_paths": list(app.state.api_root_paths)})
     except Exception as e:
         logger.warning(f"Failed to compute API root paths: {e}")

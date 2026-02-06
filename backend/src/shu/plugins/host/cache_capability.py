@@ -69,7 +69,7 @@ class CacheCapability(ImmutableCapabilityMixin):
         plugin_name: str,
         user_id: str,
         backend: CacheBackend | None = None,
-    ):
+    ) -> None:
         """Initialize the cache capability.
 
         Args:
@@ -108,14 +108,12 @@ class CacheCapability(ImmutableCapabilityMixin):
             object.__setattr__(self, "_backend", backend)
         return self._backend
 
-    async def _serialize_and_set(
-        self, namespaced_key: str, value: Any, ttl_seconds: int
-    ) -> None:
+    async def _serialize_and_set(self, namespaced_key: str, value: Any, ttl_seconds: int) -> None:
         """Serialize value and write to cache backend.
-        
+
         This is the shared implementation for set() and set_safe().
         Exceptions are not caught here - callers handle errors differently.
-        
+
         Args:
             namespaced_key: The fully namespaced cache key.
             value: The value to store (must be JSON-serializable).
@@ -265,7 +263,7 @@ class CacheCapability(ImmutableCapabilityMixin):
                     "user_id": self._user_id,
                     "key": key,
                     "error": str(e),
-                }
+                },
             )
             return False
 
@@ -297,6 +295,6 @@ class CacheCapability(ImmutableCapabilityMixin):
                     "user_id": self._user_id,
                     "key": key,
                     "error": str(e),
-                }
+                },
             )
             return False

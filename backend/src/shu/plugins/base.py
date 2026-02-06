@@ -25,11 +25,11 @@ class PluginResult(BaseModel):
     citations: list[dict[str, Any]] | None = None
 
     @classmethod
-    def ok(cls, data: dict[str, Any] | None = None, warnings: list[str] | None = None):
+    def ok(cls, data: dict[str, Any] | None = None, warnings: list[str] | None = None) -> PluginResult:
         return cls(status="success", data=data or {}, warnings=warnings)
 
     @classmethod
-    def err(cls, message: str, code: str = "", details: dict[str, Any] | None = None):
+    def err(cls, message: str, code: str = "", details: dict[str, Any] | None = None) -> PluginResult:
         return cls(
             status="error",
             error={"code": code or "plugin_error", "message": message, "details": details or {}},

@@ -19,7 +19,7 @@ class RAGServiceManager:
     Replaces the problematic singleton pattern with proper lifecycle management.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._instances: dict[str, dict] = {}  # key -> {instance, last_used, created_at}
         self._executor: ThreadPoolExecutor | None = None
         self._cache_ttl = 3600  # 1 hour TTL for unused instances
@@ -66,8 +66,7 @@ class RAGServiceManager:
             settings = get_settings_instance()
             embedding_threads = max(1, int(getattr(settings, "embedding_threads", 4)))
             self._executor = ThreadPoolExecutor(
-                max_workers=embedding_threads,
-                thread_name_prefix="rag-embedding-worker"
+                max_workers=embedding_threads, thread_name_prefix="rag-embedding-worker"
             )
             logger.debug(f"Created new ThreadPoolExecutor for RAG processing (threads={embedding_threads})")
         return self._executor
@@ -149,7 +148,7 @@ class RAGProcessingService:
     No longer uses singleton pattern - managed by RAGServiceManager.
     """
 
-    def __init__(self, embedding_model: str, device: str, executor: ThreadPoolExecutor):
+    def __init__(self, embedding_model: str, device: str, executor: ThreadPoolExecutor) -> None:
         """Initialize RAGProcessingService with specified model and device."""
         settings = get_settings_instance()
 
@@ -218,7 +217,7 @@ class RAGProcessingService:
         knowledge_base: KnowledgeBase,
         text: str,
         document_title: str | None = None,
-        config_manager: Optional["ConfigurationManager"] = None,
+        config_manager: Optional["ConfigurationManager"] = None,  # noqa: F821 # indirect typing is fine here for now
     ) -> list[DocumentChunk]:
         """Chunk the document text and generate embeddings for each chunk.
         Returns a list of DocumentChunk objects (not yet added to DB).
@@ -233,12 +232,7 @@ class RAGProcessingService:
         embedding_model = str(knowledge_base.embedding_model or settings.default_embedding_model)
 
         # Get title configuration
-        if config_manager is not None:
-            # Use injected configuration manager (preferred)
-            configuration_manager = config_manager
-        else:
-            # Fall back to singleton pattern for backward compatibility
-            configuration_manager = get_config_manager()
+        configuration_manager = config_manager if config_manager is not None else get_config_manager()
 
         kb_config = knowledge_base.get_rag_config()
         title_chunk_enabled = configuration_manager.get_title_chunk_enabled(kb_config=kb_config)

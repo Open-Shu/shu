@@ -19,7 +19,7 @@ class TokenBucketLimiter:
     Uses the same fixed-window algorithm as core rate limiting for consistency.
     """
 
-    def __init__(self, *, namespace: str = "rl:plugin", capacity: int, refill_per_second: int):
+    def __init__(self, *, namespace: str = "rl:plugin", capacity: int, refill_per_second: int) -> None:
         self.namespace = namespace
         self.capacity = max(1, int(capacity))
         self.refill_per_second = max(1, int(refill_per_second))

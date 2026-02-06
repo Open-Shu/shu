@@ -13,7 +13,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from importlib.abc import MetaPathFinder
-from typing import Any
+from typing import Any, ClassVar, Self
 
 from fastapi import HTTPException
 
@@ -46,14 +46,14 @@ _TRUSTED_MODULE_PREFIXES = (
 
 def _is_called_from_trusted_code(frame_offset: int = 2) -> bool:
     """Check if the import is being called from trusted host code.
-    
+
     Walks the call stack to find the module that initiated the import.
     If any frame in the stack is from a trusted module prefix, allow the import.
-    
+
     Args:
         frame_offset: Number of frames to skip from the current frame.
             Default is 2 (skip this function and the immediate caller).
-    
+
     Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
     Short-circuits as soon as a trusted frame is found.
 
@@ -93,9 +93,9 @@ class _DenyImportsFinder(MetaPathFinder):
     """
 
     # Deny direct HTTP clients from plugins at runtime.
-    deny_always = {"requests", "httpx", "urllib3", "urllib.request"}
+    deny_always: ClassVar[set[str]] = {"requests", "httpx", "urllib3", "urllib.request"}
     # Deny shu.* imports only from untrusted (plugin) code
-    deny_from_plugins = {"shu"}
+    deny_from_plugins: ClassVar[set[str]] = {"shu"}
 
     def find_spec(self, fullname, path, target=None):  # type: ignore[override]
         # Block exact and submodule imports under denylisted packages
@@ -108,14 +108,10 @@ class _DenyImportsFinder(MetaPathFinder):
 
         # Block shu.* imports only from plugin code, not from trusted host code
         for p in self.deny_from_plugins:
-            if name == p or name.startswith(p + "."):
-                # frame_offset=2: Frame 0 is _is_called_from_trusted_code, Frame 1 is find_spec,
-                # Frame 2 is the actual caller where we start walking the stack
-                if not _is_called_from_trusted_code(frame_offset=2):
-                    raise ImportError(
-                        f"Import of '{fullname}' is denied by host policy. Use host.http instead."
-                    )
-
+            # frame_offset=2: Frame 0 is _is_called_from_trusted_code, Frame 1 is find_spec,
+            # Frame 2 is the actual caller where we start walking the stack
+            if (name == p or name.startswith(p + ".")) and not _is_called_from_trusted_code(frame_offset=2):
+                raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
 
 
 class _DenyHttpImportsCtx:
@@ -127,7 +123,7 @@ class _DenyHttpImportsCtx:
     blocked regardless of caller.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._finder: _DenyImportsFinder | None = None
         self._orig_import_module = None
 
@@ -149,14 +145,13 @@ class _DenyHttpImportsCtx:
 
         # Deny shu.* only from plugin code
         for p in _DenyImportsFinder.deny_from_plugins:
-            if n == p or n.startswith(p + "."):
-                # frame_offset=3: skip _is_denied -> _is_called_from_trusted_code -> sys._getframe
-                if not _is_called_from_trusted_code(frame_offset=3):
-                    return True
+            # frame_offset=3: skip _is_denied -> _is_called_from_trusted_code -> sys._getframe
+            if (n == p or n.startswith(p + ".")) and not _is_called_from_trusted_code(frame_offset=3):
+                return True
 
         return False
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self._finder = _DenyImportsFinder()
         sys.meta_path.insert(0, self._finder)
         # Patch importlib.import_module to catch explicit dynamic imports
@@ -176,7 +171,7 @@ class _DenyHttpImportsCtx:
             self._orig_import_module = None
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type, exc, tb) -> bool:
         try:
             # Restore importlib.import_module
             if self._orig_import_module is not None:
@@ -197,7 +192,7 @@ class _DenyHttpImportsCtx:
 
 
 class Executor:
-    def __init__(self, settings: Any | None = None):
+    def __init__(self, settings: Any | None = None) -> None:
         """Initialize executor rate limiters from configuration.
 
         If rate limiting is enabled in settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")
@@ -445,7 +440,8 @@ class Executor:
         except Exception:
             pass
 
-    async def execute(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def execute(  # noqa: PLR0912, PLR0915
         self,
         *,
         plugin: Plugin,
@@ -651,10 +647,10 @@ class Executor:
                 capabilities = list(getattr(plugin, "_capabilities", []) or [])
             except Exception:
                 capabilities = []
-            
+
             # Get staging_ttl from settings for file staging configuration
             staging_ttl = getattr(self._settings, "file_staging_ttl", None)
-            
+
             host = make_host(
                 plugin_name=plugin.name,
                 user_id=user_id,
@@ -693,9 +689,11 @@ class Executor:
                         if e.retry_after_seconds is not None:
                             details["retry_after_seconds"] = e.retry_after_seconds
                         return PluginResult.err(
-                            message=f"Provider HTTP error ({e.status_code}): {e.provider_message}" if e.provider_message else f"Provider HTTP error ({e.status_code})",
+                            message=f"Provider HTTP error ({e.status_code}): {e.provider_message}"
+                            if e.provider_message
+                            else f"Provider HTTP error ({e.status_code})",
                             code=e.error_category,
-                            details=details
+                            details=details,
                         )
                     logger.exception("Plugin '%s' failed: %s", plugin.name, e)
                     return PluginResult.err(message=str(e), code="plugin_execute_error")

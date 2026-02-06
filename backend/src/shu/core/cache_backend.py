@@ -72,7 +72,7 @@ class CacheError(Exception):
         self,
         message: str,
         details: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.message = message
         self.details = details or {}
         super().__init__(self.message)
@@ -439,7 +439,7 @@ class InMemoryCacheBackend:
 
     """
 
-    def __init__(self, cleanup_interval_seconds: int = 60):
+    def __init__(self, cleanup_interval_seconds: int = 60) -> None:
         """Initialize the in-memory cache.
 
         Args:
@@ -909,7 +909,7 @@ class RedisCacheBackend:
 
     """
 
-    def __init__(self, redis_client: Any, redis_binary_client: Any | None = None):
+    def __init__(self, redis_client: Any, redis_binary_client: Any | None = None) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -943,8 +943,7 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
-            result = await self._client.get(key)
-            return result
+            return await self._client.get(key)
         except Exception as e:
             logger.error(f"Redis GET failed for key '{key}': {e}")
             raise CacheConnectionError(
@@ -1215,8 +1214,7 @@ class RedisCacheBackend:
             )
 
         try:
-            result = await self._binary_client.get(key)
-            return result
+            return await self._binary_client.get(key)
         except Exception as e:
             logger.error(f"Redis GET (binary) failed for key '{key}': {e}")
             raise CacheConnectionError(
@@ -1391,7 +1389,7 @@ async def _get_redis_client() -> Any:
         CacheConnectionError: If Redis connection fails.
 
     """
-    global _redis_client
+    global _redis_client  # noqa: PLW0603
 
     if _redis_client is None:
         _redis_client = await _create_redis_client()
@@ -1411,7 +1409,7 @@ async def _get_redis_binary_client() -> Any:
         CacheConnectionError: If Redis connection fails.
 
     """
-    global _redis_binary_client
+    global _redis_binary_client  # noqa: PLW0603 # this works for now, we'll leave it
 
     if _redis_binary_client is None:
         _redis_binary_client = await _create_redis_binary_client()
@@ -1447,7 +1445,7 @@ async def get_cache_backend() -> CacheBackend:
         await backend.set("key", "value", ttl_seconds=300)
 
     """
-    global _cache_backend
+    global _cache_backend  # noqa: PLW0603
 
     if _cache_backend is not None:
         return _cache_backend
@@ -1456,15 +1454,13 @@ async def get_cache_backend() -> CacheBackend:
 
     settings = get_settings_instance()
 
-    # Check if Redis URL is configured
+    # Check if Redis URL is configured and check if this is a default/unconfigured value
+    # If redis_required is False and no explicit URL, use in-memory
     redis_url = settings.redis_url
-    if not redis_url or redis_url == "redis://localhost:6379":
-        # Check if this is a default/unconfigured value
-        # If redis_required is False and no explicit URL, use in-memory
-        if not settings.redis_required:
-            logger.info("No Redis URL configured, using InMemoryCacheBackend")
-            _cache_backend = InMemoryCacheBackend()
-            return _cache_backend
+    if (not redis_url or redis_url == "redis://localhost:6379") and not settings.redis_required:
+        logger.info("No Redis URL configured, using InMemoryCacheBackend")
+        _cache_backend = InMemoryCacheBackend()
+        return _cache_backend
 
     # Try to connect to Redis
     try:
@@ -1538,16 +1534,9 @@ def get_cache_backend_dependency() -> CacheBackend:
         A CacheBackend instance.
 
     """
-    # For dependency injection, we return a fresh instance
-    # This allows for easier testing and follows DEVELOPMENT_STANDARDS.md
-    # The actual backend selection happens based on settings
-    from .config import get_settings_instance
-
-    settings = get_settings_instance()
-
     # For synchronous dependency injection, we can't await Redis connection
     # So we check if we already have a cached backend
-    global _cache_backend
+    global _cache_backend  # noqa: PLW0602
 
     if _cache_backend is not None:
         return _cache_backend
@@ -1583,7 +1572,7 @@ def reset_cache_backend() -> None:
     This function is intended for use in tests to reset the global state
     between test cases.
     """
-    global _cache_backend, _redis_client, _redis_binary_client
+    global _cache_backend, _redis_client, _redis_binary_client  # noqa: PLW0603
     _cache_backend = None
     _redis_client = None
     _redis_binary_client = None

@@ -7,7 +7,7 @@ not exposed in production environments.
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -83,7 +83,7 @@ class ErrorSanitizer:
     """
 
     # Error guidance messages for common HTTP status codes
-    ERROR_GUIDANCE: dict[int, dict[str, Any]] = {
+    ERROR_GUIDANCE: ClassVar[dict[int, dict[str, Any]]] = {
         400: {
             "message": "The request was invalid or malformed",
             "suggestions": [
@@ -371,10 +371,7 @@ class ErrorSanitizer:
         suggestions = list(guidance.get("suggestions", []))
 
         # Always sanitize the provider message
-        if provider_message:
-            message = cls.sanitize_string(provider_message)
-        else:
-            message = default_message
+        message = cls.sanitize_string(provider_message) if provider_message else default_message
 
         # No details dict in any environment for security
         details: dict[str, Any] | None = None

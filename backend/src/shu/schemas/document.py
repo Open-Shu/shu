@@ -94,6 +94,8 @@ class DocumentResponse(BaseModel):
     extraction_metadata: dict[str, Any] | None = Field(None, description="Detailed extraction information")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -126,6 +128,8 @@ class DocumentSummary(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -160,6 +164,8 @@ class DocumentChunkResponse(DocumentChunkBase):
     created_at: datetime = Field(..., description="Creation timestamp")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 

@@ -93,7 +93,7 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
     try:
         # Get the queue backend
         backend = await get_queue_backend()
-        
+
         # Enqueue profiling job with PROFILING WorkloadType
         # Use higher max_attempts and longer visibility_timeout for LLM calls
         job = await enqueue_job(
@@ -106,14 +106,14 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
             max_attempts=5,  # Retry up to 5 times for transient failures
             visibility_timeout=600,  # 10 minutes for LLM API calls
         )
-        
+
         logger.info(
             "Document profiling job enqueued",
             extra={
                 "document_id": document_id,
                 "job_id": job.id,
                 "queue_name": job.queue_name,
-            }
+            },
         )
     except Exception as e:
         # Log error but don't fail ingestion if profiling enqueue fails
@@ -239,14 +239,11 @@ def _check_skip(
 
     # Check hash match - prefer source_hash, fall back to content_hash
     hash_matches = False
-    matched_hash = ""
 
     if source_hash and existing.source_hash:
         hash_matches = source_hash == existing.source_hash
-        matched_hash = source_hash
     elif existing.content_hash:
         hash_matches = content_hash == existing.content_hash
-        matched_hash = content_hash
 
     # Only skip if hash matches AND document is in terminal successful state
     if hash_matches and existing.is_processed:
@@ -264,15 +261,14 @@ def _check_skip(
     return None
 
 
-async def _enqueue_embed_job(
-    queue: "QueueBackend", document_id: str, knowledge_base_id: str
-) -> None:
+async def _enqueue_embed_job(queue: QueueBackend, document_id: str, knowledge_base_id: str) -> None:
     """Enqueue an embedding job for a document.
 
     Args:
         queue: QueueBackend instance
         document_id: Document ID to embed
         knowledge_base_id: Knowledge base ID
+
     """
     from ..core.workload_routing import WorkloadType, enqueue_job
 
@@ -405,7 +401,8 @@ async def _upsert_document_record(
     return UpsertResult(document=document, extraction=extraction_data, skipped=False)
 
 
-async def ingest_document(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_document(  # noqa: PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,
@@ -443,6 +440,7 @@ async def ingest_document(
         attributes: Optional additional attributes.
         ocr_mode: Optional OCR mode override.
         staging_ttl: Optional TTL for staged files (defaults to settings.file_staging_ttl).
+
     """
     from ..core.cache_backend import get_cache_backend
     from ..core.queue_backend import get_queue_backend
@@ -537,7 +535,9 @@ async def ingest_document(
     staging_service = None
     try:
         cache = await get_cache_backend()
-        staging_service = FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
+        staging_service = (
+            FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
+        )
         staging_key = await staging_service.stage_file(document.id, file_bytes)
 
         # Enqueue OCR job
@@ -713,7 +713,8 @@ async def ingest_email(
     }
 
 
-async def ingest_text(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_text(  # noqa: PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,
@@ -859,7 +860,8 @@ async def ingest_text(
     }
 
 
-async def ingest_thread(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_thread(  # noqa: PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,

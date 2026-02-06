@@ -13,8 +13,11 @@ import sys
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, ClassVar
 
 from .config import get_settings_instance
+
+logger = logging.getLogger(__name__)
 
 # Internal guard to prevent double configuration when setup_logging() is called
 # both at import-time and again during lifespan startup
@@ -48,11 +51,11 @@ def rotate_log_file(log_file_path: str, max_archives: int = 10) -> None:
         cleanup_old_log_archives(log_path.parent, log_path.stem, max_archives)
 
         # Log the rotation (this will go to console since file handler isn't set up yet)
-        print(f"Log file rotated: {log_path.name} -> {archive_name}")
+        logger.info("Log file rotated: %s -> %s", log_path.name, archive_name)
 
     except Exception as e:
         # If rotation fails, just log the error but don't fail startup
-        print(f"Failed to rotate log file {log_path.name}: {e}")
+        logger.error("Failed to rotate log file %s: %s", log_path.name, e)
 
 
 def cleanup_old_log_archives(log_dir: Path, log_stem: str, max_archives: int) -> None:
@@ -78,19 +81,19 @@ def cleanup_old_log_archives(log_dir: Path, log_stem: str, max_archives: int) ->
             for file_path in files_to_remove:
                 try:
                     file_path.unlink()
-                    print(f"Removed old log archive: {file_path.name}")
+                    logger.info("Removed old log archive: %s", file_path.name)
                 except Exception as e:
-                    print(f"Failed to remove old log archive {file_path.name}: {e}")
+                    logger.error("Failed to remove old log archive %s: %s", file_path.name, e)
 
     except Exception as e:
-        print(f"Failed to cleanup old log archives: {e}")
+        logger.error("Failed to cleanup old log archives: %s", e)
 
 
 class ColoredFormatter(logging.Formatter):
     """Custom colored formatter for human-readable logs with proper alignment."""
 
     # Color codes for different log levels
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",  # Cyan
         "INFO": "\033[32m",  # Green
         "WARNING": "\033[33m",  # Yellow
@@ -99,7 +102,7 @@ class ColoredFormatter(logging.Formatter):
         "RESET": "\033[0m",  # Reset
     }
 
-    def __init__(self, use_colors: bool = True):
+    def __init__(self, use_colors: bool = True) -> None:
         super().__init__()
         self.use_colors = use_colors and sys.stdout.isatty()
 
@@ -110,10 +113,7 @@ class ColoredFormatter(logging.Formatter):
         reset_color = self.COLORS["RESET"] if self.use_colors else ""
 
         # Format timestamp
-        timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
-
-        # Format log level with fixed width
-        level_name = f"{record.levelname:8}"
+        timestamp = datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%d %H:%M:%S")
 
         # Format logger name with fixed width (truncate if too long)
         logger_name = record.name
@@ -127,7 +127,7 @@ class ColoredFormatter(logging.Formatter):
         # Add extra fields if present (but not too verbose)
         extra_fields = []
         for key, value in record.__dict__.items():
-            if (
+            if (  # noqa: SIM102 # we'll need to fix this at some point, limiting  bugs for now
                 key
                 not in [
                     "name",
@@ -243,9 +243,10 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-def setup_logging() -> None:
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def setup_logging() -> None:  # noqa: PLR0915
     """Set up logging configuration with improved readability."""
-    global _LOGGING_CONFIGURED
+    global _LOGGING_CONFIGURED  # noqa: PLW0603 # it's working, so we will leave it as is for now
     if _LOGGING_CONFIGURED:
         return
 
@@ -259,10 +260,7 @@ def setup_logging() -> None:
     use_colors = settings.environment == "development" and sys.stdout.isatty()
 
     # Create formatter based on settings
-    if settings.log_format == "json":
-        formatter = JSONFormatter()
-    else:
-        formatter = ColoredFormatter(use_colors=use_colors)
+    formatter = JSONFormatter() if settings.log_format == "json" else ColoredFormatter(use_colors=use_colors)
 
     # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
@@ -415,9 +413,9 @@ class LoggerMixin:
 
 
 def log_function_call(func):
-    """Decorator to log function calls at DEBUG level."""
+    """Log function calls at DEBUG level decorator."""
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any):
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling {func.__name__}",
@@ -446,9 +444,9 @@ def log_function_call(func):
 
 
 def log_async_function_call(func):
-    """Decorator to log async function calls at DEBUG level."""
+    """Log async function calls at DEBUG level decorator."""
 
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any):
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling async {func.__name__}",

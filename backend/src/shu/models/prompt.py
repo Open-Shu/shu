@@ -54,17 +54,18 @@ class Prompt(BaseModel):
     assignments = relationship("PromptAssignment", back_populates="prompt", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Prompt(id={self.id}, name='{self.name}', entity_type='{self.entity_type}')>"
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this prompt."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this prompt."""
         self.is_active = False
 
-    def increment_version(self):
+    def increment_version(self) -> None:
         """Increment the version number."""
         self.version += 1
 
@@ -95,13 +96,14 @@ class PromptAssignment(Base, UUIDMixin):
     prompt = relationship("Prompt", back_populates="assignments")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<PromptAssignment(prompt_id={self.prompt_id}, entity_id={self.entity_id})>"
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this assignment."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this assignment."""
         self.is_active = False
 

@@ -1,4 +1,4 @@
-"""RBAC (Role-Based Access Control) Schemas
+"""RBAC (Role-Based Access Control) Schemas.
 
 This module contains Pydantic schemas for RBAC operations including
 user groups, permissions, and access control management.
@@ -44,6 +44,8 @@ class UserGroupResponse(UserGroupBase):
     member_count: int | None = Field(None, description="Number of members in the group")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -83,6 +85,8 @@ class UserGroupMembershipResponse(UserGroupMembershipBase):
     group_name: str | None = Field(None, description="Group name")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -139,6 +143,8 @@ class KnowledgeBasePermissionResponse(KnowledgeBasePermissionBase):
     granter_name: str | None = Field(None, description="Name of user who granted permission")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 

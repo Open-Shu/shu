@@ -61,7 +61,7 @@ class QueueError(Exception):
         self,
         message: str,
         details: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.message = message
         self.details = details or {}
         super().__init__(self.message)
@@ -573,7 +573,7 @@ class InMemoryQueueBackend:
 
     """
 
-    def __init__(self, cleanup_interval_seconds: int = 60):
+    def __init__(self, cleanup_interval_seconds: int = 60) -> None:
         """Initialize the in-memory queue backend.
 
         Args:
@@ -1070,7 +1070,7 @@ class RedisQueueBackend:
 
     """
 
-    def __init__(self, redis_client: Any):
+    def __init__(self, redis_client: Any) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -1536,8 +1536,7 @@ class RedisQueueBackend:
             await self._restore_expired_jobs(queue_name)
             await self._move_scheduled_jobs(queue_name)
 
-            length = await self._client.llen(queue_key)
-            return length
+            return await self._client.llen(queue_key)
 
         except Exception as e:
             logger.error(
@@ -1673,7 +1672,7 @@ async def get_queue_backend() -> QueueBackend:
         await backend.enqueue(job)
 
     """
-    global _queue_backend
+    global _queue_backend  # noqa: PLW0603 # works for now
 
     if _queue_backend is not None:
         return _queue_backend
@@ -1684,7 +1683,7 @@ async def get_queue_backend() -> QueueBackend:
 
     # Check if Redis URL is configured
     redis_url = settings.redis_url
-    if not redis_url or redis_url == "redis://localhost:6379":
+    if not redis_url or redis_url == "redis://localhost:6379":  # noqa: SIM102
         # Check if this is a default/unconfigured value
         # If redis_required is False and no explicit URL, use in-memory
         if not settings.redis_required:
@@ -1755,7 +1754,7 @@ def get_queue_backend_dependency() -> QueueBackend:
     """
     # For dependency injection, we check if we already have a cached backend
     # This allows for easier testing and follows DEVELOPMENT_STANDARDS.md
-    global _queue_backend
+    global _queue_backend  # noqa: PLW0602 # works for now
 
     if _queue_backend is not None:
         return _queue_backend
@@ -1794,5 +1793,5 @@ def reset_queue_backend() -> None:
     Note: This does NOT reset the shared Redis client from cache_backend.
     Use cache_backend.reset_cache_backend() if you need to reset that too.
     """
-    global _queue_backend
+    global _queue_backend  # noqa: PLW0603 # works for now
     _queue_backend = None

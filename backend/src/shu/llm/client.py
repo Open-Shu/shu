@@ -125,7 +125,7 @@ class RetryState:
         # Check if error is non-retryable
         if isinstance(error, httpx.HTTPStatusError):
             status_code = error.response.status_code if error.response else None
-            if status_code:
+            if status_code:  # noqa: SIM102
                 # Non-retryable 4xx errors (except 429 rate limit)
                 if 400 <= status_code < 500 and status_code != 429:
                     return False
@@ -152,7 +152,7 @@ class LLMResponse:
         provider: str,
         usage: dict[str, int],
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.content = content
         self.model = model
         self.provider = provider
@@ -181,7 +181,7 @@ class UnifiedLLMClient:
         provider: LLMProvider,
         conversation_owner_id: str | None = None,
         settings: Any | None = None,
-    ):
+    ) -> None:
         self.provider = provider
         self.conversation_owner_id = conversation_owner_id
         self.db_session = db_session
@@ -251,7 +251,7 @@ class UnifiedLLMClient:
         try:
             fmt_kwargs = self.provider_adapter.inject_override_parameters(fmt_kwargs)
         except Exception:
-            fmt_kwargs = fmt_kwargs
+            pass
 
         if isinstance(candidate, str) and fmt_kwargs:
             try:
@@ -268,10 +268,7 @@ class UnifiedLLMClient:
         Connect/write/pool use the caller-provided timeout (or fall back to global defaults).
         """
         base_timeout = request_timeout or self._llm_timeout
-        if stream:
-            read_timeout = max(request_timeout or 0.0, self._llm_stream_read_timeout)
-        else:
-            read_timeout = base_timeout
+        read_timeout = max(request_timeout or 0.0, self._llm_stream_read_timeout) if stream else base_timeout
 
         return httpx.Timeout(
             connect=base_timeout,
@@ -434,7 +431,8 @@ class UnifiedLLMClient:
 
         return await self.provider_adapter.handle_provider_completion(response_data)
 
-    async def _stream_response(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _stream_response(  # noqa: PLR0912, PLR0915
         self,
         payload: dict[str, Any],
         model: str,
@@ -590,7 +588,7 @@ class UnifiedLLMClient:
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate exponential backoff delay with decorrelated jitter."""
         exponential = min(self._retry_base_delay * (2**attempt), self._retry_max_delay)
-        return exponential + random.uniform(0, self._retry_base_delay)
+        return exponential + random.uniform(0, self._retry_base_delay)  # noqa: S311 # not cryptographic use
 
     def _stringify_error_body(self, body: Any) -> str:
         """Convert provider error body to a compact string for logging."""
@@ -993,7 +991,7 @@ class UnifiedLLMClient:
 
         return gen()
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
 
@@ -1010,4 +1008,5 @@ class UnifiedLLMClient:
         return str(content)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UnifiedLLMClient(provider='{self.provider.name}', type='{self.provider.provider_type}')>"

@@ -151,7 +151,7 @@ class LLMModelResponse(BaseModel):
 
 # Helper function to convert database model to response model
 def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LLMProviderResponse:
-    """Builds an LLMProviderResponse from a LLMProvider database model.
+    """Build a LLMProviderResponse from a LLMProvider database model.
 
     Parameters
     ----------
@@ -353,7 +353,7 @@ async def discover_provider_models(
 @router.post("/providers/{provider_id}/sync-models")
 async def sync_provider_models(
     provider_id: str,
-    selected_models: list[str] = None,
+    selected_models: list[str] | None = None,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

@@ -26,7 +26,7 @@ from ..adapter_base import (
 class ResponsesAdapter(BaseProviderAdapter):
     """Base adapter for providers implementing the OpenAI Responses API contract."""
 
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         super().__init__(context)
         self.function_call_messages: list[dict[str, Any]] = []
         self.function_call_reasoning_messages: list[dict[str, Any]] = []
@@ -77,7 +77,7 @@ class ResponsesAdapter(BaseProviderAdapter):
 
         return ToolCallInstructions(plugin_name=plugin_name, operation=op, args_dict=args_dict)
 
-    def _extract_usage(self, path: str, chunk):
+    def _extract_usage(self, path: str, chunk) -> None:
         usage = jmespath.search(path, chunk) or {}
         if not usage:
             return
@@ -122,7 +122,7 @@ class ResponsesAdapter(BaseProviderAdapter):
 
         return parts
 
-    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         incomplete_response = jmespath.search(
             "type=='response.incomplete' && response.incomplete_details.reason", chunk
         )
@@ -161,6 +161,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         final_message = jmespath.search("type=='response.completed' && response.output[-1].content[-1].text", chunk)
         if final_message:
             return ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})
+        return None
 
     async def finalize_provider_events(self) -> list[ProviderEventResult]:
         if not self.function_call_messages:
@@ -246,12 +247,9 @@ class ResponsesAdapter(BaseProviderAdapter):
             for msg in (function_call_reasoning_messages + function_call_messages)
         ] + result_messages
         return [
-            ProviderToolCallEventResult(
-                tool_calls=tool_calls,
-                additional_messages=additional_messages,
-                content="",
-            )
-        ] + final_messages
+            ProviderToolCallEventResult(tool_calls=tool_calls, additional_messages=additional_messages, content=""),
+            *final_messages,
+        ]
 
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         res: list[dict[str, Any]] = []

@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class ExperiencesSchedulerService:
     """Service for scheduling and executing due experiences."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.settings = get_settings_instance()
 
@@ -280,7 +280,7 @@ async def start_experiences_scheduler():
         batch,
     )
 
-    async def _runner():
+    async def _runner() -> None:
         while True:
             try:
                 db = await get_db_session()

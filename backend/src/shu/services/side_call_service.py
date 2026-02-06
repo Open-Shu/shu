@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -41,7 +41,7 @@ class SideCallResult:
         cost: Decimal | None = None,
         response_time_ms: int | None = None,
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.content = content
         self.success = success
         self.error_message = error_message
@@ -54,7 +54,7 @@ class SideCallResult:
 class SideCallService:
     """Service for managing optimized LLM side-calls."""
 
-    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager) -> None:
         self.db = db
         self.config_manager = config_manager
         self.llm_service = LLMService(db)
@@ -375,7 +375,7 @@ class SideCallService:
                 {
                     "model_config_id": model_config_id,
                     "updated_by": user_id,
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 },
             )
 
@@ -479,7 +479,7 @@ class SideCallService:
                 return model
 
         raise LLMProviderError(
-            f"Model '{model_config.model_name}' not found or inactive " f"for provider '{provider.name}'"
+            f"Model '{model_config.model_name}' not found or inactive for provider '{provider.name}'"
         )
 
     async def _build_sequence_messages(

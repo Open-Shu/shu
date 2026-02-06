@@ -13,7 +13,7 @@ class BaseAuthAdapter:
     its HTTP helpers, settings, encryption, and caches without duplicating logic.
     """
 
-    def __init__(self, auth_capability: Any):
+    def __init__(self, auth_capability: Any) -> None:
         self._auth = auth_capability
 
     # -- Used by AuthCapability today --
@@ -38,7 +38,7 @@ class BaseAuthAdapter:
     # -- Status/Disconnect hooks for endpoint abstraction --
     async def status(self, *, user_id: str, db) -> dict[str, Any]:
         """Return minimal provider connection status for the given user.
-        Shape: { user_connected: bool, granted_scopes?: List[str], meta?: Dict[str,Any] }
+        Shape: { user_connected: bool, granted_scopes?: List[str], meta?: Dict[str,Any] }.
         """
         raise NotImplementedError
 

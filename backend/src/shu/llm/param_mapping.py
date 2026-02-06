@@ -1,4 +1,4 @@
-"""TASK-003: Parameter Normalization and Mapping Layer
+"""TASK-003: Parameter Normalization and Mapping Layer.
 
 This module implements a small, self-contained utility for:
 - Merging model_configurations.parameter_overrides with per-request llm_params
@@ -56,7 +56,7 @@ def _matches_option(value: Any, candidates: list | None) -> bool:
             if candidate.get("type") and value.get("type") == candidate.get("type"):
                 return True
             # fallback: candidate as subset of value
-            if all(candidate.get(k) == value.get(k) for k in candidate.keys()):
+            if all(candidate.get(k) == value.get(k) for k in candidate):
                 return True
         elif value == candidate:
             return True

@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +62,7 @@ class ProviderResponseEvent:
         model_configuration: dict[str, Any],
         model_display_name: str,
         model_name: str,
-    ):
+    ) -> Self:
         return ProviderResponseEvent(
             type=event.type,
             variant_index=variant_index,
@@ -139,7 +139,7 @@ class EnsembleStreamingHelper:
         return provider_and_model_support_tools and chat_plugins_enabled
 
     async def _get_conversation_owner(self, conversation_id):
-        """Fetches the owner user ID for a conversation by its ID.
+        """Fetch the owner user ID for a conversation by its ID.
 
         Parameters
         ----------
@@ -293,7 +293,7 @@ class EnsembleStreamingHelper:
             return_as_stream=True,  # We always stream to our frontends
             tools_enabled=tools_enabled,
         ):
-            stream_event: ProviderEventResult = stream_event
+            stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
             logger.debug("EVENT %s", stream_event)
             if isinstance(stream_event, ProviderToolCallEventResult) and tools_enabled:
                 followup_messages = stream_event.additional_messages
@@ -335,7 +335,8 @@ class EnsembleStreamingHelper:
 
         return final_message_event, followup_messages
 
-    async def stream_ensemble_responses(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def stream_ensemble_responses(  # noqa: PLR0915
         self,
         ensemble_inputs: list["ModelExecutionInputs"],
         conversation_id: str,
@@ -370,7 +371,8 @@ class EnsembleStreamingHelper:
 
         conversation_owner_id = await self._get_conversation_owner(conversation_id)
 
-        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs"):
+        # TODO: Refactor this function. It's too complex (number of branches and statements).
+        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs") -> None:  # noqa: PLR0915
             """Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
 
             Parameters

@@ -78,10 +78,20 @@ ignore = [
     "D100",     # Missing docstring in public module
     "D104",     # Missing docstring in public package
     "D107",     # Missing docstring in __init__
-    "ANN101",   # Missing type annotation for self
-    "ANN102",   # Missing type annotation for cls
     "ANN401",   # Dynamically typed expressions (Any)
     "S101",     # Use of assert (allowed in tests)
+    "SIM105",   # Suppressible exception (prefer try-except-pass for performance)
+    "N818",     # Exception class name should end with 'Error'
+    "UP038",    # Use `isinstance` instead of `type` check
+
+    # Pathlib directives. We are currently fine using the legacy functions over `Path`.
+    "PTH123",
+    "PTH110",
+    "PTH107",
+    "PTH111",
+    "PTH103",
+    "PTH108",
+    "PTH118",
 ]
 
 [tool.ruff.lint.mccabe]
@@ -92,7 +102,10 @@ max-complexity = 10
 # Maximum number of statements in a function
 max-statements = 50
 # Maximum number of branches in a function
-max-branches = 12
+max-branches = 15
+# Maximum number of return statements in a function
+# Increased from default (6) to allow factory patterns and guard clauses
+max-returns = 15
 
 [tool.ruff.lint.per-file-ignores]
 # Allow unused imports in __init__.py files
@@ -104,6 +117,37 @@ max-branches = 12
 "backend/src/tests/**/*.py" = ["ARG", "PLR2004", "S", "D", "ANN"]
 # Migrations don't need docstrings or type hints
 "backend/migrations/**/*.py" = ["D", "ANN"]
+# FastAPI routes use Query/Depends in defaults (B008 is a false positive for functions like `Depends`)
+"backend/src/shu/api/*.py" = ["B008"]
+"backend/src/shu/auth/*.py" = ["B008"]
+
+# LEGACY CODE BASELINE - Relaxed rules for existing code
+# These rules will be gradually re-enabled as we clean up the codebase
+# See docs/LINTING_CLEANUP_PLAN.md for the cleanup strategy
+# NOTE: Auto-fixes have been applied (539 fixes on 2026-02-02)
+# Remaining violations that cannot be auto-fixed:
+"backend/src/shu/**/*.py" = [
+    "PLC0415",  # Import outside top-level (277 violations - manual fix required)
+    "D102",     # Undocumented public methods (230 violations - manual fix required)
+    "ANN201",   # Missing return type (205 violations - manual fix required)
+    "B904",     # Raise without from (195 violations - manual fix required)
+    "ANN001",   # Missing type on function args (121 violations - manual fix required)
+    "ARG001",   # Unused function arguments (82 violations - manual fix required)
+    "D101",     # Undocumented public classes (82 violations - manual fix required)
+    "ERA001",   # Commented-out code (71 violations - manual fix required)
+    "C901",     # Complex structure (65 violations - manual fix required)
+    "D103",     # Undocumented public function (58 violations - manual fix required)
+    "ARG002",   # Unused method arguments (50 violations - manual fix required)
+    "S110",     # Try-except-pass (50 violations - manual fix required)
+    "D205",     # Missing blank line after summary (49 violations - manual fix required)
+    "D417",     # Undocumented param (49 violations - manual fix required)
+    "ANN202",   # Missing return type private function (47 violations - manual fix required)
+    "UP038",    # isinstance with tuple instead of union (keeping traditional syntax)
+]
+
+# NEW CODE - Strict rules (no ignores except B008 for FastAPI)
+# Any new files or files being actively worked on should follow full linting
+# Remove files from the legacy baseline above as they are cleaned up
 
 [tool.ruff.lint.isort]
 known-first-party = ["shu"]
@@ -122,6 +166,9 @@ warn_unused_ignores = true
 warn_no_return = true
 strict_equality = true
 
+# Enable SQLAlchemy plugin for proper Column type inference
+plugins = ["sqlalchemy.ext.mypy.plugin"]
+
 # Exclude directories
 exclude = [
     "^.venv/",
@@ -129,6 +176,9 @@ exclude = [
     "^build/",
     "^dist/",
     "^frontend/",
+    "^backend/src/tests/",
+    "^backend/scripts/",
+    "^backend/migrations",
 ]
 
 # Per-module options
@@ -143,6 +193,11 @@ module = [
     "pytesseract.*",
     "pymupdf.*",
     "PyPDF2.*",
+    "psycopg2.*",
+    "croniter.*",
+    "jose.*",
+    "google_auth_oauthlib.*",
+    "pgvector.*",
 ]
 ignore_missing_imports = true
 

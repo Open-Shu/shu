@@ -27,7 +27,7 @@ class CursorCapability(ImmutableCapabilityMixin):
     _schedule_id: str | None
     _storage: StorageCapability
 
-    def __init__(self, *, plugin_name: str, user_id: str, schedule_id: str | None = None):
+    def __init__(self, *, plugin_name: str, user_id: str, schedule_id: str | None = None) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_schedule_id", str(schedule_id) if schedule_id else None)
@@ -67,7 +67,7 @@ class CursorCapability(ImmutableCapabilityMixin):
                     "user_id": self._user_id,
                     "kb_id": kb_id,
                     "error": str(e),
-                }
+                },
             )
             return None
 
@@ -75,7 +75,7 @@ class CursorCapability(ImmutableCapabilityMixin):
         await self._storage.put(self._key(kb_id), value, namespace=self.NAMESPACE)
 
     async def set_safe(self, kb_id: str, value: str) -> bool:
-        """Sets the cursor value, returning success status instead of raising.
+        """Set the cursor value, returning success status instead of raising.
 
         This is a convenience method for plugins that want to avoid try/except
         blocks. On error, logs a warning and returns False.
@@ -99,7 +99,7 @@ class CursorCapability(ImmutableCapabilityMixin):
                     "user_id": self._user_id,
                     "kb_id": kb_id,
                     "error": str(e),
-                }
+                },
             )
             return False
 
@@ -107,7 +107,7 @@ class CursorCapability(ImmutableCapabilityMixin):
         await self._storage.delete(self._key(kb_id), namespace=self.NAMESPACE)
 
     async def delete_safe(self, kb_id: str) -> bool:
-        """Deletes the cursor, returning success status instead of raising.
+        """Delete the cursor, returning success status instead of raising.
 
         This is a convenience method for plugins that want to avoid try/except
         blocks. On error, logs a warning and returns False.
@@ -130,7 +130,6 @@ class CursorCapability(ImmutableCapabilityMixin):
                     "user_id": self._user_id,
                     "kb_id": kb_id,
                     "error": str(e),
-                }
+                },
             )
             return False
-

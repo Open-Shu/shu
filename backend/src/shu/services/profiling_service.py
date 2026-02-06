@@ -85,7 +85,7 @@ class ProfilingService:
         self,
         side_call_service: SideCallService,
         settings: Settings,
-    ):
+    ) -> None:
         self.side_call = side_call_service
         self.settings = settings
         self.parser = ProfileParser()

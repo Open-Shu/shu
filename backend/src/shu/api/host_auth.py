@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -119,7 +120,7 @@ async def get_host_auth_status(
                             if s not in scopes_union:
                                 scopes_union.append(s)
                     else:
-                        for s in (pi.scopes or []):
+                        for s in pi.scopes or []:
                             s_str = str(s)
                             if s_str and s_str not in scopes_union:
                                 scopes_union.append(s_str)
@@ -333,8 +334,9 @@ class ExchangeRequest(BaseModel):
     scopes: list[str] | None = None
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
 @router.post("/exchange")
-async def host_auth_exchange(
+async def host_auth_exchange(  # noqa: PLR0912, PLR0915
     body: ExchangeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -730,9 +732,6 @@ async def host_auth_google_delegation_check(
     except Exception as e:
         logger.error(f"Delegation check failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Delegation check failed")
-
-
-from fastapi.responses import HTMLResponse
 
 
 @router.get("/callback")

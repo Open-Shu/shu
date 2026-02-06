@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class ConversationAutomationService:
     """Coordinates conversation summaries and auto-rename flows."""
 
-    def __init__(self, db_session: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(self, db_session: AsyncSession, config_manager: ConfigurationManager) -> None:
         self.db_session = db_session
         self.config_manager = config_manager
         self.settings = config_manager.settings

@@ -1,4 +1,4 @@
-"""Google Single Sign-On authentication for Shu"""
+"""Google Single Sign-On authentication for Shu."""
 
 import logging
 from typing import Any
@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleSSOAuth:
-    """Google Single Sign-On authentication handler"""
+    """Google Single Sign-On authentication handler."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         settings = get_settings_instance()
         self.client_id = settings.google_client_id
         self.client_secret = settings.google_client_secret
@@ -24,7 +24,7 @@ class GoogleSSOAuth:
         self.enabled = bool(self.client_id and self.client_secret)
 
     async def verify_token(self, token: str) -> dict[str, Any]:
-        """Verify Google ID token and return user information"""
+        """Verify Google ID token and return user information."""
         if not self.enabled:
             raise ValueError("Google OAuth2 is not configured/enabled")
         try:
@@ -48,7 +48,7 @@ class GoogleSSOAuth:
             raise ValueError(f"Invalid token: {e}")
 
     def get_authorization_url(self) -> str:
-        """Get the Google OAuth2 authorization URL"""
+        """Get the Google OAuth2 authorization URL."""
         if not self.enabled:
             raise ValueError("Google OAuth2 is not configured/enabled")
         flow = Flow.from_client_config(
@@ -70,7 +70,7 @@ class GoogleSSOAuth:
         return authorization_url
 
     async def exchange_code_for_token(self, code: str) -> dict[str, Any]:
-        """Exchange authorization code for access token and user info"""
+        """Exchange authorization code for access token and user info."""
         if not self.enabled:
             raise ValueError("Google OAuth2 is not configured/enabled")
         flow = Flow.from_client_config(

@@ -40,4 +40,5 @@ class PluginDefinition(BaseModel):
     __table_args__ = (UniqueConstraint("name", "version", name="uq_plugin_name_version"),)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<PluginDefinition(name={self.name}, version={self.version}, enabled={self.enabled})>"

@@ -40,7 +40,7 @@ class KbCapability(ImmutableCapabilityMixin):
         ocr_mode: str | None = None,
         schedule_id: str | None = None,
         staging_ttl: int | None = None,
-    ):
+    ) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_schedule_id", str(schedule_id) if schedule_id else None)

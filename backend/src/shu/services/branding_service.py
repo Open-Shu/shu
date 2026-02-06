@@ -19,7 +19,7 @@ class BrandingService:
 
     SETTINGS_KEY = "app.branding"
 
-    def __init__(self, db: AsyncSession, settings: Settings | None = None):
+    def __init__(self, db: AsyncSession, settings: Settings | None = None) -> None:
         self.db = db
         self.settings = settings or get_settings_instance()
         self.assets_dir = Path(self.settings.branding_assets_dir).resolve()
@@ -140,9 +140,9 @@ class BrandingService:
 
         extension = Path(filename).suffix.lower().lstrip(".")
         allowed = (
-            set(ext.lower() for ext in self.settings.branding_allowed_logo_extensions)
+            {ext.lower() for ext in self.settings.branding_allowed_logo_extensions}
             if asset_type == "logo"
-            else set(ext.lower() for ext in self.settings.branding_allowed_favicon_extensions)
+            else {ext.lower() for ext in self.settings.branding_allowed_favicon_extensions}
         )
 
         if extension not in allowed:

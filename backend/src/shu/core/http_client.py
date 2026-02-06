@@ -5,6 +5,7 @@ for external API calls (Google Drive, LLM providers, etc.).
 """
 
 from functools import lru_cache
+from typing import Any
 
 import httpx
 
@@ -17,7 +18,7 @@ logger = get_logger(__name__)
 class HTTPClientManager:
     """Manages HTTP client connections with pooling for external APIs."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._settings = get_settings_instance()
 
@@ -38,18 +39,18 @@ class HTTPClientManager:
             )
         return self._client
 
-    async def close(self):
+    async def close(self) -> None:
         """Close HTTP client."""
         if self._client:
             logger.debug("Closing HTTP client")
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> httpx.AsyncClient:
         """Async context manager entry."""
         return await self.get_client()
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> Any:
         """Async context manager exit."""
         await self.close()
 
@@ -70,7 +71,7 @@ async def get_http_client() -> httpx.AsyncClient:
     return await manager.get_client()
 
 
-async def close_http_client():
+async def close_http_client() -> None:
     """Close HTTP client (call during shutdown)."""
     manager = get_http_client_manager()
     await manager.close()

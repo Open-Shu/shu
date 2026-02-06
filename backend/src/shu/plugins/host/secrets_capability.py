@@ -42,7 +42,7 @@ class SecretsCapability(ImmutableCapabilityMixin):
     _user_id: str
     _enc: Any
 
-    def __init__(self, *, plugin_name: str, user_id: str):
+    def __init__(self, *, plugin_name: str, user_id: str) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_enc", get_oauth_encryption_service())

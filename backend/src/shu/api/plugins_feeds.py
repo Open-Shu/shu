@@ -1,5 +1,5 @@
 """Plugins API (admin feeds): create/list/update/delete feeds and run controls
-Preserves original paths under /plugins/admin/feeds*
+Preserves original paths under /plugins/admin/feeds*.
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ async def admin_run_schedule_now(
 
     # Fire-and-forget: spawn background task to run immediately
     # Don't await - return to frontend immediately so it can poll for status
-    async def _run_in_background():
+    async def _run_in_background() -> None:
         try:
             async with get_async_session_local()() as bg_session:
                 from ..services.plugins_scheduler_service import PluginsSchedulerService
@@ -270,7 +270,7 @@ async def admin_run_schedule_now(
             # Best-effort immediate run; if it fails, scheduler will pick it up
             pass
 
-    asyncio.create_task(_run_in_background())
+    asyncio.create_task(_run_in_background())  # noqa: RUF006 # We run this in the background, currently no way to store
 
     # Return the execution record immediately (status will be PENDING)
     await db.refresh(exec_rec)

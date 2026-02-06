@@ -9,7 +9,9 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+
+import easyocr
 
 from ..core.config import ConfigurationManager, get_config_manager
 from ..core.logging import get_logger
@@ -31,14 +33,14 @@ class TextExtractor:
     # OCR instance management (EasyOCR → Tesseract fallback chain)
 
     # Thread tracking for proper cleanup
-    _active_ocr_threads = {}  # job_id -> list of threads
+    _active_ocr_threads: ClassVar[dict[str, list]] = {}  # job_id -> list of threads
     _thread_lock = threading.Lock()
 
     # Cancellation events for jobs
-    _job_cancellation_events = {}  # job_id -> threading.Event
+    _job_cancellation_events: ClassVar[dict[str, threading.Event]] = {}  # job_id -> threading.Event
     _cancellation_lock = threading.Lock()
 
-    def __init__(self, config_manager: ConfigurationManager = None):
+    def __init__(self, config_manager: ConfigurationManager = None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self.supported_formats = {
             ".txt": self._extract_text_plain,
@@ -78,7 +80,7 @@ class TextExtractor:
         self._current_sync_job_id = None
 
     @classmethod
-    async def get_ocr_instance(cls):
+    async def get_ocr_instance(cls) -> easyocr.Reader | None:
         """Get OCR instance with fallback chain: EasyOCR → Tesseract."""
         # Set SSL certificate path to fix EasyOCR download issues
         import os
@@ -89,11 +91,8 @@ class TextExtractor:
 
         try:
             # Try EasyOCR first (better quality than Tesseract)
-            import easyocr
-
             logger.info("Initializing EasyOCR")
-            reader = easyocr.Reader(["en"])
-            return reader
+            return easyocr.Reader(["en"])
         except Exception as e:
             logger.warning(f"EasyOCR failed: {e}")
             # Fallback to Tesseract
@@ -101,12 +100,12 @@ class TextExtractor:
             return None
 
     @classmethod
-    def cleanup_ocr_instance(cls):
+    def cleanup_ocr_instance(cls) -> None:
         """Clean up OCR instances to free memory."""
         logger.info("OCR instance cleanup completed")
 
     @classmethod
-    def cleanup_ocr_processes(cls):
+    def cleanup_ocr_processes(cls) -> None:
         """Clean up all OCR processes and threads."""
         logger.info("Cleaning up OCR processes during shutdown")
 
@@ -134,7 +133,7 @@ class TextExtractor:
         logger.info("OCR process cleanup completed")
 
     @classmethod
-    def register_ocr_thread(cls, job_id: str, thread: threading.Thread):
+    def register_ocr_thread(cls, job_id: str, thread: threading.Thread) -> None:
         """Register an OCR thread for tracking and cleanup."""
         with cls._thread_lock:
             if job_id not in cls._active_ocr_threads:
@@ -145,7 +144,7 @@ class TextExtractor:
             )
 
     @classmethod
-    def cleanup_job_threads(cls, job_id: str):
+    def cleanup_job_threads(cls, job_id: str) -> None:
         """Clean up all OCR threads for a specific job."""
         with cls._thread_lock:
             if job_id in cls._active_ocr_threads:
@@ -167,7 +166,7 @@ class TextExtractor:
                 logger.info(f"Removed OCR thread tracking for job {job_id}")
 
     @classmethod
-    def get_active_thread_count(cls, job_id: str = None) -> int:
+    def get_active_thread_count(cls, job_id: str | None = None) -> int:
         """Get count of active OCR threads for a job or all jobs."""
         with cls._thread_lock:
             if job_id:
@@ -175,7 +174,7 @@ class TextExtractor:
             return sum(len(threads) for threads in cls._active_ocr_threads.values())
 
     @classmethod
-    def cancel_job_ocr(cls, job_id: str):
+    def cancel_job_ocr(cls, job_id: str) -> None:
         """Cancel all OCR processing for a specific job."""
         with cls._cancellation_lock:
             if job_id not in cls._job_cancellation_events:
@@ -194,14 +193,15 @@ class TextExtractor:
             return False
 
     @classmethod
-    def cleanup_job_cancellation(cls, job_id: str):
+    def cleanup_job_cancellation(cls, job_id: str) -> None:
         """Clean up cancellation tracking for a job."""
         with cls._cancellation_lock:
             if job_id in cls._job_cancellation_events:
                 del cls._job_cancellation_events[job_id]
                 logger.debug(f"Cleaned up cancellation tracking for job {job_id}")
 
-    async def extract_text(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def extract_text(  # noqa: PLR0915
         self,
         file_path: str,
         file_content: bytes | None = None,
@@ -298,14 +298,12 @@ class TextExtractor:
             # Update progress tracker with actual method used
             if progress_context and progress_context.get("enhanced_tracker"):
                 tracker = progress_context["enhanced_tracker"]
-                if tracker.current_document_tracker:
-                    # Update the tracker's method if it changed
-                    if tracker.current_document_tracker.method != actual_method:
-                        logger.info(
-                            f"Updating processing method from {tracker.current_document_tracker.method} to {actual_method}"
-                        )
-                        tracker.current_document_tracker.method = actual_method
-                        # Broadcast the update
+                if tracker.current_document_tracker and tracker.current_document_tracker.method != actual_method:
+                    logger.info(
+                        f"Updating processing method from {tracker.current_document_tracker.method} to {actual_method}"
+                    )
+                    tracker.current_document_tracker.method = actual_method
+                    # Broadcast the update
 
             return {
                 "text": text,
@@ -409,7 +407,9 @@ class TextExtractor:
                 extra={"sync_job_id": sync_job_id, "document_id": document_id},
             )
 
-        def progress_callback(current_page: int, total_pages: int, page_time: float = 0.0, page_text_length: int = 0):
+        def progress_callback(
+            current_page: int, total_pages: int, page_time: float = 0.0, page_text_length: int = 0
+        ) -> None:
             """Progress callback that schedules updates in the main event loop."""
             try:
                 # Calculate progress percentage
@@ -429,11 +429,11 @@ class TextExtractor:
                     return
 
                 # Schedule the async update in the main event loop
-                def schedule_update():
+                def schedule_update() -> None:
                     """Schedule the progress update in the main event loop."""
                     try:
                         # Create a coroutine for the update
-                        async def update_progress():
+                        async def update_progress() -> None:
                             try:
                                 if use_ocr:
                                     # Use OCR progress update for OCR processing
@@ -487,7 +487,7 @@ class TextExtractor:
                                 )
 
                         # Schedule the coroutine in the main event loop
-                        asyncio.create_task(update_progress())
+                        asyncio.create_task(update_progress())  # noqa: RUF006 # we don't need the task reference
 
                     except Exception as e:
                         logger.error(
@@ -583,10 +583,7 @@ class TextExtractor:
                 import fitz
 
                 # Open PDF document
-                if file_content:
-                    doc = fitz.open(stream=BytesIO(file_content), filetype="pdf")
-                else:
-                    doc = fitz.open(file_path)
+                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
                 total_pages = len(doc)
                 logger.debug(f"PDF has {total_pages} pages", extra={"file_path": file_path})
@@ -640,10 +637,7 @@ class TextExtractor:
             import fitz
 
             try:
-                if file_content:
-                    doc = fitz.open(stream=BytesIO(file_content), filetype="pdf")
-                else:
-                    doc = fitz.open(file_path)
+                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
                 text = ""
                 total_pages = len(doc)
@@ -751,10 +745,7 @@ class TextExtractor:
             import fitz
 
             # Open PDF
-            if file_content:
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf")
-            else:
-                doc = fitz.open(file_path)
+            doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
             total_pages = len(doc)
             logger.info(
@@ -810,7 +801,8 @@ class TextExtractor:
                 )
             return ""
 
-    async def _process_pdf_with_ocr_direct(self, doc, file_path: str, progress_callback=None):
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _process_pdf_with_ocr_direct(self, doc, file_path: str, progress_callback=None):  # noqa: PLR0912, PLR0915
         """Process PDF with OCR directly (EasyOCR with Tesseract fallback)."""
         import threading
         import time
@@ -874,30 +866,30 @@ class TextExtractor:
             ocr_error = None
             ocr_complete = threading.Event()
 
-            def run_ocr():
-                """Run OCR in a separate thread so we can monitor progress"""
+            def run_ocr(current_page_num: int = page_num) -> None:
+                """Run OCR in a separate thread so we can monitor progress."""
                 nonlocal ocr_result, ocr_error
                 try:
                     # Check for job cancellation before starting OCR
                     if self._current_sync_job_id and self.is_job_cancelled(self._current_sync_job_id):
-                        logger.info(f"OCR cancelled for job {self._current_sync_job_id} on page {page_num + 1}")
+                        logger.info(f"OCR cancelled for job {self._current_sync_job_id} on page {current_page_num + 1}")
                         ocr_error = Exception("OCR cancelled")
                         return
 
-                    logger.info(f"Running OCR on page {page_num + 1}", extra={"file_path": file_path})
+                    logger.info(f"Running OCR on page {current_page_num + 1}", extra={"file_path": file_path})
 
                     # Use EasyOCR (Tesseract fallback handled in get_ocr_instance)
                     if hasattr(ocr, "readtext"):  # EasyOCR
-                        ocr_result = ocr.readtext(img_array)
-                        logger.info(f"EasyOCR completed for page {page_num + 1}")
+                        ocr_result = ocr.readtext(img_array)  # noqa: B023
+                        logger.info(f"EasyOCR completed for page {current_page_num + 1}")
                     else:
-                        logger.error(f"Unknown OCR instance type on page {page_num + 1}")
+                        logger.error(f"Unknown OCR instance type on page {current_page_num + 1}")
                         ocr_result = []
                 except Exception as e:
                     ocr_error = e
-                    logger.error(f"OCR failed on page {page_num + 1}: {e}", extra={"file_path": file_path})
+                    logger.error(f"OCR failed on page {current_page_num + 1}: {e}", extra={"file_path": file_path})
                 finally:
-                    ocr_complete.set()
+                    ocr_complete.set()  # noqa: B023
 
             # Start OCR in background thread
             ocr_thread = threading.Thread(target=run_ocr)
@@ -976,7 +968,7 @@ class TextExtractor:
                     if hasattr(ocr, "readtext"):  # EasyOCR format
                         for detection in result:
                             if len(detection) >= 3:
-                                bbox, text_content, confidence = detection
+                                _bbox, text_content, confidence = detection
                                 page_text += text_content + " "
                                 page_confidences.append(confidence)
                     else:
@@ -1087,9 +1079,7 @@ class TextExtractor:
         cleaned = re.sub(r"\n\n+", "\n\n", cleaned)
 
         # Strip leading/trailing whitespace
-        cleaned = cleaned.strip()
-
-        return cleaned
+        return cleaned.strip()
 
     async def _extract_text_plain(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from plain text files."""
@@ -1102,7 +1092,8 @@ class TextExtractor:
 
         return await asyncio.get_event_loop().run_in_executor(None, _read_file)
 
-    async def _extract_text_pdf(self, file_path: str, file_content: bytes | None = None) -> str:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _extract_text_pdf(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
         """Extract text from PDF files using multiple methods including OCR for image-based PDFs."""
         logger.debug("Extracting text from PDF", extra={"file_path": file_path})
 
@@ -1113,10 +1104,7 @@ class TextExtractor:
 
                 import fitz
 
-                if file_content:
-                    doc = fitz.open(stream=BytesIO(file_content), filetype="pdf")
-                else:
-                    doc = fitz.open(file_path)
+                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
                 text = ""
                 for page_num in range(len(doc)):
@@ -1165,10 +1153,7 @@ class TextExtractor:
 
                 from PyPDF2 import PdfReader
 
-                if file_content:
-                    reader = PdfReader(BytesIO(file_content))
-                else:
-                    reader = PdfReader(file_path)
+                reader = PdfReader(BytesIO(file_content)) if file_content else PdfReader(file_path)
 
                 text = ""
                 for page in reader.pages:
@@ -1192,10 +1177,7 @@ class TextExtractor:
 
                 logger.debug(f"Starting OCR extraction for {file_path}")
 
-                if file_content:
-                    doc = fitz.open(stream=BytesIO(file_content), filetype="pdf")
-                else:
-                    doc = fitz.open(file_path)
+                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
                 page_count = len(doc)
                 logger.debug(f"PDF has {page_count} pages for OCR processing", extra={"file_path": file_path})
@@ -1373,11 +1355,10 @@ class TextExtractor:
         common_word_ratio = common_word_count / len(words) if words else 0
 
         # Combine scores
-        quality_score = meaningful_ratio * 0.4 + min(avg_word_length / 10.0, 1.0) * 0.3 + common_word_ratio * 0.3
+        return meaningful_ratio * 0.4 + min(avg_word_length / 10.0, 1.0) * 0.3 + common_word_ratio * 0.3
 
-        return quality_score
-
-    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
         """Extract text from DOCX files using multiple methods with fallbacks."""
 
         def _try_python_docx():
@@ -1387,10 +1368,7 @@ class TextExtractor:
 
                 import docx
 
-                if file_content:
-                    doc = docx.Document(BytesIO(file_content))
-                else:
-                    doc = docx.Document(file_path)
+                doc = docx.Document(BytesIO(file_content)) if file_content else docx.Document(file_path)
 
                 text = ""
                 for paragraph in doc.paragraphs:
@@ -1422,8 +1400,6 @@ class TextExtractor:
         def _try_textract():
             """Try textract for DOCX text extraction."""
             try:
-                from io import BytesIO
-
                 import textract
 
                 if file_content:
@@ -1481,8 +1457,6 @@ class TextExtractor:
     async def _extract_text_doc(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from DOC files."""
         try:
-            from io import BytesIO
-
             import textract
 
             def _extract_doc():
@@ -1496,15 +1470,13 @@ class TextExtractor:
                         temp_file_path = temp_file.name
 
                     try:
-                        text = textract.process(temp_file_path).decode("utf-8")
-                        return text
+                        return textract.process(temp_file_path).decode("utf-8")
                     finally:
                         import os
 
                         os.unlink(temp_file_path)
                 else:
-                    text = textract.process(file_path).decode("utf-8")
-                    return text
+                    return textract.process(file_path).decode("utf-8")
 
             return await asyncio.get_event_loop().run_in_executor(None, _extract_doc)
         except ImportError:

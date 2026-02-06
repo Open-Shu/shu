@@ -1,4 +1,4 @@
-"""Authentication API endpoints for Shu"""
+"""Authentication API endpoints for Shu."""
 
 import logging
 from typing import Any, Literal
@@ -63,20 +63,20 @@ async def _check_auth_rate_limit(request: Request) -> None:
 
 
 class LoginRequest(BaseModel):
-    """Request model for Google OAuth login endpoint"""
+    """Request model for Google OAuth login endpoint."""
 
     google_token: str
 
 
 class PasswordLoginRequest(BaseModel):
-    """Request model for password login endpoint"""
+    """Request model for password login endpoint."""
 
     email: str
     password: str
 
 
 class RegisterRequest(BaseModel):
-    """Request model for user registration endpoint"""
+    """Request model for user registration endpoint."""
 
     email: str
     password: str
@@ -84,36 +84,36 @@ class RegisterRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """Request model for password change endpoint"""
+    """Request model for password change endpoint."""
 
     old_password: str
     new_password: str
 
 
 class RefreshTokenRequest(BaseModel):
-    """Request model for token refresh endpoint"""
+    """Request model for token refresh endpoint."""
 
     refresh_token: str
 
 
 class TokenResponse(BaseModel):
-    """Response model for token endpoints"""
+    """Response model for token endpoints."""
 
     access_token: str
     refresh_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 # not an actual password
     user: dict[str, Any]
 
 
 class UserUpdateRequest(BaseModel):
-    """Request model for updating user"""
+    """Request model for updating user."""
 
     role: str
     is_active: bool = True
 
 
 class CreateUserRequest(BaseModel):
-    """Request model for admin to create new users"""
+    """Request model for admin to create new users."""
 
     email: str
     name: str
@@ -300,7 +300,7 @@ async def change_password(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Change current user's password"""
+    """Change current user's password."""
     try:
         await password_auth_service.change_password(
             user_id=current_user.id,
@@ -324,7 +324,7 @@ async def refresh_token(
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
-    """Refresh access token using refresh token"""
+    """Refresh access token using refresh token."""
     try:
         # Verify refresh token and get user_id
         user_id = user_service.jwt_manager.refresh_access_token(request.refresh_token)
@@ -350,7 +350,7 @@ async def refresh_token(
 
 @router.get("/me", response_model=SuccessResponse[dict[str, Any]])
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """Get current user information"""
+    """Get current user information."""
     return SuccessResponse(data=current_user.to_dict())
 
 
@@ -512,7 +512,7 @@ async def get_all_users(
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
-    """Get all users (admin only)"""
+    """Get all users (admin only)."""
     users = await user_service.get_all_users(db)
     return SuccessResponse(data=[user.to_dict() for user in users])
 
@@ -525,7 +525,7 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
-    """Update user role and status (admin only)"""
+    """Update user role and status (admin only)."""
     try:
         user = await user_service.update_user_role(user_id, request.role, db)
         user.is_active = request.is_active
@@ -542,7 +542,7 @@ async def create_user(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new user (admin only)"""
+    """Create a new user (admin only)."""
     try:
         if request.auth_method == "password":
             if not request.password:
@@ -598,7 +598,7 @@ async def activate_user(
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
-    """Activate a user account (admin only)"""
+    """Activate a user account (admin only)."""
     try:
         # Get user by ID
         user = await user_service.get_user_by_id(user_id, db)
@@ -627,7 +627,7 @@ async def deactivate_user(
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
-    """Deactivate a user account (admin only)"""
+    """Deactivate a user account (admin only)."""
     try:
         # Get user by ID
         user = await user_service.get_user_by_id(user_id, db)
@@ -660,7 +660,7 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
 ):
-    """Delete user (admin only)"""
+    """Delete user (admin only)."""
     try:
         await user_service.delete_user(user_id, current_user.id, db)
         return SuccessResponse(data={"message": "User deleted successfully"})

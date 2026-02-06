@@ -26,7 +26,7 @@ from ..plugins.host._storage_ops import (
     storage_set_scoped,
 )
 
-SECRET_NAMESPACE = "secret"
+SECRET_NAMESPACE = "secret"  # noqa: S105 # not an actual secret
 
 
 async def list_secret_keys(

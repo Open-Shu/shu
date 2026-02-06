@@ -1,5 +1,5 @@
 """Plugins API (admin executions): list/get/run-pending + scheduler metrics
-Preserves original paths under /plugins/admin/executions* and /plugins/admin/scheduler/metrics
+Preserves original paths under /plugins/admin/executions* and /plugins/admin/scheduler/metrics.
 """
 
 from __future__ import annotations

@@ -82,7 +82,7 @@ class RAGConfig(BaseModel):
 
     @field_validator("reference_format")
     @classmethod
-    def validate_reference_format(cls, v):
+    def validate_reference_format(cls, v: str) -> str:
         """Validate reference format."""
         if v not in ["markdown", "text"]:
             raise ValueError("reference_format must be 'markdown' or 'text'")
@@ -90,7 +90,7 @@ class RAGConfig(BaseModel):
 
     @field_validator("context_format")
     @classmethod
-    def validate_context_format(cls, v):
+    def validate_context_format(cls, v: str) -> str:
         """Validate context format."""
         if v not in ["detailed", "simple"]:
             raise ValueError("context_format must be 'detailed' or 'simple'")
@@ -98,7 +98,7 @@ class RAGConfig(BaseModel):
 
     @field_validator("prompt_template")
     @classmethod
-    def validate_prompt_template(cls, v):
+    def validate_prompt_template(cls, v: str) -> str:
         """Validate prompt template."""
         if v not in ["academic", "business", "technical", "custom"]:
             raise ValueError("prompt_template must be 'academic', 'business', 'technical', or 'custom'")
@@ -106,7 +106,7 @@ class RAGConfig(BaseModel):
 
     @field_validator("search_type")
     @classmethod
-    def validate_search_type(cls, v):
+    def validate_search_type(cls, v: str) -> str:
         """Validate search type."""
         if v not in ["similarity", "keyword", "hybrid"]:
             raise ValueError("search_type must be 'similarity', 'keyword', or 'hybrid'")
@@ -158,7 +158,7 @@ class KnowledgeBaseBase(BaseModel):
 
     @field_validator("chunk_overlap")
     @classmethod
-    def validate_chunk_overlap(cls, v, info):
+    def validate_chunk_overlap(cls, v, info):  # noqa: ANN206 # don't think this is used anymore
         """Validate that chunk overlap is less than chunk size."""
         chunk_size = info.data.get("chunk_size", 1000)
         if v >= chunk_size:
@@ -184,7 +184,7 @@ class KnowledgeBaseUpdate(BaseModel):
 
     @field_validator("chunk_overlap")
     @classmethod
-    def validate_chunk_overlap(cls, v, info):
+    def validate_chunk_overlap(cls, v, info):  # noqa: ANN206 # don't think this is used anymore
         """Validate that chunk overlap is less than chunk size."""
         chunk_size = info.data.get("chunk_size")
         if v is not None and chunk_size is not None and v >= chunk_size:
@@ -204,6 +204,8 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
     updated_at: datetime = Field(..., description="Last update timestamp")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 
@@ -230,6 +232,8 @@ class KnowledgeBaseSummary(BaseModel):
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")
 
     class Config:
+        """Configure Pydantic to work with ORM objects."""
+
         from_attributes = True
 
 

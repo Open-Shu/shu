@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, ClassVar
 
 import jmespath
 
@@ -7,6 +7,7 @@ from shu.core.logging import get_logger
 from ..adapter_base import (
     ProviderCapabilities,
     ProviderContentDeltaEventResult,
+    ProviderEventResult,
     ProviderInformation,
     register_adapter,
 )
@@ -27,7 +28,7 @@ logger = get_logger(__name__)
 class PerplexityAdapter(CompletionsAdapter):
     """Adapter for Perplexity chat completions (OpenAI-compatible)."""
 
-    citations = []
+    citations: ClassVar[list[str]] = []
 
     def _get_citations_markdown(self) -> str:
         citations = ""
@@ -56,10 +57,10 @@ class PerplexityAdapter(CompletionsAdapter):
     def get_authorization_header(self) -> dict[str, Any]:
         return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
 
-    def get_finish_reason_path(self):
+    def get_finish_reason_path(self) -> str:
         return "object == 'chat.completion.done' && choices[*].finish_reason | [0]"
 
-    async def handle_provider_event(self, chunk):
+    async def handle_provider_event(self, chunk) -> ProviderEventResult | None:
         self.citations = jmespath.search("object == 'chat.completion.done' && citations", chunk)
         return await super().handle_provider_event(chunk)
 
@@ -82,14 +83,14 @@ class PerplexityAdapter(CompletionsAdapter):
                 max=2,
                 default=0.7,
                 label="Temperature",
-                description="Controls randomness in the model's output (0–2). Lower = more deterministic, higher = more creative.",
+                description="Controls randomness in the model's output (0-2). Lower = more deterministic, higher = more creative.",
             ),
             "top_p": NumberParameter(
                 min=0,
                 max=1,
                 default=1.0,
                 label="Top P",
-                description="Nucleus sampling (0–1). The model considers only the smallest set of tokens whose cumulative probability ≥ top_p.",
+                description="Nucleus sampling (0-1). The model considers only the smallest set of tokens whose cumulative probability ≥ top_p.",
             ),
             "top_k": IntegerParameter(
                 min=1,
@@ -141,7 +142,7 @@ class PerplexityAdapter(CompletionsAdapter):
             ),
             "disable_search": BooleanParameter(
                 label="Disable Search",
-                description="If true, disables Perplexity’s web search and forces pure LLM generation from the prompt and context only.",
+                description="If true, disables Perplexity's web search and forces pure LLM generation from the prompt and context only.",
                 default=False,
             ),
             "enable_search_classifier": BooleanParameter(

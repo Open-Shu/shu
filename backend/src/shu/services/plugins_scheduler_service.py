@@ -20,7 +20,7 @@ import json
 import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
@@ -53,21 +53,23 @@ logger = logging.getLogger(__name__)
 
 
 class PluginsSchedulerService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.settings = get_settings_instance()
 
-    async def enqueue_due_schedules(self, *, limit: Optional[int] = None, fallback_user_id: Optional[str] = None) -> Dict[str, int]:
+    async def enqueue_due_schedules(
+        self, *, limit: int | None = None, fallback_user_id: str | None = None
+    ) -> dict[str, int]:
         """Atomically claim due schedules and enqueue executions to QueueBackend.
-        
+
         Creates PluginExecution records for tracking and idempotency, then enqueues
         jobs to QueueBackend with MAINTENANCE WorkloadType for worker processing.
-        
+
         Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j, "queue_enqueued": p}
         """
         from ..core.queue_backend import get_queue_backend
         from ..core.workload_routing import WorkloadType, enqueue_job
-        
+
         now = datetime.now(UTC)
         # Claim due schedules with row-level locks to avoid duplicates across workers
         q = (
@@ -75,7 +77,7 @@ class PluginsSchedulerService:
             .where(
                 and_(
                     PluginFeed.enabled == True,  # noqa: E712
-                    or_(PluginFeed.next_run_at == None, PluginFeed.next_run_at <= now),
+                    or_(PluginFeed.next_run_at.is_(None), PluginFeed.next_run_at <= now),
                 )
             )
             .with_for_update(skip_locked=True)
@@ -89,7 +91,7 @@ class PluginsSchedulerService:
         skipped_no_owner = 0
         skipped_missing_plugin = 0
         skipped_already_enqueued = 0
-        
+
         # Get queue backend for job enqueueing
         try:
             queue_backend = await get_queue_backend()
@@ -97,7 +99,7 @@ class PluginsSchedulerService:
             logger.error(f"Failed to get queue backend: {e}")
             # Fall back to database-only mode if queue is unavailable
             queue_backend = None
-        
+
         for s in due_scheds:
             # Skip if plugin no longer exists or is disabled
             plugin = await REGISTRY.resolve(s.plugin_name, self.db)
@@ -143,7 +145,7 @@ class PluginsSchedulerService:
             )
             self.db.add(exec_rec)
             await self.db.flush()  # Flush to get exec_rec.id
-            
+
             # Enqueue job to QueueBackend with MAINTENANCE WorkloadType
             if queue_backend:
                 try:
@@ -168,19 +170,18 @@ class PluginsSchedulerService:
                             "execution_id": exec_rec.id,
                             "schedule_id": s.id,
                             "job_id": job.id,
-                        }
+                        },
                     )
                 except Exception as e:
                     logger.error(
-                        f"Failed to enqueue job to queue: {e}",
-                        extra={"execution_id": exec_rec.id, "schedule_id": s.id}
+                        f"Failed to enqueue job to queue: {e}", extra={"execution_id": exec_rec.id, "schedule_id": s.id}
                     )
                     # Continue - the PluginExecution record is created, so run_pending can still process it
-            
+
             # Advance schedule to next time; safe under lock
             s.schedule_next()
             enqueued += 1
-            
+
         await self.db.commit()
         return {
             "due": len(due_scheds),
@@ -280,11 +281,12 @@ class PluginsSchedulerService:
             pass
         return stale_cleaned
 
-    async def run_pending(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def run_pending(  # noqa: PLR0912, PLR0915
         self, *, limit: int = 10, schedule_id: str | None = None, execution_id: str | None = None
     ) -> dict[str, int]:
         """Claim up to limit pending executions and run them sequentially.
-        Returns: {"attempted": n, "ran": m, "failed_owner_required": x, "skipped_disabled": y}
+        Returns: {"attempted": n, "ran": m, "failed_owner_required": x, "skipped_disabled": y}.
         """
         claimed = await self._claim_pending(
             limit=max(1, int(limit)), schedule_id=schedule_id, execution_id=execution_id
@@ -462,16 +464,15 @@ class PluginsSchedulerService:
                 if (
                     getattr(self.settings, "plugin_exec_output_max_bytes", 0)
                     and self.settings.plugin_exec_output_max_bytes > 0
-                ):
-                    if payload_size > self.settings.plugin_exec_output_max_bytes:
-                        rec.completed_at = datetime.now(UTC)
-                        rec.status = PluginExecutionStatus.FAILED
-                        rec.error = (
-                            f"output exceeds max bytes ({payload_size} > {self.settings.plugin_exec_output_max_bytes})"
-                        )
-                        rec.result = {"status": "error", "error": "output_too_large"}
-                        await self.db.commit()
-                        continue
+                ) and payload_size > self.settings.plugin_exec_output_max_bytes:
+                    rec.completed_at = datetime.now(UTC)
+                    rec.status = PluginExecutionStatus.FAILED
+                    rec.error = (
+                        f"output exceeds max bytes ({payload_size} > {self.settings.plugin_exec_output_max_bytes})"
+                    )
+                    rec.result = {"status": "error", "error": "output_too_large"}
+                    await self.db.commit()
+                    continue
 
                 rec.result = payload
                 rec.completed_at = datetime.now(UTC)
@@ -603,7 +604,7 @@ async def start_plugins_scheduler():
         ),
     )
 
-    async def _runner():
+    async def _runner() -> None:
         while True:
             try:
                 db = await get_db_session()
