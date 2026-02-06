@@ -66,6 +66,31 @@ class TestFileStagingService:
         assert cached_after is None
 
     @pytest.mark.asyncio
+    async def test_retrieve_without_delete_preserves_staging_key(
+        self,
+        staging_service: FileStagingService,
+        cache_backend: InMemoryCacheBackend,
+    ):
+        """Retrieve with delete_after_retrieve=False keeps key in cache."""
+        document_id = "test_doc_nodelete"
+        file_bytes = b"retry-safe content"
+
+        staging_key = await staging_service.stage_file(document_id, file_bytes)
+
+        # Retrieve without deleting
+        retrieved_bytes = await staging_service.retrieve_file(staging_key, delete_after_retrieve=False)
+        assert retrieved_bytes == file_bytes
+
+        # Key should still exist in cache
+        cached_after = await cache_backend.get_bytes(staging_key)
+        assert cached_after == file_bytes
+
+        # Explicit cleanup should remove it
+        await staging_service.delete_staged_file(staging_key)
+        cached_final = await cache_backend.get_bytes(staging_key)
+        assert cached_final is None
+
+    @pytest.mark.asyncio
     async def test_retrieve_missing_file_raises_error(
         self,
         staging_service: FileStagingService,

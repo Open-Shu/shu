@@ -163,8 +163,8 @@ async def _handle_ocr_job(job) -> None:
         await session.commit()
 
         try:
-            # Retrieve file bytes from staging
-            file_bytes = await staging_service.retrieve_file(staging_key)
+            # Retrieve file bytes from staging (don't delete yet - need retry safety)
+            file_bytes = await staging_service.retrieve_file(staging_key, delete_after_retrieve=False)
 
             logger.info(
                 "Retrieved staged file",
@@ -226,6 +226,9 @@ async def _handle_ocr_job(job) -> None:
                 max_attempts=3,
                 visibility_timeout=300,
             )
+
+            # Clean up staged file now that extraction succeeded
+            await staging_service.delete_staged_file(staging_key)
 
             logger.info(
                 "OCR job completed, enqueued embedding job",
@@ -463,23 +466,37 @@ async def _handle_profiling_job(job) -> None:
                 }
             )
         else:
-            # Mark document as FAILED before raising to trigger retry
+            # Only mark ERROR when retries are exhausted (mirrors OCR/EMBED pattern)
             error_msg = f"Profiling failed: {result.error}"
-            stmt = select(Document).where(Document.id == document_id)
-            doc_result = await session.execute(stmt)
-            document = doc_result.scalar_one_or_none()
-            if document:
-                document.mark_error(error_msg)
-                await session.commit()
+            if job.attempts >= job.max_attempts:
+                stmt = select(Document).where(Document.id == document_id)
+                doc_result = await session.execute(stmt)
+                document = doc_result.scalar_one_or_none()
+                if document:
+                    document.mark_error(error_msg)
+                    await session.commit()
 
-            logger.error(
-                "Profiling job failed",
-                extra={
-                    "job_id": job.id,
-                    "document_id": document_id,
-                    "error": result.error,
-                }
-            )
+                logger.error(
+                    "Profiling job failed after max attempts",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": result.error,
+                    }
+                )
+            else:
+                logger.warning(
+                    "Profiling job failed, will retry",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": result.error,
+                    }
+                )
             raise Exception(f"Profiling failed for document {document_id}: {result.error}")
 
 
@@ -615,17 +632,22 @@ async def run_worker(
 
 
     try:
-        # Run all workers concurrently, handling individual failures gracefully
-        results = await asyncio.gather(*[w.run() for w in workers], return_exceptions=True)
-        
-        # Check for individual worker failures
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                worker_id = workers[i].worker_id if hasattr(workers[i], 'worker_id') else f"{i + 1}/{len(workers)}"
-                logger.error(
-                    f"Worker {worker_id} failed with error: {result}",
-                    exc_info=result,
-                )
+        # Run all workers concurrently, logging failures immediately via done callbacks
+        tasks = []
+        for i, w in enumerate(workers):
+            task = asyncio.create_task(w.run())
+            wid = w.worker_id if hasattr(w, 'worker_id') else f"{i + 1}/{len(workers)}"
+
+            def _on_done(t: asyncio.Task, worker_id: str = wid) -> None:
+                if t.cancelled():
+                    logger.warning(f"Worker {worker_id} was cancelled")
+                elif exc := t.exception():
+                    logger.error(f"Worker {worker_id} failed with error: {exc}", exc_info=exc)
+
+            task.add_done_callback(_on_done)
+            tasks.append(task)
+
+        await asyncio.gather(*tasks, return_exceptions=True)
     except KeyboardInterrupt:
         logger.info("Workers interrupted by user")
     except Exception as e:

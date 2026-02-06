@@ -215,7 +215,8 @@ class Document(BaseModel):
         elif new_status == DocumentStatus.ERROR:
             self.processed_at = datetime.now(UTC)
         else:
-            # Clear stale error fields when moving to non-terminal states
+            # Clear stale timestamps and error fields when moving to non-terminal states
+            self.processed_at = None
             self.processing_error = None
 
 

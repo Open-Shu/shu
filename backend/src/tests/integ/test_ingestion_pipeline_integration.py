@@ -152,12 +152,12 @@ async def test_full_pipeline_success(client, db, auth_headers):
 
     # Wait for pipeline to complete
     final_status = await _wait_for_document_status(
-        db, doc_id, ["ready", "failed"], timeout=PIPELINE_TIMEOUT
+        db, doc_id, ["processed", "error"], timeout=PIPELINE_TIMEOUT
     )
 
-    # Verify final status is READY
-    assert final_status["status"] == "ready", (
-        f"Expected status 'ready', got '{final_status['status']}'. "
+    # Verify final status is PROCESSED
+    assert final_status["status"] == "processed", (
+        f"Expected status 'processed', got '{final_status['status']}'. "
         f"Error: {final_status.get('error_message')}"
     )
 
@@ -244,12 +244,12 @@ async def test_ocr_failure_sets_failed_status(client, db, auth_headers):
     # Wait for pipeline to complete (expecting failure)
     try:
         final_status = await _wait_for_document_status(
-            db, doc_id, ["ready", "failed"], timeout=PIPELINE_TIMEOUT
+            db, doc_id, ["processed", "error"], timeout=PIPELINE_TIMEOUT
         )
 
-        # Document should be in FAILED status
-        assert final_status["status"] == "failed", (
-            f"Expected status 'failed' for missing staged file, got '{final_status['status']}'"
+        # Document should be in ERROR status
+        assert final_status["status"] == "error", (
+            f"Expected status 'error' for missing staged file, got '{final_status['status']}'"
         )
 
         # Error message should be populated
@@ -345,12 +345,12 @@ async def test_text_ingestion_skips_ocr(client, db, auth_headers):
 
     # Wait for pipeline to complete
     final_status = await _wait_for_document_status(
-        db, doc_id, ["ready", "failed"], timeout=PIPELINE_TIMEOUT
+        db, doc_id, ["processed", "error"], timeout=PIPELINE_TIMEOUT
     )
 
-    # Verify final status is READY
-    assert final_status["status"] == "ready", (
-        f"Expected status 'ready', got '{final_status['status']}'. "
+    # Verify final status is PROCESSED
+    assert final_status["status"] == "processed", (
+        f"Expected status 'processed', got '{final_status['status']}'. "
         f"Error: {final_status.get('error_message')}"
     )
 

@@ -105,13 +105,15 @@ class FileStagingService:
     async def retrieve_file(
         self,
         staging_key: str,
+        delete_after_retrieve: bool = True,
     ) -> bytes:
         """Retrieve file bytes from staging.
 
-        Retrieves the staged file and cleans up the staging key after retrieval.
-
         Args:
             staging_key: The cache key for the staged file.
+            delete_after_retrieve: If True (default), deletes the staging key
+                after retrieval. Set to False when the caller needs retry
+                safety and will call delete_staged_file explicitly on success.
 
         Returns:
             The raw file bytes.
@@ -127,24 +129,26 @@ class FileStagingService:
                     details={"staging_key": staging_key},
                 )
 
-            # Clean up after retrieval
-            try:
-                await self._cache.delete(staging_key)
-            except Exception as cleanup_error:
-                # Log but don't fail - file was retrieved successfully
-                logger.warning(
-                    "Failed to clean up staging key after retrieval",
-                    extra={
-                        "staging_key": staging_key,
-                        "error": str(cleanup_error),
-                    },
-                )
+            if delete_after_retrieve:
+                # Clean up after retrieval
+                try:
+                    await self._cache.delete(staging_key)
+                except Exception as cleanup_error:
+                    # Log but don't fail - file was retrieved successfully
+                    logger.warning(
+                        "Failed to clean up staging key after retrieval",
+                        extra={
+                            "staging_key": staging_key,
+                            "error": str(cleanup_error),
+                        },
+                    )
 
             logger.debug(
-                "Retrieved and cleaned up staged file",
+                "Retrieved staged file",
                 extra={
                     "staging_key": staging_key,
                     "file_size": len(file_bytes),
+                    "deleted": delete_after_retrieve,
                 },
             )
             return file_bytes
@@ -156,3 +160,20 @@ class FileStagingService:
                 f"Failed to retrieve staged file: {staging_key}: {e}",
                 details={"staging_key": staging_key, "error": str(e)},
             ) from e
+
+    async def delete_staged_file(self, staging_key: str) -> None:
+        """Delete a staged file from cache.
+
+        Args:
+            staging_key: The cache key to delete.
+        """
+        try:
+            await self._cache.delete(staging_key)
+        except Exception as e:
+            logger.warning(
+                "Failed to delete staging key",
+                extra={
+                    "staging_key": staging_key,
+                    "error": str(e),
+                },
+            )

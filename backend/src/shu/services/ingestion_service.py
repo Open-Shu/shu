@@ -526,31 +526,52 @@ async def ingest_document(
         await db.commit()
         await db.refresh(document)
 
-    # Stage file bytes using FileStagingService
-    cache = await get_cache_backend()
-    staging_service = FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
-    staging_key = await staging_service.stage_file(document.id, file_bytes)
+    # Stage file bytes and enqueue OCR job
+    staging_key = None
+    staging_service = None
+    try:
+        cache = await get_cache_backend()
+        staging_service = FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
+        staging_key = await staging_service.stage_file(document.id, file_bytes)
 
-    # Enqueue OCR job
-    queue = await get_queue_backend()
-    job_payload = {
-        "document_id": document.id,
-        "knowledge_base_id": knowledge_base_id,
-        "filename": filename,
-        "mime_type": mime_type,
-        "source_id": source_id,
-        "staging_key": staging_key,
-        "ocr_mode": ocr_mode,
-        "action": "extract_text",
-    }
+        # Enqueue OCR job
+        queue = await get_queue_backend()
+        job_payload = {
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "source_id": source_id,
+            "staging_key": staging_key,
+            "ocr_mode": ocr_mode,
+            "action": "extract_text",
+        }
 
-    await enqueue_job(
-        queue,
-        WorkloadType.INGESTION_OCR,
-        payload=job_payload,
-        max_attempts=3,
-        visibility_timeout=600,  # 10 minutes for large PDFs
-    )
+        await enqueue_job(
+            queue,
+            WorkloadType.INGESTION_OCR,
+            payload=job_payload,
+            max_attempts=3,
+            visibility_timeout=600,  # 10 minutes for large PDFs
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to stage/enqueue document ingestion",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        # Mark document as ERROR so it doesn't stay PENDING forever
+        document.update_status(DocumentStatus.ERROR)
+        document.processing_error = f"Failed to stage/enqueue: {e}"
+        db.add(document)
+        await db.commit()
+        # Clean up staged bytes if staging succeeded but enqueue failed
+        if staging_key and staging_service:
+            await staging_service.delete_staged_file(staging_key)
+        raise
 
     logger.info(
         "Document ingestion enqueued",
@@ -793,8 +814,23 @@ async def ingest_text(
     await db.commit()
 
     # Enqueue embedding job directly (no file staging needed)
-    queue = await get_queue_backend()
-    await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+    try:
+        queue = await get_queue_backend()
+        await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+    except Exception as e:
+        logger.error(
+            "Failed to enqueue text ingestion embedding job",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        document.update_status(DocumentStatus.ERROR)
+        document.processing_error = f"Failed to enqueue embedding: {e}"
+        db.add(document)
+        await db.commit()
+        raise
 
     logger.info(
         "Text ingestion enqueued (skipping OCR)",
@@ -920,8 +956,23 @@ async def ingest_thread(
     await db.commit()
 
     # Enqueue embedding job directly (no file staging needed)
-    queue = await get_queue_backend()
-    await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+    try:
+        queue = await get_queue_backend()
+        await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+    except Exception as e:
+        logger.error(
+            "Failed to enqueue thread ingestion embedding job",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        document.update_status(DocumentStatus.ERROR)
+        document.processing_error = f"Failed to enqueue embedding: {e}"
+        db.add(document)
+        await db.commit()
+        raise
 
     logger.info(
         "Thread ingestion enqueued (skipping OCR)",
