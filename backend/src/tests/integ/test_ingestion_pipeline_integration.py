@@ -2,7 +2,7 @@
 Document Ingestion Pipeline Integration Tests
 
 Tests the queue-based document ingestion pipeline end-to-end.
-Verifies that documents progress through PENDING → EXTRACTING → EMBEDDING → READY
+Verifies that documents progress through PENDING → EXTRACTING → EMBEDDING → PROCESSED
 and that DocumentChunks are created.
 """
 
@@ -37,7 +37,7 @@ async def _wait_for_document_status(
     Args:
         db: Database session
         document_id: The document ID to check
-        target_statuses: List of status values to wait for (e.g., ['ready', 'failed'])
+        target_statuses: List of status values to wait for (e.g., ['processed', 'error'])
         timeout: Maximum time to wait in seconds
 
     Returns:
@@ -83,12 +83,12 @@ async def _wait_for_document_status(
 
 
 async def test_full_pipeline_success(client, db, auth_headers):
-    """Test that document ingestion progresses through pipeline to READY status.
+    """Test that document ingestion progresses through pipeline to PROCESSED status.
 
     This test verifies:
     - Document is created with initial status
     - Pipeline processes the document through all stages
-    - Final status is READY
+    - Final status is PROCESSED
     - DocumentChunks are created
     """
     from shu.services.ingestion_service import ingest_document
@@ -183,10 +183,10 @@ async def test_full_pipeline_success(client, db, auth_headers):
 
 
 async def test_ocr_failure_sets_failed_status(client, db, auth_headers):
-    """Test that missing staged file results in FAILED status with error message.
+    """Test that missing staged file results in ERROR status with error message.
 
     This test verifies:
-    - When staged file is missing, document status is set to FAILED
+    - When staged file is missing, document status is set to ERROR
     - Error message is populated with staging failure details
 
     Note: The text extractor is designed to be resilient and will attempt to
@@ -287,7 +287,7 @@ async def test_text_ingestion_skips_ocr(client, db, auth_headers):
 
     This test verifies:
     - Initial status is EMBEDDING (not PENDING)
-    - Document progresses to READY without OCR stage
+    - Document progresses to PROCESSED without OCR stage
     - DocumentChunks are created
     """
     from shu.services.ingestion_service import ingest_text

@@ -274,7 +274,7 @@ async def _handle_embed_job(job) -> None:
     """Handle an INGESTION_EMBED workload job.
 
     Retrieves the document from the database, generates chunks and embeddings,
-    and either enqueues a PROFILING job (if enabled) or sets status to READY.
+    and either enqueues a PROFILING job (if enabled) or sets status to PROCESSED.
 
     Args:
         job: The job containing document_id and knowledge_base_id in payload.
@@ -372,7 +372,7 @@ async def _handle_embed_job(job) -> None:
                     }
                 )
             else:
-                # Profiling disabled - set status to READY
+                # Profiling disabled - set status to PROCESSED
                 document.update_status(DocumentStatus.PROCESSED)
                 await session.commit()
 
@@ -406,7 +406,7 @@ async def _handle_profiling_job(job) -> None:
     """Handle a PROFILING workload job.
 
     Runs the profiling orchestrator for the specified document. On success,
-    sets the document's pipeline status to READY (the final state).
+    sets the document's pipeline status to PROCESSED (the final state).
 
     Args:
         job: The job containing document_id in payload.
@@ -443,7 +443,7 @@ async def _handle_profiling_job(job) -> None:
         result = await orchestrator.run_for_document(document_id)
 
         if result.success:
-            # Set document pipeline status to READY (final state)
+            # Set document pipeline status to PROCESSED (final state)
             # The orchestrator already updated profiling_status to "complete"
             # Now we need to update the pipeline status field
             stmt = select(Document).where(Document.id == document_id)

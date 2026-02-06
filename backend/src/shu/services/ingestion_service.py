@@ -356,8 +356,8 @@ async def _upsert_document_record(
         return UpsertResult(document=document, extraction=extraction_data, skipped=False)
 
     # Existing document - check if content is unchanged
-    # Only skip if document is in a terminal successful state (READY or legacy processed).
-    # Documents that are PENDING, in-progress, or FAILED should be re-processed.
+    # Only skip if document is in a terminal successful state (PROCESSED).
+    # Documents that are PENDING, in-progress, or ERROR should be re-processed.
     if not force_reingest:
         match, matched_hash = _hashes_match(source_hash, content_hash, existing)
         if match and existing.is_processed:
@@ -428,7 +428,7 @@ async def ingest_document(
     The pipeline stages are:
     1. PENDING → EXTRACTING: OCR job extracts text
     2. EXTRACTING → EMBEDDING: Embed job creates chunks and embeddings
-    3. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+    3. EMBEDDING → PROFILING/PROCESSED: Profiling job (if enabled) or done
 
     Args:
         db: Database session.
@@ -520,6 +520,12 @@ async def ingest_document(
             document.source_hash = source_hash
         if source_modified_at is not None:
             document.source_modified_at = source_modified_at
+        # Clear stale extraction metadata so previous OCR results don't persist
+        document.extraction_method = None
+        document.extraction_engine = None
+        document.extraction_confidence = None
+        document.extraction_duration = None
+        document.extraction_metadata = None
         # Set status to PENDING atomically with update
         document.update_status(DocumentStatus.PENDING)
         db.add(document)
@@ -726,7 +732,7 @@ async def ingest_text(
 
     The pipeline stages are:
     1. EMBEDDING: Embed job creates chunks and embeddings
-    2. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+    2. EMBEDDING → PROFILING/PROCESSED: Profiling job (if enabled) or done
     """
     from ..core.queue_backend import get_queue_backend
     from ..models.document import DocumentStatus
@@ -799,6 +805,10 @@ async def ingest_text(
         document.content_hash = content_hash
         document.extraction_method = "text"
         document.extraction_engine = "direct"
+        # Clear stale extraction metadata from previous ingestion (e.g. OCR)
+        document.extraction_confidence = None
+        document.extraction_duration = None
+        document.extraction_metadata = None
         if effective_source_url:
             document.source_url = effective_source_url
         if source_hash:
@@ -868,7 +878,7 @@ async def ingest_thread(
 
     The pipeline stages are:
     1. EMBEDDING: Embed job creates chunks and embeddings
-    2. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
+    2. EMBEDDING → PROFILING/PROCESSED: Profiling job (if enabled) or done
     """
     from ..core.queue_backend import get_queue_backend
     from ..models.document import DocumentStatus
@@ -941,6 +951,10 @@ async def ingest_thread(
         document.content_hash = content_hash
         document.extraction_method = "text"
         document.extraction_engine = "direct"
+        # Clear stale extraction metadata from previous ingestion (e.g. OCR)
+        document.extraction_confidence = None
+        document.extraction_duration = None
+        document.extraction_metadata = None
         if effective_source_url:
             document.source_url = effective_source_url
         if source_hash:
