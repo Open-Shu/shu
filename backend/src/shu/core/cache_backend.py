@@ -1534,13 +1534,6 @@ def get_cache_backend_dependency() -> CacheBackend:
         A CacheBackend instance.
 
     """
-    # For dependency injection, we return a fresh instance
-    # This allows for easier testing and follows DEVELOPMENT_STANDARDS.md
-    # The actual backend selection happens based on settings
-    from .config import get_settings_instance
-
-    get_settings_instance()
-
     # For synchronous dependency injection, we can't await Redis connection
     # So we check if we already have a cached backend
     global _cache_backend  # noqa: PLW0602
