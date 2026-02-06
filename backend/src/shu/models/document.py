@@ -52,6 +52,28 @@ class RelationalContext(TypedDict, total=False):
     interaction_signals: list[str]  # e.g., "meeting", "decision", "request"
 
 
+# Document pipeline status enum (Queue-Based Ingestion Pipeline)
+# NOTE: This enum must be defined before the Document class since it's used in column defaults
+class DocumentStatus(str, Enum):
+    """Status values for document ingestion pipeline.
+
+    Tracks the document's progress through the async ingestion pipeline:
+    - PENDING: Document created, awaiting OCR/extraction
+    - EXTRACTING: OCR/text extraction in progress
+    - EMBEDDING: Chunking and embedding in progress
+    - PROFILING: LLM profiling in progress (if enabled)
+    - PROCESSED: Document fully processed and searchable
+    - ERROR: Processing failed (see processing_error for details)
+    """
+
+    PENDING = "pending"
+    EXTRACTING = "extracting"
+    EMBEDDING = "embedding"
+    PROFILING = "profiling"
+    PROCESSED = "processed"
+    ERROR = "error"
+
+
 class Document(BaseModel):
     """Document metadata and content.
 
@@ -83,8 +105,8 @@ class Document(BaseModel):
         String(64), nullable=True, index=True
     )  # Hash of original source content (md5Checksum, etag, etc.)
 
-    # Processing information
-    processing_status = Column(String(50), default="pending", nullable=False)  # 'pending', 'processed', 'error'
+    # Processing status: pending → extracting → embedding → profiling → processed (or error)
+    processing_status = Column(String(50), default="pending", nullable=False)
     processing_error = Column(Text, nullable=True)
 
     # Extraction metadata (for OCR verification and tracking)
@@ -144,6 +166,7 @@ class Document(BaseModel):
             {
                 "chunk_count": self.chunk_count,
                 "processing_status": self.processing_status,
+                "processing_error": self.processing_error,
                 "processed_at": self.processed_at.isoformat() if self.processed_at else None,
                 "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
                 # Profile fields (SHU-342)
@@ -162,24 +185,43 @@ class Document(BaseModel):
     @property
     def is_processed(self) -> bool:
         """Check if document has been processed successfully."""
-        return self.processing_status == "processed"
+        return self.processing_status == DocumentStatus.PROCESSED.value
 
     @property
     def has_error(self) -> bool:
         """Check if document processing had an error."""
-        return self.processing_status == "error"
+        return self.processing_status == DocumentStatus.ERROR.value
 
     def mark_processed(self) -> None:
         """Mark document as processed successfully."""
-        self.processing_status = "processed"
+        self.processing_status = DocumentStatus.PROCESSED.value
         self.processed_at = datetime.now(UTC)
         self.processing_error = None
 
     def mark_error(self, error_message: str) -> None:
         """Mark document as having a processing error."""
-        self.processing_status = "error"
+        self.processing_status = DocumentStatus.ERROR.value
         self.processing_error = error_message
         self.processed_at = datetime.now(UTC)
+
+    def update_status(self, new_status: "DocumentStatus") -> None:
+        """Update document pipeline status.
+
+        Args:
+            new_status: The new DocumentStatus value
+
+        """
+        self.processing_status = new_status.value
+
+        if new_status == DocumentStatus.PROCESSED:
+            self.processed_at = datetime.now(UTC)
+            self.processing_error = None
+        elif new_status == DocumentStatus.ERROR:
+            self.processed_at = datetime.now(UTC)
+        else:
+            # Clear stale timestamps and error fields when moving to non-terminal states
+            self.processed_at = None
+            self.processing_error = None
 
     def update_content_stats(self, word_count: int, character_count: int, chunk_count: int) -> None:
         """Update content statistics."""

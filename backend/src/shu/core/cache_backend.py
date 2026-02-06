@@ -7,6 +7,11 @@ for key-value caching operations. It supports two interchangeable implementation
 
 Backend selection is automatic based on the SHU_REDIS_URL configuration.
 
+The CacheBackend protocol supports both string and binary data:
+- String methods (get, set, delete, etc.): For text and JSON data
+- Binary methods (get_bytes, set_bytes): For raw binary data (files, images, etc.)
+  without base64 encoding overhead
+
 Example usage:
     # In FastAPI endpoints (preferred - dependency injection):
     from shu.core.cache_backend import get_cache_backend_dependency, CacheBackend
@@ -14,14 +19,22 @@ Example usage:
     async def my_endpoint(
         cache: CacheBackend = Depends(get_cache_backend_dependency)
     ):
+        # String operations
         await cache.set("my_key", "my_value", ttl_seconds=300)
         value = await cache.get("my_key")
+
+        # Binary operations
+        with open("document.pdf", "rb") as f:
+            file_bytes = f.read()
+        await cache.set_bytes("doc:123", file_bytes, ttl_seconds=3600)
+        cached_bytes = await cache.get_bytes("doc:123")
 
     # In background tasks or non-FastAPI code:
     from shu.core.cache_backend import get_cache_backend
 
     backend = await get_cache_backend()
     await backend.set("my_key", "my_value", ttl_seconds=300)
+    await backend.set_bytes("binary_key", b"raw bytes", ttl_seconds=300)
 """
 
 import logging
@@ -38,6 +51,9 @@ _cache_backend: Optional["CacheBackend"] = None
 
 # Global Redis client instance (internal use only)
 _redis_client: Any | None = None
+
+# Global Redis client for binary operations (no decode_responses)
+_redis_binary_client: Any | None = None
 
 
 class CacheError(Exception):
@@ -325,6 +341,74 @@ class CacheBackend(Protocol):
         """
         ...
 
+    async def get_bytes(self, key: str) -> bytes | None:
+        """Retrieve binary data by key.
+
+        This method is for storing raw binary data (e.g., file contents, images)
+        without the overhead of base64 encoding. A key can hold either a string
+        value or a binary value, not both; writing one type evicts the other
+        (last-write-wins).
+
+        Args:
+            key: The cache key to retrieve. Must be a non-empty string.
+
+        Returns:
+            The cached binary value as bytes, or None if the key does not exist
+            or has expired.
+
+        Raises:
+            CacheConnectionError: If the cache backend is unreachable.
+            CacheKeyError: If the key is invalid (empty, too long, etc.).
+
+        Example:
+            file_bytes = await backend.get_bytes("document:123:content")
+            if file_bytes is not None:
+                with open("output.pdf", "wb") as f:
+                    f.write(file_bytes)
+
+        """
+        ...
+
+    async def set_bytes(
+        self,
+        key: str,
+        value: bytes,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Store binary data with optional TTL.
+
+        This method is for storing raw binary data (e.g., file contents, images)
+        without the overhead of base64 encoding. A key can hold either a string
+        value or a binary value, not both; writing one type evicts the other
+        (last-write-wins).
+
+        Args:
+            key: The cache key. Must be a non-empty string.
+            value: The binary value to store. Must be bytes.
+            ttl_seconds: Optional time-to-live in seconds. If None, the key
+                will not expire automatically. If 0 or negative, the key
+                will be deleted immediately.
+
+        Returns:
+            True if the operation succeeded, False otherwise.
+
+        Raises:
+            CacheConnectionError: If the cache backend is unreachable.
+            CacheKeyError: If the key is invalid.
+            CacheOperationError: If the operation fails for other reasons.
+
+        Example:
+            # Store PDF file with 1-hour TTL
+            with open("document.pdf", "rb") as f:
+                file_bytes = f.read()
+            await backend.set_bytes("document:123:content", file_bytes, ttl_seconds=3600)
+
+            # Store without expiration
+            await backend.set_bytes("image:logo", logo_bytes)
+
+        """
+        ...
+
 
 class InMemoryCacheBackend:
     """In-memory cache implementation with TTL support.
@@ -366,6 +450,8 @@ class InMemoryCacheBackend:
         """
         # Storage: key -> (value, expiry_timestamp or None for no expiry)
         self._data: dict[str, tuple[str, float | None]] = {}
+        # Binary storage: key -> (bytes_value, expiry_timestamp or None for no expiry)
+        self._binary_data: dict[str, tuple[bytes, float | None]] = {}
         self._lock = threading.RLock()
         self._cleanup_interval = cleanup_interval_seconds
         self._last_cleanup = time.time()
@@ -398,10 +484,15 @@ class InMemoryCacheBackend:
 
         self._last_cleanup = current_time
 
-        # Find and remove expired keys
+        # Find and remove expired keys from string data
         expired_keys = [key for key, (_, expiry) in self._data.items() if self._is_expired(expiry)]
         for key in expired_keys:
             del self._data[key]
+
+        # Find and remove expired keys from binary data
+        expired_binary_keys = [key for key, (_, expiry) in self._binary_data.items() if self._is_expired(expiry)]
+        for key in expired_binary_keys:
+            del self._binary_data[key]
 
     async def get(self, key: str) -> str | None:
         """Retrieve a value by key.
@@ -468,9 +559,12 @@ class InMemoryCacheBackend:
 
             # Handle immediate deletion for non-positive TTL
             if ttl_seconds is not None and ttl_seconds <= 0:
-                if key in self._data:
-                    del self._data[key]
+                self._data.pop(key, None)
+                self._binary_data.pop(key, None)
                 return True
+
+            # Evict from binary storage (last-write-wins, matches Redis behaviour)
+            self._binary_data.pop(key, None)
 
             # Calculate expiry timestamp
             expiry: float | None = None
@@ -482,6 +576,8 @@ class InMemoryCacheBackend:
 
     async def delete(self, key: str) -> bool:
         """Delete a key from the cache.
+
+        Deletes from both string and binary storage if the key exists.
 
         Args:
             key: The cache key to delete. Must be a non-empty string.
@@ -499,29 +595,39 @@ class InMemoryCacheBackend:
         with self._lock:
             self._maybe_cleanup()
 
-            if key not in self._data:
-                return False
+            deleted = False
 
-            # Check if already expired (lazy expiration)
-            _, expiry = self._data[key]
-            if self._is_expired(expiry):
+            # Check and delete from string data
+            if key in self._data:
+                # Check if already expired (lazy expiration)
+                _, expiry = self._data[key]
+                if not self._is_expired(expiry):
+                    deleted = True
                 del self._data[key]
-                return False
 
-            del self._data[key]
-            return True
+            # Check and delete from binary data
+            if key in self._binary_data:
+                # Check if already expired (lazy expiration)
+                _, expiry = self._binary_data[key]
+                if not self._is_expired(expiry):
+                    deleted = True
+                del self._binary_data[key]
+
+            return deleted
 
     async def exists(self, key: str) -> bool:
         """Check if a key exists in the cache.
 
-        Performs lazy expiration check - if the key exists but has expired,
-        it will be deleted and False will be returned.
+        Checks both string and binary storage. Performs lazy expiration check -
+        if the key exists but has expired, it will be deleted and False will be
+        returned.
 
         Args:
             key: The cache key to check. Must be a non-empty string.
 
         Returns:
-            True if the key exists and is not expired, False otherwise.
+            True if the key exists (in either string or binary storage) and
+            is not expired, False otherwise.
 
         Raises:
             CacheKeyError: If the key is empty.
@@ -533,17 +639,23 @@ class InMemoryCacheBackend:
         with self._lock:
             self._maybe_cleanup()
 
-            if key not in self._data:
-                return False
-
-            _, expiry = self._data[key]
-
-            # Lazy expiration check
-            if self._is_expired(expiry):
+            # Check string storage
+            if key in self._data:
+                _, expiry = self._data[key]
+                if not self._is_expired(expiry):
+                    return True
+                # Expired - clean up
                 del self._data[key]
-                return False
 
-            return True
+            # Check binary storage
+            if key in self._binary_data:
+                _, expiry = self._binary_data[key]
+                if not self._is_expired(expiry):
+                    return True
+                # Expired - clean up
+                del self._binary_data[key]
+
+            return False
 
     async def expire(self, key: str, ttl_seconds: int) -> bool:
         """Set or update the TTL for an existing key.
@@ -568,21 +680,27 @@ class InMemoryCacheBackend:
 
         with self._lock:
             self._maybe_cleanup()
-
-            if key not in self._data:
-                return False
-
-            value, old_expiry = self._data[key]
-
-            # Check if already expired
-            if self._is_expired(old_expiry):
-                del self._data[key]
-                return False
-
-            # Update expiry
             new_expiry = time.time() + ttl_seconds
-            self._data[key] = (value, new_expiry)
-            return True
+
+            # Check string storage
+            if key in self._data:
+                value, old_expiry = self._data[key]
+                if self._is_expired(old_expiry):
+                    del self._data[key]
+                else:
+                    self._data[key] = (value, new_expiry)
+                    return True
+
+            # Check binary storage
+            if key in self._binary_data:
+                value_b, old_expiry_b = self._binary_data[key]
+                if self._is_expired(old_expiry_b):
+                    del self._binary_data[key]
+                else:
+                    self._binary_data[key] = (value_b, new_expiry)
+                    return True
+
+            return False
 
     async def incr(self, key: str, amount: int = 1) -> int:
         """Increment a numeric value.
@@ -672,6 +790,86 @@ class InMemoryCacheBackend:
             self._data[key] = (str(new_value), current_expiry)
             return new_value
 
+    async def get_bytes(self, key: str) -> bytes | None:
+        """Retrieve binary data by key.
+
+        Performs lazy expiration check - if the key exists but has expired,
+        it will be deleted and None will be returned.
+
+        Args:
+            key: The cache key to retrieve. Must be a non-empty string.
+
+        Returns:
+            The cached binary value as bytes, or None if the key does not exist
+            or has expired.
+
+        Raises:
+            CacheKeyError: If the key is empty.
+
+        """
+        if not key:
+            raise CacheKeyError("Cache key cannot be empty")
+
+        with self._lock:
+            self._maybe_cleanup()
+
+            if key not in self._binary_data:
+                return None
+
+            value, expiry = self._binary_data[key]
+
+            # Lazy expiration check
+            if self._is_expired(expiry):
+                del self._binary_data[key]
+                return None
+
+            return value
+
+    async def set_bytes(
+        self,
+        key: str,
+        value: bytes,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Store binary data with optional TTL.
+
+        Args:
+            key: The cache key. Must be a non-empty string.
+            value: The binary value to store. Must be bytes.
+            ttl_seconds: Optional time-to-live in seconds. If None, the key
+                will not expire automatically. If 0 or negative, the key
+                will be deleted immediately.
+
+        Returns:
+            True if the operation succeeded.
+
+        Raises:
+            CacheKeyError: If the key is empty.
+
+        """
+        if not key:
+            raise CacheKeyError("Cache key cannot be empty")
+
+        with self._lock:
+            self._maybe_cleanup()
+
+            # Handle immediate deletion for non-positive TTL
+            if ttl_seconds is not None and ttl_seconds <= 0:
+                self._data.pop(key, None)
+                self._binary_data.pop(key, None)
+                return True
+
+            # Evict from string storage (last-write-wins, matches Redis behaviour)
+            self._data.pop(key, None)
+
+            # Calculate expiry timestamp
+            expiry: float | None = None
+            if ttl_seconds is not None:
+                expiry = time.time() + ttl_seconds
+
+            self._binary_data[key] = (value, expiry)
+            return True
+
 
 class RedisCacheBackend:
     """Redis-backed cache implementation.
@@ -711,17 +909,20 @@ class RedisCacheBackend:
 
     """
 
-    def __init__(self, redis_client: Any) -> None:
+    def __init__(self, redis_client: Any, redis_binary_client: Any | None = None) -> None:
         """Initialize with an existing Redis client.
 
         Args:
-            redis_client: An async Redis client instance. This is typically
-                created internally by `get_cache_backend()`. External code
-                should use the factory function instead of constructing
-                this class directly.
+            redis_client: An async Redis client instance with decode_responses=True
+                for string operations. This is typically created internally by
+                `get_cache_backend()`. External code should use the factory function
+                instead of constructing this class directly.
+            redis_binary_client: An async Redis client instance with decode_responses=False
+                for binary operations. If None, binary operations will not be available.
 
         """
         self._client = redis_client
+        self._binary_client = redis_binary_client
 
     async def get(self, key: str) -> str | None:
         """Retrieve a value by key.
@@ -987,6 +1188,91 @@ class RedisCacheBackend:
                 details={"key": key, "amount": amount, "error": str(e)},
             ) from e
 
+    async def get_bytes(self, key: str) -> bytes | None:
+        """Retrieve binary data by key.
+
+        Args:
+            key: The cache key to retrieve. Must be a non-empty string.
+
+        Returns:
+            The cached binary value as bytes, or None if the key does not exist
+            or has expired.
+
+        Raises:
+            CacheKeyError: If the key is empty.
+            CacheConnectionError: If the Redis server is unreachable.
+            CacheOperationError: If binary client is not available.
+
+        """
+        if not key:
+            raise CacheKeyError("Cache key cannot be empty")
+
+        if self._binary_client is None:
+            raise CacheOperationError(
+                "Binary operations are not available - binary Redis client not initialized",
+                details={"key": key},
+            )
+
+        try:
+            return await self._binary_client.get(key)
+        except Exception as e:
+            logger.error(f"Redis GET (binary) failed for key '{key}': {e}")
+            raise CacheConnectionError(
+                f"Failed to get binary key '{key}' from Redis", details={"key": key, "error": str(e)}
+            ) from e
+
+    async def set_bytes(
+        self,
+        key: str,
+        value: bytes,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Store binary data with optional TTL.
+
+        Args:
+            key: The cache key. Must be a non-empty string.
+            value: The binary value to store. Must be bytes.
+            ttl_seconds: Optional time-to-live in seconds. If None, the key
+                will not expire automatically. If 0 or negative, the key
+                will be deleted immediately.
+
+        Returns:
+            True if the operation succeeded.
+
+        Raises:
+            CacheKeyError: If the key is empty.
+            CacheConnectionError: If the Redis server is unreachable.
+            CacheOperationError: If binary client is not available.
+
+        """
+        if not key:
+            raise CacheKeyError("Cache key cannot be empty")
+
+        if self._binary_client is None:
+            raise CacheOperationError(
+                "Binary operations are not available - binary Redis client not initialized",
+                details={"key": key},
+            )
+
+        try:
+            # Handle immediate deletion for non-positive TTL
+            if ttl_seconds is not None and ttl_seconds <= 0:
+                await self._binary_client.delete(key)
+                return True
+
+            if ttl_seconds is not None:
+                # Use setex for atomic set with expiration
+                await self._binary_client.setex(key, ttl_seconds, value)
+            else:
+                await self._binary_client.set(key, value)
+
+            return True
+        except Exception as e:
+            logger.error(f"Redis SET (binary) failed for key '{key}': {e}")
+            raise CacheConnectionError(
+                f"Failed to set binary key '{key}' in Redis", details={"key": key, "error": str(e)}
+            ) from e
+
 
 # =============================================================================
 # Redis Client Management (Internal)
@@ -994,13 +1280,16 @@ class RedisCacheBackend:
 
 
 async def _create_redis_client() -> Any:
-    """Create and test a Redis client connection.
+    """Create and test a Redis client connection for string operations.
+
+    This client has decode_responses=True, which automatically decodes
+    Redis responses to strings.
 
     This is an internal function used by the cache backend factory.
     External code should use get_cache_backend() instead.
 
     Returns:
-        An async Redis client instance.
+        An async Redis client instance with decode_responses=True.
 
     Raises:
         CacheConnectionError: If Redis connection fails.
@@ -1021,7 +1310,7 @@ async def _create_redis_client() -> Any:
         # Test connection
         await client.ping()
         logger.info(
-            "Redis client initialized successfully",
+            "Redis client (string mode) initialized successfully",
             extra={
                 "redis_url": settings.redis_url,
                 "connection_timeout": settings.redis_connection_timeout,
@@ -1039,13 +1328,62 @@ async def _create_redis_client() -> Any:
         ) from e
 
 
+async def _create_redis_binary_client() -> Any:
+    """Create and test a Redis client connection for binary operations.
+
+    This client has decode_responses=False, which returns raw bytes
+    from Redis without decoding.
+
+    This is an internal function used by the cache backend factory.
+    External code should use get_cache_backend() instead.
+
+    Returns:
+        An async Redis client instance with decode_responses=False.
+
+    Raises:
+        CacheConnectionError: If Redis connection fails.
+
+    """
+    from .config import get_settings_instance
+
+    settings = get_settings_instance()
+
+    try:
+        client = redis.from_url(
+            settings.redis_url,
+            decode_responses=False,
+            socket_timeout=settings.redis_socket_timeout,
+            socket_connect_timeout=settings.redis_connection_timeout,
+        )
+
+        # Test connection
+        await client.ping()
+        logger.info(
+            "Redis client (binary mode) initialized successfully",
+            extra={
+                "redis_url": settings.redis_url,
+                "connection_timeout": settings.redis_connection_timeout,
+                "socket_timeout": settings.redis_socket_timeout,
+            },
+        )
+
+        return client
+
+    except Exception as e:
+        logger.warning(f"Redis binary client connection failed: {e}")
+        raise CacheConnectionError(
+            f"Redis binary client connection failed: {e}",
+            details={"redis_url": settings.redis_url, "error": str(e)},
+        ) from e
+
+
 async def _get_redis_client() -> Any:
-    """Get or create the Redis client (internal singleton).
+    """Get or create the Redis client for string operations (internal singleton).
 
     This is an internal function. External code should use get_cache_backend().
 
     Returns:
-        An async Redis client instance.
+        An async Redis client instance with decode_responses=True.
 
     Raises:
         CacheConnectionError: If Redis connection fails.
@@ -1057,6 +1395,26 @@ async def _get_redis_client() -> Any:
         _redis_client = await _create_redis_client()
 
     return _redis_client
+
+
+async def _get_redis_binary_client() -> Any:
+    """Get or create the Redis client for binary operations (internal singleton).
+
+    This is an internal function. External code should use get_cache_backend().
+
+    Returns:
+        An async Redis client instance with decode_responses=False.
+
+    Raises:
+        CacheConnectionError: If Redis connection fails.
+
+    """
+    global _redis_binary_client  # noqa: PLW0603 # this works for now, we'll leave it
+
+    if _redis_binary_client is None:
+        _redis_binary_client = await _create_redis_binary_client()
+
+    return _redis_binary_client
 
 
 # =============================================================================
@@ -1107,8 +1465,19 @@ async def get_cache_backend() -> CacheBackend:
     # Try to connect to Redis
     try:
         redis_client = await _get_redis_client()
-        _cache_backend = RedisCacheBackend(redis_client)
-        logger.info("Using RedisCacheBackend")
+
+        # Try to get binary client, but don't fail if it's not available
+        redis_binary_client = None
+        try:
+            redis_binary_client = await _get_redis_binary_client()
+            logger.info("Using RedisCacheBackend with binary support")
+        except CacheConnectionError as binary_error:
+            logger.warning(
+                f"Binary Redis client initialization failed, binary operations will not be available: {binary_error}"
+            )
+            logger.info("Using RedisCacheBackend without binary support")
+
+        _cache_backend = RedisCacheBackend(redis_client, redis_binary_client)
         return _cache_backend
 
     except CacheConnectionError as e:
@@ -1210,6 +1579,7 @@ def reset_cache_backend() -> None:
     This function is intended for use in tests to reset the global state
     between test cases.
     """
-    global _cache_backend, _redis_client  # noqa: PLW0603
+    global _cache_backend, _redis_client, _redis_binary_client  # noqa: PLW0603
     _cache_backend = None
     _redis_client = None
+    _redis_binary_client = None

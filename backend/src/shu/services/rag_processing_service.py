@@ -64,9 +64,11 @@ class RAGServiceManager:
         """Get or create the shared thread pool executor."""
         if self._executor is None or self._executor._shutdown:
             settings = get_settings_instance()
-            max_workers = max(1, int(getattr(settings, "max_workers", 4)))
-            self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="rag-embedding-worker")
-            logger.debug(f"Created new ThreadPoolExecutor for RAG processing (max_workers={max_workers})")
+            embedding_threads = max(1, int(getattr(settings, "embedding_threads", 4)))
+            self._executor = ThreadPoolExecutor(
+                max_workers=embedding_threads, thread_name_prefix="rag-embedding-worker"
+            )
+            logger.debug(f"Created new ThreadPoolExecutor for RAG processing (threads={embedding_threads})")
         return self._executor
 
     def _cleanup_expired_instances(self, current_time: float) -> None:
