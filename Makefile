@@ -150,10 +150,10 @@ lint-uncommitted:
 		echo "No uncommitted Python files"; \
 	fi
 	@echo "Checking uncommitted frontend files..."
-	@UNCOMMITTED_JS=$$(git status --short | grep -E '^\s*[MAU\?].*\.(js|jsx|ts|tsx)$$' | awk '{print $$2}' || true); \
+	@UNCOMMITTED_JS=$$(git status --short | grep -E '^\s*[MAU\?].*\.(js|jsx|ts|tsx)$$' | awk '{print $$2}' | grep '^frontend/' || true); \
 	if [ -n "$$UNCOMMITTED_JS" ]; then \
 		echo "Uncommitted files: $$UNCOMMITTED_JS"; \
-		cd frontend && echo "$$UNCOMMITTED_JS" | xargs npx eslint 2>/dev/null || true; \
+		FRONTEND_FILES=$$(echo "$$UNCOMMITTED_JS" | sed 's|^frontend/||'); cd frontend && echo "$$FRONTEND_FILES" | xargs npx eslint 2>/dev/null || true; \
 	else \
 		echo "No uncommitted frontend files"; \
 	fi
@@ -175,10 +175,10 @@ lint-changed:
 	@echo "Checking changed frontend files..."
 	@BASE=$${GITHUB_BASE_REF:-$$(git show-ref --verify --quiet refs/heads/main && echo main || echo master)}; \
 	BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
-	CHANGED_JS=$$(git diff --name-only --diff-filter=ACMR $$BASE...$$BRANCH 2>/dev/null | grep -E '\.(js|jsx|ts|tsx)$$' || true); \
+	CHANGED_JS=$$(git diff --name-only --diff-filter=ACMR $$BASE...$$BRANCH 2>/dev/null | grep -E '\.(js|jsx|ts|tsx)$$' | grep '^frontend/' || true); \
 	if [ -n "$$CHANGED_JS" ]; then \
 		echo "Changed files: $$CHANGED_JS"; \
-		cd frontend && echo "$$CHANGED_JS" | xargs npx eslint 2>/dev/null || true; \
+		FRONTEND_FILES=$$(echo "$$CHANGED_JS" | sed 's|^frontend/||'); cd frontend && echo "$$FRONTEND_FILES" | xargs npx eslint 2>/dev/null || true; \
 	else \
 		echo "No frontend files changed"; \
 	fi
@@ -195,75 +195,10 @@ lint-staged:
 		echo "No Python files staged"; \
 	fi
 	@echo "Checking staged frontend files..."
-	@STAGED_JS=$$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(js|jsx|ts|tsx)$$' || true); \
+	@STAGED_JS=$$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(js|jsx|ts|tsx)$$' | grep '^frontend/' || true); \
 	if [ -n "$$STAGED_JS" ]; then \
 		echo "Staged files: $$STAGED_JS"; \
-		cd frontend && echo "$$STAGED_JS" | xargs npx eslint; \
-	else \
-		echo "No frontend files staged"; \
-	fi
-
-# Check only uncommitted changes (modified/untracked files)
-lint-uncommitted:
-	@echo "Checking uncommitted Python files..."
-	@UNCOMMITTED_PY=$$(git status --short | grep -E '^\s*[MAU\?].*\.py$$' | awk '{print $$2}' || true); \
-	if [ -n "$$UNCOMMITTED_PY" ]; then \
-		echo "Uncommitted files: $$UNCOMMITTED_PY"; \
-		echo "$$UNCOMMITTED_PY" | xargs ruff check; \
-		echo "$$UNCOMMITTED_PY" | xargs mypy --follow-imports=silent --no-error-summary 2>/dev/null || true; \
-	else \
-		echo "No uncommitted Python files"; \
-	fi
-	@echo "Checking uncommitted frontend files..."
-	@UNCOMMITTED_JS=$$(git status --short | grep -E '^\s*[MAU\?].*\.(js|jsx|ts|tsx)$$' | awk '{print $$2}' || true); \
-	if [ -n "$$UNCOMMITTED_JS" ]; then \
-		echo "Uncommitted files: $$UNCOMMITTED_JS"; \
-		cd frontend && echo "$$UNCOMMITTED_JS" | xargs npx eslint 2>/dev/null || true; \
-	else \
-		echo "No uncommitted frontend files"; \
-	fi
-
-# Check only changed files (git diff against PR base or main/master)
-lint-changed:
-	@echo "Checking changed Python files..."
-	@BASE=$${GITHUB_BASE_REF:-$$(git show-ref --verify --quiet refs/heads/main && echo main || echo master)}; \
-	BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
-	CHANGED_PY=$$(git diff --name-only --diff-filter=ACMR $$BASE...$$BRANCH 2>/dev/null | grep '\.py$$' || true); \
-	if [ -n "$$CHANGED_PY" ]; then \
-		echo "Comparing against: $$BASE"; \
-		echo "Changed files: $$CHANGED_PY"; \
-		echo "$$CHANGED_PY" | xargs ruff check; \
-		echo "$$CHANGED_PY" | xargs mypy --follow-imports=silent --no-error-summary 2>/dev/null || true; \
-	else \
-		echo "No Python files changed (comparing against $$BASE)"; \
-	fi
-	@echo "Checking changed frontend files..."
-	@BASE=$${GITHUB_BASE_REF:-$$(git show-ref --verify --quiet refs/heads/main && echo main || echo master)}; \
-	BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
-	CHANGED_JS=$$(git diff --name-only --diff-filter=ACMR $$BASE...$$BRANCH 2>/dev/null | grep -E '\.(js|jsx|ts|tsx)$$' || true); \
-	if [ -n "$$CHANGED_JS" ]; then \
-		echo "Changed files: $$CHANGED_JS"; \
-		cd frontend && echo "$$CHANGED_JS" | xargs npx eslint 2>/dev/null || true; \
-	else \
-		echo "No frontend files changed"; \
-	fi
-
-# Check only staged files (git diff --cached)
-lint-staged:
-	@echo "Checking staged Python files..."
-	@STAGED_PY=$$(git diff --cached --name-only --diff-filter=ACMR | grep '\.py$$' || true); \
-	if [ -n "$$STAGED_PY" ]; then \
-		echo "Staged files: $$STAGED_PY"; \
-		echo "$$STAGED_PY" | xargs ruff check; \
-		echo "$$STAGED_PY" | xargs mypy --follow-imports=silent --no-error-summary; \
-	else \
-		echo "No Python files staged"; \
-	fi
-	@echo "Checking staged frontend files..."
-	@STAGED_JS=$$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(js|jsx|ts|tsx)$$' || true); \
-	if [ -n "$$STAGED_JS" ]; then \
-		echo "Staged files: $$STAGED_JS"; \
-		cd frontend && echo "$$STAGED_JS" | xargs npx eslint; \
+		FRONTEND_FILES=$$(echo "$$STAGED_JS" | sed 's|^frontend/||'); cd frontend && echo "$$FRONTEND_FILES" | xargs npx eslint; \
 	else \
 		echo "No frontend files staged"; \
 	fi

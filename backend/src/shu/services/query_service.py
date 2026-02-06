@@ -1128,10 +1128,6 @@ class QueryService:
                 "avg_tokens_escalated": (total_tokens / max(len(escalated_docs), 1)),
                 "docs": escalated_docs,
             }
-        # TODO: Evaluate if this needs to actvually be here.
-        # except ShuException:
-        #     # Re-raise shu exception without modification
-        #     raise
         except Exception as e:
             logger.warning(f"Full-doc escalation failed: {e}")
             return {"enabled": False, "error": str(e)}

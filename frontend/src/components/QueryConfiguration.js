@@ -61,14 +61,14 @@ function QueryConfiguration({
         const config = extractDataFromResponse(data);
         // Only set threshold if not yet initialized
         if (onThresholdChange && threshold === null) {
-          onThresholdChange(config.search_threshold || 0.7);
+          onThresholdChange(config.search_threshold ?? 0.7);
         }
         // Always update title weighting settings from KB config
         if (onTitleWeightingEnabledChange) {
           onTitleWeightingEnabledChange(config.title_weighting_enabled ?? true);
         }
         if (onTitleWeightMultiplierChange) {
-          onTitleWeightMultiplierChange(config.title_weight_multiplier || 3.0);
+          onTitleWeightMultiplierChange(config.title_weight_multiplier ?? 3.0);
         }
       }
     },
@@ -159,8 +159,11 @@ function QueryConfiguration({
           fullWidth
           label="Threshold"
           type="number"
-          value={threshold || ''}
-          onChange={(e) => onThresholdChange && onThresholdChange(e.target.value)}
+          value={threshold ?? ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            onThresholdChange && onThresholdChange(v === '' ? null : parseFloat(v));
+          }}
           placeholder="Threshold (e.g., 0.7)"
           sx={{ mb: 2 }}
           inputProps={{ min: 0, max: 1, step: 0.1 }}
