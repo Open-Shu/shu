@@ -15,6 +15,9 @@ class ProcessingStatus(str, Enum):
     """Document processing status options."""
 
     PENDING = "pending"
+    EXTRACTING = "extracting"
+    EMBEDDING = "embedding"
+    PROFILING = "profiling"
     PROCESSED = "processed"
     ERROR = "error"
 

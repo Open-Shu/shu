@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,9 @@ from ..core.logging import get_logger
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
 from ..services.document_service import DocumentService
+
+if TYPE_CHECKING:
+    from ..core.queue_backend import QueueBackend
 
 logger = get_logger(__name__)
 
@@ -214,6 +217,78 @@ def _hashes_match(incoming_source_hash: str | None, incoming_content_hash: str, 
     return (False, "")
 
 
+def _check_skip(
+    existing: Document | None,
+    source_hash: str | None,
+    content_hash: str,
+    force_reingest: bool,
+    ko_id: str,
+) -> dict[str, Any] | None:
+    """Check if document ingestion should be skipped due to unchanged content.
+
+    Returns skip result dict if document should be skipped, None otherwise.
+
+    Only skips if:
+    - Document exists
+    - force_reingest is False
+    - Hash matches (source_hash or content_hash)
+    - Document is in terminal successful state (is_ready or is_processed)
+    """
+    if existing is None or force_reingest:
+        return None
+
+    # Check hash match - prefer source_hash, fall back to content_hash
+    hash_matches = False
+    matched_hash = ""
+
+    if source_hash and existing.source_hash:
+        hash_matches = source_hash == existing.source_hash
+        matched_hash = source_hash
+    elif existing.content_hash:
+        hash_matches = content_hash == existing.content_hash
+        matched_hash = content_hash
+
+    # Only skip if hash matches AND document is in terminal successful state
+    if hash_matches and existing.is_processed:
+        return {
+            "ko_id": ko_id,
+            "document_id": existing.id,
+            "status": existing.processing_status,
+            "word_count": existing.word_count or 0,
+            "character_count": existing.character_count or 0,
+            "chunk_count": existing.chunk_count or 0,
+            "skipped": True,
+            "skip_reason": "hash_match",
+        }
+
+    return None
+
+
+async def _enqueue_embed_job(
+    queue: "QueueBackend", document_id: str, knowledge_base_id: str
+) -> None:
+    """Enqueue an embedding job for a document.
+
+    Args:
+        queue: QueueBackend instance
+        document_id: Document ID to embed
+        knowledge_base_id: Knowledge base ID
+    """
+    from ..core.workload_routing import WorkloadType, enqueue_job
+
+    await enqueue_job(
+        queue,
+        WorkloadType.INGESTION_EMBED,
+        payload={
+            "document_id": document_id,
+            "knowledge_base_id": knowledge_base_id,
+            "action": "embed_document",
+        },
+        max_attempts=3,
+        visibility_timeout=300,
+    )
+
+
 async def _upsert_document_record(
     svc: DocumentService,
     knowledge_base_id: str,
@@ -285,7 +360,7 @@ async def _upsert_document_record(
     # Documents that are PENDING, in-progress, or FAILED should be re-processed.
     if not force_reingest:
         match, matched_hash = _hashes_match(source_hash, content_hash, existing)
-        if match and (existing.is_ready or existing.is_processed):
+        if match and existing.is_processed:
             logger.info(
                 "Skipping unchanged document",
                 extra={
@@ -384,35 +459,21 @@ async def ingest_document(
     source_hash = attrs.get("source_hash")
     force_reingest = bool(attrs.get("force_reingest"))
 
-    if existing is not None and not force_reingest:
-        # Check if content is unchanged using source_hash.
-        # Only skip if document is in a terminal successful state (READY or legacy processed).
-        # Documents that are PENDING, in-progress, or FAILED should be re-queued.
-        if (
-            source_hash
-            and existing.source_hash
-            and source_hash == existing.source_hash
-            and (existing.is_ready or existing.is_processed)
-        ):
-            logger.info(
-                "Skipping unchanged document",
-                extra={
-                    "kb_id": knowledge_base_id,
-                    "source_id": source_id,
-                    "hash": source_hash,
-                    "document_id": existing.id,
-                },
-            )
-            return {
-                "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
+    # Check if we should skip due to unchanged content
+    # For ingest_document, we only have source_hash (no content yet), so pass empty content_hash
+    ko_id = deterministic_ko_id(f"{plugin_name}:{user_id}", source_id)
+    skip_result = _check_skip(existing, source_hash, "", force_reingest, ko_id)
+    if skip_result:
+        logger.info(
+            "Skipping unchanged document",
+            extra={
+                "kb_id": knowledge_base_id,
+                "source_id": source_id,
+                "hash": source_hash,
                 "document_id": existing.id,
-                "status": existing.status,
-                "word_count": existing.word_count or 0,
-                "character_count": existing.character_count or 0,
-                "chunk_count": existing.chunk_count or 0,
-                "skipped": True,
-                "skip_reason": "hash_match",
-            }
+            },
+        )
+        return skip_result
 
     # Create document record with PENDING status and empty content
     source_type = f"plugin:{plugin_name}"
@@ -467,8 +528,8 @@ async def ingest_document(
 
     # Stage file bytes using FileStagingService
     cache = await get_cache_backend()
-    staging_service = FileStagingService(staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService()
-    staging_key = await staging_service.stage_file(document.id, file_bytes, cache)
+    staging_service = FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
+    staging_key = await staging_service.stage_file(document.id, file_bytes)
 
     # Enqueue OCR job
     queue = await get_queue_backend()
@@ -647,7 +708,6 @@ async def ingest_text(
     2. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
     """
     from ..core.queue_backend import get_queue_backend
-    from ..core.workload_routing import WorkloadType, enqueue_job
     from ..models.document import DocumentStatus
     from ..schemas.document import DocumentCreate
 
@@ -667,33 +727,20 @@ async def ingest_text(
     # Check for existing document with same source_id (for hash-based skip)
     existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
 
-    if existing is not None and not force_reingest:
-        # Check if content is unchanged using content hash.
-        # Only skip if document is in a terminal successful state (READY or legacy processed).
-        if (
-            existing.content_hash
-            and content_hash == existing.content_hash
-            and (existing.is_ready or existing.is_processed)
-        ):
-            logger.info(
-                "Skipping unchanged document",
-                extra={
-                    "kb_id": knowledge_base_id,
-                    "source_id": source_id,
-                    "hash": content_hash,
-                    "document_id": existing.id,
-                },
-            )
-            return {
-                "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
+    # Check if we should skip due to unchanged content
+    ko_id = deterministic_ko_id(f"{plugin_name}:{user_id}", source_id)
+    skip_result = _check_skip(existing, source_hash, content_hash, force_reingest, ko_id)
+    if skip_result:
+        logger.info(
+            "Skipping unchanged document",
+            extra={
+                "kb_id": knowledge_base_id,
+                "source_id": source_id,
+                "hash": content_hash,
                 "document_id": existing.id,
-                "status": existing.status,
-                "word_count": existing.word_count or 0,
-                "character_count": existing.character_count or 0,
-                "chunk_count": existing.chunk_count or 0,
-                "skipped": True,
-                "skip_reason": "hash_match",
-            }
+            },
+        )
+        return skip_result
 
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
@@ -747,17 +794,7 @@ async def ingest_text(
 
     # Enqueue embedding job directly (no file staging needed)
     queue = await get_queue_backend()
-    await enqueue_job(
-        queue,
-        WorkloadType.INGESTION_EMBED,
-        payload={
-            "document_id": document.id,
-            "knowledge_base_id": knowledge_base_id,
-            "action": "embed_document",
-        },
-        max_attempts=3,
-        visibility_timeout=300,
-    )
+    await _enqueue_embed_job(queue, document.id, knowledge_base_id)
 
     logger.info(
         "Text ingestion enqueued (skipping OCR)",
@@ -798,7 +835,6 @@ async def ingest_thread(
     2. EMBEDDING → PROFILING/READY: Profiling job (if enabled) or done
     """
     from ..core.queue_backend import get_queue_backend
-    from ..core.workload_routing import WorkloadType, enqueue_job
     from ..models.document import DocumentStatus
     from ..schemas.document import DocumentCreate
 
@@ -818,33 +854,20 @@ async def ingest_thread(
     # Check for existing document with same source_id (for hash-based skip)
     existing = await svc.get_document_by_source_id(knowledge_base_id, thread_id)
 
-    if existing is not None and not force_reingest:
-        # Check if content is unchanged using content hash.
-        # Only skip if document is in a terminal successful state (READY or legacy processed).
-        if (
-            existing.content_hash
-            and content_hash == existing.content_hash
-            and (existing.is_ready or existing.is_processed)
-        ):
-            logger.info(
-                "Skipping unchanged thread",
-                extra={
-                    "kb_id": knowledge_base_id,
-                    "thread_id": thread_id,
-                    "hash": content_hash,
-                    "document_id": existing.id,
-                },
-            )
-            return {
-                "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),
+    # Check if we should skip due to unchanged content
+    ko_id = deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id)
+    skip_result = _check_skip(existing, source_hash, content_hash, force_reingest, ko_id)
+    if skip_result:
+        logger.info(
+            "Skipping unchanged thread",
+            extra={
+                "kb_id": knowledge_base_id,
+                "thread_id": thread_id,
+                "hash": content_hash,
                 "document_id": existing.id,
-                "status": existing.status,
-                "word_count": existing.word_count or 0,
-                "character_count": existing.character_count or 0,
-                "chunk_count": existing.chunk_count or 0,
-                "skipped": True,
-                "skip_reason": "hash_match",
-            }
+            },
+        )
+        return skip_result
 
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
@@ -898,17 +921,7 @@ async def ingest_thread(
 
     # Enqueue embedding job directly (no file staging needed)
     queue = await get_queue_backend()
-    await enqueue_job(
-        queue,
-        WorkloadType.INGESTION_EMBED,
-        payload={
-            "document_id": document.id,
-            "knowledge_base_id": knowledge_base_id,
-            "action": "embed_document",
-        },
-        max_attempts=3,
-        visibility_timeout=300,
-    )
+    await _enqueue_embed_job(queue, document.id, knowledge_base_id)
 
     logger.info(
         "Thread ingestion enqueued (skipping OCR)",

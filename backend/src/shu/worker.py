@@ -146,7 +146,7 @@ async def _handle_ocr_job(job) -> None:
 
     session_local = get_async_session_local()
     cache = await get_cache_backend()
-    staging_service = FileStagingService()  # TTL not needed for retrieval
+    staging_service = FileStagingService(cache)  # TTL not needed for retrieval
 
     async with session_local() as session:
         # Get document and update status to EXTRACTING
@@ -164,7 +164,7 @@ async def _handle_ocr_job(job) -> None:
 
         try:
             # Retrieve file bytes from staging
-            file_bytes = await staging_service.retrieve_file(staging_key, cache)
+            file_bytes = await staging_service.retrieve_file(staging_key)
 
             logger.info(
                 "Retrieved staged file",
@@ -245,7 +245,7 @@ async def _handle_ocr_job(job) -> None:
                     "error": str(e),
                 }
             )
-            document.mark_failed(f"File staging failed: {e}")
+            document.mark_error(f"File staging failed: {e}")
             await session.commit()
             raise
 
@@ -262,7 +262,7 @@ async def _handle_ocr_job(job) -> None:
                         "error": str(e),
                     }
                 )
-                document.mark_failed(f"Text extraction failed after {job.attempts} attempts: {e}")
+                document.mark_error(f"Text extraction failed after {job.attempts} attempts: {e}")
                 await session.commit()
             raise
 
@@ -370,7 +370,7 @@ async def _handle_embed_job(job) -> None:
                 )
             else:
                 # Profiling disabled - set status to READY
-                document.update_status(DocumentStatus.READY)
+                document.update_status(DocumentStatus.PROCESSED)
                 await session.commit()
 
                 logger.info(
@@ -394,7 +394,7 @@ async def _handle_embed_job(job) -> None:
                         "error": str(e),
                     }
                 )
-                document.mark_failed(f"Embedding generation failed after {job.attempts} attempts: {e}")
+                document.mark_error(f"Embedding generation failed after {job.attempts} attempts: {e}")
                 await session.commit()
             raise
 
@@ -448,7 +448,7 @@ async def _handle_profiling_job(job) -> None:
             document = doc_result.scalar_one_or_none()
 
             if document:
-                document.update_status(DocumentStatus.READY)
+                document.update_status(DocumentStatus.PROCESSED)
                 await session.commit()
 
             logger.info(
@@ -459,7 +459,7 @@ async def _handle_profiling_job(job) -> None:
                     "profiling_mode": result.profiling_mode.value if result.profiling_mode else None,
                     "tokens_used": result.tokens_used,
                     "duration_ms": result.duration_ms,
-                    "status": DocumentStatus.READY.value,
+                    "status": DocumentStatus.PROCESSED.value,
                 }
             )
         else:
@@ -469,7 +469,7 @@ async def _handle_profiling_job(job) -> None:
             doc_result = await session.execute(stmt)
             document = doc_result.scalar_one_or_none()
             if document:
-                document.mark_failed(error_msg)
+                document.mark_error(error_msg)
                 await session.commit()
 
             logger.error(

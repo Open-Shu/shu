@@ -60,16 +60,16 @@ class DocumentStatus(str, Enum):
     - EXTRACTING: OCR/text extraction in progress
     - EMBEDDING: Chunking and embedding in progress
     - PROFILING: LLM profiling in progress (if enabled)
-    - READY: Document fully processed and searchable
-    - FAILED: Processing failed (see error_message for details)
+    - PROCESSED: Document fully processed and searchable
+    - ERROR: Processing failed (see processing_error for details)
     """
 
     PENDING = "pending"
     EXTRACTING = "extracting"
     EMBEDDING = "embedding"
     PROFILING = "profiling"
-    READY = "ready"
-    FAILED = "failed"
+    PROCESSED = "processed"
+    ERROR = "error"
 
 
 class Document(BaseModel):
@@ -103,14 +103,9 @@ class Document(BaseModel):
         String(64), nullable=True, index=True
     )  # Hash of original source content (md5Checksum, etag, etc.)
 
-    # Processing information (legacy fields - kept for backward compatibility)
-    processing_status = Column(String(50), default="pending", nullable=False)  # 'pending', 'processed', 'error'
+    # Processing status: pending → extracting → embedding → profiling → processed (or error)
+    processing_status = Column(String(50), default="pending", nullable=False)
     processing_error = Column(Text, nullable=True)
-
-    # Pipeline status tracking (Queue-Based Ingestion Pipeline)
-    # Tracks document progress through async ingestion: PENDING → EXTRACTING → EMBEDDING → PROFILING → READY
-    status = Column(String(20), default=DocumentStatus.READY.value, nullable=False, index=True)
-    error_message = Column(Text, nullable=True)  # Error details when status is FAILED
 
     # Extraction metadata (for OCR verification and tracking)
     extraction_method = Column(String(50), nullable=True)  # 'ocr', 'text', 'pdfplumber', 'pymupdf', etc.
@@ -168,11 +163,9 @@ class Document(BaseModel):
             {
                 "chunk_count": self.chunk_count,
                 "processing_status": self.processing_status,
+                "processing_error": self.processing_error,
                 "processed_at": self.processed_at.isoformat() if self.processed_at else None,
                 "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
-                # Pipeline status (Queue-Based Ingestion Pipeline)
-                "status": self.status,
-                "error_message": self.error_message,
                 # Profile fields (SHU-342)
                 "synopsis": self.synopsis,
                 "document_type": self.document_type,
@@ -189,85 +182,43 @@ class Document(BaseModel):
     @property
     def is_processed(self) -> bool:
         """Check if document has been processed successfully."""
-        return self.processing_status == "processed"
+        return self.processing_status == DocumentStatus.PROCESSED.value
 
     @property
     def has_error(self) -> bool:
         """Check if document processing had an error."""
-        return self.processing_status == "error"
+        return self.processing_status == DocumentStatus.ERROR.value
 
     def mark_processed(self) -> None:
         """Mark document as processed successfully."""
-        self.processing_status = "processed"
+        self.processing_status = DocumentStatus.PROCESSED.value
         self.processed_at = datetime.now(UTC)
         self.processing_error = None
-        self.error_message = None
-        # Sync with pipeline status
-        self.status = DocumentStatus.READY.value
 
     def mark_error(self, error_message: str) -> None:
         """Mark document as having a processing error."""
-        self.processing_status = "error"
+        self.processing_status = DocumentStatus.ERROR.value
         self.processing_error = error_message
         self.processed_at = datetime.now(UTC)
-        # Sync with pipeline status
-        self.status = DocumentStatus.FAILED.value
-        self.error_message = error_message
 
-    # Pipeline status helpers (Queue-Based Ingestion Pipeline)
     def update_status(self, new_status: "DocumentStatus") -> None:
-        """Update document pipeline status and synchronize with processing_status.
-
-        This method ensures backward compatibility by keeping processing_status
-        in sync with the new status field:
-        - READY status → processing_status = 'processed'
-        - FAILED status → processing_status = 'error'
-        - Other statuses → processing_status = 'pending'
+        """Update document pipeline status.
 
         Args:
             new_status: The new DocumentStatus value
         """
-        self.status = new_status.value
+        self.processing_status = new_status.value
 
-        # Synchronize with legacy processing_status field
-        if new_status == DocumentStatus.READY:
-            self.processing_status = "processed"
+        if new_status == DocumentStatus.PROCESSED:
             self.processed_at = datetime.now(UTC)
             self.processing_error = None
-            self.error_message = None
-        elif new_status == DocumentStatus.FAILED:
-            self.processing_status = "error"
+        elif new_status == DocumentStatus.ERROR:
             self.processed_at = datetime.now(UTC)
         else:
-            self.processing_status = "pending"
-            # Clear stale error fields when moving back to non-terminal states
+            # Clear stale error fields when moving to non-terminal states
             self.processing_error = None
-            self.error_message = None
 
-    def mark_failed(self, error_msg: str) -> None:
-        """Mark document as failed with error message.
 
-        Sets status to FAILED and synchronizes with processing_status.
-
-        Args:
-            error_msg: Description of the failure
-        """
-        self.status = DocumentStatus.FAILED.value
-        self.error_message = error_msg
-        # Synchronize with legacy fields
-        self.processing_status = "error"
-        self.processing_error = error_msg
-        self.processed_at = datetime.now(UTC)
-
-    @property
-    def is_ready(self) -> bool:
-        """Check if document is ready (fully processed)."""
-        return self.status == DocumentStatus.READY.value
-
-    @property
-    def is_failed(self) -> bool:
-        """Check if document processing failed."""
-        return self.status == DocumentStatus.FAILED.value
 
     def update_content_stats(self, word_count: int, character_count: int, chunk_count: int) -> None:
         """Update content statistics."""

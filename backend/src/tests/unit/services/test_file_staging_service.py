@@ -23,9 +23,9 @@ def cache_backend() -> InMemoryCacheBackend:
 
 
 @pytest.fixture
-def staging_service() -> FileStagingService:
-    """Provide a FileStagingService instance."""
-    return FileStagingService()
+def staging_service(cache_backend: InMemoryCacheBackend) -> FileStagingService:
+    """Provide a FileStagingService instance with injected cache backend."""
+    return FileStagingService(cache_backend)
 
 
 class TestFileStagingService:
@@ -46,7 +46,7 @@ class TestFileStagingService:
         file_bytes = b"Hello, this is test file content with binary data \x00\x01\x02"
 
         # Stage the file
-        staging_key = await staging_service.stage_file(document_id, file_bytes, cache_backend)
+        staging_key = await staging_service.stage_file(document_id, file_bytes)
 
         # Verify staging key format
         assert staging_key == f"file_staging:{document_id}"
@@ -56,7 +56,7 @@ class TestFileStagingService:
         assert cached_bytes == file_bytes
 
         # Retrieve the file
-        retrieved_bytes = await staging_service.retrieve_file(staging_key, cache_backend)
+        retrieved_bytes = await staging_service.retrieve_file(staging_key)
 
         # Verify bytes match
         assert retrieved_bytes == file_bytes
@@ -69,7 +69,6 @@ class TestFileStagingService:
     async def test_retrieve_missing_file_raises_error(
         self,
         staging_service: FileStagingService,
-        cache_backend: InMemoryCacheBackend,
     ):
         """Test retrieve_file() with non-existent key raises FileStagingError.
 
@@ -78,7 +77,7 @@ class TestFileStagingService:
         non_existent_key = "file_staging:non_existent_doc"
 
         with pytest.raises(FileStagingError) as exc_info:
-            await staging_service.retrieve_file(non_existent_key, cache_backend)
+            await staging_service.retrieve_file(non_existent_key)
 
         assert "Staged file not found" in str(exc_info.value.message)
         assert exc_info.value.details["staging_key"] == non_existent_key

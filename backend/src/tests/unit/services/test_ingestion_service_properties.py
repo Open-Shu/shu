@@ -58,7 +58,7 @@ class TestAPIImmediateReturnProperty:
         # Create mock document
         mock_document = MagicMock()
         mock_document.id = "test-doc-123"
-        mock_document.status = DocumentStatus.PENDING.value
+        mock_document.processing_status = DocumentStatus.PENDING.value
         mock_document.word_count = 0
         mock_document.character_count = 0
         mock_document.chunk_count = 0
@@ -160,7 +160,7 @@ class TestAPIImmediateReturnProperty:
         # Create mock document
         mock_document = MagicMock()
         mock_document.id = "test-doc-456"
-        mock_document.status = DocumentStatus.EMBEDDING.value
+        mock_document.processing_status = DocumentStatus.EMBEDDING.value
         mock_document.word_count = 0
         mock_document.character_count = 0
         mock_document.chunk_count = 0
@@ -251,7 +251,7 @@ class TestAPIImmediateReturnProperty:
         # Create mock document
         mock_document = MagicMock()
         mock_document.id = "test-doc-789"
-        mock_document.status = DocumentStatus.EMBEDDING.value
+        mock_document.processing_status = DocumentStatus.EMBEDDING.value
         mock_document.word_count = 0
         mock_document.character_count = 0
         mock_document.chunk_count = 0

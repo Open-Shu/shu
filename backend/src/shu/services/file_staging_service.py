@@ -39,29 +39,30 @@ class FileStagingService:
     Works with both RedisCacheBackend and InMemoryCacheBackend.
 
     Args:
+        cache: The CacheBackend instance to use for storage and retrieval.
         staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
     """
 
-    def __init__(self, staging_ttl: int = DEFAULT_STAGING_TTL):
+    def __init__(self, cache: CacheBackend, staging_ttl: int = DEFAULT_STAGING_TTL):
         """Initialize the file staging service.
 
         Args:
+            cache: The CacheBackend instance to use for storage and retrieval.
             staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
         """
+        self._cache = cache
         self._staging_ttl = staging_ttl
 
     async def stage_file(
         self,
         document_id: str,
         file_bytes: bytes,
-        cache: CacheBackend,
     ) -> str:
         """Stage file bytes for OCR worker.
 
         Args:
             document_id: The document ID to associate with the staged file.
             file_bytes: The raw file bytes to stage.
-            cache: The CacheBackend instance to use for storage.
 
         Returns:
             staging_key: Cache key reference for retrieval.
@@ -72,7 +73,7 @@ class FileStagingService:
         staging_key = f"file_staging:{document_id}"
 
         try:
-            success = await cache.set_bytes(
+            success = await self._cache.set_bytes(
                 staging_key,
                 file_bytes,
                 ttl_seconds=self._staging_ttl,
@@ -104,7 +105,6 @@ class FileStagingService:
     async def retrieve_file(
         self,
         staging_key: str,
-        cache: CacheBackend,
     ) -> bytes:
         """Retrieve file bytes from staging.
 
@@ -112,7 +112,6 @@ class FileStagingService:
 
         Args:
             staging_key: The cache key for the staged file.
-            cache: The CacheBackend instance to use for retrieval.
 
         Returns:
             The raw file bytes.
@@ -121,7 +120,7 @@ class FileStagingService:
             FileStagingError: If staged file not found or retrieval fails.
         """
         try:
-            file_bytes = await cache.get_bytes(staging_key)
+            file_bytes = await self._cache.get_bytes(staging_key)
             if file_bytes is None:
                 raise FileStagingError(
                     f"Staged file not found: {staging_key}",
@@ -130,7 +129,7 @@ class FileStagingService:
 
             # Clean up after retrieval
             try:
-                await cache.delete(staging_key)
+                await self._cache.delete(staging_key)
             except Exception as cleanup_error:
                 # Log but don't fail - file was retrieved successfully
                 logger.warning(

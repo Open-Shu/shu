@@ -183,64 +183,43 @@ class TestDocument:
         assert doc.character_count == 500
         assert doc.chunk_count == 5
 
-    def test_update_status_synchronizes_with_processing_status(self):
-        """Test that update_status keeps status and processing_status in sync.
-
-        This is a critical test for backward compatibility. The new status field
-        must stay synchronized with the legacy processing_status field to ensure
-        existing code that reads processing_status continues to work correctly.
-        """
+    def test_update_status_sets_processing_status(self):
+        """Test that update_status writes to processing_status correctly."""
         from shu.models.document import DocumentStatus
 
         doc = Document()
 
-        # READY status should set processing_status to 'processed'
-        doc.update_status(DocumentStatus.READY)
-        assert doc.status == "ready"
+        # PROCESSED status
+        doc.update_status(DocumentStatus.PROCESSED)
         assert doc.processing_status == "processed"
         assert doc.processed_at is not None
+        assert doc.processing_error is None
 
-        # FAILED status should set processing_status to 'error'
-        doc.update_status(DocumentStatus.FAILED)
-        assert doc.status == "failed"
+        # ERROR status
+        doc.update_status(DocumentStatus.ERROR)
         assert doc.processing_status == "error"
         assert doc.processed_at is not None
 
-        # PENDING status should set processing_status to 'pending'
+        # PENDING status
         doc.update_status(DocumentStatus.PENDING)
-        assert doc.status == "pending"
         assert doc.processing_status == "pending"
 
-        # EXTRACTING status should set processing_status to 'pending'
+        # Intermediate statuses
         doc.update_status(DocumentStatus.EXTRACTING)
-        assert doc.status == "extracting"
-        assert doc.processing_status == "pending"
+        assert doc.processing_status == "extracting"
 
-        # EMBEDDING status should set processing_status to 'pending'
         doc.update_status(DocumentStatus.EMBEDDING)
-        assert doc.status == "embedding"
-        assert doc.processing_status == "pending"
+        assert doc.processing_status == "embedding"
 
-        # PROFILING status should set processing_status to 'pending'
         doc.update_status(DocumentStatus.PROFILING)
-        assert doc.status == "profiling"
-        assert doc.processing_status == "pending"
+        assert doc.processing_status == "profiling"
 
-    def test_mark_failed_synchronizes_with_processing_status(self):
-        """Test that mark_failed keeps status and processing_status in sync.
-
-        The mark_failed method should set both status and processing_status,
-        as well as both error_message and processing_error fields.
-        """
+    def test_mark_error_sets_processing_status_and_error(self):
+        """Test that mark_error sets processing_status and processing_error."""
         doc = Document()
 
-        doc.mark_failed("OCR extraction failed: invalid PDF format")
+        doc.mark_error("OCR extraction failed: invalid PDF format")
 
-        # New pipeline fields
-        assert doc.status == "failed"
-        assert doc.error_message == "OCR extraction failed: invalid PDF format"
-
-        # Legacy fields (backward compatibility)
         assert doc.processing_status == "error"
         assert doc.processing_error == "OCR extraction failed: invalid PDF format"
         assert doc.processed_at is not None

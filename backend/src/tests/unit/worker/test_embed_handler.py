@@ -155,7 +155,7 @@ class TestEmbedHandlerProfilingBranch:
             await _handle_embed_job(job)
 
         # Verify document status was updated to READY (not PROFILING)
-        mock_document.update_status.assert_called_once_with(DocumentStatus.READY)
+        mock_document.update_status.assert_called_once_with(DocumentStatus.PROCESSED)
 
         # Verify NO profiling job was enqueued
         mock_enqueue_job.assert_not_called()

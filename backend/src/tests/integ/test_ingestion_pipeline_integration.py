@@ -52,7 +52,7 @@ async def _wait_for_document_status(
     while True:
         result = await db.execute(
             text("""
-                SELECT status, error_message, processing_status, chunk_count
+                SELECT processing_status, processing_error, chunk_count
                 FROM documents WHERE id = :doc_id
             """),
             {"doc_id": document_id},
@@ -62,12 +62,12 @@ async def _wait_for_document_status(
         if row is None:
             raise ValueError(f"Document not found: {document_id}")
 
-        status, error_message, processing_status, chunk_count = row
+        processing_status, processing_error, chunk_count = row
 
-        if status in target_statuses:
+        if processing_status in target_statuses:
             return {
-                "status": status,
-                "error_message": error_message,
+                "status": processing_status,
+                "error_message": processing_error,
                 "processing_status": processing_status,
                 "chunk_count": chunk_count,
             }
@@ -76,7 +76,7 @@ async def _wait_for_document_status(
         if elapsed > timeout:
             raise TimeoutError(
                 f"Document {document_id} did not reach status {target_statuses} "
-                f"within {timeout}s. Current status: {status}"
+                f"within {timeout}s. Current status: {processing_status}"
             )
 
         await asyncio.sleep(POLL_INTERVAL)
@@ -268,7 +268,7 @@ async def test_ocr_failure_sets_failed_status(client, db, auth_headers):
     except TimeoutError:
         # If timeout, check current status - it might still be processing
         result = await db.execute(
-            text("SELECT status, error_message FROM documents WHERE id = :doc_id"),
+            text("SELECT processing_status, processing_error FROM documents WHERE id = :doc_id"),
             {"doc_id": doc_id},
         )
         row = result.fetchone()

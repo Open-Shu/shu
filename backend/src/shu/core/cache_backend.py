@@ -559,8 +559,8 @@ class InMemoryCacheBackend:
 
             # Handle immediate deletion for non-positive TTL
             if ttl_seconds is not None and ttl_seconds <= 0:
-                if key in self._data:
-                    del self._data[key]
+                self._data.pop(key, None)
+                self._binary_data.pop(key, None)
                 return True
 
             # Evict from binary storage (last-write-wins, matches Redis behaviour)
@@ -855,8 +855,8 @@ class InMemoryCacheBackend:
 
             # Handle immediate deletion for non-positive TTL
             if ttl_seconds is not None and ttl_seconds <= 0:
-                if key in self._binary_data:
-                    del self._binary_data[key]
+                self._data.pop(key, None)
+                self._binary_data.pop(key, None)
                 return True
 
             # Evict from string storage (last-write-wins, matches Redis behaviour)
