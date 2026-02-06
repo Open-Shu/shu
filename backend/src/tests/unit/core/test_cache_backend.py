@@ -23,23 +23,52 @@ class MockRedisClient:
 
     This mock implements the same interface as the real Redis client
     to allow testing RedisCacheBackend without a real Redis server.
+
+    In real Redis, both the string client (decode_responses=True) and the
+    binary client (decode_responses=False) share the same keyspace. To
+    model this accurately, callers can pass shared ``data`` and ``expiry``
+    dicts so that two MockRedisClient instances operate on the same storage.
+
+    Args:
+        decode_responses: If True, returns strings. If False, returns bytes.
+        data: Optional shared data dict. If None, a new dict is created.
+        expiry: Optional shared expiry dict. If None, a new dict is created.
     """
 
-    def __init__(self):
-        self._data: dict[str, Any] = {}
-        self._expiry: dict[str, float] = {}
+    def __init__(
+        self,
+        decode_responses: bool = True,
+        data: dict[str, Any] | None = None,
+        expiry: dict[str, float] | None = None,
+    ):
+        self._data: dict[str, Any] = data if data is not None else {}
+        self._expiry: dict[str, float] = expiry if expiry is not None else {}
+        self._decode_responses = decode_responses
 
-    async def get(self, key: str) -> str | None:
-        """Get a value by key."""
+    async def get(self, key: str) -> str | bytes | None:
+        """Get a value by key.
+
+        Models real Redis decode_responses behaviour:
+        - decode_responses=True: bytes values are decoded to str (UTF-8)
+        - decode_responses=False: str values are encoded to bytes (UTF-8)
+        """
         # Check expiration
         if key in self._expiry and time.time() > self._expiry[key]:
             del self._data[key]
             del self._expiry[key]
             return None
-        return self._data.get(key)
+        value = self._data.get(key)
+        if value is None:
+            return None
+        if self._decode_responses and isinstance(value, bytes):
+            return value.decode('utf-8')
+        if not self._decode_responses and isinstance(value, str):
+            return value.encode('utf-8')
+        return value
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
+    async def set(self, key: str, value: str | bytes, ex: int | None = None) -> bool:
         """Set a key-value pair with optional expiration."""
+        # Store as-is (bytes or str)
         self._data[key] = value
         if ex:
             self._expiry[key] = time.time() + ex
@@ -47,7 +76,7 @@ class MockRedisClient:
             del self._expiry[key]
         return True
 
-    async def setex(self, key: str, seconds: int, value: str) -> bool:
+    async def setex(self, key: str, seconds: int, value: str | bytes) -> bool:
         """Set a key-value pair with expiration."""
         self._data[key] = value
         self._expiry[key] = time.time() + seconds
@@ -1227,3 +1256,251 @@ class TestDependencyInjection:
         # Should not be a coroutine
         result = get_cache_backend_dependency()
         assert not asyncio.iscoroutine(result)
+
+
+# ============================================================================
+# Binary Operations Tests
+# ============================================================================
+
+
+@pytest.fixture
+def redis_backend_with_binary() -> RedisCacheBackend:
+    """Provide a RedisCacheBackend with both string and binary clients.
+
+    Both clients share the same data/expiry dicts to accurately model
+    real Redis where both clients hit the same keyspace.
+    """
+    shared_data: dict[str, Any] = {}
+    shared_expiry: dict[str, float] = {}
+    mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
+    mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
+    return RedisCacheBackend(mock_string_client, mock_binary_client)
+
+
+# Strategy for generating binary data
+binary_data_strategy = st.binary(min_size=0, max_size=10000)
+
+
+class TestBinaryOperationsInMemory:
+    """Tests for binary operations on InMemoryCacheBackend."""
+
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(key=cache_key_strategy, value=binary_data_strategy)
+    async def test_set_bytes_then_get_bytes_returns_same_value(self, key: str, value: bytes):
+        """
+        Property: For any key and binary value, set_bytes followed by get_bytes returns the same value.
+        Feature: binary-cache-support, Property 1
+        **Validates: Binary data round-trip correctness for InMemoryCacheBackend**
+        """
+        backend = InMemoryCacheBackend(cleanup_interval_seconds=0)
+
+        # Set binary data
+        success = await backend.set_bytes(key, value)
+        assert success is True
+
+        # Get binary data
+        result = await backend.get_bytes(key)
+        assert result == value, f"Expected {value!r}, got {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_set_bytes_with_ttl_expires(self, inmemory_backend: InMemoryCacheBackend):
+        """Unit test: Binary data with TTL expires correctly."""
+        test_data = b"test binary data"
+
+        # Set with 1 second TTL
+        await inmemory_backend.set_bytes("test_key", test_data, ttl_seconds=1)
+
+        # Should exist immediately
+        result = await inmemory_backend.get_bytes("test_key")
+        assert result == test_data
+
+        # Wait for expiration
+        await asyncio.sleep(1.1)
+
+        # Should be expired
+        result = await inmemory_backend.get_bytes("test_key")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_last_write_wins_for_same_key(self, inmemory_backend: InMemoryCacheBackend):
+        """Unit test: Writing binary to a key that holds string data overwrites it (last-write-wins).
+
+        This matches real Redis behavior where both clients share the same
+        keyspace. A key can only hold one type of value at a time.
+        """
+        key = "shared_key"
+        string_value = "string data"
+        binary_value = b"binary data"
+
+        # Set string, then overwrite with binary
+        await inmemory_backend.set(key, string_value)
+        await inmemory_backend.set_bytes(key, binary_value)
+
+        # String read should return None (overwritten by binary write)
+        assert await inmemory_backend.get(key) is None
+        # Binary read should return the last-written value
+        assert await inmemory_backend.get_bytes(key) == binary_value
+
+        # Now overwrite binary with string
+        await inmemory_backend.set(key, string_value)
+
+        assert await inmemory_backend.get(key) == string_value
+        assert await inmemory_backend.get_bytes(key) is None
+
+    @pytest.mark.asyncio
+    async def test_set_bytes_with_zero_ttl_deletes_immediately(self, inmemory_backend: InMemoryCacheBackend):
+        """Unit test: set_bytes with TTL=0 deletes the key immediately (edge case)."""
+        # Set a key first
+        await inmemory_backend.set_bytes("test_key", b"data")
+        assert await inmemory_backend.get_bytes("test_key") == b"data"
+
+        # Set with TTL=0 should delete
+        await inmemory_backend.set_bytes("test_key", b"new data", ttl_seconds=0)
+
+        # Should be gone
+        assert await inmemory_backend.get_bytes("test_key") is None
+
+
+class TestBinaryOperationsRedis:
+    """Tests for binary operations on RedisCacheBackend."""
+
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(key=cache_key_strategy, value=binary_data_strategy)
+    async def test_set_bytes_then_get_bytes_returns_same_value(self, key: str, value: bytes):
+        """
+        Property: For any key and binary value, set_bytes followed by get_bytes returns the same value.
+        Feature: binary-cache-support, Property 2
+        **Validates: Binary data round-trip correctness for RedisCacheBackend**
+        """
+        # Create backend directly for property test (shared storage models real Redis)
+        shared_data: dict[str, Any] = {}
+        shared_expiry: dict[str, float] = {}
+        mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
+        mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
+        backend = RedisCacheBackend(mock_string_client, mock_binary_client)
+
+        # Set binary data
+        success = await backend.set_bytes(key, value)
+        assert success is True
+
+        # Get binary data
+        result = await backend.get_bytes(key)
+        assert result == value, f"Expected {value!r}, got {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_last_write_wins_for_same_key(self, redis_backend_with_binary: RedisCacheBackend):
+        """Unit test: Writing binary to a key that holds string data overwrites it (last-write-wins).
+
+        In real Redis both clients share the same keyspace, so set_bytes()
+        on a key that was previously set() with a string value will overwrite it.
+        The string client will decode the stored bytes (not return None), and
+        the binary client will encode the stored string (not return None).
+        """
+        key = "shared_key"
+        string_value = "string data"
+        binary_value = b"binary data"
+
+        # Set string, then overwrite with binary
+        await redis_backend_with_binary.set(key, string_value)
+        await redis_backend_with_binary.set_bytes(key, binary_value)
+
+        # The original string value is gone; string client decodes stored bytes
+        assert await redis_backend_with_binary.get(key) != string_value
+        assert await redis_backend_with_binary.get(key) == binary_value.decode("utf-8")
+        # Binary read should return the last-written value
+        assert await redis_backend_with_binary.get_bytes(key) == binary_value
+
+        # Now overwrite binary with string
+        await redis_backend_with_binary.set(key, string_value)
+
+        assert await redis_backend_with_binary.get(key) == string_value
+        # The original binary value is gone; binary client encodes stored string
+        assert await redis_backend_with_binary.get_bytes(key) != binary_value
+        assert await redis_backend_with_binary.get_bytes(key) == string_value.encode("utf-8")
+
+
+class TestBinaryBackendSubstitutability:
+    """Tests that both backends handle binary operations identically."""
+
+    @pytest.fixture(params=["inmemory", "redis"])
+    def binary_backend(self, request) -> CacheBackend:
+        """Parametrized fixture providing both backends with binary support."""
+        if request.param == "inmemory":
+            return InMemoryCacheBackend(cleanup_interval_seconds=0)
+        else:  # redis (shared storage models real Redis)
+            shared_data: dict[str, Any] = {}
+            shared_expiry: dict[str, float] = {}
+            mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
+            mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
+            return RedisCacheBackend(mock_string_client, mock_binary_client)
+
+    @pytest.mark.asyncio
+    @settings(max_examples=100)
+    @given(key=cache_key_strategy, value=binary_data_strategy, backend_type=st.sampled_from(["inmemory", "redis"]))
+    async def test_binary_round_trip_consistent_across_backends(self, key: str, value: bytes, backend_type: str):
+        """
+        Property: For any key and binary value, both backends produce identical round-trip results.
+        Feature: binary-cache-support, Property 3
+        **Validates: Backend substitutability for binary operations (CacheBackend protocol compliance)**
+        """
+        # Create backend based on type
+        if backend_type == "inmemory":
+            backend = InMemoryCacheBackend(cleanup_interval_seconds=0)
+        else:  # redis (shared storage models real Redis)
+            shared_data: dict[str, Any] = {}
+            shared_expiry: dict[str, float] = {}
+            mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
+            mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
+            backend = RedisCacheBackend(mock_string_client, mock_binary_client)
+
+        # Set binary data
+        success = await backend.set_bytes(key, value)
+        assert success is True
+
+        # Get binary data
+        result = await backend.get_bytes(key)
+        assert result == value
+
+    @pytest.mark.asyncio
+    async def test_binary_ttl_behavior_consistent(self, binary_backend: CacheBackend):
+        """Unit test: TTL behavior is consistent across backends."""
+        test_data = b"test data"
+
+        # Set with TTL
+        await binary_backend.set_bytes("ttl_key", test_data, ttl_seconds=1)
+
+        # Should exist immediately
+        assert await binary_backend.get_bytes("ttl_key") == test_data
+
+        # Wait for expiration
+        await asyncio.sleep(1.1)
+
+        # Should be expired
+        assert await binary_backend.get_bytes("ttl_key") is None
+
+    @pytest.mark.asyncio
+    async def test_last_write_wins_consistent(self, binary_backend: CacheBackend):
+        """Unit test: Last-write-wins behavior is consistent across backends.
+
+        When the same key is used for both string and binary data, the last
+        write wins. The original value for the previous type is gone. This
+        property holds for both InMemory (eviction) and Redis (shared keyspace).
+
+        Note: cross-type reads differ between backends (InMemory returns None,
+        Redis returns decoded/encoded data), so we only assert on the same-type
+        read and that the old value is no longer accessible via its original type.
+        """
+        key = "isolation_test"
+        string_val = "string"
+        binary_val = b"binary"
+
+        # Set string, then overwrite with binary
+        await binary_backend.set(key, string_val)
+        await binary_backend.set_bytes(key, binary_val)
+
+        # The original string value is gone (both backends agree)
+        assert await binary_backend.get(key) != string_val
+        # Binary read should return the last-written value (both backends agree)
+        assert await binary_backend.get_bytes(key) == binary_val

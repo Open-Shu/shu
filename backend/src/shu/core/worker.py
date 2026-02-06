@@ -31,7 +31,7 @@ import signal
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from .queue_backend import Job, QueueBackend
 from .workload_routing import WorkloadType
@@ -167,8 +167,11 @@ class Worker:
         backend: QueueBackend,
         config: WorkerConfig,
         job_handler: Callable[[Job], Awaitable[None]],
+        worker_id: Optional[str] = None,
+        install_signal_handlers: bool = True,
     ):
         """Initialize the worker.
+
 
         Args:
             backend: The queue backend to use for dequeuing jobs.
@@ -176,11 +179,18 @@ class Worker:
             job_handler: Async function that processes a job. Should raise
                 an exception if processing fails. The worker will handle
                 acknowledgment/rejection based on success/failure.
-
+            worker_id: Optional identifier for this worker instance (e.g., "1/4").
+                Used in logs to distinguish concurrent workers in the same process.
+            install_signal_handlers: Whether to install SIGTERM/SIGINT handlers.
+                Set to False when running multiple workers in the same process
+                (e.g., inline workers in the API server) to avoid overwriting
+                each other's handlers. Default is True for standalone workers.
         """
         self._backend = backend
         self._config = config
         self._handler = job_handler
+        self._worker_id = worker_id
+        self._install_signal_handlers = install_signal_handlers
         self._running = False
         self._current_job: Job | None = None
         self._queue_index: int = 0  # Round-robin index for fair queue polling
@@ -223,15 +233,18 @@ class Worker:
 
         """
         self._running = True
-        self._setup_signal_handlers()
+        if self._install_signal_handlers:
+            self._setup_signal_handlers()
 
         # Get queue names for configured workload types
         # Sort to ensure deterministic polling order across runs
         queue_names = sorted([wt.queue_name for wt in self._config.workload_types])
-
+        
+        worker_label = f"Worker[{self._worker_id}]" if self._worker_id else "Worker"
         logger.info(
-            "Worker starting",
+            f"{worker_label} starting",
             extra={
+                "worker_id": self._worker_id,
                 "workload_types": [wt.value for wt in self._config.workload_types],
                 "queue_names": queue_names,
                 "poll_interval": self._config.poll_interval,
@@ -239,9 +252,11 @@ class Worker:
             },
         )
 
+
         while self._running:
             # Try to dequeue from any of the configured queues
             job = await self._dequeue_from_any(queue_names)
+
 
             if job:
                 await self._process_job(job)
@@ -249,8 +264,8 @@ class Worker:
                 # No jobs available, sleep before trying again
                 await asyncio.sleep(self._config.poll_interval)
 
-        logger.info("Worker stopped")
-
+        logger.info(f"{worker_label} stopped", extra={"worker_id": self._worker_id})
+    
     async def _dequeue_from_any(
         self,
         queue_names: list[str],
@@ -317,6 +332,7 @@ class Worker:
             logger.info(
                 "Job completed successfully",
                 extra={
+                    "worker_id": self._worker_id,
                     "job_id": job.id,
                     "queue": job.queue_name,
                     "attempts": job.attempts,
@@ -329,6 +345,7 @@ class Worker:
             logger.error(
                 "Job processing failed",
                 extra={
+                    "worker_id": self._worker_id,
                     "job_id": job.id,
                     "queue": job.queue_name,
                     "error": str(e),
@@ -347,6 +364,7 @@ class Worker:
                 logger.info(
                     "Job requeued for retry",
                     extra={
+                        "worker_id": self._worker_id,
                         "job_id": job.id,
                         "queue": job.queue_name,
                         "attempts": job.attempts,
@@ -357,6 +375,7 @@ class Worker:
                 logger.warning(
                     "Job discarded after max attempts",
                     extra={
+                        "worker_id": self._worker_id,
                         "job_id": job.id,
                         "queue": job.queue_name,
                         "attempts": job.attempts,

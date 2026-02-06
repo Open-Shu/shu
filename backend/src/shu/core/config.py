@@ -107,7 +107,7 @@ class Settings(BaseSettings):
 
     # Performance configuration
     batch_size: int = Field(10, alias="SHU_BATCH_SIZE")
-    max_workers: int = Field(4, alias="SHU_MAX_WORKERS")
+    embedding_threads: int = Field(4, alias="SHU_EMBEDDING_THREADS")  # Thread pool size for CPU-bound embedding work
     download_concurrency: int = Field(3, alias="SHU_DOWNLOAD_CONCURRENCY")
     cache_ttl: int = Field(3600, alias="SHU_CACHE_TTL")
 
@@ -148,10 +148,14 @@ class Settings(BaseSettings):
     sync_timeout: int = Field(3600, alias="SHU_SYNC_TIMEOUT")  # 1 hour
     sync_retry_attempts: int = Field(3, alias="SHU_SYNC_RETRY_ATTEMPTS")  # Default retry attempts
 
-    # Worker mode configuration
-    worker_mode: str = Field("inline", alias="SHU_WORKER_MODE")  # "inline" or "dedicated"
+    # Worker configuration
+    workers_enabled: bool = Field(True, alias="SHU_WORKERS_ENABLED")  # Run background workers in this process
+    worker_concurrency: int = Field(10, alias="SHU_WORKER_CONCURRENCY")  # Number of concurrent worker tasks per process
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
+
+    # File staging configuration (for document ingestion pipeline)
+    file_staging_ttl: int = Field(3600, alias="SHU_FILE_STAGING_TTL")  # TTL in seconds for staged files (default: 1 hour)
 
     # API Rate Limiting (HTTP request throttling, not LLM-specific)
     enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
@@ -483,15 +487,6 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [email.strip() for email in v if email.strip()]
         return []
-
-    @field_validator("worker_mode")
-    @classmethod
-    def validate_worker_mode(cls, v):
-        """Validate worker mode setting."""
-        valid_modes = ["inline", "dedicated"]
-        if v.lower() not in valid_modes:
-            raise ValueError(f"Worker mode must be one of: {valid_modes}")
-        return v.lower()
 
     def get_oauth_redirect_uri(self, provider: str = "google") -> str:
         """Get the effective OAuth redirect URI for a provider.
