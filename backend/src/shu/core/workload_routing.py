@@ -43,6 +43,14 @@ class WorkloadType(Enum):
             Examples: Fetching documents from Google Drive, parsing PDFs,
             extracting text, creating embeddings, storing in vector DB.
 
+        INGESTION_OCR: OCR/text extraction stage of document pipeline.
+            Examples: Running OCR on PDFs, extracting text from images,
+            parsing document formats. First stage of async ingestion.
+
+        INGESTION_EMBED: Embedding stage of document pipeline.
+            Examples: Chunking extracted text, generating embeddings,
+            storing vectors. Second stage of async ingestion.
+
         LLM_WORKFLOW: LLM-based workflows and chat operations.
             Examples: Chat message processing, workflow execution,
             prompt generation, LLM API calls for conversations.
@@ -69,6 +77,8 @@ class WorkloadType(Enum):
     """
 
     INGESTION = "ingestion"
+    INGESTION_OCR = "ingestion_ocr"
+    INGESTION_EMBED = "ingestion_embed"
     LLM_WORKFLOW = "llm_workflow"
     MAINTENANCE = "maintenance"
     PROFILING = "profiling"

@@ -27,7 +27,7 @@ class AttachmentCleanupService:
         now = datetime.now(UTC)
         # Primary criterion: expires_at <= now
         stmt = (
-            select(Attachment).where(Attachment.expires_at is not None, Attachment.expires_at <= now).limit(batch_size)
+            select(Attachment).where(Attachment.expires_at.is_not(None), Attachment.expires_at <= now).limit(batch_size)
         )
         result = await self.db.execute(stmt)
         attachments = list(result.scalars().all())

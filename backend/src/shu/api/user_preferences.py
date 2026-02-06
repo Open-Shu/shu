@@ -141,7 +141,7 @@ async def update_user_preferences_partial(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update user preferences."""
+    """Update user preferences, partially."""
     try:
         # Get existing preferences or create with defaults
         stmt = select(UserPreferences).where(UserPreferences.user_id == current_user.id)

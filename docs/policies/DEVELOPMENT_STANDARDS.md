@@ -153,8 +153,33 @@ const [threshold, setThreshold] = useState(0.7); // NEVER DO THIS
 - Use **context managers** or explicit connection cleanup
 - **No schema dropping** in tests - use targeted cleanup instead
 
+### 4.1. SQLAlchemy NULL Checks (CRITICAL)
+**NEVER use Python's `is None` or `is not None` in SQLAlchemy queries** - it doesn't generate proper SQL.
 
-### 4.1. Time & Timezones (REQUIRED)
+```python
+# WRONG: Python 'is None' doesn't generate SQL IS NULL
+select(Model).where(Model.column is None)
+select(Model).where(or_(Model.column is None, Model.column <= value))
+
+# CORRECT: Use .is_(None) or == None for proper SQL generation
+select(Model).where(Model.column.is_(None))
+select(Model).where(Model.column == None)  # Also works
+select(Model).where(or_(Model.column.is_(None), Model.column <= value))
+
+# WRONG: Python 'is not None' doesn't generate SQL IS NOT NULL
+select(Model).where(Model.column is not None)
+
+# CORRECT: Use .is_not(None) or != None
+select(Model).where(Model.column.is_not(None))
+select(Model).where(Model.column != None)  # Also works
+```
+
+**Why this matters**: Python's `is` operator checks object identity, not value equality. SQLAlchemy needs to intercept the comparison to generate SQL, which only works with `.is_()`, `.is_not()`, `==`, or `!=`.
+
+**Prevention**: This pattern is difficult to catch with linters. Code reviews must check for this pattern in all SQLAlchemy queries.
+
+### 4.2. Time & Timezones (REQUIRED)
+
 - Always use timezone-aware datetimes in backend code (tzinfo set) and normalize to UTC.
 - When generating timestamps, use `datetime.now(timezone.utc)`.
 - When parsing external timestamps, preserve timezone if present; if a naive datetime is encountered, explicitly set it to UTC immediately.
@@ -733,6 +758,111 @@ def get_system_constants() -> Dict:
 - **Plugin data** or user preferences
 - **Any data that should survive process restarts**
 
+## **26. Queue Usage Standards**
+
+### **26.1. QueueBackend Interface (REQUIRED)**
+- **ALL queue operations** must use the unified `QueueBackend` interface
+- **NO direct Redis client usage** for queue purposes
+- **NO custom queue implementations** - use provided backends only
+- **ALWAYS use dependency injection** for QueueBackend access
+
+```python
+# CORRECT: Use QueueBackend interface
+from fastapi import Depends
+from shu.core.queue_backend import QueueBackend, get_queue_backend_dependency
+from shu.core.workload_routing import WorkloadType, enqueue_job
+
+async def some_endpoint(
+    queue: QueueBackend = Depends(get_queue_backend_dependency)
+):
+    # Enqueue a job using WorkloadType routing
+    job = await enqueue_job(
+        backend=queue,
+        workload_type=WorkloadType.INGESTION,
+        payload={"document_id": "doc-123"}
+    )
+
+# CORRECT: Service with QueueBackend dependency
+class SomeService:
+    def __init__(self, queue: QueueBackend):
+        self.queue = queue
+
+# WRONG: Direct Redis usage for queues
+from shu.core.database import get_redis_client
+redis = get_redis_client()
+await redis.lpush("my_queue", job_data)  # NEVER DO THIS FOR QUEUES
+
+# WRONG: Custom queue implementation
+class MyCustomQueue:  # NEVER DO THIS
+    pass
+```
+
+### **26.2. Backend Selection**
+- **Automatic selection** based on `SHU_REDIS_URL` configuration
+- **Redis backend**: Used when `SHU_REDIS_URL` is set and Redis is reachable
+- **In-memory backend**: Used for development or when Redis is unavailable
+- **Transparent operation**: Application works identically with both backends
+
+### **26.3. WorkloadType Routing (REQUIRED)**
+- **ALWAYS use WorkloadType** when enqueuing jobs - never hardcode queue names
+- **Use the `enqueue_job` helper** from `workload_routing.py`
+- **Available WorkloadTypes**: INGESTION, INGESTION_OCR, INGESTION_EMBED, LLM_WORKFLOW, MAINTENANCE, PROFILING
+
+```python
+from shu.core.workload_routing import WorkloadType, enqueue_job, get_queue_name
+
+# CORRECT: Use WorkloadType routing
+await enqueue_job(
+    backend=queue,
+    workload_type=WorkloadType.PROFILING,
+    payload={"document_id": doc_id}
+)
+
+# CORRECT: Get queue name for a workload type
+queue_name = get_queue_name(WorkloadType.INGESTION)
+
+# WRONG: Hardcoded queue names
+await queue.enqueue(Job(queue_name="my_queue", payload=data))  # NEVER DO THIS
+```
+
+### **26.4. Job Processing Pattern**
+- **Use the Worker class** for consuming jobs from queues
+- **Configure workers with WorkloadTypes** they should consume
+- **Implement proper acknowledgment** after successful processing
+- **Use reject with requeue** for transient failures
+
+```python
+from shu.core.worker import Worker, WorkerConfig
+from shu.core.workload_routing import WorkloadType
+
+# Configure worker for specific workload types
+config = WorkerConfig(
+    workload_types={WorkloadType.INGESTION, WorkloadType.PROFILING},
+    poll_interval=1.0,
+    shutdown_timeout=30.0
+)
+
+# Worker handles dequeue → process → acknowledge flow
+worker = Worker(backend=queue, config=config, job_handler=process_job)
+await worker.run()
+```
+
+### **26.5. Migration from asyncio.create_task**
+- **Replace fire-and-forget tasks** with queue-based processing
+- **Benefits**: Visibility, reliability, horizontal scaling, retry support
+
+```python
+# OLD: Fire-and-forget (no visibility, lost on crash)
+asyncio.create_task(process_document(doc_id))
+
+# NEW: Queue-based (visible, reliable, scalable)
+await enqueue_job(
+    backend=queue,
+    workload_type=WorkloadType.PROFILING,
+    payload={"document_id": doc_id}
+)
+```
+
 ## **Quick Reference for LLMs**
 
 When developing, prioritize:
@@ -754,3 +884,4 @@ When developing, prioritize:
 16. **Privacy**: Data isolation, access control, audit logging
 17. **Monitoring**: Structured logging, health metrics, alerting
 18. **Caching**: Use CacheBackend interface, namespace keys, graceful error handling
+19. **Queues**: Use QueueBackend interface, WorkloadType routing, no direct Redis for queues

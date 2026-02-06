@@ -53,8 +53,9 @@ jobs:
           files: |
             **/*.py
           files_ignore: |
-            tests/**
+            backend/src/tests/**
             backend/migrations/**
+            backend/scripts/**
 
       - name: Run Ruff linter on changed files
         if: steps.changed-py-files.outputs.any_changed == 'true'
@@ -74,7 +75,7 @@ jobs:
         run: |
           echo "✅ No Python files changed, skipping linting"
 
-      # Too manby mypy errors for now
+      # Too many mypy errors for now
       # - name: Run mypy type checker on changed files
       #   if: steps.changed-py-files.outputs.any_changed == 'true'
       #   run: |

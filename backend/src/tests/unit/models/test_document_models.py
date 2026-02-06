@@ -183,6 +183,47 @@ class TestDocument:
         assert doc.character_count == 500
         assert doc.chunk_count == 5
 
+    def test_update_status_sets_processing_status(self):
+        """Test that update_status writes to processing_status correctly."""
+        from shu.models.document import DocumentStatus
+
+        doc = Document()
+
+        # PROCESSED status
+        doc.update_status(DocumentStatus.PROCESSED)
+        assert doc.processing_status == "processed"
+        assert doc.processed_at is not None
+        assert doc.processing_error is None
+
+        # ERROR status
+        doc.update_status(DocumentStatus.ERROR)
+        assert doc.processing_status == "error"
+        assert doc.processed_at is not None
+
+        # PENDING status
+        doc.update_status(DocumentStatus.PENDING)
+        assert doc.processing_status == "pending"
+
+        # Intermediate statuses
+        doc.update_status(DocumentStatus.EXTRACTING)
+        assert doc.processing_status == "extracting"
+
+        doc.update_status(DocumentStatus.EMBEDDING)
+        assert doc.processing_status == "embedding"
+
+        doc.update_status(DocumentStatus.PROFILING)
+        assert doc.processing_status == "profiling"
+
+    def test_mark_error_sets_processing_status_and_error(self):
+        """Test that mark_error sets processing_status and processing_error."""
+        doc = Document()
+
+        doc.mark_error("OCR extraction failed: invalid PDF format")
+
+        assert doc.processing_status == "error"
+        assert doc.processing_error == "OCR extraction failed: invalid PDF format"
+        assert doc.processed_at is not None
+
 
 class TestDocumentChunk:
     """Tests for DocumentChunk model."""

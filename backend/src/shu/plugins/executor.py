@@ -205,15 +205,14 @@ class Executor:
         """
         self._limiter = None  # per-user/per-tool limiter
         self._provider_limiter = None  # provider/model limiter
+        self._settings = settings if settings is not None else get_settings_instance()
         try:
-            if settings is None:
-                settings = get_settings_instance()
-            if settings.enable_api_rate_limiting:
+            if self._settings.enable_api_rate_limiting:
                 from ..core.rate_limiting import TokenBucketRateLimiter
 
                 # Per-user defaults using settings directly
-                rpm = settings.api_rate_limit_user_requests
-                period = settings.api_rate_limit_user_period
+                rpm = self._settings.api_rate_limit_user_requests
+                period = self._settings.api_rate_limit_user_period
                 capacity = max(1, rpm)
                 refill_per_second = max(1, int(rpm / max(1, period)))
                 self._limiter = TokenBucketRateLimiter(
@@ -490,7 +489,7 @@ class Executor:
         # Resolve effective limits/quotas (per-tool overrides -> global defaults)
         limits = limits or {}
         try:
-            s = get_settings_instance()
+            s = self._settings
             # Quotas
             daily = int(limits.get("quota_daily_requests") or s.plugin_quota_daily_requests_default or 0)
             monthly = int(limits.get("quota_monthly_requests") or s.plugin_quota_monthly_requests_default or 0)
@@ -648,6 +647,10 @@ class Executor:
                 capabilities = list(getattr(plugin, "_capabilities", []) or [])
             except Exception:
                 capabilities = []
+
+            # Get staging_ttl from settings for file staging configuration
+            staging_ttl = getattr(self._settings, "file_staging_ttl", None)
+
             host = make_host(
                 plugin_name=plugin.name,
                 user_id=user_id,
@@ -655,6 +658,7 @@ class Executor:
                 capabilities=capabilities,
                 provider_identities=(provider_identities or {}),
                 host_context=host_overlay,
+                staging_ttl=staging_ttl,
             )
             # Execute under import deny-hook for HTTP clients and host internals
             ctx = ExecuteContext(user_id=user_id, agent_key=agent_key)

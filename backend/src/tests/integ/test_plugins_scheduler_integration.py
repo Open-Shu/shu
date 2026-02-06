@@ -141,7 +141,7 @@ async def test_stale_running_cleanup_marks_failed(client, db, auth_headers):
     from shu.services.plugins_scheduler_service import PluginsSchedulerService
 
     svc = PluginsSchedulerService(db)
-    await svc.run_pending(limit=1)
+    await svc.cleanup_stale_executions()
 
     # Reload and verify it was marked failed due to stale timeout
     res = await db.execute(select(PluginExecution).where(PluginExecution.id == exec_rec.id))
