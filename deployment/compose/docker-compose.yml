@@ -191,6 +191,105 @@ services:
       redis:
         condition: service_started
 
+  # ==========================================================================
+  # Multi-Worker Profile: Workload-Specific Workers
+  # Usage: make up-workers  (or docker compose --profile workers up -d)
+  # IMPORTANT: Set SHU_WORKERS_ENABLED=false on shu-api when using these.
+  # ==========================================================================
+
+  # Ingestion worker: handles INGESTION, INGESTION_OCR, INGESTION_EMBED queues
+  shu-worker-ingestion:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-worker-ingestion
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=INFO
+      - SHU_LOG_FORMAT=text
+      - SHU_ENVIRONMENT=production
+      - SHU_WORKER_CONCURRENCY=10
+      - SHU_WORKER_POLL_INTERVAL=1.0
+      - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
+      - PYTHONPATH=/app/src
+    volumes:
+      - shu-plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - workers
+    command: ["python", "-m", "shu.worker", "--workload-types=INGESTION,INGESTION_OCR,INGESTION_EMBED"]
+    depends_on:
+      shu-db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  # LLM worker: handles PROFILING and LLM_WORKFLOW queues
+  shu-worker-llm:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-worker-llm
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=INFO
+      - SHU_LOG_FORMAT=text
+      - SHU_ENVIRONMENT=production
+      - SHU_WORKER_CONCURRENCY=5
+      - SHU_WORKER_POLL_INTERVAL=1.0
+      - SHU_WORKER_SHUTDOWN_TIMEOUT=60.0
+      - PYTHONPATH=/app/src
+    volumes:
+      - shu-plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - workers
+    command: ["python", "-m", "shu.worker", "--workload-types=PROFILING,LLM_WORKFLOW"]
+    depends_on:
+      shu-db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  # Maintenance worker: handles MAINTENANCE queue (plugin feeds, cleanup)
+  shu-worker-maintenance:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+    container_name: shu-worker-maintenance
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=INFO
+      - SHU_LOG_FORMAT=text
+      - SHU_ENVIRONMENT=production
+      - SHU_WORKER_CONCURRENCY=3
+      - SHU_WORKER_POLL_INTERVAL=2.0
+      - SHU_WORKER_SHUTDOWN_TIMEOUT=60.0
+      - PYTHONPATH=/app/src
+    volumes:
+      - shu-plugins:/app/plugins
+    networks:
+      - shu-network
+    restart: unless-stopped
+    profiles:
+      - workers
+    command: ["python", "-m", "shu.worker", "--workload-types=MAINTENANCE"]
+    depends_on:
+      shu-db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
   # Shu React Admin frontend (static build served by Nginx)
   shu-frontend:
     build:

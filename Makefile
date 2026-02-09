@@ -80,18 +80,27 @@ up-worker:
 up-worker-dev:
 	docker compose -f $(COMPOSE_FILE) --profile worker-dev up -d shu-worker-dev
 
+# Start workload-specific workers (ingestion, llm, maintenance)
+# IMPORTANT: Set SHU_WORKERS_ENABLED=false on shu-api when using these
+up-workers:
+	docker compose -f $(COMPOSE_FILE) --profile workers up -d shu-worker-ingestion shu-worker-llm shu-worker-maintenance
+
+# Start API with inline workers disabled + workload-specific workers
+up-split:
+	SHU_WORKERS_ENABLED=false docker compose -f $(COMPOSE_FILE) --profile workers up -d
+
 down:
-	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev down --remove-orphans || true
-	-docker rm -f shu-frontend shu-api-dev shu-worker shu-worker-dev 2>/dev/null || true
+	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev --profile workers down --remove-orphans || true
+	-docker rm -f shu-frontend shu-api-dev shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
 
 logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
 
 logs-worker:
-	docker compose -f $(COMPOSE_FILE) logs -f shu-worker shu-worker-dev
+	docker compose -f $(COMPOSE_FILE) logs -f shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance
 
 ps:
-	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev ps
+	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev --profile workers ps
 
 # Linting and formatting targets
 .PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix lint-changed lint-staged lint-uncommitted
