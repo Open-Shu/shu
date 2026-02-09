@@ -591,7 +591,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockResolvedValue({ data: testResult }),
+      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
 
     api.llmAPI = {
@@ -629,16 +629,13 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     // Wait for test to complete
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
 
-    // Verify: Test endpoint was called with correct parameters
-    expect(api.modelConfigAPI.test).toHaveBeenCalledWith(testConfig.id, {
-      test_message: 'Test message',
-      include_knowledge_bases: false,
-    });
+    // Verify: Test endpoint was called with correct parameters (FormData)
+    expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledWith(testConfig.id, expect.any(FormData));
 
     // Verify: Results are displayed
     await waitFor(() => {
@@ -670,7 +667,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockResolvedValue({ data: testResult }),
+      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
 
     api.llmAPI = {
@@ -708,7 +705,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     // Wait for test to complete
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
@@ -741,7 +738,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     // Mock API responses - test endpoint throws network error
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockRejectedValue(new Error('Network error')),
+      testWithFile: jest.fn().mockRejectedValue(new Error('Network error')),
     };
 
     api.llmAPI = {
@@ -779,7 +776,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     // Wait for test to complete
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
@@ -855,7 +852,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockResolvedValue({ data: testResult }),
+      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
 
     api.llmAPI = {
@@ -893,7 +890,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Wait for error to be displayed
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
@@ -928,7 +925,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Mock API responses - test endpoint throws exception
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockRejectedValue(new Error('Server error: 500')),
+      testWithFile: jest.fn().mockRejectedValue(new Error('Server error: 500')),
     };
 
     api.llmAPI = {
@@ -966,7 +963,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Wait for error to be displayed
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
@@ -1006,7 +1003,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Mock API responses
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockResolvedValue({ data: testResult }),
+      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
 
     api.llmAPI = {
@@ -1044,7 +1041,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Wait for error to be displayed
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
@@ -1083,7 +1080,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockRejectedValue(timeoutError),
+      testWithFile: jest.fn().mockRejectedValue(timeoutError),
     };
 
     api.llmAPI = {
@@ -1121,7 +1118,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Wait for error to be displayed
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalled();
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
       { timeout: 3000 }
     );
@@ -1171,7 +1168,10 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Mock API responses - first call fails, second succeeds
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      test: jest.fn().mockResolvedValueOnce({ data: failResult }).mockResolvedValueOnce({ data: successResult }),
+      testWithFile: jest
+        .fn()
+        .mockResolvedValueOnce({ data: failResult })
+        .mockResolvedValueOnce({ data: successResult }),
     };
 
     api.llmAPI = {
@@ -1209,7 +1209,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Wait for error to be displayed
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalledTimes(1);
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledTimes(1);
       },
       { timeout: 3000 }
     );
@@ -1229,7 +1229,7 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Wait for success
     await waitFor(
       () => {
-        expect(api.modelConfigAPI.test).toHaveBeenCalledTimes(2);
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledTimes(2);
       },
       { timeout: 3000 }
     );

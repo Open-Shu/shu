@@ -277,32 +277,12 @@ async def upload_attachment(
                 status_code=403,
             )
 
-        settings = get_settings_instance()
-
-        # Validate filename/type
-        filename = file.filename or "upload"
-        ext = filename.split(".")[-1].lower() if "." in filename else ""
-        if ext not in [t.lower() for t in settings.chat_attachment_allowed_types]:
-            return create_error_response(
-                code="UNSUPPORTED_TYPE", message=f"Unsupported file type: {ext}", status_code=400
-            )
-
-        # Read bytes and enforce size
-        data = await file.read()
-        if len(data) > settings.chat_attachment_max_size:
-            return create_error_response(
-                code="PAYLOAD_TOO_LARGE",
-                message=f"File too large. Max {settings.chat_attachment_max_size} bytes",
-                status_code=413,
-            )
-
-        # Persist (non-blocking OCR for PDFs)
+        # Save attachment (validation handled by AttachmentService)
         attachment_service = AttachmentService(db)
         attachment, _ = await attachment_service.save_upload(
             conversation_id=conversation_id,
             user_id=current_user.id,
-            filename=filename,
-            file_bytes=data,
+            upload_file=file,
         )
 
         resp = AttachmentUploadResponse(
@@ -313,6 +293,10 @@ async def upload_attachment(
             is_ocr=(attachment.extraction_method == "ocr"),
         )
         return create_success_response(data=resp)
+    except ValueError as e:
+        # ValueError from AttachmentService contains user-friendly validation messages
+        logger.error(f"Attachment validation failed: {e}")
+        return create_error_response(code="INVALID_ATTACHMENT", message=str(e), status_code=400)
     except Exception as e:
         logger.error(f"Attachment upload failed: {e}")
         return create_error_response(code="ATTACHMENT_UPLOAD_FAILED", message=str(e), status_code=500)

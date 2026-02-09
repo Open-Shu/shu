@@ -9,7 +9,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
@@ -25,11 +25,11 @@ from ..schemas.model_configuration import (
     ModelConfigurationCreate,
     ModelConfigurationList,
     ModelConfigurationResponse,
-    ModelConfigurationTest,
     ModelConfigurationTestResponse,
     ModelConfigurationUpdate,
 )
 from ..schemas.query import RagRewriteMode
+from ..services.attachment_service import AttachmentService
 from ..services.chat_service import ChatService
 from ..services.error_sanitization import ErrorSanitizer
 from ..services.model_configuration_service import ModelConfigurationService
@@ -111,6 +111,56 @@ def _apply_side_call_flag(
     for config in configs:
         if config is not None:
             config.is_side_call = config.id == side_call_model_id
+
+
+async def _handle_test_file_upload(
+    file: UploadFile | None,
+    conversation_id: str,
+    user_id: str,
+    db: AsyncSession,
+    chat_service: ChatService,
+) -> list[str]:
+    """Handle file upload for model configuration testing.
+
+    Args:
+        file: The uploaded file (optional)
+        conversation_id: ID of the test conversation
+        user_id: ID of the user performing the test
+        db: Database session
+        chat_service: ChatService instance for cleanup on error
+
+    Returns:
+        List of attachment IDs (empty list if no file provided)
+
+    Raises:
+        HTTPException: If file validation fails or upload errors occur
+
+    """
+    if not file:
+        return []
+
+    try:
+        attachment_service = AttachmentService(db)
+        attachment, _ = await attachment_service.save_upload(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            upload_file=file,
+        )
+        return [attachment.id]
+    except ValueError as e:
+        # ValueError from AttachmentService contains user-friendly validation messages
+        await file.close()
+        await chat_service.delete_conversation(conversation_id)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to create attachment for test: {e}")
+        await file.close()
+        await chat_service.delete_conversation(conversation_id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to process image attachment: {e!s}"
+        )
+    finally:
+        await file.close()
 
 
 @router.post(
@@ -384,15 +434,19 @@ async def delete_model_configuration(
 )
 async def test_model_configuration(
     config_id: str,
-    test_data: ModelConfigurationTest,
+    test_message: str = Form(..., description="Test message to send"),
+    include_knowledge_bases: bool = Form(True, description="Whether to include KB context"),
+    file: UploadFile | None = File(None, description="Optional image file for vision testing"),
     current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
-    """Test a model configuration with a sample message.
+    """Test a model configuration with a sample message and optional image attachment.
 
     Uses non-streaming mode to ensure providers return detailed error messages.
     Some providers only return useful configuration errors in non-streaming requests.
+
+    Supports multipart/form-data for image uploads to test vision capabilities.
     """
     try:
         service = ModelConfigurationService(db)
@@ -407,6 +461,15 @@ async def test_model_configuration(
         chat_service = ChatService(db, config_manager)
         conversation = await chat_service.create_conversation(current_user.id, config.id)
 
+        # Handle file upload if provided
+        attachment_ids = await _handle_test_file_upload(
+            file=file,
+            conversation_id=conversation.id,
+            user_id=current_user.id,
+            db=db,
+            chat_service=chat_service,
+        )
+
         response = ""
         error = None
         message_metadata: dict[str, Any] = {}
@@ -414,10 +477,11 @@ async def test_model_configuration(
         try:
             async for event in await chat_service.send_message(
                 conversation_id=conversation.id,
-                user_message=test_data.test_message,
+                user_message=test_message,
                 current_user=current_user,
                 rag_rewrite_mode=RagRewriteMode.NO_RAG,
                 force_no_streaming=True,
+                attachment_ids=attachment_ids,
             ):
                 if event.type == "final_message":
                     response = event.content.get("content")
@@ -452,9 +516,7 @@ async def test_model_configuration(
                 error=enhanced_error,
                 model_used=f"{config.llm_provider.name}/{config.model_name}",
                 prompt_applied=config.prompt is not None,
-                knowledge_bases_used=[kb.name for kb in config.knowledge_bases]
-                if test_data.include_knowledge_bases
-                else [],
+                knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if include_knowledge_bases else [],
                 response_time_ms=response_time_ms,
                 token_usage=token_usage,
                 metadata={"streaming": False},
@@ -470,9 +532,7 @@ async def test_model_configuration(
             error=None,
             model_used=f"{config.llm_provider.name}/{config.model_name}",
             prompt_applied=config.prompt is not None,
-            knowledge_bases_used=[kb.name for kb in config.knowledge_bases]
-            if test_data.include_knowledge_bases
-            else [],
+            knowledge_bases_used=[kb.name for kb in config.knowledge_bases] if include_knowledge_bases else [],
             response_time_ms=response_time_ms,
             token_usage=token_usage,
             metadata={"streaming": False},

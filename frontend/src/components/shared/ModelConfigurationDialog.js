@@ -16,7 +16,6 @@ import {
   Paper,
   Typography,
   Box,
-  Tooltip,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -24,8 +23,9 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-import { InfoOutlined, ExpandMore as ExpandMoreIcon, PlayArrow as VerifyIcon } from '@mui/icons-material';
+import { ExpandMore as ExpandMoreIcon, PlayArrow as VerifyIcon } from '@mui/icons-material';
 import LLMTester from '../LLMTester';
+import HelpTooltip from '../HelpTooltip';
 import { modelConfigAPI, formatError, extractDataFromResponse } from '../../services/api';
 import log from '../../utils/log';
 
@@ -775,20 +775,43 @@ const ModelConfigurationDialog = ({
             </FormControl>
           </Grid>
           <Grid item xs={12} sm={6}>
-            <FormControl fullWidth disabled={!formData.llm_provider_id}>
-              <InputLabel>Model</InputLabel>
-              <Select
-                value={formData.model_name}
-                onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
-                label="Model"
-              >
-                {models.map((model) => (
-                  <MenuItem key={model.id} value={model.model_name}>
-                    {model.display_name || model.model_name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <FormControl fullWidth disabled={!formData.llm_provider_id}>
+                <InputLabel>Model</InputLabel>
+                <Select
+                  value={formData.model_name}
+                  onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
+                  label="Model"
+                >
+                  {models.map((model) => (
+                    <MenuItem key={model.id} value={model.model_name}>
+                      {model.display_name || model.model_name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <HelpTooltip
+                title={
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Select the specific model to use from your provider.
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                      Examples:
+                    </Typography>
+                    <Typography variant="body2" component="div">
+                      • OpenAI: gpt-4o, gpt-4o-mini, o1, o1-mini
+                      <br />
+                      • Anthropic: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
+                      <br />
+                      • Ollama: llama3.3, qwen2.5, deepseek-r1
+                      <br />• LM Studio: Any model loaded in LM Studio
+                    </Typography>
+                  </Box>
+                }
+                ariaLabel="Model selection help"
+              />
+            </Box>
           </Grid>
           <Grid item xs={12}>
             <FormControl fullWidth>
@@ -1296,12 +1319,13 @@ const ModelConfigurationDialog = ({
                 </Box>
 
                 <Box>
-                  <Typography variant="subtitle2">
-                    Advanced JSON &nbsp;
-                    <Tooltip title="JSON overrides beyond mapped parameters. This form accepts any valid JSON and will apply parameters dynamically during requests.">
-                      <InfoOutlined fontSize="small" color="action" />
-                    </Tooltip>
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="subtitle2">Advanced JSON</Typography>
+                    <HelpTooltip
+                      title="JSON overrides beyond mapped parameters. This form accepts any valid JSON and will apply parameters dynamically during requests."
+                      ariaLabel="Advanced JSON help"
+                    />
+                  </Box>
                   <TextField
                     fullWidth
                     multiline
@@ -1324,12 +1348,27 @@ const ModelConfigurationDialog = ({
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
               />
               <Typography variant="body2">Active</Typography>
+              <HelpTooltip
+                title="When active, this configuration will be available for use in conversations and experiences. Inactive configurations are hidden from selection."
+                ariaLabel="Active status help"
+              />
             </Box>
             {capabilityToggles.map(({ funcKey, value, label }) => {
               // Determine if this is a tools or vision capability
               const isToolsCapability = funcKey === 'supports_tools' || funcKey === 'supports_tool_calling';
               const isVisionCapability = funcKey === 'supports_vision';
               const showWarning = value && (isToolsCapability || isVisionCapability);
+
+              // Tooltip text for each capability
+              const getTooltipText = () => {
+                if (isToolsCapability) {
+                  return 'Enables the model to call functions/tools during generation. Required for plugin execution and structured outputs. Not all models support this feature.';
+                }
+                if (isVisionCapability) {
+                  return 'Enables the model to process and understand images in conversations. Required for image analysis. Not all models support this feature.';
+                }
+                return 'Toggle this capability for the model configuration.';
+              };
 
               return (
                 <Box key={funcKey}>
@@ -1347,6 +1386,7 @@ const ModelConfigurationDialog = ({
                       }
                     />
                     <Typography variant="body2">{label}</Typography>
+                    <HelpTooltip title={getTooltipText()} ariaLabel={`${label} help`} />
                   </Box>
                   {showWarning && (
                     <Alert severity="warning" sx={{ mt: 0.5, mb: 1, py: 0.5 }}>
@@ -1380,6 +1420,10 @@ const ModelConfigurationDialog = ({
                 }
               />
               <Typography variant="body2">Use model for side calls</Typography>
+              <HelpTooltip
+                title="Side calls are optimized LLM requests for UI features like prompt assistance, title generation, and summaries. Only one model should have this enabled at a time."
+                ariaLabel="Side calls help"
+              />
             </Box>
           </Grid>
           <Grid item xs={12}>

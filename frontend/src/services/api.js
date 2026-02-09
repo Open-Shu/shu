@@ -409,6 +409,10 @@ export const modelConfigAPI = {
 
   // Testing
   test: (id, data) => api.post(`/model-configurations/${id}/test`, data),
+  testWithFile: (id, formData) =>
+    api.post(`/model-configurations/${id}/test`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
 
   // KB Prompt Management
   getKBPrompts: (id) => api.get(`/model-configurations/${id}/kb-prompts`),

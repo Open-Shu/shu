@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation } from 'react-query';
 import {
   Box,
@@ -37,6 +37,9 @@ import {
   Settings as SettingsIcon,
   Timer as TimerIcon,
   Error as ErrorIcon,
+  AttachFile as AttachFileIcon,
+  Close as CloseIcon,
+  Image as ImageIcon,
 } from '@mui/icons-material';
 import {
   llmAPI,
@@ -68,6 +71,10 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
 
   // Timing state for test duration tracking
   const [testDuration, setTestDuration] = useState(null);
+
+  // Attachment state for visual testing
+  const [selectedFile, setSelectedFile] = useState(null);
+  const fileInputRef = useRef(null);
 
   // Query configuration state (for knowledge base search)
   const [searchType, setSearchType] = useState('hybrid');
@@ -160,6 +167,31 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
   );
 
   /**
+   * Handle file upload for visual testing.
+   */
+  const handleUploadClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  /**
+   * Handle file selection.
+   */
+  const handleFileSelected = useCallback((event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+    }
+    event.target.value = ''; // Reset input
+  }, []);
+
+  /**
+   * Remove the selected file.
+   */
+  const removeSelectedFile = useCallback(() => {
+    setSelectedFile(null);
+  }, []);
+
+  /**
    * Handle LLM test using the dedicated test endpoint.
    * This uses non-streaming mode for better error messages from providers.
    */
@@ -190,10 +222,16 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
     setTestDuration(null);
 
     try {
-      const response = await modelConfigAPI.test(selectedConfigId, {
-        test_message: userMessage,
-        include_knowledge_bases: hasKnowledgeBases,
-      });
+      // Create FormData to send file with test request
+      const formData = new FormData();
+      formData.append('test_message', userMessage);
+      formData.append('include_knowledge_bases', enablePostProcessing.toString());
+
+      if (selectedFile) {
+        formData.append('file', selectedFile);
+      }
+
+      const response = await modelConfigAPI.testWithFile(selectedConfigId, formData);
 
       const endTime = Date.now();
       const duration = endTime - localStartTime;
@@ -221,6 +259,9 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
         if (onTestStatusChange) {
           onTestStatusChange(true);
         }
+
+        // Clear the selected file after successful test
+        setSelectedFile(null);
       } else {
         // Test returned an error from the provider
         const errorMessage = result.error || 'Test failed';
@@ -349,6 +390,7 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
         tips={[
           'Select a model configuration from the dropdown to test',
           'Type a message to test the configuration with your prompt',
+          'Upload images to test vision capabilities (requires vision-enabled models)',
           'View configuration details to see provider, model, prompts, and knowledge bases',
           'View the Request Preview tab to see exactly what will be sent to the LLM',
           'This creates a temporary conversation for testing—results are cleaned up automatically',
@@ -544,6 +586,61 @@ function LLMTester({ prePopulatedConfigId = null, onTestStatusChange = null }) {
                 margin="normal"
                 placeholder="Enter your test message here..."
               />
+
+              {/* Attachment Upload Section */}
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  <ImageIcon sx={{ mr: 1, verticalAlign: 'middle', fontSize: '1rem' }} />
+                  Visual Testing (Images)
+                </Typography>
+
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleFileSelected}
+                />
+
+                {/* Upload button */}
+                <Button
+                  variant="outlined"
+                  startIcon={<AttachFileIcon />}
+                  onClick={handleUploadClick}
+                  disabled={!selectedConfigId || streamState.isLoading}
+                  size="small"
+                  sx={{ mb: 1 }}
+                >
+                  {selectedFile ? 'Change Image' : 'Upload Image'}
+                </Button>
+
+                {/* Selected file */}
+                {selectedFile && (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+                    <Chip
+                      label={selectedFile.name}
+                      onDelete={removeSelectedFile}
+                      deleteIcon={<CloseIcon />}
+                      color="primary"
+                      variant="outlined"
+                      size="small"
+                      icon={<ImageIcon />}
+                    />
+                  </Box>
+                )}
+
+                {/* Vision capability warning */}
+                {selectedFile && (
+                  <Alert severity="info" sx={{ mt: 1 }}>
+                    <Typography variant="caption">
+                      <strong>Note:</strong> Vision support varies by model. If your model doesn't support vision, image
+                      attachments may be filtered out or cause errors. Ensure your model configuration has vision
+                      capability enabled.
+                    </Typography>
+                  </Alert>
+                )}
+              </Box>
 
               {/* Post-processing Toggle */}
               <FormControlLabel

@@ -4,7 +4,7 @@ import datetime as dt
 import mimetypes
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import get_settings_instance
 from ..models.attachment import Attachment, MessageAttachment
 from ..processors.text_extractor import TextExtractor
+
+if TYPE_CHECKING:
+    from fastapi import UploadFile
+
+# Constants for streaming file reads
+UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024  # 1MB chunks for streaming reads
 
 
 class AttachmentService:
@@ -75,29 +81,76 @@ class AttachmentService:
         *,
         conversation_id: str,
         user_id: str,
-        filename: str,
-        file_bytes: bytes,
+        upload_file: "UploadFile",
     ) -> tuple[Attachment, str]:
         """Save an uploaded file to disk, extract text, and create Attachment.
 
-        Returns (attachment, temp_path).
-        Caller may optionally remove temp_path later if using external storage.
+        Handles streaming file reads with validation for MIME type, file extension,
+        and size limits. All validation uses settings from ConfigurationManager.
+
+        Args:
+            conversation_id: ID of the conversation this attachment belongs to
+            user_id: ID of the user uploading the file
+            upload_file: FastAPI UploadFile object (streaming)
+
+        Returns:
+            Tuple of (attachment, storage_path)
+
+        Raises:
+            ValueError: If file type is unsupported, size exceeds limit, or validation fails
+
         """
+        filename = upload_file.filename or "attachment"
+
         # Validate extension
         ext = Path(filename).suffix.lower().lstrip(".")
         allowed = [t.lower() for t in self.settings.chat_attachment_allowed_types]
         if ext not in allowed:
-            raise ValueError(f"Unsupported file type: {ext}")
+            raise ValueError(f"Unsupported file type: {ext}. Allowed types: {', '.join(sorted(allowed))}")
+
+        # Validate MIME type (if provided by client)
+        if upload_file.content_type:
+            # Build allowed MIME types from extensions
+            allowed_mime_types = set()
+            for allowed_ext in allowed:
+                mime_type, _ = mimetypes.guess_type(f"file.{allowed_ext}")
+                if mime_type:
+                    allowed_mime_types.add(mime_type)
+
+            if upload_file.content_type not in allowed_mime_types:
+                raise ValueError(
+                    f"Invalid MIME type: {upload_file.content_type}. "
+                    f"Allowed types: {', '.join(sorted(allowed_mime_types))}"
+                )
 
         # Sanitize filename
         sanitized_name = self._sanitize_filename(filename, fallback_ext=ext)
 
-        # Enforce size limit
+        # Stream file with size validation
         max_size = self.settings.chat_attachment_max_size
-        if len(file_bytes) > max_size:
-            raise ValueError(f"File too large: {len(file_bytes)} > {max_size}")
+        file_content = bytearray()
 
-        # Determine MIME (use original filename for accurate detection)
+        # Stage 1: Pre-read size validation using metadata (if available)
+        if upload_file.size is not None and upload_file.size > max_size:
+            raise ValueError(
+                f"File too large: {upload_file.size} bytes. "
+                f"Maximum size is {max_size} bytes ({max_size // (1024 * 1024)}MB)"
+            )
+
+        # Stage 2: Stream file in chunks with size validation during read
+        while True:
+            chunk = await upload_file.read(UPLOAD_CHUNK_SIZE_BYTES)
+            if not chunk:
+                break
+            file_content.extend(chunk)
+
+            # Validate accumulated size doesn't exceed limit
+            if len(file_content) > max_size:
+                raise ValueError(f"File too large: exceeds {max_size} bytes ({max_size // (1024 * 1024)}MB)")
+
+        file_bytes = bytes(file_content)
+
+        # Determine MIME type (use original filename for accurate detection)
         mime_type, _ = mimetypes.guess_type(filename)
         mime_type = mime_type or "application/octet-stream"
 
