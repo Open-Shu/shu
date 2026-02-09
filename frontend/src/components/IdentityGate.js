@@ -1,6 +1,6 @@
-import React from "react";
-import { Box, Typography } from "@mui/material";
-import IdentityStatus from "./IdentityStatus";
+import React from 'react';
+import { Box, Typography } from '@mui/material';
+import IdentityStatus from './IdentityStatus';
 
 /**
  * IdentityGate
@@ -10,7 +10,7 @@ import IdentityStatus from "./IdentityStatus";
 export default function IdentityGate({
   requiredIdentities = [],
   onStatusChange,
-  title = "Required Identities",
+  title = 'Required Identities',
   identityStatusProps = {},
 }) {
   if (!Array.isArray(requiredIdentities) || requiredIdentities.length === 0) {
@@ -26,7 +26,7 @@ export default function IdentityGate({
       <IdentityStatus
         requiredIdentities={requiredIdentities}
         onStatusChange={(ok) => {
-          if (typeof onStatusChange === "function") {
+          if (typeof onStatusChange === 'function') {
             onStatusChange(!!ok);
           }
         }}
@@ -38,9 +38,5 @@ export default function IdentityGate({
 
 /** Helper: returns true if actions should be disabled until identities are connected */
 export function identityGateDisabled(requiredIdentities, identitiesOk) {
-  return (
-    Array.isArray(requiredIdentities) &&
-    requiredIdentities.length > 0 &&
-    !identitiesOk
-  );
+  return Array.isArray(requiredIdentities) && requiredIdentities.length > 0 && !identitiesOk;
 }

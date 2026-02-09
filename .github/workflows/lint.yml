@@ -127,13 +127,21 @@ jobs:
           files: |
             frontend/**/*.{js,jsx,ts,tsx,json,css,md}
 
-      - name: Run ESLint on changed files
-        if: steps.changed-frontend-files.outputs.any_changed == 'true'
+      - name: Get changed JS/JSX files for ESLint
+        id: changed-js-files
+        uses: tj-actions/changed-files@v44
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+          files: |
+            frontend/**/*.{js,jsx}
+
+      - name: Run ESLint on changed files (includes Prettier)
+        if: steps.changed-js-files.outputs.any_changed == 'true'
         working-directory: frontend
         run: |
           echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
-          echo "Running ESLint on changed files..."
-          FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
+          echo "Running ESLint on changed JS/JSX files (with Prettier integration)..."
+          FILES="${{ steps.changed-js-files.outputs.all_changed_files }}"
           # Remove 'frontend/' prefix from paths since we're in frontend directory
           FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
           echo "$FILES_RELATIVE" | xargs npx eslint
@@ -143,6 +151,7 @@ jobs:
         working-directory: frontend
         run: |
           echo "Checking Prettier formatting on changed files..."
+          echo "Note: Prettier is also enforced via ESLint (prettier/prettier rule)"
           FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
           # Remove 'frontend/' prefix from paths since we're in frontend directory
           FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
@@ -171,6 +180,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
 
       - name: Install pre-commit
         run: pip install pre-commit

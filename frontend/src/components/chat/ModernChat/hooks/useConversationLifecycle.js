@@ -1,11 +1,7 @@
-import { useCallback } from "react";
-import { useMutation, useQueryClient } from "react-query";
+import { useCallback } from 'react';
+import { useMutation, useQueryClient } from 'react-query';
 
-import {
-  extractDataFromResponse,
-  formatError,
-  sideCallsAPI,
-} from "../../../../services/api";
+import { extractDataFromResponse, formatError, sideCallsAPI } from '../../../../services/api';
 
 const useConversationLifecycle = ({
   conversationQueryKey,
@@ -19,17 +15,11 @@ const useConversationLifecycle = ({
   const handleError = useCallback(
     (err, fallbackMessage) => {
       const formatted = formatError(err);
-      const message =
-        typeof formatted === "string"
-          ? formatted
-          : formatted?.message || fallbackMessage;
+      const message = typeof formatted === 'string' ? formatted : formatted?.message || fallbackMessage;
 
       // When side-caller is not configured, treat this as a soft warning that
       // is handled via header UI instead of a global error banner.
-      if (
-        typeof message === "string" &&
-        message.includes("No side-call model configured")
-      ) {
+      if (typeof message === 'string' && message.includes('No side-call model configured')) {
         if (onSideCallNotConfigured) {
           onSideCallNotConfigured();
         }
@@ -41,15 +31,14 @@ const useConversationLifecycle = ({
       }
       onError(message);
     },
-    [onError, onSideCallNotConfigured],
+    [onError, onSideCallNotConfigured]
   );
 
   const generateSummaryMutation = useMutation(
-    ({ conversationId, payload = {} }) =>
-      sideCallsAPI.generateSummary(conversationId, payload),
+    ({ conversationId, payload = {} }) => sideCallsAPI.generateSummary(conversationId, payload),
     {
       onError: (err) => {
-        handleError(err, "Summary failed");
+        handleError(err, 'Summary failed');
       },
       onSuccess: (response, variables) => {
         const data = extractDataFromResponse(response);
@@ -101,12 +90,11 @@ const useConversationLifecycle = ({
           });
         }
       },
-    },
+    }
   );
 
   const autoRenameMutation = useMutation(
-    ({ conversationId, payload = {} }) =>
-      sideCallsAPI.autoRename(conversationId, payload),
+    ({ conversationId, payload = {} }) => sideCallsAPI.autoRename(conversationId, payload),
     {
       onSuccess: (response, variables) => {
         const renameResult = extractDataFromResponse(response);
@@ -149,8 +137,7 @@ const useConversationLifecycle = ({
               }
               const nextMeta = { ...(c.meta || {}) };
               if (renameResult.last_message_id !== undefined) {
-                nextMeta.last_auto_title_message_id =
-                  renameResult.last_message_id;
+                nextMeta.last_auto_title_message_id = renameResult.last_message_id;
               }
               if (renameResult.title_locked !== undefined) {
                 nextMeta.title_locked = renameResult.title_locked;
@@ -167,32 +154,29 @@ const useConversationLifecycle = ({
       },
       onError: (err) => {
         // Don't block sending on rename errors; just surface a notice
-        handleError(err, "Auto-rename failed");
+        handleError(err, 'Auto-rename failed');
       },
-    },
+    }
   );
 
-  const unlockRenameMutation = useMutation(
-    (conversationId) => sideCallsAPI.unlockAutoRename(conversationId),
-    {
-      onError: (err) => {
-        handleError(err, "Failed to unlock auto-rename");
-      },
-      onSuccess: (response, conversationId) => {
-        const payload = extractDataFromResponse(response);
-        setSelectedConversation?.((prev) => {
-          if (!prev || prev.id !== conversationId) {
-            return prev;
-          }
-          const nextMeta = {
-            ...(prev.meta || {}),
-            title_locked: payload?.title_locked ?? false,
-          };
-          return { ...prev, meta: nextMeta };
-        });
-      },
+  const unlockRenameMutation = useMutation((conversationId) => sideCallsAPI.unlockAutoRename(conversationId), {
+    onError: (err) => {
+      handleError(err, 'Failed to unlock auto-rename');
     },
-  );
+    onSuccess: (response, conversationId) => {
+      const payload = extractDataFromResponse(response);
+      setSelectedConversation?.((prev) => {
+        if (!prev || prev.id !== conversationId) {
+          return prev;
+        }
+        const nextMeta = {
+          ...(prev.meta || {}),
+          title_locked: payload?.title_locked ?? false,
+        };
+        return { ...prev, meta: nextMeta };
+      });
+    },
+  });
 
   const summaryIsLoading = generateSummaryMutation.isLoading;
   const autoRenameIsLoading = autoRenameMutation.isLoading;

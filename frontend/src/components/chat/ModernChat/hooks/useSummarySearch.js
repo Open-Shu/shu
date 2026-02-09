@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from 'react';
 
 const DEFAULT_MIN_TERM_LENGTH = 3;
 const DEFAULT_MAX_TOKENS = 10;
@@ -9,23 +9,20 @@ export default function useSummarySearch({
   maxTokens = DEFAULT_MAX_TOKENS,
   debounceMs = DEFAULT_DEBOUNCE_MS,
 } = {}) {
-  const [searchInput, setSearchInput] = useState("");
+  const [searchInput, setSearchInput] = useState('');
   const [tokens, setTokens] = useState([]);
   const [feedback, setFeedback] = useState(null);
 
   const effectiveMinTokenLength = useMemo(
     () => Math.max(minTokenLength ?? DEFAULT_MIN_TERM_LENGTH, 1),
-    [minTokenLength],
+    [minTokenLength]
   );
 
-  const effectiveMaxTokens = useMemo(
-    () => Math.max(maxTokens ?? DEFAULT_MAX_TOKENS, 1),
-    [maxTokens],
-  );
+  const effectiveMaxTokens = useMemo(() => Math.max(maxTokens ?? DEFAULT_MAX_TOKENS, 1), [maxTokens]);
 
   const normalizeTokens = useCallback(
     (rawValue) => {
-      if (!rawValue || typeof rawValue !== "string") {
+      if (!rawValue || typeof rawValue !== 'string') {
         return { tokens: [], feedback: null };
       }
 
@@ -54,36 +51,28 @@ export default function useSummarySearch({
       const notices = [];
       if (ignoredShort > 0) {
         notices.push(
-          `${ignoredShort} short word${ignoredShort > 1 ? "s" : ""} ignored (minimum ${effectiveMinTokenLength} characters)`,
+          `${ignoredShort} short word${ignoredShort > 1 ? 's' : ''} ignored (minimum ${effectiveMinTokenLength} characters)`
         );
       }
       if (ignoredOverflow > 0) {
-        notices.push(
-          `Only the first ${effectiveMaxTokens} keywords are applied`,
-        );
+        notices.push(`Only the first ${effectiveMaxTokens} keywords are applied`);
       }
       if (!nextTokens.length) {
-        notices.push(
-          `Enter keywords with at least ${effectiveMinTokenLength} characters`,
-        );
+        notices.push(`Enter keywords with at least ${effectiveMinTokenLength} characters`);
       }
 
-      const nextFeedback = notices.length ? `${notices.join(". ")}.` : null;
+      const nextFeedback = notices.length ? `${notices.join('. ')}.` : null;
       return { tokens: nextTokens, feedback: nextFeedback };
     },
-    [effectiveMinTokenLength, effectiveMaxTokens],
+    [effectiveMinTokenLength, effectiveMaxTokens]
   );
 
   useEffect(() => {
     const handle = setTimeout(() => {
-      const { tokens: nextTokens, feedback: nextFeedback } =
-        normalizeTokens(searchInput);
+      const { tokens: nextTokens, feedback: nextFeedback } = normalizeTokens(searchInput);
       setFeedback(nextFeedback);
       setTokens((prev) => {
-        if (
-          prev.length === nextTokens.length &&
-          prev.every((value, index) => value === nextTokens[index])
-        ) {
+        if (prev.length === nextTokens.length && prev.every((value, index) => value === nextTokens[index])) {
           return prev;
         }
         return nextTokens;
@@ -93,10 +82,7 @@ export default function useSummarySearch({
     return () => clearTimeout(handle);
   }, [searchInput, normalizeTokens, debounceMs]);
 
-  const summaryQuery = useMemo(
-    () => (tokens.length ? tokens.join(" ") : null),
-    [tokens],
-  );
+  const summaryQuery = useMemo(() => (tokens.length ? tokens.join(' ') : null), [tokens]);
 
   return {
     searchInput,

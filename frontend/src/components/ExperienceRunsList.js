@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "react-query";
+import { useState } from 'react';
+import { useQuery } from 'react-query';
 import {
   Box,
   Chip,
@@ -18,7 +18,7 @@ import {
   Button,
   CircularProgress,
   Alert,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Visibility as ViewIcon,
   Refresh as RefreshIcon,
@@ -26,50 +26,38 @@ import {
   Error as ErrorIcon,
   Cancel as CancelIcon,
   HourglassEmpty as PendingIcon,
-} from "@mui/icons-material";
-import { format } from "date-fns";
-import {
-  experiencesAPI,
-  extractItemsFromResponse,
-  extractPaginationFromResponse,
-} from "../services/api";
-import ExperienceRunDetailDialog from "./ExperienceRunDetailDialog";
-import { formatDateInTimezone } from "../utils/timezoneFormatter";
+} from '@mui/icons-material';
+import { format } from 'date-fns';
+import { experiencesAPI, extractItemsFromResponse, extractPaginationFromResponse } from '../services/api';
+import ExperienceRunDetailDialog from './ExperienceRunDetailDialog';
+import { formatDateInTimezone } from '../utils/timezoneFormatter';
 
 const StatusChip = ({ status }) => {
-  let color = "default";
+  let color = 'default';
   let icon = <PendingIcon />;
 
   switch (status) {
-    case "succeeded":
-      color = "success";
+    case 'succeeded':
+      color = 'success';
       icon = <SuccessIcon />;
       break;
-    case "failed":
-      color = "error";
+    case 'failed':
+      color = 'error';
       icon = <ErrorIcon />;
       break;
-    case "running":
-      color = "primary";
+    case 'running':
+      color = 'primary';
       icon = <CircularProgress size={16} />;
       break;
-    case "cancelled":
-      color = "warning";
+    case 'cancelled':
+      color = 'warning';
       icon = <CancelIcon />;
       break;
     default:
       break;
   }
 
-  return (
-    <Chip
-      icon={icon}
-      label={status}
-      color={color}
-      size="small"
-      variant="outlined"
-    />
-  );
+  return <Chip icon={icon} label={status} color={color} size="small" variant="outlined" />;
 };
 
 export default function ExperienceRunsList({ experienceId, timezone }) {
@@ -78,7 +66,7 @@ export default function ExperienceRunsList({ experienceId, timezone }) {
   const [selectedRunId, setSelectedRunId] = useState(null);
 
   const { data, isLoading, error, refetch } = useQuery(
-    ["experience-runs", experienceId, page, rowsPerPage],
+    ['experience-runs', experienceId, page, rowsPerPage],
     () =>
       experiencesAPI.listRuns(experienceId, {
         page: page + 1,
@@ -87,7 +75,7 @@ export default function ExperienceRunsList({ experienceId, timezone }) {
     {
       keepPreviousData: true,
       staleTime: 10000,
-    },
+    }
   );
 
   const runs = data ? extractItemsFromResponse(data) : [];
@@ -118,11 +106,7 @@ export default function ExperienceRunsList({ experienceId, timezone }) {
   return (
     <Box>
       <Stack direction="row" justifyContent="flex-end" mb={2}>
-        <Button
-          startIcon={<RefreshIcon />}
-          onClick={() => refetch()}
-          size="small"
-        >
+        <Button startIcon={<RefreshIcon />} onClick={() => refetch()} size="small">
           Refresh
         </Button>
       </Stack>
@@ -152,9 +136,7 @@ export default function ExperienceRunsList({ experienceId, timezone }) {
               runs.map((run) => {
                 const start = new Date(run.started_at);
                 const end = run.finished_at ? new Date(run.finished_at) : null;
-                const duration = end
-                  ? ((end - start) / 1000).toFixed(1) + "s"
-                  : "-";
+                const duration = end ? ((end - start) / 1000).toFixed(1) + 's' : '-';
 
                 return (
                   <TableRow key={run.id} hover>
@@ -163,27 +145,17 @@ export default function ExperienceRunsList({ experienceId, timezone }) {
                     </TableCell>
                     <TableCell>
                       {timezone
-                        ? formatDateInTimezone(
-                            start,
-                            timezone,
-                            "MMM d, HH:mm:ss",
-                          )
-                        : format(start, "MMM d, HH:mm:ss")}
+                        ? formatDateInTimezone(start, timezone, 'MMM d, HH:mm:ss')
+                        : format(start, 'MMM d, HH:mm:ss')}
                     </TableCell>
                     <TableCell>{duration}</TableCell>
                     <TableCell>{run.user?.email || run.user_id}</TableCell>
                     <TableCell>
                       {run.result_metadata?.model_configuration ? (
                         <Box>
-                          <Typography variant="body2">
-                            {run.result_metadata.model_configuration.name}
-                          </Typography>
+                          <Typography variant="body2">{run.result_metadata.model_configuration.name}</Typography>
                           <Typography variant="caption" color="textSecondary">
-                            {
-                              run.result_metadata.model_configuration
-                                .provider_name
-                            }{" "}
-                            -{" "}
+                            {run.result_metadata.model_configuration.provider_name} -{' '}
                             {run.result_metadata.model_configuration.model_name}
                           </Typography>
                         </Box>
@@ -199,10 +171,7 @@ export default function ExperienceRunsList({ experienceId, timezone }) {
                     </TableCell>
                     <TableCell align="right">
                       <Tooltip title="View Details">
-                        <IconButton
-                          size="small"
-                          onClick={() => setSelectedRunId(run.id)}
-                        >
+                        <IconButton size="small" onClick={() => setSelectedRunId(run.id)}>
                           <ViewIcon />
                         </IconButton>
                       </Tooltip>

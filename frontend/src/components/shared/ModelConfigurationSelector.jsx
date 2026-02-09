@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useQuery } from "react-query";
+import { useMemo } from 'react';
+import { useQuery } from 'react-query';
 import {
   FormControl,
   InputLabel,
@@ -13,12 +13,9 @@ import {
   Typography,
   Box,
   Chip,
-} from "@mui/material";
-import {
-  SmartToy as ModelIcon,
-  Psychology as PromptIcon,
-} from "@mui/icons-material";
-import { modelConfigAPI, extractDataFromResponse } from "../../services/api";
+} from '@mui/material';
+import { SmartToy as ModelIcon, Psychology as PromptIcon } from '@mui/icons-material';
+import { modelConfigAPI, extractDataFromResponse } from '../../services/api';
 
 // Constants
 const MODEL_CONFIG_STALE_TIME = 30000; // 30 seconds
@@ -36,17 +33,17 @@ const MODEL_CONFIG_STALE_TIME = 30000; // 30 seconds
  * @param {boolean} props.showDetails - Whether to show configuration details when selected
  */
 const ModelConfigurationSelector = ({
-  modelConfigurationId = "",
+  modelConfigurationId = '',
   onModelConfigurationChange,
   validationErrors = {},
   required = false,
   showHelperText = true,
-  label = "Model Configuration",
+  label = 'Model Configuration',
   showDetails = true,
 }) => {
   // Fetch model configurations for selector
   const modelConfigsQuery = useQuery(
-    ["model-configurations", "active"],
+    ['model-configurations', 'active'],
     () =>
       modelConfigAPI
         .list({
@@ -54,7 +51,7 @@ const ModelConfigurationSelector = ({
           include_relationships: true,
         })
         .then(extractDataFromResponse),
-    { staleTime: MODEL_CONFIG_STALE_TIME },
+    { staleTime: MODEL_CONFIG_STALE_TIME }
   );
 
   const modelConfigurations = useMemo(() => {
@@ -64,40 +61,34 @@ const ModelConfigurationSelector = ({
 
   // Find the selected configuration for details display
   const selectedConfiguration = useMemo(() => {
-    if (!modelConfigurationId) return null;
-    return (
-      modelConfigurations.find(
-        (config) => config.id === modelConfigurationId,
-      ) || null
-    );
+    if (!modelConfigurationId) {
+      return null;
+    }
+    return modelConfigurations.find((config) => config.id === modelConfigurationId) || null;
   }, [modelConfigurations, modelConfigurationId]);
 
   const handleModelConfigurationChange = (e) => {
     const newConfigId = e.target.value;
-    if (typeof onModelConfigurationChange === "function") {
+    if (typeof onModelConfigurationChange === 'function') {
       onModelConfigurationChange(newConfigId);
     }
   };
 
   if (modelConfigsQuery.isError) {
-    return (
-      <Alert severity="error">
-        Failed to load model configurations. Please try again.
-      </Alert>
-    );
+    return <Alert severity="error">Failed to load model configurations. Please try again.</Alert>;
   }
 
   return (
     <Stack spacing={2}>
       <FormControl fullWidth error={!!validationErrors.model_configuration_id}>
         <InputLabel id="model-configuration-label">
-          {label} {required ? "*" : ""}
+          {label} {required ? '*' : ''}
         </InputLabel>
         <Select
           id="model-configuration"
           labelId="model-configuration-label"
           value={modelConfigurationId}
-          label={`${label} ${required ? "*" : ""}`}
+          label={`${label} ${required ? '*' : ''}`}
           onChange={handleModelConfigurationChange}
           disabled={modelConfigsQuery.isLoading}
         >
@@ -116,14 +107,11 @@ const ModelConfigurationSelector = ({
           ))}
         </Select>
         {validationErrors.model_configuration_id && (
-          <FormHelperText>
-            {validationErrors.model_configuration_id}
-          </FormHelperText>
+          <FormHelperText>{validationErrors.model_configuration_id}</FormHelperText>
         )}
         {!validationErrors.model_configuration_id && showHelperText && (
           <FormHelperText>
-            Select a model configuration for AI processing, or leave empty for
-            no LLM synthesis
+            Select a model configuration for AI processing, or leave empty for no LLM synthesis
           </FormHelperText>
         )}
       </FormControl>
@@ -142,10 +130,10 @@ const ModelConfigurationSelector = ({
               </Typography>
             )}
 
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
               <Chip
                 icon={<ModelIcon />}
-                label={`${selectedConfiguration.llm_provider?.name || "Unknown"} - ${selectedConfiguration.model_name}`}
+                label={`${selectedConfiguration.llm_provider?.name || 'Unknown'} - ${selectedConfiguration.model_name}`}
                 size="small"
                 variant="outlined"
               />
@@ -164,81 +152,52 @@ const ModelConfigurationSelector = ({
             {/* Show prompt usage information */}
             {selectedConfiguration.prompt && (
               <Box sx={{ mt: 1 }}>
-                <Typography
-                  variant="caption"
-                  color="textSecondary"
-                  display="block"
-                >
+                <Typography variant="caption" color="textSecondary" display="block">
                   Default Prompt: {selectedConfiguration.prompt.name}
                 </Typography>
-                <Typography
-                  variant="body2"
-                  color="textSecondary"
-                  sx={{ fontStyle: "italic" }}
-                >
+                <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
                   Used only when no experience prompt is provided
                 </Typography>
               </Box>
             )}
 
             {/* Show knowledge bases information if configured */}
-            {selectedConfiguration.knowledge_bases &&
-              selectedConfiguration.knowledge_bases.length > 0 && (
-                <Box sx={{ mt: 1 }}>
-                  <Typography
-                    variant="caption"
-                    color="textSecondary"
-                    display="block"
-                  >
-                    Knowledge Bases (
-                    {selectedConfiguration.knowledge_bases.length}):
-                  </Typography>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 0.5,
-                      mt: 0.5,
-                      mb: 1,
-                    }}
-                  >
-                    {selectedConfiguration.knowledge_bases.map((kb) => (
-                      <Chip
-                        key={kb.id}
-                        label={kb.name}
-                        size="small"
-                        variant="outlined"
-                        color="info"
-                      />
-                    ))}
-                  </Box>
-                  <Alert severity="info" sx={{ mt: 1 }}>
-                    <Typography variant="body2">
-                      These knowledge bases are configured for this model but
-                      are not automatically queried. To use them, add specific
-                      knowledge base query steps to your experience workflow
-                      below.
-                    </Typography>
-                  </Alert>
+            {selectedConfiguration.knowledge_bases && selectedConfiguration.knowledge_bases.length > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <Typography variant="caption" color="textSecondary" display="block">
+                  Knowledge Bases ({selectedConfiguration.knowledge_bases.length}):
+                </Typography>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 0.5,
+                    mt: 0.5,
+                    mb: 1,
+                  }}
+                >
+                  {selectedConfiguration.knowledge_bases.map((kb) => (
+                    <Chip key={kb.id} label={kb.name} size="small" variant="outlined" color="info" />
+                  ))}
                 </Box>
-              )}
+                <Alert severity="info" sx={{ mt: 1 }}>
+                  <Typography variant="body2">
+                    These knowledge bases are configured for this model but are not automatically queried. To use them,
+                    add specific knowledge base query steps to your experience workflow below.
+                  </Typography>
+                </Alert>
+              </Box>
+            )}
 
             {/* Show parameter overrides if available */}
             {selectedConfiguration.parameter_overrides &&
-              Object.keys(selectedConfiguration.parameter_overrides).length >
-                0 && (
+              Object.keys(selectedConfiguration.parameter_overrides).length > 0 && (
                 <Box sx={{ mt: 1 }}>
-                  <Typography
-                    variant="caption"
-                    color="textSecondary"
-                    display="block"
-                  >
+                  <Typography variant="caption" color="textSecondary" display="block">
                     Parameter Overrides:
                   </Typography>
                   <Typography variant="body2" color="textSecondary">
-                    {Object.keys(
-                      selectedConfiguration.parameter_overrides,
-                    ).join(", ")}
+                    {Object.keys(selectedConfiguration.parameter_overrides).join(', ')}
                   </Typography>
                 </Box>
               )}
@@ -247,19 +206,14 @@ const ModelConfigurationSelector = ({
       )}
 
       {/* Show loading state */}
-      {modelConfigsQuery.isLoading && showHelperText && (
-        <Alert severity="info">Loading model configurations...</Alert>
-      )}
+      {modelConfigsQuery.isLoading && showHelperText && <Alert severity="info">Loading model configurations...</Alert>}
 
       {/* Show empty state */}
-      {!modelConfigsQuery.isLoading &&
-        modelConfigurations.length === 0 &&
-        showHelperText && (
-          <Alert severity="warning">
-            No active model configurations found. Create one in the Model
-            Configurations section first.
-          </Alert>
-        )}
+      {!modelConfigsQuery.isLoading && modelConfigurations.length === 0 && showHelperText && (
+        <Alert severity="warning">
+          No active model configurations found. Create one in the Model Configurations section first.
+        </Alert>
+      )}
     </Stack>
   );
 };

@@ -5,17 +5,17 @@
  * prompt management API that supports multiple entity types.
  */
 
-import api from "../services/api";
+import api from '../services/api';
 
 /**
  * Entity types supported by the prompt system
  */
 export const ENTITY_TYPES = {
-  KNOWLEDGE_BASE: "knowledge_base", // For KB context prompts (assigned via model configs)
-  LLM_MODEL: "llm_model",
-  AGENT: "agent",
-  WORKFLOW: "workflow",
-  TOOL: "tool",
+  KNOWLEDGE_BASE: 'knowledge_base', // For KB context prompts (assigned via model configs)
+  LLM_MODEL: 'llm_model',
+  AGENT: 'agent',
+  WORKFLOW: 'workflow',
+  TOOL: 'tool',
 };
 
 /**
@@ -33,7 +33,7 @@ export const promptAPI = {
    * @returns {Promise<Object>} Created prompt
    */
   async create(promptData) {
-    const response = await api.post("/prompts", promptData);
+    const response = await api.post('/prompts', promptData);
     return response.data;
   },
 
@@ -49,7 +49,7 @@ export const promptAPI = {
    * @returns {Promise<Object>} List of prompts with metadata
    */
   async list(params = {}) {
-    const response = await api.get("/prompts", { params });
+    const response = await api.get('/prompts', { params });
     return response.data;
   },
 
@@ -96,10 +96,7 @@ export const promptAPI = {
    * @returns {Promise<Object>} Assignment data
    */
   async assign(promptId, assignmentData) {
-    const response = await api.post(
-      `/prompts/${promptId}/assignments`,
-      assignmentData,
-    );
+    const response = await api.post(`/prompts/${promptId}/assignments`, assignmentData);
     return response.data;
   },
 
@@ -131,7 +128,7 @@ export const promptAPI = {
    * @returns {Promise<Object>} System statistics
    */
   async getStats() {
-    const response = await api.get("/prompts/stats");
+    const response = await api.get('/prompts/stats');
     return response.data;
   },
 };
@@ -210,11 +207,7 @@ export const llmModelPromptAPI = {
    * @returns {Promise<Array>} List of assigned prompts
    */
   async getForModel(modelId, activeOnly = true) {
-    return promptAPI.getEntityPrompts(
-      modelId,
-      ENTITY_TYPES.LLM_MODEL,
-      activeOnly,
-    );
+    return promptAPI.getEntityPrompts(modelId, ENTITY_TYPES.LLM_MODEL, activeOnly);
   },
 
   /**

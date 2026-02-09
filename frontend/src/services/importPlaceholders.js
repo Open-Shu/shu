@@ -8,32 +8,32 @@
 // Fixed set of supported import placeholders
 export const SUPPORTED_IMPORT_PLACEHOLDERS = {
   trigger_type: {
-    type: "dropdown",
-    label: "Trigger Type",
-    description: "How the experience will be triggered",
+    type: 'dropdown',
+    label: 'Trigger Type',
+    description: 'How the experience will be triggered',
     required: true,
     options: [
-      { value: "manual", label: "Manual" },
-      { value: "scheduled", label: "Scheduled" },
-      { value: "cron", label: "Cron" },
+      { value: 'manual', label: 'Manual' },
+      { value: 'scheduled', label: 'Scheduled' },
+      { value: 'cron', label: 'Cron' },
     ],
   },
   trigger_config: {
-    type: "dynamic", // Special type that depends on trigger_type
-    label: "Trigger Configuration",
-    description: "Configuration for the selected trigger type",
+    type: 'dynamic', // Special type that depends on trigger_type
+    label: 'Trigger Configuration',
+    description: 'Configuration for the selected trigger type',
     required: true,
   },
   model_configuration_id: {
-    type: "model_configuration",
-    label: "Model Configuration",
-    description: "Choose your model configuration for LLM synthesis",
+    type: 'model_configuration',
+    label: 'Model Configuration',
+    description: 'Choose your model configuration for LLM synthesis',
     required: false,
   },
   max_run_seconds: {
-    type: "number",
-    label: "Max Run Time (seconds)",
-    description: "Maximum time the experience is allowed to run",
+    type: 'number',
+    label: 'Max Run Time (seconds)',
+    description: 'Maximum time the experience is allowed to run',
     required: true,
     min: 10,
     max: 600,
@@ -79,48 +79,46 @@ export function validatePlaceholderValues(placeholders, values) {
     const value = values[placeholder];
 
     // Required field validation
-    if (config.required && (!value || value.toString().trim() === "")) {
+    if (config.required && (!value || value.toString().trim() === '')) {
       errors[placeholder] = `${config.label} is required`;
       continue;
     }
 
     // Skip further validation if field is empty and not required
-    if (!value || value.toString().trim() === "") {
+    if (!value || value.toString().trim() === '') {
       continue;
     }
 
     // Type-specific validation
     switch (config.type) {
-      case "number": {
+      case 'number': {
         const num = parseInt(value, 10);
         if (!Number.isFinite(num)) {
           errors[placeholder] = `${config.label} must be a valid number`;
         } else if (config.min && num < config.min) {
-          errors[placeholder] =
-            `${config.label} must be at least ${config.min}`;
+          errors[placeholder] = `${config.label} must be at least ${config.min}`;
         } else if (config.max && num > config.max) {
           errors[placeholder] = `${config.label} must be at most ${config.max}`;
         }
         break;
       }
 
-      case "dropdown": {
+      case 'dropdown': {
         const validValues = config.options.map((opt) => opt.value);
         if (!validValues.includes(value)) {
-          errors[placeholder] =
-            `${config.label} must be one of: ${validValues.join(", ")}`;
+          errors[placeholder] = `${config.label} must be one of: ${validValues.join(', ')}`;
         }
         break;
       }
 
-      case "dynamic": {
+      case 'dynamic': {
         // Special validation for trigger_config based on trigger_type
-        if (placeholder === "trigger_config") {
-          const triggerType = values["trigger_type"];
-          if (triggerType === "scheduled" && !value.scheduled_at) {
-            errors[placeholder] = "Scheduled date/time is required";
-          } else if (triggerType === "cron" && !value.cron) {
-            errors[placeholder] = "Cron expression is required";
+        if (placeholder === 'trigger_config') {
+          const triggerType = values['trigger_type'];
+          if (triggerType === 'scheduled' && !value.scheduled_at) {
+            errors[placeholder] = 'Scheduled date/time is required';
+          } else if (triggerType === 'cron' && !value.cron) {
+            errors[placeholder] = 'Cron expression is required';
           }
         }
         break;
@@ -156,11 +154,11 @@ export function getDefaultPlaceholderValues(placeholders) {
  */
 export function replacePlaceholders(yamlContent, values) {
   // Preserve comment lines while avoiding replacements inside them
-  const lines = yamlContent.split("\n");
+  const lines = yamlContent.split('\n');
   const outputLines = [];
 
   for (let line of lines) {
-    if (line.trim().startsWith("#")) {
+    if (line.trim().startsWith('#')) {
       // Preserve comment lines unchanged
       outputLines.push(line);
     } else {
@@ -168,35 +166,26 @@ export function replacePlaceholders(yamlContent, values) {
       for (const [placeholder, value] of Object.entries(values)) {
         if (SUPPORTED_IMPORT_PLACEHOLDERS[placeholder]) {
           // Handle both quoted and unquoted placeholders
-          const quotedRegex = new RegExp(
-            `"\\{\\{\\s*${placeholder}\\s*\\}\\}"`,
-            "g",
-          );
-          const unquotedRegex = new RegExp(
-            `\\{\\{\\s*${placeholder}\\s*\\}\\}`,
-            "g",
-          );
+          const quotedRegex = new RegExp(`"\\{\\{\\s*${placeholder}\\s*\\}\\}"`, 'g');
+          const unquotedRegex = new RegExp(`\\{\\{\\s*${placeholder}\\s*\\}\\}`, 'g');
 
           // Handle different value types
           let replacementValue;
-          if (typeof value === "object" && value !== null) {
+          if (typeof value === 'object' && value !== null) {
             // For objects like trigger_config, convert to proper YAML object
             if (Object.keys(value).length === 0) {
-              replacementValue = "{}";
+              replacementValue = '{}';
             } else {
               // Convert to YAML object format with proper quoting for string values
               const yamlLines = Object.entries(value).map(([k, v]) => {
                 // Quote string values to prevent YAML parsing issues with special characters
                 // Escape backslashes first, then double quotes
-                const quotedValue =
-                  typeof v === "string"
-                    ? `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-                    : v;
+                const quotedValue = typeof v === 'string' ? `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : v;
                 return `  ${k}: ${quotedValue}`;
               });
-              replacementValue = `\n${yamlLines.join("\n")}`;
+              replacementValue = `\n${yamlLines.join('\n')}`;
             }
-          } else if (typeof value === "string") {
+          } else if (typeof value === 'string') {
             replacementValue = value; // Don't add extra quotes
           } else {
             replacementValue = String(value);
@@ -211,5 +200,5 @@ export function replacePlaceholders(yamlContent, values) {
     }
   }
 
-  return outputLines.join("\n");
+  return outputLines.join('\n');
 }

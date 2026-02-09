@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback } from 'react';
 
 export default function useFreshConversations() {
   const freshConversationIdsRef = useRef(new Set());
@@ -18,11 +18,8 @@ export default function useFreshConversations() {
   }, []);
 
   const isConversationFresh = useCallback(
-    (conversationId) =>
-      conversationId
-        ? freshConversationIdsRef.current.has(conversationId)
-        : false,
-    [],
+    (conversationId) => (conversationId ? freshConversationIdsRef.current.has(conversationId) : false),
+    []
   );
 
   return {

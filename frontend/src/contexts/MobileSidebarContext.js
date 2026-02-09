@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback } from 'react';
 
 const MobileSidebarContext = createContext(null);
 
@@ -10,18 +10,14 @@ export const MobileSidebarProvider = ({ children }) => {
   const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
 
   return (
-    <MobileSidebarContext.Provider value={{ isOpen, open, close, toggle }}>
-      {children}
-    </MobileSidebarContext.Provider>
+    <MobileSidebarContext.Provider value={{ isOpen, open, close, toggle }}>{children}</MobileSidebarContext.Provider>
   );
 };
 
 export const useMobileSidebar = () => {
   const ctx = useContext(MobileSidebarContext);
   if (!ctx) {
-    throw new Error(
-      "useMobileSidebar must be used within MobileSidebarProvider",
-    );
+    throw new Error('useMobileSidebar must be used within MobileSidebarProvider');
   }
   return ctx;
 };

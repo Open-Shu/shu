@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Box, Typography, TextField, Alert, Paper, Grid } from "@mui/material";
+import React, { useState, useEffect, useCallback } from 'react';
+import { Box, Typography, TextField, Alert, Paper, Grid } from '@mui/material';
 import {
   SUPPORTED_IMPORT_PLACEHOLDERS,
   validatePlaceholderValues,
   getDefaultPlaceholderValues,
-} from "../../services/importPlaceholders";
-import { log } from "../../utils/log";
-import TriggerConfiguration from "../shared/TriggerConfiguration";
-import ModelConfigurationSelector from "../shared/ModelConfigurationSelector";
+} from '../../services/importPlaceholders';
+import { log } from '../../utils/log';
+import TriggerConfiguration from '../shared/TriggerConfiguration';
+import ModelConfigurationSelector from '../shared/ModelConfigurationSelector';
 
 /**
  * PlaceholderFormStep - Second step of the import wizard for filling placeholder values
@@ -18,12 +18,7 @@ import ModelConfigurationSelector from "../shared/ModelConfigurationSelector";
  * @param {function} props.onValuesChange - Callback when placeholder values change
  * @param {function} props.onValidationChange - Callback when validation state changes
  */
-const PlaceholderFormStep = ({
-  placeholders = [],
-  values = {},
-  onValuesChange,
-  onValidationChange,
-}) => {
+const PlaceholderFormStep = ({ placeholders = [], values = {}, onValuesChange, onValidationChange }) => {
   const [validationErrors, setValidationErrors] = useState({});
 
   // Initialize with default values
@@ -32,7 +27,7 @@ const PlaceholderFormStep = ({
     if (Object.keys(defaults).length > 0) {
       const newValues = { ...defaults, ...values };
       onValuesChange(newValues);
-      log.debug("Applied default placeholder values", defaults);
+      log.debug('Applied default placeholder values', defaults);
     }
   }, [placeholders]); // Only run when placeholders change
 
@@ -40,21 +35,18 @@ const PlaceholderFormStep = ({
   const validatePlaceholders = useCallback(
     (currentValues) => {
       try {
-        const validation = validatePlaceholderValues(
-          placeholders,
-          currentValues,
-        );
+        const validation = validatePlaceholderValues(placeholders, currentValues);
         setValidationErrors(validation.errors);
         onValidationChange(validation.isValid);
         return validation.isValid;
       } catch (error) {
-        log.error("Placeholder validation error", { error: error.message });
-        setValidationErrors({ _general: "Validation error occurred" });
+        log.error('Placeholder validation error', { error: error.message });
+        setValidationErrors({ _general: 'Validation error occurred' });
         onValidationChange(false);
         return false;
       }
     },
-    [placeholders, onValidationChange],
+    [placeholders, onValidationChange]
   );
 
   // Validate whenever values change
@@ -70,7 +62,7 @@ const PlaceholderFormStep = ({
         [placeholderName]: newValue,
       }));
     },
-    [onValuesChange],
+    [onValuesChange]
   );
 
   // Render form field for a placeholder
@@ -81,23 +73,19 @@ const PlaceholderFormStep = ({
       return null;
     }
 
-    const currentValue = values[placeholderName] || "";
+    const currentValue = values[placeholderName] || '';
     const hasError = !!validationErrors[placeholderName];
     const errorMessage = validationErrors[placeholderName];
 
     // Trigger Type dropdown
-    if (placeholderName === "trigger_type") {
+    if (placeholderName === 'trigger_type') {
       return (
         <TriggerConfiguration
           key={placeholderName}
           triggerType={currentValue}
-          triggerConfig={values["trigger_config"] || {}}
-          onTriggerTypeChange={(newType) =>
-            handleValueChange("trigger_type", newType)
-          }
-          onTriggerConfigChange={(newConfig) =>
-            handleValueChange("trigger_config", newConfig)
-          }
+          triggerConfig={values['trigger_config'] || {}}
+          onTriggerTypeChange={(newType) => handleValueChange('trigger_type', newType)}
+          onTriggerConfigChange={(newConfig) => handleValueChange('trigger_config', newConfig)}
           validationErrors={validationErrors}
           required={config.required}
           showHelperText={true}
@@ -106,19 +94,17 @@ const PlaceholderFormStep = ({
     }
 
     // Skip trigger_config as it's handled by TriggerConfiguration
-    if (placeholderName === "trigger_config") {
+    if (placeholderName === 'trigger_config') {
       return null;
     }
 
     // Model Configuration selection
-    if (placeholderName === "model_configuration_id") {
+    if (placeholderName === 'model_configuration_id') {
       return (
         <ModelConfigurationSelector
           key={placeholderName}
           modelConfigurationId={currentValue}
-          onModelConfigurationChange={(newValue) =>
-            handleValueChange("model_configuration_id", newValue)
-          }
+          onModelConfigurationChange={(newValue) => handleValueChange('model_configuration_id', newValue)}
           validationErrors={validationErrors}
           required={config.required}
           label={config.label}
@@ -128,13 +114,13 @@ const PlaceholderFormStep = ({
     }
 
     // Number input
-    if (config.type === "number") {
+    if (config.type === 'number') {
       return (
         <TextField
           key={placeholderName}
           fullWidth
           type="number"
-          label={`${config.label} ${config.required ? "*" : ""}`}
+          label={`${config.label} ${config.required ? '*' : ''}`}
           value={currentValue}
           onChange={(e) => handleValueChange(placeholderName, e.target.value)}
           error={hasError}
@@ -152,7 +138,7 @@ const PlaceholderFormStep = ({
       <TextField
         key={placeholderName}
         fullWidth
-        label={`${config.label} ${config.required ? "*" : ""}`}
+        label={`${config.label} ${config.required ? '*' : ''}`}
         value={currentValue}
         onChange={(e) => handleValueChange(placeholderName, e.target.value)}
         error={hasError}
@@ -162,30 +148,28 @@ const PlaceholderFormStep = ({
   };
 
   // Filter out unsupported placeholders and group related ones
-  const supportedPlaceholders = placeholders.filter(
-    (p) => SUPPORTED_IMPORT_PLACEHOLDERS[p],
-  );
-  const unsupportedPlaceholders = placeholders.filter(
-    (p) => !SUPPORTED_IMPORT_PLACEHOLDERS[p],
-  );
+  const supportedPlaceholders = placeholders.filter((p) => SUPPORTED_IMPORT_PLACEHOLDERS[p]);
+  const unsupportedPlaceholders = placeholders.filter((p) => !SUPPORTED_IMPORT_PLACEHOLDERS[p]);
 
   // Group related placeholders to avoid duplicates in rendering
   const groupedPlaceholders = [];
   const processedPlaceholders = new Set();
 
   supportedPlaceholders.forEach((placeholder) => {
-    if (processedPlaceholders.has(placeholder)) return;
+    if (processedPlaceholders.has(placeholder)) {
+      return;
+    }
 
-    if (placeholder === "trigger_type") {
-      groupedPlaceholders.push("trigger_type");
-      processedPlaceholders.add("trigger_type");
+    if (placeholder === 'trigger_type') {
+      groupedPlaceholders.push('trigger_type');
+      processedPlaceholders.add('trigger_type');
       // Only mark trigger_config as processed if it's actually in the placeholders
-      if (supportedPlaceholders.includes("trigger_config")) {
-        processedPlaceholders.add("trigger_config");
+      if (supportedPlaceholders.includes('trigger_config')) {
+        processedPlaceholders.add('trigger_config');
       }
-    } else if (placeholder === "model_configuration_id") {
-      groupedPlaceholders.push("model_configuration_id");
-      processedPlaceholders.add("model_configuration_id");
+    } else if (placeholder === 'model_configuration_id') {
+      groupedPlaceholders.push('model_configuration_id');
+      processedPlaceholders.add('model_configuration_id');
     } else if (!processedPlaceholders.has(placeholder)) {
       groupedPlaceholders.push(placeholder);
       processedPlaceholders.add(placeholder);
@@ -202,16 +186,14 @@ const PlaceholderFormStep = ({
 
         <Alert severity="success" sx={{ mb: 2 }}>
           <Typography variant="body2">
-            No configuration placeholders found in the YAML. The experience is
-            ready to be created as-is.
+            No configuration placeholders found in the YAML. The experience is ready to be created as-is.
           </Typography>
         </Alert>
 
         {unsupportedPlaceholders.length > 0 && (
           <Alert severity="warning" sx={{ mb: 2 }}>
             <Typography variant="body2" gutterBottom>
-              <strong>Note:</strong> The following placeholders were found but
-              are not supported for import:
+              <strong>Note:</strong> The following placeholders were found but are not supported for import:
             </Typography>
             <Box component="ul" sx={{ m: 0, pl: 2 }}>
               {unsupportedPlaceholders.map((p) => (
@@ -221,8 +203,7 @@ const PlaceholderFormStep = ({
               ))}
             </Box>
             <Typography variant="body2" sx={{ mt: 1 }}>
-              These will be left as-is in the imported experience and can be
-              configured after import.
+              These will be left as-is in the imported experience and can be configured after import.
             </Typography>
           </Alert>
         )}
@@ -241,16 +222,15 @@ const PlaceholderFormStep = ({
       </Typography>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Fill in the configuration values for your imported experience. These
-        settings will replace the placeholders in the YAML.
+        Fill in the configuration values for your imported experience. These settings will replace the placeholders in
+        the YAML.
       </Typography>
 
       {/* Show warning for unsupported placeholders */}
       {unsupportedPlaceholders.length > 0 && (
         <Alert severity="info" sx={{ mb: 3 }}>
           <Typography variant="body2" gutterBottom>
-            <strong>Note:</strong> Some placeholders in your YAML are not
-            configurable during import:
+            <strong>Note:</strong> Some placeholders in your YAML are not configurable during import:
           </Typography>
           <Box component="ul" sx={{ m: 0, pl: 2 }}>
             {unsupportedPlaceholders.map((p) => (
@@ -260,8 +240,7 @@ const PlaceholderFormStep = ({
             ))}
           </Box>
           <Typography variant="body2" sx={{ mt: 1 }}>
-            These will remain as template variables and can be configured after
-            import.
+            These will remain as template variables and can be configured after import.
           </Typography>
         </Alert>
       )}
@@ -297,16 +276,13 @@ const PlaceholderFormStep = ({
             Fields marked with * are required
           </Typography>
           <Typography component="li" variant="body2">
-            Model configuration is optional - leave blank to create experience
-            without AI processing
+            Model configuration is optional - leave blank to create experience without AI processing
           </Typography>
           <Typography component="li" variant="body2">
-            Trigger configuration determines when the experience runs
-            automatically
+            Trigger configuration determines when the experience runs automatically
           </Typography>
           <Typography component="li" variant="body2">
-            The maximum runtime dictates how long the experience is allowed to
-            run before automatically interrupting
+            The maximum runtime dictates how long the experience is allowed to run before automatically interrupting
           </Typography>
         </Box>
       </Alert>

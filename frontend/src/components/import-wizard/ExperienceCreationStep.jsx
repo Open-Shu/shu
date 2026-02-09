@@ -1,30 +1,16 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  Box,
-  Typography,
-  Alert,
-  CircularProgress,
-  Button,
-  Paper,
-  Stack,
-  Divider,
-  LinearProgress,
-} from "@mui/material";
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Box, Typography, Alert, CircularProgress, Button, Paper, Stack, Divider, LinearProgress } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Launch as LaunchIcon,
   Refresh as RefreshIcon,
-} from "@mui/icons-material";
-import { useNavigate } from "react-router-dom";
-import {
-  experiencesAPI,
-  extractDataFromResponse,
-  formatError,
-} from "../../services/api";
-import YAMLProcessor from "../../services/yamlProcessor";
-import { replacePlaceholders } from "../../services/importPlaceholders";
-import { log } from "../../utils/log";
+} from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
+import { experiencesAPI, extractDataFromResponse, formatError } from '../../services/api';
+import YAMLProcessor from '../../services/yamlProcessor';
+import { replacePlaceholders } from '../../services/importPlaceholders';
+import { log } from '../../utils/log';
 
 /**
  * ExperienceCreationStep - Final step of the import wizard showing creation progress
@@ -36,14 +22,8 @@ import { log } from "../../utils/log";
  * @param {function} props.onRetry - Callback to retry creation (goes back to previous step)
  * @param {function} props.onClose - Callback to close the wizard (optional)
  */
-const ExperienceCreationStep = ({
-  yamlContent,
-  resolvedValues = {},
-  onCreationComplete,
-  onRetry,
-  onClose,
-}) => {
-  const [creationState, setCreationState] = useState("idle"); // 'idle', 'creating', 'success', 'error'
+const ExperienceCreationStep = ({ yamlContent, resolvedValues = {}, onCreationComplete, onRetry, onClose }) => {
+  const [creationState, setCreationState] = useState('idle'); // 'idle', 'creating', 'success', 'error'
   const [error, setError] = useState(null);
   const [createdExperience, setCreatedExperience] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -54,11 +34,7 @@ const ExperienceCreationStep = ({
 
   // Create experience when component mounts
   useEffect(() => {
-    if (
-      creationState === "idle" &&
-      yamlContent &&
-      !creationInitiatedRef.current
-    ) {
+    if (creationState === 'idle' && yamlContent && !creationInitiatedRef.current) {
       creationInitiatedRef.current = true;
       createExperience();
     }
@@ -68,11 +44,13 @@ const ExperienceCreationStep = ({
   useEffect(() => {
     let progressInterval;
 
-    if (creationState === "creating") {
+    if (creationState === 'creating') {
       setProgress(0);
       progressInterval = setInterval(() => {
         setProgress((prev) => {
-          if (prev >= 90) return prev; // Stop at 90% until actual completion
+          if (prev >= 90) {
+            return prev;
+          } // Stop at 90% until actual completion
           return prev + Math.random() * 15;
         });
       }, 200);
@@ -87,17 +65,17 @@ const ExperienceCreationStep = ({
 
   const createExperience = useCallback(async () => {
     if (!yamlContent) {
-      setError("No YAML content provided");
-      setCreationState("error");
+      setError('No YAML content provided');
+      setCreationState('error');
       return;
     }
 
-    setCreationState("creating");
+    setCreationState('creating');
     setError(null);
     setProgress(10);
 
     try {
-      log.info("Starting experience creation from YAML", {
+      log.info('Starting experience creation from YAML', {
         placeholderCount: Object.keys(resolvedValues).length,
       });
 
@@ -107,10 +85,9 @@ const ExperienceCreationStep = ({
 
       // Step 2: Convert to API payload format
       setProgress(50);
-      const experiencePayload =
-        YAMLProcessor.convertToExperiencePayload(resolvedYAML);
+      const experiencePayload = YAMLProcessor.convertToExperiencePayload(resolvedYAML);
 
-      log.debug("Converted YAML to experience payload", {
+      log.debug('Converted YAML to experience payload', {
         experienceName: experiencePayload.name,
         stepCount: experiencePayload.steps?.length || 0,
       });
@@ -123,9 +100,9 @@ const ExperienceCreationStep = ({
       // Step 4: Success
       setProgress(100);
       setCreatedExperience(createdExp);
-      setCreationState("success");
+      setCreationState('success');
 
-      log.info("Experience created successfully", {
+      log.info('Experience created successfully', {
         experienceId: createdExp.id,
         experienceName: createdExp.name,
       });
@@ -135,67 +112,64 @@ const ExperienceCreationStep = ({
         onCreationComplete(createdExp);
       }
     } catch (err) {
-      log.error("Failed to create experience", { error: err.message });
+      log.error('Failed to create experience', { error: err.message });
 
       // Enhanced error handling with specific error types
       const formattedError = formatError(err);
       const errorDetails = {
         message: formattedError,
-        type: "unknown",
+        type: 'unknown',
         canRetry: true,
         suggestions: null,
       };
 
       // Categorize error types for better user guidance
       if (err.response?.status === 400) {
-        errorDetails.type = "validation";
+        errorDetails.type = 'validation';
         errorDetails.suggestions = [
-          "Check that all required fields are filled",
-          "Verify YAML structure matches expected format",
-          "Ensure placeholder values are valid",
+          'Check that all required fields are filled',
+          'Verify YAML structure matches expected format',
+          'Ensure placeholder values are valid',
         ];
       } else if (err.response?.status === 404) {
-        errorDetails.type = "not_found";
+        errorDetails.type = 'not_found';
         errorDetails.suggestions = [
-          "Verify that the selected LLM provider exists",
-          "Check that the selected model is available",
-          "Ensure all referenced plugins are installed",
+          'Verify that the selected LLM provider exists',
+          'Check that the selected model is available',
+          'Ensure all referenced plugins are installed',
         ];
       } else if (err.response?.status === 422) {
-        errorDetails.type = "plugin_validation";
+        errorDetails.type = 'plugin_validation';
         errorDetails.suggestions = [
-          "Install missing plugins before creating the experience",
-          "Check plugin names and operations in the YAML",
-          "Verify plugin configurations are correct",
+          'Install missing plugins before creating the experience',
+          'Check plugin names and operations in the YAML',
+          'Verify plugin configurations are correct',
         ];
       } else if (err.response?.status >= 500) {
-        errorDetails.type = "server_error";
+        errorDetails.type = 'server_error';
         errorDetails.suggestions = [
-          "Try again in a few moments",
-          "Check system status",
-          "Contact support if the problem persists",
+          'Try again in a few moments',
+          'Check system status',
+          'Contact support if the problem persists',
         ];
-      } else if (
-        err.code === "NETWORK_ERROR" ||
-        err.message?.includes("Network Error")
-      ) {
-        errorDetails.type = "network";
+      } else if (err.code === 'NETWORK_ERROR' || err.message?.includes('Network Error')) {
+        errorDetails.type = 'network';
         errorDetails.suggestions = [
-          "Check your internet connection",
-          "Try again in a few moments",
-          "Verify the server is accessible",
+          'Check your internet connection',
+          'Try again in a few moments',
+          'Verify the server is accessible',
         ];
-      } else if (err.name === "TimeoutError" || err.code === "ECONNABORTED") {
-        errorDetails.type = "timeout";
+      } else if (err.name === 'TimeoutError' || err.code === 'ECONNABORTED') {
+        errorDetails.type = 'timeout';
         errorDetails.suggestions = [
-          "The request timed out - try again",
-          "Check your network connection",
-          "The server may be experiencing high load",
+          'The request timed out - try again',
+          'Check your network connection',
+          'The server may be experiencing high load',
         ];
       }
 
       setError(errorDetails);
-      setCreationState("error");
+      setCreationState('error');
       setProgress(0);
     }
   }, [yamlContent, resolvedValues, onCreationComplete]);
@@ -206,7 +180,7 @@ const ExperienceCreationStep = ({
     } else {
       // Reset state and try again
       creationInitiatedRef.current = false;
-      setCreationState("idle");
+      setCreationState('idle');
       setError(null);
       setCreatedExperience(null);
       setProgress(0);
@@ -225,16 +199,16 @@ const ExperienceCreationStep = ({
       onClose();
     } else {
       // Fallback to navigation if no close callback provided
-      navigate("/admin/experiences");
+      navigate('/admin/experiences');
     }
   }, [onClose, navigate]);
 
   // Render different states
   const renderContent = () => {
     switch (creationState) {
-      case "creating":
+      case 'creating':
         return (
-          <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+          <Paper variant="outlined" sx={{ p: 3, textAlign: 'center' }}>
             <CircularProgress size={48} sx={{ mb: 2 }} />
             <Typography variant="h6" gutterBottom>
               Creating Experience...
@@ -242,28 +216,18 @@ const ExperienceCreationStep = ({
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
               Processing YAML configuration and setting up your experience
             </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={progress}
-              sx={{ width: "100%", height: 8, borderRadius: 4 }}
-            />
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ mt: 1, display: "block" }}
-            >
+            <LinearProgress variant="determinate" value={progress} sx={{ width: '100%', height: 8, borderRadius: 4 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
               {Math.round(progress)}% complete
             </Typography>
           </Paper>
         );
 
-      case "success":
+      case 'success':
         return (
           <Paper variant="outlined" sx={{ p: 3 }}>
-            <Box sx={{ textAlign: "center", mb: 3 }}>
-              <CheckCircleIcon
-                sx={{ fontSize: 64, color: "success.main", mb: 2 }}
-              />
+            <Box sx={{ textAlign: 'center', mb: 3 }}>
+              <CheckCircleIcon sx={{ fontSize: 64, color: 'success.main', mb: 2 }} />
               <Typography variant="h5" gutterBottom color="success.main">
                 Experience Created Successfully!
               </Typography>
@@ -292,28 +256,24 @@ const ExperienceCreationStep = ({
                   <Typography variant="body2" color="text.secondary">
                     Description:
                   </Typography>
-                  <Typography variant="body1">
-                    {createdExperience?.description}
-                  </Typography>
+                  <Typography variant="body1">{createdExperience?.description}</Typography>
                 </Box>
                 <Box>
                   <Typography variant="body2" color="text.secondary">
                     Steps:
                   </Typography>
-                  <Typography variant="body1">
-                    {createdExperience?.step_count || 0} configured
-                  </Typography>
+                  <Typography variant="body1">{createdExperience?.step_count || 0} configured</Typography>
                 </Box>
                 <Box>
                   <Typography variant="body2" color="text.secondary">
                     Trigger:
                   </Typography>
                   <Typography variant="body1">
-                    {createdExperience?.trigger_type === "cron"
-                      ? "Recurring"
-                      : createdExperience?.trigger_type === "scheduled"
-                        ? "Scheduled"
-                        : "Manual"}
+                    {createdExperience?.trigger_type === 'cron'
+                      ? 'Recurring'
+                      : createdExperience?.trigger_type === 'scheduled'
+                        ? 'Scheduled'
+                        : 'Manual'}
                   </Typography>
                 </Box>
               </Stack>
@@ -321,12 +281,7 @@ const ExperienceCreationStep = ({
 
             {/* Action Buttons */}
             <Stack direction="row" spacing={2} justifyContent="center">
-              <Button
-                variant="contained"
-                startIcon={<LaunchIcon />}
-                onClick={handleViewExperience}
-                size="large"
-              >
+              <Button variant="contained" startIcon={<LaunchIcon />} onClick={handleViewExperience} size="large">
                 View Experience
               </Button>
               <Button variant="outlined" onClick={handleGoToExperiences}>
@@ -336,11 +291,11 @@ const ExperienceCreationStep = ({
           </Paper>
         );
 
-      case "error":
+      case 'error':
         return (
           <Paper variant="outlined" sx={{ p: 3 }}>
-            <Box sx={{ textAlign: "center", mb: 3 }}>
-              <ErrorIcon sx={{ fontSize: 64, color: "error.main", mb: 2 }} />
+            <Box sx={{ textAlign: 'center', mb: 3 }}>
+              <ErrorIcon sx={{ fontSize: 64, color: 'error.main', mb: 2 }} />
               <Typography variant="h5" gutterBottom color="error.main">
                 Creation Failed
               </Typography>
@@ -353,45 +308,37 @@ const ExperienceCreationStep = ({
               <Typography variant="body2" fontWeight="medium" gutterBottom>
                 Error Details:
               </Typography>
-              <Typography variant="body2">
-                {typeof error === "object" && error ? error.message : error}
-              </Typography>
+              <Typography variant="body2">{typeof error === 'object' && error ? error.message : error}</Typography>
             </Alert>
 
             {/* Enhanced error guidance based on error type */}
-            {typeof error === "object" &&
-              error &&
-              error.suggestions &&
-              error.suggestions.length > 0 && (
-                <Alert severity="info" sx={{ mb: 3 }}>
-                  <Typography variant="body2" fontWeight="medium" gutterBottom>
-                    {error.type === "network"
-                      ? "Network Issues:"
-                      : error.type === "validation"
-                        ? "Validation Issues:"
-                        : error.type === "plugin_validation"
-                          ? "Plugin Issues:"
-                          : error.type === "server_error"
-                            ? "Server Issues:"
-                            : error.type === "timeout"
-                              ? "Timeout Issues:"
-                              : "Troubleshooting Tips:"}
-                  </Typography>
-                  <Box component="ul" sx={{ m: 0, pl: 2 }}>
-                    {error.suggestions.map((suggestion, index) => (
-                      <Typography key={index} component="li" variant="body2">
-                        {suggestion}
-                      </Typography>
-                    ))}
-                  </Box>
-                </Alert>
-              )}
+            {typeof error === 'object' && error && error.suggestions && error.suggestions.length > 0 && (
+              <Alert severity="info" sx={{ mb: 3 }}>
+                <Typography variant="body2" fontWeight="medium" gutterBottom>
+                  {error.type === 'network'
+                    ? 'Network Issues:'
+                    : error.type === 'validation'
+                      ? 'Validation Issues:'
+                      : error.type === 'plugin_validation'
+                        ? 'Plugin Issues:'
+                        : error.type === 'server_error'
+                          ? 'Server Issues:'
+                          : error.type === 'timeout'
+                            ? 'Timeout Issues:'
+                            : 'Troubleshooting Tips:'}
+                </Typography>
+                <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                  {error.suggestions.map((suggestion, index) => (
+                    <Typography key={index} component="li" variant="body2">
+                      {suggestion}
+                    </Typography>
+                  ))}
+                </Box>
+              </Alert>
+            )}
 
             {/* General troubleshooting tips for non-enhanced errors */}
-            {(typeof error !== "object" ||
-              !error ||
-              !error.suggestions ||
-              error.suggestions.length === 0) && (
+            {(typeof error !== 'object' || !error || !error.suggestions || error.suggestions.length === 0) && (
               <Alert severity="info" sx={{ mb: 3 }}>
                 <Typography variant="body2" fontWeight="medium" gutterBottom>
                   Troubleshooting Tips:
@@ -423,13 +370,13 @@ const ExperienceCreationStep = ({
                 startIcon={<RefreshIcon />}
                 onClick={handleRetry}
                 size="large"
-                disabled={typeof error === "object" && !error.canRetry}
+                disabled={typeof error === 'object' && !error.canRetry}
               >
-                {typeof error === "object" && error.type === "network"
-                  ? "Retry Connection"
-                  : typeof error === "object" && error.type === "timeout"
-                    ? "Try Again"
-                    : "Try Again"}
+                {typeof error === 'object' && error.type === 'network'
+                  ? 'Retry Connection'
+                  : typeof error === 'object' && error.type === 'timeout'
+                    ? 'Try Again'
+                    : 'Try Again'}
               </Button>
               <Button variant="outlined" onClick={handleGoToExperiences}>
                 Cancel Import
@@ -440,7 +387,7 @@ const ExperienceCreationStep = ({
 
       default:
         return (
-          <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+          <Paper variant="outlined" sx={{ p: 3, textAlign: 'center' }}>
             <Typography variant="body1" color="text.secondary">
               Preparing to create experience...
             </Typography>
@@ -456,8 +403,7 @@ const ExperienceCreationStep = ({
       </Typography>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Creating your experience from the configured YAML. This may take a few
-        moments.
+        Creating your experience from the configured YAML. This may take a few moments.
       </Typography>
 
       {renderContent()}

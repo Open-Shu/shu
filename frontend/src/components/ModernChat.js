@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "react-query";
-import log from "../utils/log";
-import { useTheme as useMuiTheme } from "@mui/material/styles";
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
+import log from '../utils/log';
+import { useTheme as useMuiTheme } from '@mui/material/styles';
 
 import {
   chatAPI,
@@ -11,42 +11,32 @@ import {
   formatError,
   llmAPI,
   sideCallsAPI,
-} from "../services/api";
-import { buildUserPreferencesPayload } from "../utils/userPreferences";
+} from '../services/api';
+import { buildUserPreferencesPayload } from '../utils/userPreferences';
 
-import { useAuth } from "../hooks/useAuth";
-import { useMobileSidebar } from "../contexts/MobileSidebarContext";
-import { useTheme as useAppTheme } from "../contexts/ThemeContext";
-import useAutomationSettings from "../hooks/useAutomationSettings";
-import {
-  getBrandingAppName,
-  getBrandingLogoUrl,
-  RAG_REWRITE_OPTIONS,
-} from "../utils/constants";
-import {
-  createChatStyles,
-  attachmentChipStyles,
-} from "./chat/ModernChat/styles";
-import {
-  buildRenamePayloadBase,
-  getLatestUserMessageContent,
-} from "./chat/ModernChat/utils/renamePayload";
-import useChatComposer from "./chat/ModernChat/hooks/useChatComposer";
-import useChatStreaming from "./chat/ModernChat/hooks/useChatStreaming";
-import useSummarySearch from "./chat/ModernChat/hooks/useSummarySearch";
-import useMessageWindow from "./chat/ModernChat/hooks/useMessageWindow";
-import usePreferredModelConfig from "./chat/ModernChat/hooks/usePreferredModelConfig";
-import useFreshConversations from "./chat/ModernChat/hooks/useFreshConversations";
-import useConversationData from "./chat/ModernChat/hooks/useConversationData";
-import useConversationLifecycle from "./chat/ModernChat/hooks/useConversationLifecycle";
-import useConversationAutomation from "./chat/ModernChat/hooks/useConversationAutomation";
-import useMessageStream from "./chat/ModernChat/hooks/useMessageStream";
-import useVariantStreamingManager from "./chat/ModernChat/hooks/useVariantStreamingManager";
-import useSideBySideManager from "./chat/ModernChat/hooks/useSideBySideManager";
-import useChatUiState from "./chat/ModernChat/hooks/useChatUiState";
-import usePluginFlow from "./chat/ModernChat/hooks/usePluginFlow";
-import ModernChatView from "./chat/ModernChat/ModernChatView";
-import useEnsembleMode from "./chat/ModernChat/hooks/useEnsembleMode";
+import { useAuth } from '../hooks/useAuth';
+import { useMobileSidebar } from '../contexts/MobileSidebarContext';
+import { useTheme as useAppTheme } from '../contexts/ThemeContext';
+import useAutomationSettings from '../hooks/useAutomationSettings';
+import { getBrandingAppName, getBrandingLogoUrl, RAG_REWRITE_OPTIONS } from '../utils/constants';
+import { createChatStyles, attachmentChipStyles } from './chat/ModernChat/styles';
+import { buildRenamePayloadBase, getLatestUserMessageContent } from './chat/ModernChat/utils/renamePayload';
+import useChatComposer from './chat/ModernChat/hooks/useChatComposer';
+import useChatStreaming from './chat/ModernChat/hooks/useChatStreaming';
+import useSummarySearch from './chat/ModernChat/hooks/useSummarySearch';
+import useMessageWindow from './chat/ModernChat/hooks/useMessageWindow';
+import usePreferredModelConfig from './chat/ModernChat/hooks/usePreferredModelConfig';
+import useFreshConversations from './chat/ModernChat/hooks/useFreshConversations';
+import useConversationData from './chat/ModernChat/hooks/useConversationData';
+import useConversationLifecycle from './chat/ModernChat/hooks/useConversationLifecycle';
+import useConversationAutomation from './chat/ModernChat/hooks/useConversationAutomation';
+import useMessageStream from './chat/ModernChat/hooks/useMessageStream';
+import useVariantStreamingManager from './chat/ModernChat/hooks/useVariantStreamingManager';
+import useSideBySideManager from './chat/ModernChat/hooks/useSideBySideManager';
+import useChatUiState from './chat/ModernChat/hooks/useChatUiState';
+import usePluginFlow from './chat/ModernChat/hooks/usePluginFlow';
+import ModernChatView from './chat/ModernChat/ModernChatView';
+import useEnsembleMode from './chat/ModernChat/hooks/useEnsembleMode';
 
 import {
   CHAT_WINDOW_SIZE,
@@ -57,10 +47,10 @@ import {
   STORAGE_KEY_RAG_REWRITE_MODE,
   DEFAULT_NEW_CHAT_TITLE,
   CHAT_PLUGINS_ENABLED,
-} from "./chat/ModernChat/utils/chatConfig";
+} from './chat/ModernChat/utils/chatConfig';
 
 const SIDE_CALL_NOT_CONFIGURED_TOOLTIP =
-  "Side-caller agent not configured. Configure a model configuration and set it as the side-caller to restore conversation naming and summary generation functionality.";
+  'Side-caller agent not configured. Configure a model configuration and set it as the side-caller to restore conversation naming and summary generation functionality.';
 
 const ModernChat = () => {
   const theme = useMuiTheme();
@@ -80,8 +70,7 @@ const ModernChat = () => {
   const inputRef = useRef(null);
   const isPinnedToBottomRef = useRef(true);
   const clearEnsembleModeRef = useRef(() => {});
-  const { markFreshConversation, clearFreshConversation, isConversationFresh } =
-    useFreshConversations();
+  const { markFreshConversation, clearFreshConversation, isConversationFresh } = useFreshConversations();
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
 
   // State management
@@ -115,11 +104,7 @@ const ModernChat = () => {
   } = useChatUiState();
 
   // Mobile sidebar state from context (shared with TopBar in UserLayout)
-  const {
-    isOpen: mobileSidebarOpen,
-    close: closeMobileSidebar,
-    toggle: toggleMobileSidebar,
-  } = useMobileSidebar();
+  const { isOpen: mobileSidebarOpen, close: closeMobileSidebar, toggle: toggleMobileSidebar } = useMobileSidebar();
 
   useEffect(() => {
     selectedConversationRef.current = selectedConversation;
@@ -129,9 +114,9 @@ const ModernChat = () => {
   const [userPreferences, setUserPreferences] = useState({
     memory_depth: 5,
     memory_similarity_threshold: 0.6,
-    theme: "light",
-    language: "en",
-    timezone: "UTC",
+    theme: 'light',
+    language: 'en',
+    timezone: 'UTC',
     advanced_settings: {},
     summary_search_min_token_length: DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
     summary_search_max_tokens: DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
@@ -146,12 +131,8 @@ const ModernChat = () => {
     summaryFeedback: summarySearchFeedback,
     summaryQuery,
   } = useSummarySearch({
-    minTokenLength:
-      userPreferences.summary_search_min_token_length ??
-      DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
-    maxTokens:
-      userPreferences.summary_search_max_tokens ??
-      DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
+    minTokenLength: userPreferences.summary_search_min_token_length ?? DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
+    maxTokens: userPreferences.summary_search_max_tokens ?? DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
     debounceMs: SUMMARY_SEARCH_DEBOUNCE_MS,
   });
   const {
@@ -199,24 +180,22 @@ const ModernChat = () => {
     clearEnsembleModeRef.current = clearEnsembleSelection;
   }, [clearEnsembleSelection]);
   // Local-only automation cadence settings
-  const [automationSettings, updateAutomationSettings] =
-    useAutomationSettings();
+  const [automationSettings, updateAutomationSettings] = useAutomationSettings();
   const [searchParams, setSearchParams] = useSearchParams();
-  const CLEAR_PARAM_SENTINEL = "__cleared__";
+  const CLEAR_PARAM_SENTINEL = '__cleared__';
   const pendingConversationParamRef = useRef(null);
   const syncConversationParam = useCallback(
     (conversationId) => {
-      pendingConversationParamRef.current =
-        conversationId ?? CLEAR_PARAM_SENTINEL;
+      pendingConversationParamRef.current = conversationId ?? CLEAR_PARAM_SENTINEL;
       const next = new URLSearchParams(searchParams);
       if (conversationId) {
-        next.set("conversationId", conversationId);
+        next.set('conversationId', conversationId);
       } else {
-        next.delete("conversationId");
+        next.delete('conversationId');
       }
       setSearchParams(next, { replace: true });
     },
-    [searchParams, setSearchParams],
+    [searchParams, setSearchParams]
   );
 
   const fallbackModelConfig = useMemo(() => {
@@ -251,8 +230,8 @@ const ModernChat = () => {
       if (url.origin !== window.location.origin) {
         return null;
       }
-      const segments = url.pathname.split("/").filter(Boolean);
-      if (segments.length >= 3 && segments[0] === "documents") {
+      const segments = url.pathname.split('/').filter(Boolean);
+      if (segments.length >= 3 && segments[0] === 'documents') {
         return {
           kbId: segments[1],
           documentId: segments[2],
@@ -267,14 +246,16 @@ const ModernChat = () => {
   const [ragRewriteMode, setRagRewriteMode] = useState(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_RAG_REWRITE_MODE);
-      if (stored && stored === "no_rag") {
-        return "raw_query";
+      if (stored && stored === 'no_rag') {
+        return 'raw_query';
       }
       if (stored && RAG_REWRITE_OPTIONS.some((opt) => opt.value === stored)) {
         return stored;
       }
-    } catch (_) {}
-    return "raw_query";
+    } catch (_) {
+      // Ignore error
+    }
+    return 'raw_query';
   });
 
   useEffect(() => {
@@ -283,21 +264,17 @@ const ModernChat = () => {
         localStorage.setItem(STORAGE_KEY_RAG_REWRITE_MODE, ragRewriteMode);
       }
     } catch (err) {
-      log.warn("Failed to persist RAG mode to storage:", err);
+      log.warn('Failed to persist RAG mode to storage:', err);
     }
   }, [ragRewriteMode]);
 
-  const { isLoading: loadingModels } = useQuery(
-    "llm-models",
-    () => llmAPI.getModels(),
-    {
-      onError: (err) => {
-        setError(formatError(err).message);
-      },
+  const { isLoading: loadingModels } = useQuery('llm-models', () => llmAPI.getModels(), {
+    onError: (err) => {
+      setError(formatError(err));
     },
-  );
+  });
 
-  useQuery("side-call-config", () => sideCallsAPI.getConfig(), {
+  useQuery('side-call-config', () => sideCallsAPI.getConfig(), {
     enabled: canManageUsers(),
     select: (data) => data ?? null,
     onSuccess: (config) => {
@@ -308,7 +285,7 @@ const ModernChat = () => {
     onError: (err) => {
       // For non-admin users this will typically be 403; log but do not
       // treat it as "not configured" so we don't block automation.
-      log.warn("Failed to fetch side-call config:", formatError(err).message);
+      log.warn('Failed to fetch side-call config:', formatError(err).message);
     },
   });
 
@@ -332,39 +309,33 @@ const ModernChat = () => {
   });
 
   // Fetch user preferences
-  useQuery("user-preferences", userPreferencesAPI.getPreferences, {
+  useQuery('user-preferences', userPreferencesAPI.getPreferences, {
     onSuccess: (response) => {
       const preferences = extractDataFromResponse(response);
-      if (preferences && typeof preferences === "object") {
+      if (preferences && typeof preferences === 'object') {
         setUserPreferences((prev) => ({
           ...prev,
           ...preferences,
-          advanced_settings:
-            preferences.advanced_settings ?? prev.advanced_settings ?? {},
+          advanced_settings: preferences.advanced_settings ?? prev.advanced_settings ?? {},
           summary_search_min_token_length:
-            preferences.summary_search_min_token_length ??
-            prev.summary_search_min_token_length,
-          summary_search_max_tokens:
-            preferences.summary_search_max_tokens ??
-            prev.summary_search_max_tokens,
+            preferences.summary_search_min_token_length ?? prev.summary_search_min_token_length,
+          summary_search_max_tokens: preferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
         }));
       }
     },
     onError: (err) => {
-      log.warn("Failed to load user preferences:", formatError(err).message);
+      log.warn('Failed to load user preferences:', formatError(err).message);
       // Don't show error to user for preferences - use defaults
     },
   });
 
   const switchModelMutation = useMutation(
-    ({ conversationId, payload }) =>
-      chatAPI.switchConversationModel(conversationId, payload),
+    ({ conversationId, payload }) => chatAPI.switchConversationModel(conversationId, payload),
     {
       onSuccess: (response, variables) => {
         const apiConversation = extractDataFromResponse(response);
         const { config, conversationId, payload } = variables;
-        const resolvedConfig =
-          apiConversation?.model_configuration || config || null;
+        const resolvedConfig = apiConversation?.model_configuration || config || null;
         const resolvedConfigId =
           apiConversation?.model_configuration_id ||
           resolvedConfig?.id ||
@@ -382,10 +353,8 @@ const ModernChat = () => {
         } else if (selectedConversation?.id === conversationId) {
           mergedConversation = {
             ...selectedConversation,
-            model_configuration:
-              resolvedConfig || selectedConversation.model_configuration,
-            model_configuration_id:
-              resolvedConfigId || selectedConversation.model_configuration_id,
+            model_configuration: resolvedConfig || selectedConversation.model_configuration,
+            model_configuration_id: resolvedConfigId || selectedConversation.model_configuration_id,
           };
         }
 
@@ -408,8 +377,7 @@ const ModernChat = () => {
             return {
               ...conv,
               model_configuration: resolvedConfig || conv.model_configuration,
-              model_configuration_id:
-                resolvedConfigId || conv.model_configuration_id,
+              model_configuration_id: resolvedConfigId || conv.model_configuration_id,
             };
           });
           return { ...oldData, data: { data: updated } };
@@ -417,20 +385,18 @@ const ModernChat = () => {
 
         setError(null);
         // Refresh conversations so sidebar metadata like descriptions reflect the new model
-        queryClient.invalidateQueries("conversations");
+        queryClient.invalidateQueries('conversations');
       },
       onError: (err, variables) => {
         const formatted = formatError(err);
-        setError(formatted?.message || "Failed to switch model");
+        setError(formatted?.message || 'Failed to switch model');
         if (variables?.previousConfigId) {
           selectPreferredModelConfig(variables.previousConfigId);
         } else if (selectedConversation?.model_configuration_id) {
-          selectPreferredModelConfig(
-            selectedConversation.model_configuration_id,
-          );
+          selectPreferredModelConfig(selectedConversation.model_configuration_id);
         }
       },
-    },
+    }
   );
 
   const handleUnlockAutoRename = useCallback(async () => {
@@ -457,7 +423,7 @@ const ModernChat = () => {
     (updates) => {
       updateAutomationSettings(updates);
     },
-    [updateAutomationSettings],
+    [updateAutomationSettings]
   );
 
   const handleCopyMessage = useCallback((content) => {
@@ -470,111 +436,87 @@ const ModernChat = () => {
   }, []);
 
   // Delete conversation mutation
-  const deleteConversationMutation = useMutation(
-    (conversationId) => chatAPI.deleteConversation(conversationId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries("conversations");
-        setSelectedConversation(null);
-        syncConversationParam(null);
-        closeDeleteDialog();
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-        closeDeleteDialog();
-      },
+  const deleteConversationMutation = useMutation((conversationId) => chatAPI.deleteConversation(conversationId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('conversations');
+      setSelectedConversation(null);
+      syncConversationParam(null);
+      closeDeleteDialog();
+      setError(null);
     },
-  );
+    onError: (err) => {
+      setError(formatError(err).message);
+      closeDeleteDialog();
+    },
+  });
 
   const renameConversationMutation = useMutation(
-    ({ conversationId, title }) =>
-      chatAPI.updateConversation(conversationId, { title }),
+    ({ conversationId, title }) => chatAPI.updateConversation(conversationId, { title }),
     {
       onSuccess: (response, variables) => {
         const updatedConversation = extractDataFromResponse(response);
-        const nextTitle =
-          typeof updatedConversation?.title === "string"
-            ? updatedConversation.title
-            : variables.title;
+        const nextTitle = typeof updatedConversation?.title === 'string' ? updatedConversation.title : variables.title;
 
         if (variables?.conversationId) {
           clearFreshConversation(variables.conversationId);
         }
-        queryClient.invalidateQueries("conversations");
+        queryClient.invalidateQueries('conversations');
         setSelectedConversation((prev) => {
           if (!prev || prev.id !== variables.conversationId) {
             return prev;
           }
-          const merged =
-            updatedConversation && typeof updatedConversation === "object"
-              ? updatedConversation
-              : {};
+          const merged = updatedConversation && typeof updatedConversation === 'object' ? updatedConversation : {};
           return { ...prev, ...merged, title: nextTitle };
         });
         closeRenameDialog();
-        setRenameErrorState("");
+        setRenameErrorState('');
         setError(null);
       },
       onError: (err) => {
         const renameMessage = formatError(err);
         setRenameErrorState(
-          typeof renameMessage === "string"
-            ? renameMessage
-            : renameMessage?.message || "Failed to rename conversation",
+          typeof renameMessage === 'string' ? renameMessage : renameMessage?.message || 'Failed to rename conversation'
         );
       },
-    },
+    }
   );
 
   // Update user preferences mutation
   const updatePreferencesMutation = useMutation(
-    (preferences) =>
-      userPreferencesAPI.updatePreferences(
-        buildUserPreferencesPayload(preferences),
-      ),
+    (preferences) => userPreferencesAPI.updatePreferences(buildUserPreferencesPayload(preferences)),
     {
       onSuccess: (response) => {
         const updatedPreferences = extractDataFromResponse(response);
-        if (updatedPreferences && typeof updatedPreferences === "object") {
+        if (updatedPreferences && typeof updatedPreferences === 'object') {
           setUserPreferences((prev) => ({
             ...prev,
             ...updatedPreferences,
-            advanced_settings:
-              updatedPreferences.advanced_settings ??
-              prev.advanced_settings ??
-              {},
+            advanced_settings: updatedPreferences.advanced_settings ?? prev.advanced_settings ?? {},
             summary_search_min_token_length:
-              updatedPreferences.summary_search_min_token_length ??
-              prev.summary_search_min_token_length,
-            summary_search_max_tokens:
-              updatedPreferences.summary_search_max_tokens ??
-              prev.summary_search_max_tokens,
+              updatedPreferences.summary_search_min_token_length ?? prev.summary_search_min_token_length,
+            summary_search_max_tokens: updatedPreferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
           }));
         }
-        queryClient.invalidateQueries("user-preferences");
+        queryClient.invalidateQueries('user-preferences');
         closeSettingsDialog();
         setError(null);
       },
       onError: (err) => {
         setError(formatError(err).message);
       },
-    },
+    }
   );
 
-  const {
-    preferredModelConfig,
-    selectPreferredModelConfig,
-    resolveInitialModelConfig,
-  } = usePreferredModelConfig(availableModelConfigs, selectedConversation);
+  const { preferredModelConfig, selectPreferredModelConfig, resolveInitialModelConfig } = usePreferredModelConfig(
+    availableModelConfigs,
+    selectedConversation
+  );
 
   useEffect(() => {
     if (!lastCreatedConversation) {
       return;
     }
-    const config = modelConfigs.find(
-      (cfg) => cfg.id === lastCreatedConversation.model_configuration_id,
-    );
+    const config = modelConfigs.find((cfg) => cfg.id === lastCreatedConversation.model_configuration_id);
     if (config) {
       selectPreferredModelConfig(config.id);
     }
@@ -594,14 +536,11 @@ const ModernChat = () => {
 
   const selectedModelConfig = preferredModelConfig;
 
-  const scrollToBottom = useCallback((behavior = "auto") => {
+  const scrollToBottom = useCallback((behavior = 'auto') => {
     messageListRef.current?.scrollToBottom(behavior);
   }, []);
 
-  const captureScrollSnapshot = useCallback(
-    () => messageListRef.current?.captureScrollSnapshot(),
-    [],
-  );
+  const captureScrollSnapshot = useCallback(() => messageListRef.current?.captureScrollSnapshot(), []);
 
   const restoreScrollSnapshot = useCallback((snapshot) => {
     if (snapshot) {
@@ -610,19 +549,13 @@ const ModernChat = () => {
   }, []);
 
   const scheduleScrollToBottom = useCallback(
-    (behavior = "auto") => {
+    (behavior = 'auto') => {
       requestAnimationFrame(() => scrollToBottom(behavior));
     },
-    [scrollToBottom],
+    [scrollToBottom]
   );
 
-  const {
-    messages,
-    loadingMessages,
-    hasMoreMessages,
-    loadingOlderMessages,
-    loadOlderMessages,
-  } = useMessageStream({
+  const { messages, loadingMessages, hasMoreMessages, loadingOlderMessages, loadOlderMessages } = useMessageStream({
     selectedConversation,
     queryClient,
     setError,
@@ -668,7 +601,7 @@ const ModernChat = () => {
       registerRegenerationStart(messageId, parentId);
       startRegeneration(messageId, parentId, tempId);
     },
-    [registerRegenerationStart, startRegeneration],
+    [registerRegenerationStart, startRegeneration]
   );
 
   const completeRegenerationWithSideBySide = useCallback(
@@ -676,7 +609,7 @@ const ModernChat = () => {
       registerRegenerationComplete(messageId);
       completeRegeneration(messageId);
     },
-    [registerRegenerationComplete, completeRegeneration],
+    [registerRegenerationComplete, completeRegeneration]
   );
 
   const focusMessageById = useCallback((messageId, options = {}) => {
@@ -684,8 +617,8 @@ const ModernChat = () => {
       return;
     }
     messageListRef.current?.scrollToMessage(messageId, {
-      align: options.align || "start",
-      behavior: options.behavior || "auto",
+      align: options.align || 'start',
+      behavior: options.behavior || 'auto',
     });
   }, []);
 
@@ -743,8 +676,7 @@ const ModernChat = () => {
     onEnsembleRunComplete: clearEnsembleSelection,
   });
 
-  const isStreamingForSelectedConversation =
-    streamingConversationId === selectedConversation?.id;
+  const isStreamingForSelectedConversation = streamingConversationId === selectedConversation?.id;
 
   const isSendDisabled = isStreamingForSelectedConversation;
 
@@ -763,7 +695,7 @@ const ModernChat = () => {
 
   useEffect(() => {
     if (isPinnedToBottom) {
-      scheduleScrollToBottom("auto");
+      scheduleScrollToBottom('auto');
     }
   }, [isPinnedToBottom, scheduleScrollToBottom, windowMessageCount]);
 
@@ -771,10 +703,10 @@ const ModernChat = () => {
     (atBottom) => {
       setIsPinnedToBottom(atBottom);
       if (atBottom) {
-        scheduleScrollToBottom("auto");
+        scheduleScrollToBottom('auto');
       }
     },
-    [scheduleScrollToBottom],
+    [scheduleScrollToBottom]
   );
 
   const handleUserInteract = useCallback(() => {
@@ -787,12 +719,7 @@ const ModernChat = () => {
       restoreScrollSnapshot,
       expandWindow,
     });
-  }, [
-    loadOlderMessages,
-    captureScrollSnapshot,
-    restoreScrollSnapshot,
-    expandWindow,
-  ]);
+  }, [loadOlderMessages, captureScrollSnapshot, restoreScrollSnapshot, expandWindow]);
 
   const handleRevealOlderInMemory = useCallback(() => {
     // Reveal older messages that are already in memory (no server fetch required)
@@ -806,18 +733,11 @@ const ModernChat = () => {
     requestAnimationFrame(() => {
       restoreScrollSnapshot(snapshot);
     });
-  }, [
-    visibleOffset,
-    expandWindow,
-    captureScrollSnapshot,
-    restoreScrollSnapshot,
-  ]);
+  }, [visibleOffset, expandWindow, captureScrollSnapshot, restoreScrollSnapshot]);
 
   const handleRevealNewerInMemory = useCallback(() => {
     // Reveal newer messages that are already in memory (no server fetch required)
-    const total = Array.isArray(flattenedMessages)
-      ? flattenedMessages.length
-      : 0;
+    const total = Array.isArray(flattenedMessages) ? flattenedMessages.length : 0;
     const currentStart = windowStart;
     const currentCount = CHAT_WINDOW_SIZE;
     const remainingBelow = Math.max(total - (currentStart + currentCount), 0);
@@ -831,23 +751,13 @@ const ModernChat = () => {
     requestAnimationFrame(() => {
       restoreScrollSnapshot(snapshot);
     });
-  }, [
-    flattenedMessages,
-    windowStart,
-    advanceWindow,
-    captureScrollSnapshot,
-    restoreScrollSnapshot,
-  ]);
+  }, [flattenedMessages, windowStart, advanceWindow, captureScrollSnapshot, restoreScrollSnapshot]);
 
-  const latestUserMessageContent = useMemo(
-    () => getLatestUserMessageContent(flattenedMessages),
-    [flattenedMessages],
-  );
+  const latestUserMessageContent = useMemo(() => getLatestUserMessageContent(flattenedMessages), [flattenedMessages]);
 
   const buildRenamePayload = useCallback(
-    (explicitFallback) =>
-      buildRenamePayloadBase(latestUserMessageContent, explicitFallback),
-    [latestUserMessageContent],
+    (explicitFallback) => buildRenamePayloadBase(latestUserMessageContent, explicitFallback),
+    [latestUserMessageContent]
   );
 
   const handleRunSummaryAndRename = useCallback(async () => {
@@ -877,16 +787,9 @@ const ModernChat = () => {
   ]);
 
   // Assistant reply count and latest assistant message id (collapsed variants, ignore placeholders)
-  const {
-    assistantReplyCount,
-    lastAssistantMessageId,
-    messagesMatchSelectedConversation,
-  } = useMemo(() => {
+  const { assistantReplyCount, lastAssistantMessageId, messagesMatchSelectedConversation } = useMemo(() => {
     const all = Array.isArray(flattenedMessages) ? flattenedMessages : [];
-    const matches = all.every(
-      (m) =>
-        !m?.conversation_id || m.conversation_id === selectedConversation?.id,
-    );
+    const matches = all.every((m) => !m?.conversation_id || m.conversation_id === selectedConversation?.id);
     if (!matches) {
       return {
         assistantReplyCount: 0,
@@ -894,9 +797,7 @@ const ModernChat = () => {
         messagesMatchSelectedConversation: false,
       };
     }
-    const assistants = all.filter(
-      (m) => m.role === "assistant" && !m.isPlaceholder,
-    );
+    const assistants = all.filter((m) => m.role === 'assistant' && !m.isPlaceholder);
     const count = assistants.length;
     const lastId = count > 0 ? assistants[assistants.length - 1].id : null;
     return {
@@ -938,11 +839,10 @@ const ModernChat = () => {
   }, [selectedConversation]);
 
   useEffect(() => {
-    const cid = searchParams.get("conversationId");
+    const cid = searchParams.get('conversationId');
     const pendingTarget = pendingConversationParamRef.current;
     if (pendingTarget) {
-      const matches =
-        pendingTarget === CLEAR_PARAM_SENTINEL ? !cid : cid === pendingTarget;
+      const matches = pendingTarget === CLEAR_PARAM_SENTINEL ? !cid : cid === pendingTarget;
       if (matches) {
         pendingConversationParamRef.current = null;
         if (pendingTarget === CLEAR_PARAM_SENTINEL) {
@@ -966,9 +866,7 @@ const ModernChat = () => {
       return;
     }
 
-    const found = Array.isArray(conversations)
-      ? conversations.find((c) => c.id === cid)
-      : null;
+    const found = Array.isArray(conversations) ? conversations.find((c) => c.id === cid) : null;
     if (found) {
       setSelectedConversation(found);
       return;
@@ -988,11 +886,8 @@ const ModernChat = () => {
   }, [searchParams, conversations]);
 
   const handleCreateConversation = (experience = null) => {
-    if (
-      !Array.isArray(availableModelConfigs) ||
-      availableModelConfigs.length === 0
-    ) {
-      setError("No model configurations available");
+    if (!Array.isArray(availableModelConfigs) || availableModelConfigs.length === 0) {
+      setError('No model configurations available');
       return;
     }
 
@@ -1005,16 +900,14 @@ const ModernChat = () => {
       availableModelConfigs[0]?.id;
     let selectedConfig = null;
     if (preferredConfigId) {
-      selectedConfig =
-        availableModelConfigs.find((cfg) => cfg.id === preferredConfigId) ||
-        null;
+      selectedConfig = availableModelConfigs.find((cfg) => cfg.id === preferredConfigId) || null;
     }
     if (!selectedConfig) {
       selectedConfig = availableModelConfigs[0];
     }
 
     if (!selectedConfig?.id) {
-      setError("Unable to choose a model configuration. Please try again.");
+      setError('Unable to choose a model configuration. Please try again.');
       return;
     }
 
@@ -1077,7 +970,7 @@ const ModernChat = () => {
 
     const trimmedTitle = renameDialog.value.trim();
     if (!trimmedTitle) {
-      setRenameErrorState("Title is required");
+      setRenameErrorState('Title is required');
       return;
     }
 
@@ -1099,9 +992,7 @@ const ModernChat = () => {
   };
 
   const getSelectedConfig = () => {
-    return availableModelConfigs.find(
-      (config) => config.id === selectedModelConfig,
-    );
+    return availableModelConfigs.find((config) => config.id === selectedModelConfig);
   };
 
   const handleSelectConversation = useCallback(
@@ -1112,14 +1003,14 @@ const ModernChat = () => {
       syncConversationParam(conversation?.id || null);
       closeMobileSidebar();
     },
-    [syncConversationParam, closeMobileSidebar],
+    [syncConversationParam, closeMobileSidebar]
   );
 
   const handleSummarySearchChange = useCallback(
     (value) => {
       setSummarySearchInput(value);
     },
-    [setSummarySearchInput],
+    [setSummarySearchInput]
   );
 
   const handleOpenDeleteDialog = useCallback(
@@ -1127,7 +1018,7 @@ const ModernChat = () => {
       setSelectedConversation(conversation);
       openDeleteDialog();
     },
-    [openDeleteDialog],
+    [openDeleteDialog]
   );
 
   const handleToggleFavorite = useCallback(
@@ -1178,25 +1069,24 @@ const ModernChat = () => {
         });
 
         // Refresh conversations to ensure consistency
-        queryClient.invalidateQueries("conversations");
+        queryClient.invalidateQueries('conversations');
         setError(null);
       } catch (err) {
         // Revert optimistic update on error
-        queryClient.invalidateQueries("conversations");
+        queryClient.invalidateQueries('conversations');
         setError(formatError(err).message);
       }
     },
-    [conversationQueryKey, queryClient, selectedConversation, setError],
+    [conversationQueryKey, queryClient, selectedConversation, setError]
   );
 
   const handleComposerSend = useCallback(() => {
     setIsPinnedToBottom(true);
-    scheduleScrollToBottom("smooth");
+    scheduleScrollToBottom('smooth');
     handleSendMessage();
   }, [scheduleScrollToBottom, handleSendMessage]);
 
-  const createConversationDisabled =
-    availableModelConfigs.length === 0 || createConversationMutation.isLoading;
+  const createConversationDisabled = availableModelConfigs.length === 0 || createConversationMutation.isLoading;
 
   const conversationSidebarProps = {
     conversations,
@@ -1243,8 +1133,7 @@ const ModernChat = () => {
     onUnlock: handleUnlockAutoRename,
     onRunSummaryAndRename: handleRunSummaryAndRename,
     disableUnlock: unlockRenameIsLoading,
-    disableAutomation:
-      summaryIsLoading || autoRenameIsLoading || !isSideCallConfigured,
+    disableAutomation: summaryIsLoading || autoRenameIsLoading || !isSideCallConfigured,
   };
 
   const messageListProps = {
@@ -1314,9 +1203,7 @@ const ModernChat = () => {
     onSelectEnsembleMode: canConfigureEnsemble ? openEnsembleDialog : undefined,
     isEnsembleModeActive,
     ensembleModeLabel,
-    onClearEnsembleMode: isEnsembleModeActive
-      ? clearEnsembleSelection
-      : undefined,
+    onClearEnsembleMode: isEnsembleModeActive ? clearEnsembleSelection : undefined,
     ensembleMenuDisabled: !canConfigureEnsemble,
   };
 
@@ -1330,10 +1217,10 @@ const ModernChat = () => {
     open: pluginModalOpen,
     onClose: closePluginModal,
     plugin: selectedPlugin,
-    onStart: ({ plugin }) => setPluginRun({ status: "running", plugin }),
+    onStart: ({ plugin }) => setPluginRun({ status: 'running', plugin }),
     onResult: (data, meta) =>
       setPluginRun({
-        status: "success",
+        status: 'success',
         plugin: meta?.plugin || selectedPlugin,
         data,
       }),
@@ -1360,7 +1247,7 @@ const ModernChat = () => {
 
   const deleteDialogProps = {
     open: deleteDialogOpen,
-    conversationTitle: selectedConversation?.title || "",
+    conversationTitle: selectedConversation?.title || '',
     onCancel: closeDeleteDialog,
     onConfirm: handleConfirmDelete,
     isDeleting: deleteConversationMutation.isLoading,
@@ -1381,8 +1268,7 @@ const ModernChat = () => {
     availableModelConfigs,
     selectedModelConfig,
     onModelChange: handleModelConfigChange,
-    disableModelSelect:
-      !selectedConversation || isStreamingForSelectedConversation,
+    disableModelSelect: !selectedConversation || isStreamingForSelectedConversation,
   };
 
   return (

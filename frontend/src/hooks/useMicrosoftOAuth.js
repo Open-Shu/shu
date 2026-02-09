@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { authAPI, extractDataFromResponse } from "../services/api";
-import { getApiV1Base } from "../services/baseUrl";
-import { log } from "../utils/log";
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { authAPI, extractDataFromResponse } from '../services/api';
+import { getApiV1Base } from '../services/baseUrl';
+import { log } from '../utils/log';
 
 // OAuth popup timeout in milliseconds (3 minutes)
 const OAUTH_POPUP_TIMEOUT_MS = 180000;
@@ -26,7 +26,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
   // Cleanup function
   const cleanup = useCallback(() => {
     if (messageHandlerRef.current) {
-      window.removeEventListener("message", messageHandlerRef.current);
+      window.removeEventListener('message', messageHandlerRef.current);
       messageHandlerRef.current = null;
     }
     if (timeoutRef.current) {
@@ -55,15 +55,15 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
       const url = `${getApiV1Base()}/auth/microsoft/login`;
       const popup = window.open(
         url,
-        "shu-microsoft-oauth",
-        "width=500,height=650,menubar=no,toolbar=no,location=no,status=no",
+        'shu-microsoft-oauth',
+        'width=500,height=650,menubar=no,toolbar=no,location=no,status=no'
       );
 
       popupRef.current = popup || null;
 
       if (!popup) {
         // Popup blocked - fallback to top-level redirect
-        log.info("Microsoft OAuth popup blocked, falling back to redirect");
+        log.info('Microsoft OAuth popup blocked, falling back to redirect');
         window.location.href = url;
         return;
       }
@@ -76,7 +76,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
             return;
           }
           const data = event.data || {};
-          if (!data || !data.code || data.provider !== "microsoft") {
+          if (!data || !data.code || data.provider !== 'microsoft') {
             return;
           }
 
@@ -88,7 +88,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
 
           // Check for pending activation (201 response without tokens)
           if (!payload || !payload.access_token) {
-            log.info("Microsoft OAuth: account pending activation");
+            log.info('Microsoft OAuth: account pending activation');
             if (onPendingActivation) {
               onPendingActivation();
             }
@@ -97,7 +97,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
           }
 
           // Success - call onSuccess with tokens
-          log.info("Microsoft OAuth: login successful");
+          log.info('Microsoft OAuth: login successful');
           if (onSuccess) {
             onSuccess({
               accessToken: payload.access_token,
@@ -109,9 +109,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
         } catch (ex) {
           // Check if this is a 201 pending activation response
           if (ex.response?.status === 201) {
-            log.info(
-              "Microsoft OAuth: account pending activation (201 response)",
-            );
+            log.info('Microsoft OAuth: account pending activation (201 response)');
             if (onPendingActivation) {
               onPendingActivation();
             }
@@ -119,9 +117,8 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
             return;
           }
 
-          const errorMessage =
-            ex.response?.data?.detail || ex.message || "Microsoft login failed";
-          log.error("Microsoft OAuth exchange failed", { error: errorMessage });
+          const errorMessage = ex.response?.data?.detail || ex.message || 'Microsoft login failed';
+          log.error('Microsoft OAuth exchange failed', { error: errorMessage });
           if (onError) {
             onError(errorMessage);
           }
@@ -130,20 +127,20 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
       };
 
       messageHandlerRef.current = onMessage;
-      window.addEventListener("message", onMessage);
+      window.addEventListener('message', onMessage);
 
       // Timeout after configured duration
       timeoutRef.current = setTimeout(() => {
         cleanup();
         setLoading(false);
-        log.warn("Microsoft OAuth popup timed out");
+        log.warn('Microsoft OAuth popup timed out');
         if (onError) {
-          onError("Login window timed out. Please try again.");
+          onError('Login window timed out. Please try again.');
         }
       }, OAUTH_POPUP_TIMEOUT_MS);
     } catch (err) {
-      const errorMessage = err.message || "Failed to start Microsoft login";
-      log.error("Microsoft OAuth start failed", { error: errorMessage });
+      const errorMessage = err.message || 'Failed to start Microsoft login';
+      log.error('Microsoft OAuth start failed', { error: errorMessage });
       if (onError) {
         onError(errorMessage);
       }

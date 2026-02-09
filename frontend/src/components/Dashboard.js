@@ -1,38 +1,19 @@
-import React from "react";
-import { useQuery } from "react-query";
-import {
-  Grid,
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Chip,
-  Button,
-  Alert,
-  CircularProgress,
-} from "@mui/material";
-import {
-  Storage as KnowledgeBasesIcon,
-  HealthAndSafety as HealthIcon,
-  Search as QueryIcon,
-} from "@mui/icons-material";
-import {
-  healthAPI,
-  knowledgeBaseAPI,
-  extractDataFromResponse,
-  extractItemsFromResponse,
-} from "../services/api";
-import { log } from "../utils/log";
-import NotImplemented from "./NotImplemented";
-import { useTheme as useAppTheme } from "../contexts/ThemeContext";
-import { getBrandingAppName } from "../utils/constants";
+import React from 'react';
+import { useQuery } from 'react-query';
+import { Grid, Card, CardContent, Typography, Box, Chip, Button, Alert, CircularProgress } from '@mui/material';
+import { Storage as KnowledgeBasesIcon, HealthAndSafety as HealthIcon, Search as QueryIcon } from '@mui/icons-material';
+import { healthAPI, knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
+import { log } from '../utils/log';
+import NotImplemented from './NotImplemented';
+import { useTheme as useAppTheme } from '../contexts/ThemeContext';
+import { getBrandingAppName } from '../utils/constants';
 
 function Dashboard() {
   const {
     data: healthResponse,
     isLoading: healthLoading,
     error: healthError,
-  } = useQuery("health", healthAPI.getHealth, { refetchInterval: 30000 });
+  } = useQuery('health', healthAPI.getHealth, { refetchInterval: 30000 });
 
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
@@ -44,18 +25,18 @@ function Dashboard() {
     data: knowledgeBasesResponse,
     isLoading: kbLoading,
     error: kbError,
-  } = useQuery("knowledgeBases", knowledgeBaseAPI.list, {
+  } = useQuery('knowledgeBases', knowledgeBaseAPI.list, {
     refetchInterval: 30000,
     onSuccess: (data) => {
-      log.debug("Dashboard - Knowledge bases response:", data);
+      log.debug('Dashboard - Knowledge bases response:', data);
       const extractedData = extractDataFromResponse(data);
-      log.debug("Dashboard - Knowledge bases extracted data:", extractedData);
+      log.debug('Dashboard - Knowledge bases extracted data:', extractedData);
       const items = extractItemsFromResponse(data);
-      log.debug("Dashboard - Knowledge bases items:", items);
-      log.debug("Dashboard - Knowledge bases count:", items?.length);
+      log.debug('Dashboard - Knowledge bases items:', items);
+      log.debug('Dashboard - Knowledge bases count:', items?.length);
     },
     onError: (error) => {
-      log.error("Dashboard - Knowledge bases error:", error);
+      log.error('Dashboard - Knowledge bases error:', error);
     },
   });
 
@@ -64,53 +45,46 @@ function Dashboard() {
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
 
   const getStatusColor = (status) => {
-    if (!status || typeof status !== "string") {
-      return "default";
+    if (!status || typeof status !== 'string') {
+      return 'default';
     }
 
     switch (status.toLowerCase()) {
-      case "healthy":
-      case "ready":
-        return "success";
-      case "unhealthy":
-      case "not_ready":
-        return "error";
+      case 'healthy':
+      case 'ready':
+        return 'success';
+      case 'unhealthy':
+      case 'not_ready':
+        return 'error';
       default:
-        return "warning";
+        return 'warning';
     }
   };
 
   const getStatusIcon = (status) => {
-    if (!status || typeof status !== "string") {
-      return "🟡";
+    if (!status || typeof status !== 'string') {
+      return '🟡';
     }
 
     switch (status.toLowerCase()) {
-      case "healthy":
-      case "ready":
-        return "🟢";
-      case "unhealthy":
-      case "not_ready":
-        return "🔴";
+      case 'healthy':
+      case 'ready':
+        return '🟢';
+      case 'unhealthy':
+      case 'not_ready':
+        return '🔴';
       default:
-        return "🟡";
+        return '🟡';
     }
   };
 
   // Calculate totals from knowledge bases
-  const totalDocuments =
-    knowledgeBases?.reduce((sum, kb) => sum + (kb.document_count || 0), 0) || 0;
-  const totalChunks =
-    knowledgeBases?.reduce((sum, kb) => sum + (kb.total_chunks || 0), 0) || 0;
+  const totalDocuments = knowledgeBases?.reduce((sum, kb) => sum + (kb.document_count || 0), 0) || 0;
+  const totalChunks = knowledgeBases?.reduce((sum, kb) => sum + (kb.total_chunks || 0), 0) || 0;
 
   if (healthLoading) {
     return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight="400px"
-      >
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
         <CircularProgress />
       </Box>
     );
@@ -129,20 +103,17 @@ function Dashboard() {
       )}
 
       {/* Debug Information */}
-      <Alert severity="info" sx={{ mb: 3 }}>
-        <Typography variant="body2">
-          <strong>Debug Info:</strong> Knowledge Bases:{" "}
-          {knowledgeBases?.length || 0} | Loading: {kbLoading ? "Yes" : "No"} |
-          Error: {kbError ? "Yes" : "No"} | Response:{" "}
-          {knowledgeBasesResponse ? "Present" : "Missing"} | Items:{" "}
-          {knowledgeBases ? "Present" : "Missing"} | Total:{" "}
-          {knowledgeBasesData?.total || 0} | Raw Response Type:{" "}
-          {typeof knowledgeBasesResponse} | Raw Response Keys:{" "}
-          {knowledgeBasesResponse
-            ? Object.keys(knowledgeBasesResponse).join(", ")
-            : "None"}
-        </Typography>
-      </Alert>
+      {process.env.NODE_ENV !== 'production' && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}
+            {kbLoading ? 'Yes' : 'No'} | Error: {kbError ? 'Yes' : 'No'} | Response:{' '}
+            {knowledgeBasesResponse ? 'Present' : 'Missing'} | Items: {knowledgeBases ? 'Present' : 'Missing'} | Total:{' '}
+            {knowledgeBasesData?.total || 0} | Raw Response Type: {typeof knowledgeBasesResponse} | Raw Response Keys:{' '}
+            {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'}
+          </Typography>
+        </Alert>
+      )}
 
       <Grid container spacing={3}>
         {/* System Health */}
@@ -153,22 +124,14 @@ function Dashboard() {
                 <HealthIcon color="primary" sx={{ mr: 1 }} />
                 <Typography variant="h6">System Health</Typography>
               </Box>
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="space-between"
-              >
+              <Box display="flex" alignItems="center" justifyContent="space-between">
                 <Typography variant="body2" color="text.secondary">
                   API Status
                 </Typography>
-                <Chip
-                  label={health?.status || "Unknown"}
-                  color={getStatusColor(health?.status)}
-                  size="small"
-                />
+                <Chip label={health?.status || 'Unknown'} color={getStatusColor(health?.status)} size="small" />
               </Box>
               <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                {getStatusIcon(health?.status)} {health?.status || "Unknown"}
+                {getStatusIcon(health?.status)} {health?.status || 'Unknown'}
               </Typography>
             </CardContent>
           </Card>
@@ -183,7 +146,7 @@ function Dashboard() {
                 <Typography variant="h6">Knowledge Bases</Typography>
               </Box>
               <Typography variant="h4" color="primary">
-                {kbLoading ? "..." : knowledgeBases?.length || 0}
+                {kbLoading ? '...' : knowledgeBases?.length || 0}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Total Knowledge Bases
@@ -227,15 +190,14 @@ function Dashboard() {
                 <Button
                   variant="contained"
                   color="secondary"
-                  onClick={() => (window.location.href = "/admin/briefing")}
+                  onClick={() => (window.location.href = '/admin/briefing')}
                 >
                   Run Morning Briefing (Demo/Experimental)
                 </Button>
               </Box>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Experimental/Demo feature — requires Gmail, Google Drive, and
-                Google Calendar plugins to be installed and authorized. This is
-                a hard-coded test of the future "Experience Creator" feature.
+                Experimental/Demo feature — requires Gmail, Google Drive, and Google Calendar plugins to be installed
+                and authorized. This is a hard-coded test of the future "Experience Creator" feature.
                 <Typography variant="body1" color="text.secondary">
                   The Experience Creator will allow:
                 </Typography>
@@ -249,12 +211,10 @@ function Dashboard() {
                   - Execute an LLM provider with that prompt
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  - Produce a runnable, saveable, reusable experience (with run
-                  history)
+                  - Produce a runnable, saveable, reusable experience (with run history)
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  - And later, combine with agents and workflows to create
-                  automations
+                  - And later, combine with agents and workflows to create automations
                 </Typography>
               </Typography>
             </CardContent>

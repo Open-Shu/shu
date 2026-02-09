@@ -1,6 +1,6 @@
-import CronExpressionParser from "cron-parser";
-import cronstrue from "cronstrue";
-import { formatInTimeZone } from "date-fns-tz";
+import CronExpressionParser from 'cron-parser';
+import cronstrue from 'cronstrue';
+import { formatInTimeZone } from 'date-fns-tz';
 
 /**
  * SchedulePreview utility for generating human-readable schedule descriptions
@@ -14,12 +14,12 @@ import { formatInTimeZone } from "date-fns-tz";
  * @returns {string} Human-readable description
  */
 export function describe(cron, timezone) {
-  if (!cron || typeof cron !== "string") {
-    throw new Error("Invalid cron expression: must be a non-empty string");
+  if (!cron || typeof cron !== 'string') {
+    throw new Error('Invalid cron expression: must be a non-empty string');
   }
 
-  if (!timezone || typeof timezone !== "string") {
-    throw new Error("Invalid timezone: must be a non-empty string");
+  if (!timezone || typeof timezone !== 'string') {
+    throw new Error('Invalid timezone: must be a non-empty string');
   }
 
   try {
@@ -32,7 +32,7 @@ export function describe(cron, timezone) {
 
     // Get timezone abbreviation
     const now = new Date();
-    const tzAbbr = formatInTimeZone(now, timezone, "zzz");
+    const tzAbbr = formatInTimeZone(now, timezone, 'zzz');
 
     return `${description} (${tzAbbr})`;
   } catch (error) {
@@ -50,14 +50,14 @@ export function describe(cron, timezone) {
 function checkDSTTransition(date, timezone) {
   try {
     // Get the timezone offset for the date
-    const offset = formatInTimeZone(date, timezone, "xxx");
+    const offset = formatInTimeZone(date, timezone, 'xxx');
 
     // Check one hour before and after
     const hourBefore = new Date(date.getTime() - 60 * 60 * 1000);
     const hourAfter = new Date(date.getTime() + 60 * 60 * 1000);
 
-    const offsetBefore = formatInTimeZone(hourBefore, timezone, "xxx");
-    const offsetAfter = formatInTimeZone(hourAfter, timezone, "xxx");
+    const offsetBefore = formatInTimeZone(hourBefore, timezone, 'xxx');
+    const offsetAfter = formatInTimeZone(hourAfter, timezone, 'xxx');
 
     // If offsets differ, we're near a DST transition
     const isDSTTransition = offsetBefore !== offset || offsetAfter !== offset;
@@ -84,16 +84,16 @@ function checkDSTTransition(date, timezone) {
  * @returns {Date[]} Array of Date objects representing next execution times
  */
 export function getNextExecutions(cron, timezone, count = 5) {
-  if (!cron || typeof cron !== "string") {
-    throw new Error("Invalid cron expression: must be a non-empty string");
+  if (!cron || typeof cron !== 'string') {
+    throw new Error('Invalid cron expression: must be a non-empty string');
   }
 
-  if (!timezone || typeof timezone !== "string") {
-    throw new Error("Invalid timezone: must be a non-empty string");
+  if (!timezone || typeof timezone !== 'string') {
+    throw new Error('Invalid timezone: must be a non-empty string');
   }
 
   if (!Number.isInteger(count) || count < 1 || count > 10) {
-    throw new Error("Count must be an integer between 1 and 10");
+    throw new Error('Count must be an integer between 1 and 10');
   }
 
   try {
@@ -139,38 +139,38 @@ export function getNextExecutions(cron, timezone, count = 5) {
  */
 export function formatExecution(date, timezone) {
   if (!(date instanceof Date) || isNaN(date.getTime())) {
-    throw new Error("Invalid date: must be a valid Date object");
+    throw new Error('Invalid date: must be a valid Date object');
   }
 
-  if (!timezone || typeof timezone !== "string") {
-    throw new Error("Invalid timezone: must be a non-empty string");
+  if (!timezone || typeof timezone !== 'string') {
+    throw new Error('Invalid timezone: must be a non-empty string');
   }
 
   try {
     // Format the date in the specified timezone
-    const dayOfWeek = formatInTimeZone(date, timezone, "EEEE");
-    const monthDay = formatInTimeZone(date, timezone, "MMMM d, yyyy");
-    const time = formatInTimeZone(date, timezone, "h:mm a");
-    const tzAbbr = formatInTimeZone(date, timezone, "zzz");
+    const dayOfWeek = formatInTimeZone(date, timezone, 'EEEE');
+    const monthDay = formatInTimeZone(date, timezone, 'MMMM d, yyyy');
+    const time = formatInTimeZone(date, timezone, 'h:mm a');
+    const tzAbbr = formatInTimeZone(date, timezone, 'zzz');
 
     // Check for DST transition
     const dstCheck = checkDSTTransition(date, timezone);
-    let dstNote = "";
+    let dstNote = '';
 
     if (dstCheck.isDSTTransition) {
       // Determine if this is spring forward or fall back
-      const offsetBefore = dstCheck.offsetBefore || "";
-      const offsetAfter = dstCheck.offsetAfter || "";
+      const offsetBefore = dstCheck.offsetBefore || '';
+      const offsetAfter = dstCheck.offsetAfter || '';
 
       if (offsetBefore && offsetAfter && offsetBefore !== offsetAfter) {
         // Parse offset strings to compare (e.g., "-05:00" vs "-04:00")
-        const beforeHours = parseInt(offsetBefore.split(":")[0], 10);
-        const afterHours = parseInt(offsetAfter.split(":")[0], 10);
+        const beforeHours = parseInt(offsetBefore.split(':')[0], 10);
+        const afterHours = parseInt(offsetAfter.split(':')[0], 10);
 
         if (afterHours > beforeHours) {
-          dstNote = " (near DST spring forward)";
+          dstNote = ' (near DST spring forward)';
         } else if (afterHours < beforeHours) {
-          dstNote = " (near DST fall back)";
+          dstNote = ' (near DST fall back)';
         }
       }
     }
@@ -189,20 +189,18 @@ export function formatExecution(date, timezone) {
  * @returns {Object} Object with description and formatted execution times
  */
 export function getSchedulePreview(cron, timezone, count = 5) {
-  if (!cron || typeof cron !== "string") {
-    throw new Error("Invalid cron expression: must be a non-empty string");
+  if (!cron || typeof cron !== 'string') {
+    throw new Error('Invalid cron expression: must be a non-empty string');
   }
 
-  if (!timezone || typeof timezone !== "string") {
-    throw new Error("Invalid timezone: must be a non-empty string");
+  if (!timezone || typeof timezone !== 'string') {
+    throw new Error('Invalid timezone: must be a non-empty string');
   }
 
   try {
     const description = describe(cron, timezone);
     const executions = getNextExecutions(cron, timezone, count);
-    const formattedExecutions = executions.map((date) =>
-      formatExecution(date, timezone),
-    );
+    const formattedExecutions = executions.map((date) => formatExecution(date, timezone));
 
     return {
       description,

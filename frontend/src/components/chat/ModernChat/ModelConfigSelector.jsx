@@ -1,12 +1,5 @@
-import React from "react";
-import {
-  Box,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
-  Typography,
-} from "@mui/material";
+import React from 'react';
+import { Box, FormControl, InputLabel, MenuItem, Select, Typography } from '@mui/material';
 
 /**
  * Reusable model configuration selector component.
@@ -17,30 +10,18 @@ const ModelConfigSelector = React.memo(function ModelConfigSelector({
   selectedModelConfig,
   onModelChange,
   disabled = false,
-  size = "small",
+  size = 'small',
   minWidth = 220,
   fullWidth = false,
 }) {
-  if (
-    !Array.isArray(availableModelConfigs) ||
-    availableModelConfigs.length === 0
-  ) {
+  if (!Array.isArray(availableModelConfigs) || availableModelConfigs.length === 0) {
     return null;
   }
 
   return (
-    <FormControl
-      size={size}
-      sx={{ minWidth, ...(fullWidth && { width: "100%" }) }}
-    >
+    <FormControl size={size} sx={{ minWidth, ...(fullWidth && { width: '100%' }) }}>
       <InputLabel>Model</InputLabel>
-      <Select
-        value={selectedModelConfig || ""}
-        label="Model"
-        onChange={onModelChange}
-        disabled={disabled}
-        displayEmpty
-      >
+      <Select value={selectedModelConfig || ''} label="Model" onChange={onModelChange} disabled={disabled} displayEmpty>
         <MenuItem value="" disabled>
           <Typography variant="body2" color="text.secondary">
             Select a model
@@ -53,7 +34,7 @@ const ModelConfigSelector = React.memo(function ModelConfigSelector({
                 {config.name}
               </Typography>
               <Typography variant="caption" color="text.secondary" noWrap>
-                {config.llm_provider?.name || "Provider"} • {config.model_name}
+                {config.llm_provider?.name || 'Provider'} • {config.model_name}
               </Typography>
             </Box>
           </MenuItem>

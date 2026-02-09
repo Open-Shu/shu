@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Stack,
@@ -16,7 +16,7 @@ import {
   Tooltip,
   IconButton,
   Collapse,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Schedule as ScheduleIcon,
   Public as TimezoneIcon,
@@ -26,20 +26,20 @@ import {
   ViewModule as BuilderIcon,
   HelpOutline as HelpIcon,
   ExpandMore as ExpandMoreIcon,
-} from "@mui/icons-material";
-import { Cron } from "react-js-cron";
-import "react-js-cron/dist/styles.css";
-import TimezoneSelector from "./TimezoneSelector";
-import { getSchedulePreview } from "../../utils/schedulePreview";
+} from '@mui/icons-material';
+import { Cron } from 'react-js-cron';
+import 'react-js-cron/dist/styles.css';
+import TimezoneSelector from './TimezoneSelector';
+import { getSchedulePreview } from '../../utils/schedulePreview';
 import {
   validateCronExpression,
   validateTimezone,
   validateScheduleConfig,
   validateDayOfMonthEdgeCases,
-} from "../../utils/scheduleValidation";
+} from '../../utils/scheduleValidation';
 
 // Constants
-const DEFAULT_CRON_EXPRESSION = "0 9 * * *";
+const DEFAULT_CRON_EXPRESSION = '0 9 * * *';
 const PREVIEW_DEBOUNCE_MS = 300;
 const PREVIEW_EXECUTION_COUNT = 5;
 
@@ -71,18 +71,24 @@ const PREVIEW_EXECUTION_COUNT = 5;
  * @returns {boolean} - True if the expression is too complex for the builder
  */
 const isComplexCronExpression = (cronExpr) => {
-  if (!cronExpr) return false;
+  if (!cronExpr) {
+    return false;
+  }
 
   const parts = cronExpr.trim().split(/\s+/);
 
   // 6-position cron expressions (with seconds) are not supported by the builder
-  if (parts.length === 6) return true;
+  if (parts.length === 6) {
+    return true;
+  }
 
   // Only standard 5-position cron expressions can be handled by the builder
-  if (parts.length !== 5) return false;
+  if (parts.length !== 5) {
+    return false;
+  }
 
   // Check for step values (*/n or x-y/n)
-  const hasStepValues = parts.some((part) => part.includes("/"));
+  const hasStepValues = parts.some((part) => part.includes('/'));
 
   // Check for multiple ranges (x-y,a-b)
   const hasMultipleRanges = parts.some((part) => {
@@ -93,8 +99,10 @@ const isComplexCronExpression = (cronExpr) => {
 
   // Check for long lists (more than 5 specific values)
   const hasLongLists = parts.some((part) => {
-    if (part === "*" || part.includes("-") || part.includes("/")) return false;
-    const values = part.split(",");
+    if (part === '*' || part.includes('-') || part.includes('/')) {
+      return false;
+    }
+    const values = part.split(',');
     return values.length > 5;
   });
 
@@ -114,14 +122,10 @@ const isComplexCronExpression = (cronExpr) => {
  * @param {Object} props.validationErrors.cron - Cron expression validation error
  * @param {Object} props.validationErrors.timezone - Timezone validation error
  */
-const RecurringScheduleBuilder = ({
-  value = {},
-  onChange,
-  validationErrors = {},
-}) => {
+const RecurringScheduleBuilder = ({ value = {}, onChange, validationErrors = {} }) => {
   // Treat empty string as undefined to use default value
   const cron = value.cron || DEFAULT_CRON_EXPRESSION;
-  const timezone = value.timezone || "";
+  const timezone = value.timezone || '';
 
   // State for schedule preview
   const [preview, setPreview] = useState(null);
@@ -135,28 +139,26 @@ const RecurringScheduleBuilder = ({
 
     // If complex, always start in advanced mode
     if (isComplex) {
-      sessionStorage.setItem("cronBuilderAdvancedMode", "true");
+      sessionStorage.setItem('cronBuilderAdvancedMode', 'true');
       return true;
     }
 
     // Otherwise, restore preference from session storage
-    const savedMode = sessionStorage.getItem("cronBuilderAdvancedMode");
-    return savedMode === "true";
+    const savedMode = sessionStorage.getItem('cronBuilderAdvancedMode');
+    return savedMode === 'true';
   });
 
   // State for raw cron input in advanced mode
   const [rawCronInput, setRawCronInput] = useState(cron);
 
   // State for complex expression warning
-  const [complexExpressionWarning, setComplexExpressionWarning] = useState(
-    () => {
-      // Show warning on mount if expression is complex and we're in advanced mode
-      if (cron && isComplexCronExpression(cron)) {
-        return "This cron expression is too complex for the visual builder and must be edited in Advanced mode.";
-      }
-      return null;
-    },
-  );
+  const [complexExpressionWarning, setComplexExpressionWarning] = useState(() => {
+    // Show warning on mount if expression is complex and we're in advanced mode
+    if (cron && isComplexCronExpression(cron)) {
+      return 'This cron expression is too complex for the visual builder and must be edited in Advanced mode.';
+    }
+    return null;
+  });
 
   // State for help section expansion
   const [showExamples, setShowExamples] = useState(false);
@@ -166,7 +168,7 @@ const RecurringScheduleBuilder = ({
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone;
     } catch (error) {
-      return "UTC";
+      return 'UTC';
     }
   }, []);
 
@@ -187,10 +189,7 @@ const RecurringScheduleBuilder = ({
         Object.assign(errors, scheduleValidation.errors);
       }
 
-      if (
-        scheduleValidation.warnings &&
-        scheduleValidation.warnings.length > 0
-      ) {
+      if (scheduleValidation.warnings && scheduleValidation.warnings.length > 0) {
         warnings.push(...scheduleValidation.warnings);
       }
     } else {
@@ -240,9 +239,9 @@ const RecurringScheduleBuilder = ({
   useEffect(() => {
     if (cron && isComplexCronExpression(cron) && !isAdvancedMode) {
       setIsAdvancedMode(true);
-      sessionStorage.setItem("cronBuilderAdvancedMode", "true");
+      sessionStorage.setItem('cronBuilderAdvancedMode', 'true');
       setComplexExpressionWarning(
-        "This cron expression is too complex for the visual builder and must be edited in Advanced mode.",
+        'This cron expression is too complex for the visual builder and must be edited in Advanced mode.'
       );
     } else if (cron && !isComplexCronExpression(cron)) {
       // Clear warning if expression becomes simple
@@ -266,7 +265,7 @@ const RecurringScheduleBuilder = ({
 
     if (hasCronError || hasTimezoneError) {
       setPreview(null);
-      setPreviewError("Please fix validation errors before generating preview");
+      setPreviewError('Please fix validation errors before generating preview');
       setIsLoadingPreview(false);
       return;
     }
@@ -277,32 +276,23 @@ const RecurringScheduleBuilder = ({
     // Use a small delay to debounce rapid changes
     const timeoutId = setTimeout(() => {
       try {
-        const schedulePreview = getSchedulePreview(
-          cron,
-          timezone,
-          PREVIEW_EXECUTION_COUNT,
-        );
+        const schedulePreview = getSchedulePreview(cron, timezone, PREVIEW_EXECUTION_COUNT);
         setPreview(schedulePreview);
         setPreviewError(null);
       } catch (error) {
         setPreview(null);
-        setPreviewError(error.message || "Unable to generate schedule preview");
+        setPreviewError(error.message || 'Unable to generate schedule preview');
       } finally {
         setIsLoadingPreview(false);
       }
     }, PREVIEW_DEBOUNCE_MS);
 
     return () => clearTimeout(timeoutId);
-  }, [
-    cron,
-    timezone,
-    mergedValidationErrors.cron,
-    mergedValidationErrors.timezone,
-  ]);
+  }, [cron, timezone, mergedValidationErrors.cron, mergedValidationErrors.timezone]);
 
   const handleCronChange = (newCron) => {
     // Only trigger onChange if the cron expression actually changed
-    if (newCron !== cron && typeof onChange === "function") {
+    if (newCron !== cron && typeof onChange === 'function') {
       onChange({
         cron: newCron,
         timezone: timezone,
@@ -311,7 +301,7 @@ const RecurringScheduleBuilder = ({
   };
 
   const handleTimezoneChange = (selectedTimezone) => {
-    if (typeof onChange === "function") {
+    if (typeof onChange === 'function') {
       onChange({
         cron,
         timezone: selectedTimezone,
@@ -325,7 +315,7 @@ const RecurringScheduleBuilder = ({
     setIsAdvancedMode(newMode);
 
     // Persist the user's choice in session storage
-    sessionStorage.setItem("cronBuilderAdvancedMode", newMode.toString());
+    sessionStorage.setItem('cronBuilderAdvancedMode', newMode.toString());
 
     // Clear any warnings when switching modes
     setComplexExpressionWarning(null);
@@ -338,7 +328,7 @@ const RecurringScheduleBuilder = ({
 
   const handleRawCronBlur = () => {
     // Update the parent component when user finishes editing
-    if (rawCronInput !== cron && typeof onChange === "function") {
+    if (rawCronInput !== cron && typeof onChange === 'function') {
       onChange({
         cron: rawCronInput,
         timezone: timezone,
@@ -352,23 +342,23 @@ const RecurringScheduleBuilder = ({
       <GlobalStyles
         styles={(theme) => ({
           // Target Ant Design dropdown menus that are rendered in portals
-          ".ant-select-dropdown": {
+          '.ant-select-dropdown': {
             backgroundColor: `${theme.palette.background.paper} !important`,
             color: `${theme.palette.text.primary} !important`,
-            borderRadius: "4px",
+            borderRadius: '4px',
             boxShadow: theme.shadows[8],
             // Ensure dropdown appears above Material-UI Dialog (z-index: 1300)
-            zIndex: "1400 !important",
+            zIndex: '1400 !important',
 
-            "& .ant-select-item": {
+            '& .ant-select-item': {
               color: `${theme.palette.text.primary} !important`,
-              padding: "8px 12px",
+              padding: '8px 12px',
 
-              "&:hover": {
+              '&:hover': {
                 backgroundColor: `${theme.palette.action.hover} !important`,
               },
 
-              "&.ant-select-item-option-selected": {
+              '&.ant-select-item-option-selected': {
                 backgroundColor: `${theme.palette.action.selected} !important`,
                 fontWeight: 500,
               },
@@ -376,13 +366,13 @@ const RecurringScheduleBuilder = ({
           },
 
           // Target Ant Design select boxes within react-js-cron
-          ".react-js-cron .ant-select": {
+          '.react-js-cron .ant-select': {
             background: `${theme.palette.background.default} !important`,
             color: `${theme.palette.text.primary} !important`,
             borderColor: `${theme.palette.divider} !important`,
-            borderRadius: "4px !important",
+            borderRadius: '4px !important',
 
-            "& .ant-select-suffix": {
+            '& .ant-select-suffix': {
               color: `${theme.palette.text.primary} !important`,
             },
           },
@@ -394,20 +384,20 @@ const RecurringScheduleBuilder = ({
           variant="outlined"
           sx={{
             p: 2,
-            bgcolor: "info.lighter",
-            borderColor: "info.main",
+            bgcolor: 'info.lighter',
+            borderColor: 'info.main',
           }}
         >
           <Box
             sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              cursor: "pointer",
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'pointer',
             }}
             onClick={() => setShowExamples(!showExamples)}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <HelpIcon color="info" />
               <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                 Schedule Examples & Help
@@ -416,8 +406,8 @@ const RecurringScheduleBuilder = ({
             <IconButton
               size="small"
               sx={{
-                transform: showExamples ? "rotate(180deg)" : "rotate(0deg)",
-                transition: "transform 0.3s",
+                transform: showExamples ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.3s',
               }}
             >
               <ExpandMoreIcon />
@@ -427,8 +417,7 @@ const RecurringScheduleBuilder = ({
           <Collapse in={showExamples}>
             <Box sx={{ mt: 2 }}>
               <Typography variant="body2" color="text.secondary" paragraph>
-                Click "Use this" to apply a common schedule pattern, then adjust
-                as needed.
+                Click "Use this" to apply a common schedule pattern, then adjust as needed.
               </Typography>
 
               <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
@@ -440,8 +429,8 @@ const RecurringScheduleBuilder = ({
                   disableGutters
                   sx={{
                     py: 0.5,
-                    display: "flex",
-                    alignItems: "flex-start",
+                    display: 'flex',
+                    alignItems: 'flex-start',
                   }}
                 >
                   <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
@@ -451,17 +440,17 @@ const RecurringScheduleBuilder = ({
                     primary="Daily at 9:00 AM"
                     secondary="Perfect for morning briefings or daily reports"
                     primaryTypographyProps={{
-                      variant: "body2",
+                      variant: 'body2',
                       fontWeight: 600,
                     }}
-                    secondaryTypographyProps={{ variant: "caption" }}
+                    secondaryTypographyProps={{ variant: 'caption' }}
                     sx={{ flex: 1 }}
                   />
                   <Button
                     size="small"
                     variant="outlined"
-                    onClick={() => handleCronChange("0 9 * * *")}
-                    sx={{ ml: 2, textTransform: "none", minWidth: 80 }}
+                    onClick={() => handleCronChange('0 9 * * *')}
+                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
                   >
                     Use this
                   </Button>
@@ -471,8 +460,8 @@ const RecurringScheduleBuilder = ({
                   disableGutters
                   sx={{
                     py: 0.5,
-                    display: "flex",
-                    alignItems: "flex-start",
+                    display: 'flex',
+                    alignItems: 'flex-start',
                   }}
                 >
                   <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
@@ -482,17 +471,17 @@ const RecurringScheduleBuilder = ({
                     primary="Every weekday at 8:00 AM"
                     secondary="Monday through Friday, ideal for work-related tasks"
                     primaryTypographyProps={{
-                      variant: "body2",
+                      variant: 'body2',
                       fontWeight: 600,
                     }}
-                    secondaryTypographyProps={{ variant: "caption" }}
+                    secondaryTypographyProps={{ variant: 'caption' }}
                     sx={{ flex: 1 }}
                   />
                   <Button
                     size="small"
                     variant="outlined"
-                    onClick={() => handleCronChange("0 8 * * 1-5")}
-                    sx={{ ml: 2, textTransform: "none", minWidth: 80 }}
+                    onClick={() => handleCronChange('0 8 * * 1-5')}
+                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
                   >
                     Use this
                   </Button>
@@ -502,8 +491,8 @@ const RecurringScheduleBuilder = ({
                   disableGutters
                   sx={{
                     py: 0.5,
-                    display: "flex",
-                    alignItems: "flex-start",
+                    display: 'flex',
+                    alignItems: 'flex-start',
                   }}
                 >
                   <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
@@ -513,17 +502,17 @@ const RecurringScheduleBuilder = ({
                     primary="Weekly on Monday at 10:00 AM"
                     secondary="Great for weekly summaries or status updates"
                     primaryTypographyProps={{
-                      variant: "body2",
+                      variant: 'body2',
                       fontWeight: 600,
                     }}
-                    secondaryTypographyProps={{ variant: "caption" }}
+                    secondaryTypographyProps={{ variant: 'caption' }}
                     sx={{ flex: 1 }}
                   />
                   <Button
                     size="small"
                     variant="outlined"
-                    onClick={() => handleCronChange("0 10 * * 1")}
-                    sx={{ ml: 2, textTransform: "none", minWidth: 80 }}
+                    onClick={() => handleCronChange('0 10 * * 1')}
+                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
                   >
                     Use this
                   </Button>
@@ -533,8 +522,8 @@ const RecurringScheduleBuilder = ({
                   disableGutters
                   sx={{
                     py: 0.5,
-                    display: "flex",
-                    alignItems: "flex-start",
+                    display: 'flex',
+                    alignItems: 'flex-start',
                   }}
                 >
                   <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
@@ -544,17 +533,17 @@ const RecurringScheduleBuilder = ({
                     primary="Monthly on the 1st at 9:00 AM"
                     secondary="Perfect for monthly reports or billing reminders"
                     primaryTypographyProps={{
-                      variant: "body2",
+                      variant: 'body2',
                       fontWeight: 600,
                     }}
-                    secondaryTypographyProps={{ variant: "caption" }}
+                    secondaryTypographyProps={{ variant: 'caption' }}
                     sx={{ flex: 1 }}
                   />
                   <Button
                     size="small"
                     variant="outlined"
-                    onClick={() => handleCronChange("0 9 1 * *")}
-                    sx={{ ml: 2, textTransform: "none", minWidth: 80 }}
+                    onClick={() => handleCronChange('0 9 1 * *')}
+                    sx={{ ml: 2, textTransform: 'none', minWidth: 80 }}
                   >
                     Use this
                   </Button>
@@ -563,8 +552,8 @@ const RecurringScheduleBuilder = ({
 
               <Alert severity="info" icon={<InfoIcon />} sx={{ mt: 2 }}>
                 <Typography variant="caption" component="div">
-                  <strong>Tip:</strong> After applying an example, you can
-                  adjust the time and days using the visual builder.
+                  <strong>Tip:</strong> After applying an example, you can adjust the time and days using the visual
+                  builder.
                 </Typography>
               </Alert>
             </Box>
@@ -573,12 +562,12 @@ const RecurringScheduleBuilder = ({
 
         {/* Advanced Mode Toggle */}
         {!isComplexCronExpression(cron) && (
-          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Tooltip
               title={
                 isAdvancedMode
-                  ? "Switch to visual builder for easier schedule configuration"
-                  : "Switch to advanced mode to edit cron expressions directly"
+                  ? 'Switch to visual builder for easier schedule configuration'
+                  : 'Switch to advanced mode to edit cron expressions directly'
               }
             >
               <Button
@@ -586,9 +575,9 @@ const RecurringScheduleBuilder = ({
                 size="small"
                 startIcon={isAdvancedMode ? <BuilderIcon /> : <CodeIcon />}
                 onClick={handleAdvancedModeToggle}
-                sx={{ textTransform: "none" }}
+                sx={{ textTransform: 'none' }}
               >
-                {isAdvancedMode ? "Visual Builder" : "Advanced Mode"}
+                {isAdvancedMode ? 'Visual Builder' : 'Advanced Mode'}
               </Button>
             </Tooltip>
           </Box>
@@ -596,18 +585,14 @@ const RecurringScheduleBuilder = ({
 
         {/* Complex Expression Warning */}
         {complexExpressionWarning && (
-          <Alert
-            severity="warning"
-            icon={<InfoIcon />}
-            onClose={() => setComplexExpressionWarning(null)}
-          >
+          <Alert severity="warning" icon={<InfoIcon />} onClose={() => setComplexExpressionWarning(null)}>
             {complexExpressionWarning}
           </Alert>
         )}
 
         {/* Schedule Builder Section */}
         <Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <ScheduleIcon color="primary" />
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               Schedule Configuration
@@ -627,16 +612,16 @@ const RecurringScheduleBuilder = ({
             variant="outlined"
             sx={(theme) => ({
               p: 2,
-              "& .react-js-cron": {
-                display: "flex",
-                flexWrap: "wrap",
+              '& .react-js-cron': {
+                display: 'flex',
+                flexWrap: 'wrap',
                 gap: 1,
-                alignItems: "center",
+                alignItems: 'center',
 
                 // Style the text labels
-                "& > span": {
+                '& > span': {
                   color: theme.palette.text.primary,
-                  fontSize: "0.875rem",
+                  fontSize: '0.875rem',
                 },
               },
             })}
@@ -646,9 +631,8 @@ const RecurringScheduleBuilder = ({
               <Box>
                 <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 2 }}>
                   <Typography variant="body2">
-                    <strong>Advanced Mode:</strong> Enter a standard 5-field
-                    cron expression (minute hour day month weekday). Example:{" "}
-                    <code>0 9 * * 1-5</code> runs at 9:00 AM on weekdays.
+                    <strong>Advanced Mode:</strong> Enter a standard 5-field cron expression (minute hour day month
+                    weekday). Example: <code>0 9 * * 1-5</code> runs at 9:00 AM on weekdays.
                   </Typography>
                 </Alert>
                 <TextField
@@ -661,7 +645,7 @@ const RecurringScheduleBuilder = ({
                   helperText="Enter a standard cron expression (minute hour day month weekday)"
                   error={!!mergedValidationErrors.cron}
                   InputProps={{
-                    sx: { fontFamily: "monospace" },
+                    sx: { fontFamily: 'monospace' },
                   }}
                 />
                 {mergedValidationErrors.cron && (
@@ -675,9 +659,8 @@ const RecurringScheduleBuilder = ({
               <>
                 <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 2 }}>
                   <Typography variant="body2">
-                    <strong>Visual Builder:</strong> Select the frequency
-                    (daily, weekly, monthly), choose the time, and pick specific
-                    days if needed. The schedule will be created automatically.
+                    <strong>Visual Builder:</strong> Select the frequency (daily, weekly, monthly), choose the time, and
+                    pick specific days if needed. The schedule will be created automatically.
                   </Typography>
                 </Alert>
                 <Cron
@@ -700,7 +683,7 @@ const RecurringScheduleBuilder = ({
 
         {/* Timezone Selection */}
         <Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <TimezoneIcon color="primary" />
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               Timezone
@@ -718,10 +701,9 @@ const RecurringScheduleBuilder = ({
 
           <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 2 }}>
             <Typography variant="body2">
-              <strong>Why timezone matters:</strong> Timezones ensure your
-              scheduled experiences run at the correct local time. For example,
-              "9:00 AM EST" will always run at 9:00 AM Eastern time, even during
-              daylight saving time transitions.
+              <strong>Why timezone matters:</strong> Timezones ensure your scheduled experiences run at the correct
+              local time. For example, "9:00 AM EST" will always run at 9:00 AM Eastern time, even during daylight
+              saving time transitions.
             </Typography>
           </Alert>
 
@@ -731,7 +713,7 @@ const RecurringScheduleBuilder = ({
             error={mergedValidationErrors.timezone}
             helperText={
               timezone
-                ? "Choose the timezone for schedule execution"
+                ? 'Choose the timezone for schedule execution'
                 : `Choose the timezone for schedule execution (detected: ${browserTimezone})`
             }
             placeholder={`Select timezone (e.g., ${browserTimezone})`}
@@ -756,7 +738,7 @@ const RecurringScheduleBuilder = ({
 
         {/* Schedule Preview */}
         <Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <EventIcon color="primary" />
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               Schedule Preview
@@ -776,13 +758,13 @@ const RecurringScheduleBuilder = ({
             variant="outlined"
             sx={{
               p: 2,
-              bgcolor: "background.default",
-              border: "1px solid",
-              borderColor: "divider",
+              bgcolor: 'background.default',
+              border: '1px solid',
+              borderColor: 'divider',
             }}
           >
             {isLoadingPreview && (
-              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 <CircularProgress size={20} />
                 <Typography variant="body2" color="text.secondary">
                   Calculating next execution times...
@@ -795,8 +777,8 @@ const RecurringScheduleBuilder = ({
                 severity="warning"
                 icon={<InfoIcon />}
                 sx={{
-                  "& .MuiAlert-message": {
-                    width: "100%",
+                  '& .MuiAlert-message': {
+                    width: '100%',
                   },
                 }}
               >
@@ -812,7 +794,7 @@ const RecurringScheduleBuilder = ({
                     variant="body1"
                     sx={{
                       fontWeight: 600,
-                      color: "primary.main",
+                      color: 'primary.main',
                       mb: 1,
                     }}
                   >
@@ -821,51 +803,47 @@ const RecurringScheduleBuilder = ({
                 </Box>
 
                 {/* Next execution times */}
-                {preview.nextExecutions &&
-                  preview.nextExecutions.length > 0 && (
-                    <Box>
-                      <Typography
-                        variant="subtitle2"
-                        sx={{
-                          fontWeight: 600,
-                          mb: 1,
-                          color: "text.secondary",
-                        }}
-                      >
-                        Next {preview.nextExecutions.length} execution
-                        {preview.nextExecutions.length > 1 ? "s" : ""}:
-                      </Typography>
-                      <List dense disablePadding>
-                        {preview.nextExecutions.map((execution, index) => (
-                          <ListItem
-                            key={index}
-                            disableGutters
-                            sx={{
-                              py: 0.5,
-                              px: 0,
+                {preview.nextExecutions && preview.nextExecutions.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant="subtitle2"
+                      sx={{
+                        fontWeight: 600,
+                        mb: 1,
+                        color: 'text.secondary',
+                      }}
+                    >
+                      Next {preview.nextExecutions.length} execution
+                      {preview.nextExecutions.length > 1 ? 's' : ''}:
+                    </Typography>
+                    <List dense disablePadding>
+                      {preview.nextExecutions.map((execution, index) => (
+                        <ListItem
+                          key={index}
+                          disableGutters
+                          sx={{
+                            py: 0.5,
+                            px: 0,
+                          }}
+                        >
+                          <ListItemIcon sx={{ minWidth: 32 }}>
+                            <EventIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                          </ListItemIcon>
+                          <ListItemText
+                            primary={execution}
+                            primaryTypographyProps={{
+                              variant: 'body2',
+                              sx: {
+                                fontFamily: 'monospace',
+                                fontSize: '0.875rem',
+                              },
                             }}
-                          >
-                            <ListItemIcon sx={{ minWidth: 32 }}>
-                              <EventIcon
-                                fontSize="small"
-                                sx={{ color: "text.secondary" }}
-                              />
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={execution}
-                              primaryTypographyProps={{
-                                variant: "body2",
-                                sx: {
-                                  fontFamily: "monospace",
-                                  fontSize: "0.875rem",
-                                },
-                              }}
-                            />
-                          </ListItem>
-                        ))}
-                      </List>
-                    </Box>
-                  )}
+                          />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Box>
+                )}
               </Stack>
             )}
 

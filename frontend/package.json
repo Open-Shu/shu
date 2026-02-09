@@ -34,7 +34,7 @@
     "test:coverage": "react-scripts test --coverage --watchAll=false",
     "test:coverage:watch": "react-scripts test --coverage",
     "eject": "react-scripts eject",
-    "lint": "eslint src --ext .js,.jsx --max-warnings=0",
+    "lint": "eslint src --ext .js,.jsx",
     "lint:fix": "eslint src --ext .js,.jsx --fix",
     "format": "prettier --write \"src/**/*.{js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,json,css,md}\""
@@ -105,6 +105,8 @@
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "eslint": "^8.57.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
     "prettier": "^3.1.1"

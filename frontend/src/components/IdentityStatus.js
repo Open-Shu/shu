@@ -1,16 +1,9 @@
-import React, { useEffect, useMemo, useCallback, useState } from "react";
-import { useQuery, useQueryClient, useQueries } from "react-query";
-import {
-  Box,
-  Chip,
-  Button,
-  Stack,
-  Tooltip,
-  CircularProgress,
-} from "@mui/material";
-import { useNavigate } from "react-router-dom";
-import { hostAuthAPI, extractDataFromResponse } from "../services/api";
-import useOAuthAuthorize from "../hooks/useOAuthAuthorize";
+import React, { useEffect, useMemo, useCallback, useState } from 'react';
+import { useQuery, useQueryClient, useQueries } from 'react-query';
+import { Box, Chip, Button, Stack, Tooltip, CircularProgress } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { hostAuthAPI, extractDataFromResponse } from '../services/api';
+import useOAuthAuthorize from '../hooks/useOAuthAuthorize';
 
 /**
  * IdentityStatus
@@ -30,18 +23,14 @@ export default function IdentityStatus({
 }) {
   const qc = useQueryClient();
   const providers = useMemo(() => {
-    const set = new Set(
-      requiredIdentities
-        .map((r) => (r.provider || "").toLowerCase())
-        .filter(Boolean),
-    );
+    const set = new Set(requiredIdentities.map((r) => (r.provider || '').toLowerCase()).filter(Boolean));
     return Array.from(set);
   }, [requiredIdentities]);
 
   const scopesByProvider = useMemo(() => {
     const map = {};
     for (const r of requiredIdentities) {
-      const p = (r.provider || "").toLowerCase();
+      const p = (r.provider || '').toLowerCase();
       if (!p) {
         continue;
       }
@@ -51,27 +40,26 @@ export default function IdentityStatus({
     return map;
   }, [requiredIdentities]);
 
-  const providersCsv = providers.join(",");
+  const providersCsv = providers.join(',');
   // Allow parent to control authorizing state so multiple buttons disable consistently during OAuth popup
   const [internalAuthorizing, setInternalAuthorizing] = useState({});
   const authorizing = authorizingMap || internalAuthorizing;
   const setAuthorizing = setAuthorizingMap || setInternalAuthorizing;
 
   const statusQ = useQuery(
-    ["hostAuth", "status", providersCsv],
+    ['hostAuth', 'status', providersCsv],
     () => hostAuthAPI.status(providersCsv).then(extractDataFromResponse),
-    { enabled: providers.length > 0, staleTime: 5000 },
+    { enabled: providers.length > 0, staleTime: 5000 }
   );
 
   // When server-union is enabled, load server-computed consent scopes per provider
   const consentQueriesArr = useQueries(
     (useServerUnionForAuthorize ? providers : []).map((prov) => ({
-      queryKey: ["hostAuth", "consentScopes", prov],
-      queryFn: () =>
-        hostAuthAPI.consentScopes(prov).then(extractDataFromResponse),
+      queryKey: ['hostAuth', 'consentScopes', prov],
+      queryFn: () => hostAuthAPI.consentScopes(prov).then(extractDataFromResponse),
       enabled: useServerUnionForAuthorize && !!prov,
       staleTime: 5000,
-    })),
+    }))
   );
 
   const consentScopesByProvider = useMemo(() => {
@@ -94,12 +82,8 @@ export default function IdentityStatus({
     const s = statusQ.data || {};
     return providers.every((p) => {
       const connected = !!s[p]?.user_connected;
-      const granted = Array.isArray(s[p]?.granted_scopes)
-        ? s[p].granted_scopes
-        : [];
-      const desired = useServerUnionForAuthorize
-        ? consentScopesByProvider[p] || []
-        : scopesByProvider[p] || [];
+      const granted = Array.isArray(s[p]?.granted_scopes) ? s[p].granted_scopes : [];
+      const desired = useServerUnionForAuthorize ? consentScopesByProvider[p] || [] : scopesByProvider[p] || [];
       if (desired.length === 0) {
         return true;
       }
@@ -107,13 +91,7 @@ export default function IdentityStatus({
       // Only missing scopes matter - extra granted scopes are fine
       return connected && missing.length === 0;
     });
-  }, [
-    statusQ.data,
-    providers,
-    scopesByProvider,
-    consentScopesByProvider,
-    useServerUnionForAuthorize,
-  ]);
+  }, [statusQ.data, providers, scopesByProvider, consentScopesByProvider, useServerUnionForAuthorize]);
 
   useEffect(() => {
     if (onStatusChange) {
@@ -124,21 +102,24 @@ export default function IdentityStatus({
   const navigate = useNavigate();
 
   const { startAuthorize } = useOAuthAuthorize();
-  const handleConnect = useCallback(async (provider, desiredScopes) => {
-    try {
-      await startAuthorize({
-        provider,
-        scopes: desiredScopes,
-        onStart: () => setAuthorizing((m) => ({ ...m, [provider]: true })),
-        onDone: () => setAuthorizing((m) => ({ ...m, [provider]: false })),
-      });
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('OAuth authorization failed', e);
-      // Clear authorizing state on error since onDone won't be called
-      setAuthorizing((m) => ({ ...m, [provider]: false }));
-    }
-  }, [setAuthorizing, startAuthorize]);
+  const handleConnect = useCallback(
+    async (provider, desiredScopes) => {
+      try {
+        await startAuthorize({
+          provider,
+          scopes: desiredScopes,
+          onStart: () => setAuthorizing((m) => ({ ...m, [provider]: true })),
+          onDone: () => setAuthorizing((m) => ({ ...m, [provider]: false })),
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('OAuth authorization failed', e);
+        // Clear authorizing state on error since onDone won't be called
+        setAuthorizing((m) => ({ ...m, [provider]: false }));
+      }
+    },
+    [setAuthorizing, startAuthorize]
+  );
 
   if (!providers.length) {
     return null;
@@ -148,21 +129,11 @@ export default function IdentityStatus({
 
   return (
     <Box sx={{ mt: 2 }}>
-      <Stack
-        direction="row"
-        spacing={1}
-        alignItems="center"
-        flexWrap="wrap"
-        useFlexGap
-      >
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
         {providers.map((p) => {
           const connected = !!status[p]?.user_connected;
-          const granted = Array.isArray(status[p]?.granted_scopes)
-            ? status[p].granted_scopes
-            : [];
-          const desired = useServerUnionForAuthorize
-            ? consentScopesByProvider[p] || []
-            : scopesByProvider[p] || [];
+          const granted = Array.isArray(status[p]?.granted_scopes) ? status[p].granted_scopes : [];
+          const desired = useServerUnionForAuthorize ? consentScopesByProvider[p] || [] : scopesByProvider[p] || [];
           const missing = desired.filter((sc) => !granted.includes(sc));
           const extra = granted.filter((sc) => !desired.includes(sc));
           // Only missing scopes require reauthorization - extra granted scopes are fine
@@ -174,18 +145,29 @@ export default function IdentityStatus({
             desired.length ? `Desired: ${desired.join(', ')}` : null,
             missing.length > 0 ? `Missing scopes: ${missing.join(', ')}` : null,
             extra.length > 0 ? `Extra scopes (OK): ${extra.length}` : null,
-          ].filter(Boolean).join('\n');
+          ]
+            .filter(Boolean)
+            .join('\n');
           return (
             <Stack key={p} direction="row" spacing={1} alignItems="center">
               <Tooltip title={chipTooltip}>
                 <Chip color={chipColor} label={label} />
               </Tooltip>
               {needReauth && !hideConnectButton && (
-                <Tooltip title={desired.length
-                  ? `Authorize ${p} with selected scopes.\n${desired.join('\n')}`
-                  : `Select plugin subscriptions for ${p} to request scopes before connecting.`}>
+                <Tooltip
+                  title={
+                    desired.length
+                      ? `Authorize ${p} with selected scopes.\n${desired.join('\n')}`
+                      : `Select plugin subscriptions for ${p} to request scopes before connecting.`
+                  }
+                >
                   <span>
-                    <Button size="small" variant="outlined" disabled={!!authorizing[p] || desired.length === 0} onClick={() => handleConnect(p, desired)}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={!!authorizing[p] || desired.length === 0}
+                      onClick={() => handleConnect(p, desired)}
+                    >
                       {authorizing[p] ? <CircularProgress size={14} /> : 'Authorize Selected Scopes'}
                     </Button>
                   </span>
@@ -193,11 +175,7 @@ export default function IdentityStatus({
               )}
               {needReauth && showManageLink && (
                 <Tooltip title="Open the Connected Accounts page to review or manage providers">
-                  <Button
-                    size="small"
-                    variant="text"
-                    onClick={() => navigate("/settings/connected-accounts")}
-                  >
+                  <Button size="small" variant="text" onClick={() => navigate('/settings/connected-accounts')}>
                     Manage in Connected Accounts
                   </Button>
                 </Tooltip>
@@ -211,21 +189,17 @@ export default function IdentityStatus({
                       color="warning"
                       onClick={async () => {
                         const ok = window.confirm(
-                          `Disconnect ${p}? This will remove stored tokens and identities for this provider.`,
+                          `Disconnect ${p}? This will remove stored tokens and identities for this provider.`
                         );
                         if (!ok) {
                           return;
                         }
                         try {
                           await hostAuthAPI.disconnect(p);
-                          qc.invalidateQueries([
-                            "hostAuth",
-                            "status",
-                            providersCsv,
-                          ]);
+                          qc.invalidateQueries(['hostAuth', 'status', providersCsv]);
                         } catch (e) {
                           // eslint-disable-next-line no-console
-                          console.error("Disconnect failed", e);
+                          console.error('Disconnect failed', e);
                         }
                       }}
                     >

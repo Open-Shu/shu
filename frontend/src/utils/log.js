@@ -2,9 +2,7 @@
  * - DEBUG mode if REACT_APP_DEBUG==='true' or NODE_ENV!=='production'
  * - error() always logs
  */
-const DEBUG =
-  process.env.REACT_APP_DEBUG === "true" ||
-  process.env.NODE_ENV !== "production";
+const DEBUG = process.env.REACT_APP_DEBUG === 'true' || process.env.NODE_ENV !== 'production';
 
 export const log = {
   debug: (...args) => {

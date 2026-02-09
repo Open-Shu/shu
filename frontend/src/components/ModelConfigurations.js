@@ -1,6 +1,6 @@
-import { log } from "../utils/log";
+import { log } from '../utils/log';
 
-import { useState, useMemo } from "react";
+import { useState, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -19,7 +19,7 @@ import {
   TextField,
   Divider,
   CircularProgress,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -31,8 +31,8 @@ import {
   Storage as KnowledgeBaseIcon,
   Refresh as RefreshIcon,
   Call as CallIcon,
-} from "@mui/icons-material";
-import { useQuery, useMutation, useQueryClient } from "react-query";
+} from '@mui/icons-material';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
   modelConfigAPI,
   llmAPI,
@@ -40,16 +40,16 @@ import {
   extractDataFromResponse,
   extractItemsFromResponse,
   formatError,
-} from "../services/api";
-import { promptAPI } from "../api/prompts";
-import { useAuth } from "../hooks/useAuth";
-import ModelConfigurationDialog from "./shared/ModelConfigurationDialog";
-import { sideCallsAPI } from "../services/api";
-import PageHelpHeader from "./PageHelpHeader";
-import TuneIcon from "@mui/icons-material/Tune";
+} from '../services/api';
+import { promptAPI } from '../api/prompts';
+import { useAuth } from '../hooks/useAuth';
+import ModelConfigurationDialog from './shared/ModelConfigurationDialog';
+import { sideCallsAPI } from '../services/api';
+import PageHelpHeader from './PageHelpHeader';
+import TuneIcon from '@mui/icons-material/Tune';
 
 const ModelConfigurations = () => {
-  const { canManagePromptsAndModels, user, handleAuthError } = useAuth();
+  const { canManagePromptsAndModels, handleAuthError } = useAuth();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -58,16 +58,16 @@ const ModelConfigurations = () => {
   // Store original config data for rollback when edit is cancelled without successful test
   const [originalConfigData, setOriginalConfigData] = useState(null);
   const [configToDelete, setConfigToDelete] = useState(null);
-  const [testMessage, setTestMessage] = useState("Hello, how are you?");
+  const [testMessage, setTestMessage] = useState('Hello, how are you?');
   const [testResults, setTestResults] = useState({});
   const [error, setError] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-    llm_provider_id: "",
-    model_name: "",
-    prompt_id: "",
+    name: '',
+    description: '',
+    llm_provider_id: '',
+    model_name: '',
+    prompt_id: '',
     knowledge_base_ids: [],
     kb_prompt_assignments: [],
     is_active: true,
@@ -77,16 +77,15 @@ const ModelConfigurations = () => {
 
   // Advanced parameters state
   const [paramOverrides, setParamOverrides] = useState({});
-  const [advancedJson, setAdvancedJson] = useState("");
+  const [advancedJson, setAdvancedJson] = useState('');
   const [advancedJsonError, setAdvancedJsonError] = useState(null);
 
   const queryClient = useQueryClient();
 
   // Fetch model configurations
   const { data: configurations = [], isLoading: configsLoading } = useQuery(
-    ["model-configurations", { includeInactive: true }],
-    () =>
-      modelConfigAPI.list({ include_relationships: true, active_only: false }),
+    ['model-configurations', { includeInactive: true }],
+    () => modelConfigAPI.list({ include_relationships: true, active_only: false }),
     {
       enabled: canManagePromptsAndModels(),
       select: extractItemsFromResponse,
@@ -97,50 +96,39 @@ const ModelConfigurations = () => {
           setError(formatError(err).message);
         }
       },
-    },
+    }
   );
 
   //Fetch current side-call model configuration
-  const { data: sideCallConfig = null } = useQuery(
-    "side-call-config",
-    () => sideCallsAPI.getConfig(),
-    {
-      enabled: canManagePromptsAndModels(),
-      select: (data) => data ?? null,
-      onError: (err) => {
-        if (err.response?.status === 401) {
-          handleAuthError();
-        } else {
-          log.error(
-            "ModelConfigurations - Failed to fetch side-call config:",
-            err,
-          );
-        }
-      },
+  const { data: sideCallConfig = null } = useQuery('side-call-config', () => sideCallsAPI.getConfig(), {
+    enabled: canManagePromptsAndModels(),
+    select: (data) => data ?? null,
+    onError: (err) => {
+      if (err.response?.status === 401) {
+        handleAuthError();
+      } else {
+        log.error('ModelConfigurations - Failed to fetch side-call config:', err);
+      }
     },
-  );
+  });
 
   // Fetch LLM providers for form
-  const { data: providers = [] } = useQuery(
-    "llm-providers",
-    llmAPI.getProviders,
-    {
-      enabled: canManagePromptsAndModels(),
-      select: (response) => {
-        const data = extractDataFromResponse(response);
-        return Array.isArray(data) ? data : [];
-      },
-      onError: (err) => {
-        if (err.response?.status === 401) {
-          handleAuthError();
-        }
-      },
+  const { data: providers = [] } = useQuery('llm-providers', llmAPI.getProviders, {
+    enabled: canManagePromptsAndModels(),
+    select: (response) => {
+      const data = extractDataFromResponse(response);
+      return Array.isArray(data) ? data : [];
     },
-  );
+    onError: (err) => {
+      if (err.response?.status === 401) {
+        handleAuthError();
+      }
+    },
+  });
 
   // Fetch models for selected provider
   const { data: models = [] } = useQuery(
-    ["llm-models", formData.llm_provider_id],
+    ['llm-models', formData.llm_provider_id],
     () => llmAPI.getModels(formData.llm_provider_id),
     {
       enabled: canManagePromptsAndModels() && !!formData.llm_provider_id,
@@ -153,31 +141,33 @@ const ModelConfigurations = () => {
           handleAuthError();
         }
       },
-    },
+    }
   );
 
   // Fetch prompts for form (both LLM model and knowledge base prompts)
   const { data: prompts = [], isLoading: promptsLoading } = useQuery(
-    "prompts-for-model-configs", // Changed key to force cache refresh
+    'prompts-for-model-configs', // Changed key to force cache refresh
     () => promptAPI.list({ limit: 100 }), // Fetch all prompts, filter in UI
     {
       enabled: canManagePromptsAndModels(),
       select: (response) => extractItemsFromResponse(response),
       onError: (err) => {
-        log.error("Error loading prompts:", err);
+        log.error('Error loading prompts:', err);
         if (err.response?.status === 401) {
           handleAuthError();
         }
       },
       onSuccess: (data) => {
-        log.info("Prompts loaded successfully:", data);
+        log.info('Prompts loaded successfully:', data);
       },
-    },
+    }
   );
 
   // Fetch knowledge bases for form
-  const { data: knowledgeBases = [], isLoading: knowledgeBasesLoading } =
-    useQuery("knowledge-bases-for-models", knowledgeBaseAPI.list, {
+  const { data: knowledgeBases = [], isLoading: knowledgeBasesLoading } = useQuery(
+    'knowledge-bases-for-models',
+    knowledgeBaseAPI.list,
+    {
       enabled: canManagePromptsAndModels(),
       select: extractItemsFromResponse,
       onError: (err) => {
@@ -185,19 +175,17 @@ const ModelConfigurations = () => {
           handleAuthError();
         }
       },
-    });
+    }
+  );
 
   // Create mutation
   const createMutation = useMutation((data) => modelConfigAPI.create(data), {
     onSuccess: (response, variables) => {
-      log.info("ModelConfigurations - Create success:", response);
-      queryClient.invalidateQueries([
-        "model-configurations",
-        { includeInactive: true },
-      ]);
+      log.info('ModelConfigurations - Create success:', response);
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
       // Invalidate side-call config query if this model is marked for side calls
       if (variables.is_side_call_model) {
-        queryClient.invalidateQueries("side-call-config");
+        queryClient.invalidateQueries('side-call-config');
       }
       setCreateDialogOpen(false);
       resetForm();
@@ -205,57 +193,42 @@ const ModelConfigurations = () => {
       setSubmitError(null);
     },
     onError: (err) => {
-      log.error("ModelConfigurations - Create error:", err);
-      const serverMsg =
-        err?.response?.data?.error?.message || formatError(err).message;
+      log.error('ModelConfigurations - Create error:', err);
+      const serverMsg = err?.response?.data?.error?.message || formatError(err).message;
       setSubmitError(serverMsg);
     },
   });
 
   // Update mutation
-  const updateMutation = useMutation(
-    ({ id, data }) => modelConfigAPI.update(id, data),
-    {
-      onSuccess: (response, variables) => {
-        queryClient.invalidateQueries([
-          "model-configurations",
-          { includeInactive: true },
-        ]);
+  const updateMutation = useMutation(({ id, data }) => modelConfigAPI.update(id, data), {
+    onSuccess: (response, variables) => {
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
 
-        const payload = variables?.data || {};
-        const isSideCallFlagProvided = Object.prototype.hasOwnProperty.call(
-          payload,
-          "is_side_call_model",
-        );
-        const isCurrentlySideCallModel =
-          sideCallConfig?.side_call_model_config?.id &&
-          sideCallConfig.side_call_model_config.id === variables?.id;
+      const payload = variables?.data || {};
+      const isSideCallFlagProvided = Object.prototype.hasOwnProperty.call(payload, 'is_side_call_model');
+      const isCurrentlySideCallModel =
+        sideCallConfig?.side_call_model_config?.id && sideCallConfig.side_call_model_config.id === variables?.id;
 
-        if (isSideCallFlagProvided || isCurrentlySideCallModel) {
-          queryClient.invalidateQueries("side-call-config");
-        }
+      if (isSideCallFlagProvided || isCurrentlySideCallModel) {
+        queryClient.invalidateQueries('side-call-config');
+      }
 
-        setEditDialogOpen(false);
-        setSelectedConfig(null);
-        resetForm();
-        setError(null);
-        setSubmitError(null);
-      },
-      onError: (err) => {
-        const serverMsg =
-          err?.response?.data?.error?.message || formatError(err).message;
-        setSubmitError(serverMsg);
-      },
+      setEditDialogOpen(false);
+      setSelectedConfig(null);
+      resetForm();
+      setError(null);
+      setSubmitError(null);
     },
-  );
+    onError: (err) => {
+      const serverMsg = err?.response?.data?.error?.message || formatError(err).message;
+      setSubmitError(serverMsg);
+    },
+  });
 
   // Delete mutation
   const deleteMutation = useMutation((id) => modelConfigAPI.delete(id), {
     onSuccess: () => {
-      queryClient.invalidateQueries([
-        "model-configurations",
-        { includeInactive: true },
-      ]);
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
       setDeleteDialogOpen(false);
       setConfigToDelete(null);
       setError(null);
@@ -286,36 +259,31 @@ const ModelConfigurations = () => {
           [id]: { success: false, error: formatError(err) },
         }));
       },
-    },
+    }
   );
 
   const sideCallConfigId = sideCallConfig?.side_call_model_config?.id ?? null;
 
   // Debug logging for prompts
-  log.debug("ModelConfigurations - prompts:", prompts);
-  log.debug("ModelConfigurations - promptsLoading:", promptsLoading);
+  log.debug('ModelConfigurations - prompts:', prompts);
+  log.debug('ModelConfigurations - promptsLoading:', promptsLoading);
   if (prompts.length > 0) {
-    log.debug(
-      "ModelConfigurations - First prompt object:",
-      JSON.stringify(prompts[0], null, 2),
-    );
+    log.debug('ModelConfigurations - First prompt object:', JSON.stringify(prompts[0], null, 2));
   }
   log.debug(
-    "ModelConfigurations - LLM prompts:",
-    prompts.filter((p) => p.entity_type === "llm_model"),
+    'ModelConfigurations - LLM prompts:',
+    prompts.filter((p) => p.entity_type === 'llm_model')
   );
   log.debug(
-    "ModelConfigurations - KB prompts:",
-    prompts.filter((p) => p.entity_type === "knowledge_base"),
+    'ModelConfigurations - KB prompts:',
+    prompts.filter((p) => p.entity_type === 'knowledge_base')
   );
 
   // Resolve provider type definition for typed parameter mapping
-  const selectedProvider = providers.find(
-    (p) => p.id === formData.llm_provider_id,
-  );
+  const selectedProvider = providers.find((p) => p.id === formData.llm_provider_id);
   const providerTypeKey = selectedProvider?.provider_type || null;
   const { data: providerTypeDef = null } = useQuery(
-    ["llm-provider-type", providerTypeKey],
+    ['llm-provider-type', providerTypeKey],
     () => llmAPI.getProviderType(providerTypeKey),
     {
       enabled: canManagePromptsAndModels() && !!providerTypeKey,
@@ -325,30 +293,20 @@ const ModelConfigurations = () => {
           handleAuthError();
         }
       },
-    },
+    }
   );
-  const parameterMapping = useMemo(
-    () => providerTypeDef?.parameter_mapping || {},
-    [providerTypeDef],
-  );
+  const parameterMapping = useMemo(() => providerTypeDef?.parameter_mapping || {}, [providerTypeDef]);
   const visibleParams = useMemo(
-    () =>
-      Object.entries(parameterMapping).filter(
-        ([, spec]) => spec && spec.type !== "hidden",
-      ),
-    [parameterMapping],
+    () => Object.entries(parameterMapping).filter(([, spec]) => spec && spec.type !== 'hidden'),
+    [parameterMapping]
   );
 
   if (!canManagePromptsAndModels()) {
-    return (
-      <Alert severity="error">
-        You don't have permission to manage model configurations.
-      </Alert>
-    );
+    return <Alert severity="error">You don't have permission to manage model configurations.</Alert>;
   }
 
   // Show authentication error if present
-  if (error && error.includes("Authentication")) {
+  if (error && error.includes('Authentication')) {
     return (
       <Alert severity="error">
         Authentication failed. Please <a href="/auth">log in again</a>.
@@ -359,7 +317,7 @@ const ModelConfigurations = () => {
   // Show loading state while essential data is loading
   if (promptsLoading) {
     return (
-      <Box sx={{ display: "flex", justifyContent: "center", p: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
         <CircularProgress />
       </Box>
     );
@@ -367,10 +325,10 @@ const ModelConfigurations = () => {
 
   const resetForm = () => {
     setFormData({
-      name: "",
-      description: "",
-      llm_provider_id: "",
-      model_name: "",
+      name: '',
+      description: '',
+      llm_provider_id: '',
+      model_name: '',
       prompt_id: null,
       knowledge_base_ids: [],
       kb_prompt_assignments: [],
@@ -380,43 +338,12 @@ const ModelConfigurations = () => {
     });
   };
 
-  const handleCreate = () => {
-    // Merge typed overrides with advanced JSON (typed wins). Only submit user-set values.
-    let extra = {};
-    if (advancedJson && advancedJson.trim()) {
-      try {
-        extra = JSON.parse(advancedJson);
-        setAdvancedJsonError(null);
-      } catch (e) {
-        setAdvancedJsonError("Invalid JSON");
-        return;
-      }
-    }
-    const merged = { ...extra, ...paramOverrides };
-    const pruned = Object.fromEntries(
-      Object.entries(merged).filter(
-        ([_, v]) =>
-          v !== undefined &&
-          v !== null &&
-          !(typeof v === "string" && v.trim() === "") &&
-          !(typeof v === "number" && Number.isNaN(v)),
-      ),
-    );
-    const payload = {
-      ...formData,
-      created_by: user?.id || "unknown-user",
-      prompt_id: formData.prompt_id || null,
-      ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
-    };
-    createMutation.mutate(payload);
-  };
-
   const handleEdit = (config) => {
     setSelectedConfig(config);
 
     // Handle prompt_id - ensure it's either a valid string or null
     let promptId = config.prompt_id;
-    if (promptId === "" || promptId === undefined) {
+    if (promptId === '' || promptId === undefined) {
       promptId = null;
     }
 
@@ -436,7 +363,7 @@ const ModelConfigurations = () => {
 
     const newFormData = {
       name: config.name,
-      description: config.description || "",
+      description: config.description || '',
       llm_provider_id: config.llm_provider_id,
       model_name: config.model_name,
       prompt_id: promptId,
@@ -463,41 +390,9 @@ const ModelConfigurations = () => {
       setAdvancedJson(JSON.stringify(existingOverrides, null, 2));
       setAdvancedJsonError(null);
     } catch {
-      setAdvancedJson("");
+      setAdvancedJson('');
     }
     setEditDialogOpen(true);
-  };
-
-  const handleUpdate = () => {
-    let extra = {};
-    if (advancedJson && advancedJson.trim()) {
-      try {
-        extra = JSON.parse(advancedJson);
-        setAdvancedJsonError(null);
-      } catch (e) {
-        setAdvancedJsonError("Invalid JSON");
-        return;
-      }
-    }
-    const merged = { ...extra, ...paramOverrides };
-    const pruned = Object.fromEntries(
-      Object.entries(merged).filter(
-        ([_, v]) =>
-          v !== undefined &&
-          v !== null &&
-          !(typeof v === "string" && v.trim() === "") &&
-          !(typeof v === "number" && Number.isNaN(v)),
-      ),
-    );
-    const payload = {
-      ...formData,
-      prompt_id: formData.prompt_id || null,
-      ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
-    };
-    updateMutation.mutate({
-      id: selectedConfig.id,
-      data: payload,
-    });
   };
 
   const handleDelete = (config) => {
@@ -532,23 +427,18 @@ const ModelConfigurations = () => {
         description="Model Configurations combine an LLM provider, model, system prompt, and optional knowledge bases into a usable AI configuration. This is where you define how your assistant behaves."
         icon={<TuneIcon />}
         tips={[
-          "Create at least one Model Configuration to enable the chat interface",
-          "Each configuration links a provider (e.g., OpenAI, Anthropic) with a specific model",
+          'Create at least one Model Configuration to enable the chat interface',
+          'Each configuration links a provider (e.g., OpenAI, Anthropic) with a specific model',
           "Attach a system prompt to define the assistant's personality and behavior",
-          "Add Knowledge Bases to enable RAG—the assistant will search them for context",
-          "Use parameter overrides to tune temperature, max tokens, and other model settings",
+          'Add Knowledge Bases to enable RAG—the assistant will search them for context',
+          'Use parameter overrides to tune temperature, max tokens, and other model settings',
         ]}
         actions={
           <Box display="flex" gap={1}>
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={() =>
-                queryClient.invalidateQueries([
-                  "model-configurations",
-                  { includeInactive: true },
-                ])
-              }
+              onClick={() => queryClient.invalidateQueries(['model-configurations', { includeInactive: true }])}
               disabled={configsLoading}
             >
               Refresh
@@ -559,7 +449,7 @@ const ModelConfigurations = () => {
               onClick={() => {
                 resetForm();
                 setParamOverrides({});
-                setAdvancedJson("");
+                setAdvancedJson('');
                 setAdvancedJsonError(null);
                 setSubmitError(null);
                 setCreateDialogOpen(true);
@@ -578,23 +468,17 @@ const ModelConfigurations = () => {
       )}
 
       {configsLoading ? (
-        <Box
-          display="flex"
-          justifyContent="center"
-          alignItems="center"
-          minHeight="200px"
-        >
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
           <CircularProgress />
         </Box>
       ) : configurations.length === 0 ? (
-        <Paper sx={{ p: 4, textAlign: "center" }}>
-          <SettingsIcon sx={{ fontSize: 64, color: "text.secondary", mb: 2 }} />
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <SettingsIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
           <Typography variant="h6" color="text.secondary" gutterBottom>
             No Model Configurations
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Create your first model configuration to combine models, prompts,
-            and knowledge bases
+            Create your first model configuration to combine models, prompts, and knowledge bases
           </Typography>
           <Button
             variant="contained"
@@ -602,7 +486,7 @@ const ModelConfigurations = () => {
             onClick={() => {
               resetForm();
               setParamOverrides({});
-              setAdvancedJson("");
+              setAdvancedJson('');
               setAdvancedJsonError(null);
               setSubmitError(null);
               setCreateDialogOpen(true);
@@ -623,9 +507,9 @@ const ModelConfigurations = () => {
                   <CardContent>
                     <Box
                       sx={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
                         mb: 2,
                       }}
                     >
@@ -633,18 +517,10 @@ const ModelConfigurations = () => {
                         {config.name}
                       </Typography>
                       <Box>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleTest(config)}
-                          title="Test Configuration"
-                        >
+                        <IconButton size="small" onClick={() => handleTest(config)} title="Test Configuration">
                           <TestIcon />
                         </IconButton>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleEdit(config)}
-                          title="Edit Configuration"
-                        >
+                        <IconButton size="small" onClick={() => handleEdit(config)} title="Edit Configuration">
                           <EditIcon />
                         </IconButton>
                         <IconButton
@@ -659,11 +535,7 @@ const ModelConfigurations = () => {
                     </Box>
 
                     {config.description && (
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ mb: 2 }}
-                      >
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                         {config.description}
                       </Typography>
                     )}
@@ -671,70 +543,51 @@ const ModelConfigurations = () => {
                     <Box sx={{ mb: 2 }}>
                       <Chip
                         icon={<ModelIcon />}
-                        label={`${config.llm_provider?.name || "Unknown"} / ${config.model_name}`}
+                        label={`${config.llm_provider?.name || 'Unknown'} / ${config.model_name}`}
                         size="small"
                         sx={{ mr: 1, mb: 1 }}
                       />
                       {config.prompt && (
-                        <Chip
-                          icon={<PromptIcon />}
-                          label={config.prompt.name}
-                          size="small"
-                          sx={{ mr: 1, mb: 1 }}
-                        />
+                        <Chip icon={<PromptIcon />} label={config.prompt.name} size="small" sx={{ mr: 1, mb: 1 }} />
                       )}
                       {config.knowledge_bases?.length > 0 && (
                         <Chip
                           icon={<KnowledgeBaseIcon />}
-                          label={`${config.knowledge_bases.length} KB${config.knowledge_bases.length > 1 ? "s" : ""}`}
+                          label={`${config.knowledge_bases.length} KB${config.knowledge_bases.length > 1 ? 's' : ''}`}
                           size="small"
                           sx={{ mr: 1, mb: 1 }}
                         />
                       )}
-                      {config.kb_prompts &&
-                        Object.keys(config.kb_prompts).length > 0 && (
-                          <Chip
-                            icon={<PromptIcon />}
-                            label={`${Object.keys(config.kb_prompts).length} KB Prompt${Object.keys(config.kb_prompts).length > 1 ? "s" : ""}`}
-                            size="small"
-                            color="secondary"
-                            sx={{ mr: 1, mb: 1 }}
-                          />
-                        )}
+                      {config.kb_prompts && Object.keys(config.kb_prompts).length > 0 && (
+                        <Chip
+                          icon={<PromptIcon />}
+                          label={`${Object.keys(config.kb_prompts).length} KB Prompt${Object.keys(config.kb_prompts).length > 1 ? 's' : ''}`}
+                          size="small"
+                          color="secondary"
+                          sx={{ mr: 1, mb: 1 }}
+                        />
+                      )}
                     </Box>
 
                     <Box
                       sx={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
                       }}
                     >
-                      <Box sx={{ display: "flex", gap: 0.5 }}>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
                         <Chip
-                          label={config.is_active ? "Active" : "Inactive"}
-                          color={config.is_active ? "success" : "default"}
+                          label={config.is_active ? 'Active' : 'Inactive'}
+                          color={config.is_active ? 'success' : 'default'}
                           size="small"
                         />
-                        {isSideCallModel && (
-                          <Chip
-                            icon={<CallIcon />}
-                            label="Side Call"
-                            color="info"
-                            size="small"
-                          />
-                        )}
+                        {isSideCallModel && <Chip icon={<CallIcon />} label="Side Call" color="info" size="small" />}
                       </Box>
                       {testResults[config.id] && (
                         <Chip
-                          label={
-                            testResults[config.id].success
-                              ? "Test Passed"
-                              : "Test Failed"
-                          }
-                          color={
-                            testResults[config.id].success ? "success" : "error"
-                          }
+                          label={testResults[config.id].success ? 'Test Passed' : 'Test Failed'}
+                          color={testResults[config.id].success ? 'success' : 'error'}
                           size="small"
                         />
                       )}
@@ -768,8 +621,6 @@ const ModelConfigurations = () => {
         advancedJsonError={advancedJsonError}
         setAdvancedJsonError={setAdvancedJsonError}
         submitError={submitError}
-        onSubmit={handleCreate}
-        submitLabel={createMutation.isLoading ? "Creating..." : "Create"}
         isSubmitting={createMutation.isLoading}
         isEditMode={false}
         existingConfigId={null}
@@ -796,8 +647,6 @@ const ModelConfigurations = () => {
         advancedJsonError={advancedJsonError}
         setAdvancedJsonError={setAdvancedJsonError}
         submitError={submitError}
-        onSubmit={handleUpdate}
-        submitLabel={updateMutation.isLoading ? "Saving..." : "Save"}
         isSubmitting={updateMutation.isLoading}
         isEditMode={true}
         existingConfigId={selectedConfig?.id}
@@ -805,37 +654,24 @@ const ModelConfigurations = () => {
       />
 
       {/* Delete Dialog */}
-      <Dialog
-        open={deleteDialogOpen}
-        onClose={() => setDeleteDialogOpen(false)}
-      >
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>Delete Model Configuration</DialogTitle>
         <DialogContent>
           <Typography>
-            Are you sure you want to delete the model configuration "
-            {configToDelete?.name}"? This action cannot be undone.
+            Are you sure you want to delete the model configuration "{configToDelete?.name}"? This action cannot be
+            undone.
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleConfirmDelete}
-            color="error"
-            variant="contained"
-            disabled={deleteMutation.isLoading}
-          >
-            {deleteMutation.isLoading ? "Deleting..." : "Delete"}
+          <Button onClick={handleConfirmDelete} color="error" variant="contained" disabled={deleteMutation.isLoading}>
+            {deleteMutation.isLoading ? 'Deleting...' : 'Delete'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Test Dialog */}
-      <Dialog
-        open={testDialogOpen}
-        onClose={() => setTestDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
+      <Dialog open={testDialogOpen} onClose={() => setTestDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Test Model Configuration</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -862,24 +698,17 @@ const ModelConfigurations = () => {
                     Test completed successfully
                   </Alert>
                   <Typography variant="body2" sx={{ mb: 1 }}>
-                    <strong>Response:</strong>{" "}
-                    {testResults[selectedConfig.id].response}
+                    <strong>Response:</strong> {testResults[selectedConfig.id].response}
                   </Typography>
                   <Typography variant="body2" sx={{ mb: 1 }}>
-                    <strong>Model:</strong>{" "}
-                    {testResults[selectedConfig.id].model_used}
+                    <strong>Model:</strong> {testResults[selectedConfig.id].model_used}
                   </Typography>
                   <Typography variant="body2" sx={{ mb: 1 }}>
-                    <strong>Prompt Applied:</strong>{" "}
-                    {testResults[selectedConfig.id].prompt_applied
-                      ? "Yes"
-                      : "No"}
+                    <strong>Prompt Applied:</strong> {testResults[selectedConfig.id].prompt_applied ? 'Yes' : 'No'}
                   </Typography>
                   <Typography variant="body2" sx={{ mb: 1 }}>
-                    <strong>Knowledge Bases:</strong>{" "}
-                    {testResults[selectedConfig.id].knowledge_bases_used?.join(
-                      ", ",
-                    ) || "None"}
+                    <strong>Knowledge Bases:</strong>{' '}
+                    {testResults[selectedConfig.id].knowledge_bases_used?.join(', ') || 'None'}
                   </Typography>
                 </Box>
               ) : (
@@ -895,12 +724,8 @@ const ModelConfigurations = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setTestDialogOpen(false)}>Close</Button>
-          <Button
-            onClick={handleRunTest}
-            variant="contained"
-            disabled={!testMessage.trim() || testMutation.isLoading}
-          >
-            {testMutation.isLoading ? "Testing..." : "Run Test"}
+          <Button onClick={handleRunTest} variant="contained" disabled={!testMessage.trim() || testMutation.isLoading}>
+            {testMutation.isLoading ? 'Testing...' : 'Run Test'}
           </Button>
         </DialogActions>
       </Dialog>

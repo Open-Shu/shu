@@ -1,5 +1,5 @@
-import React from "react";
-import { useNavigate } from "react-router-dom";
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -14,7 +14,7 @@ import {
   Typography,
   TextField,
   InputAdornment,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -24,10 +24,10 @@ import {
   Dashboard as DashboardIcon,
   Star as StarIcon,
   StarBorder as StarBorderIcon,
-} from "@mui/icons-material";
-import { alpha, useTheme } from "@mui/material/styles";
-import ClearIcon from "@mui/icons-material/Clear";
-import MarkdownRenderer from "../../shared/MarkdownRenderer";
+} from '@mui/icons-material';
+import { alpha, useTheme } from '@mui/material/styles';
+import ClearIcon from '@mui/icons-material/Clear';
+import MarkdownRenderer from '../../shared/MarkdownRenderer';
 
 const ConversationSidebar = React.memo(function ConversationSidebar({
   conversations,
@@ -48,28 +48,28 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
   isMobile = false,
 }) {
   const theme = useTheme();
-  const isDarkMode = theme.palette.mode === "dark";
+  const isDarkMode = theme.palette.mode === 'dark';
   const navigate = useNavigate();
 
   return (
     <Paper
       sx={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
         borderRadius: 0,
         borderRight: isMobile ? 0 : 1,
-        borderColor: "divider",
+        borderColor: 'divider',
       }}
     >
       <Box
         sx={{
           p: 2,
           borderBottom: 1,
-          borderColor: "divider",
-          display: "flex",
-          flexDirection: "column",
+          borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
           gap: 2,
         }}
       >
@@ -77,7 +77,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
           fullWidth
           variant="outlined"
           startIcon={<DashboardIcon />}
-          onClick={() => navigate("/dashboard")}
+          onClick={() => navigate('/dashboard')}
           sx={{ minHeight: 44 }}
         >
           Dashboard
@@ -98,7 +98,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
           </Typography>
         )}
         <TextField
-          value={searchValue || ""}
+          value={searchValue || ''}
           onChange={(event) => onSearchChange?.(event.target.value)}
           size="small"
           label="Search summaries"
@@ -112,7 +112,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   <IconButton
                     size="small"
                     edge="end"
-                    onClick={() => onSearchChange?.("")}
+                    onClick={() => onSearchChange?.('')}
                     aria-label="Clear summary search"
                     sx={{ mr: -0.5 }}
                   >
@@ -129,16 +129,11 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
         ) : null}
       </Box>
 
-      <Box sx={{ flexGrow: 1, overflow: "auto" }}>
+      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
         {loadingConversations ? (
           <Box sx={{ p: 2 }}>
             {[1, 2, 3].map((i) => (
-              <Skeleton
-                key={i}
-                variant="rectangular"
-                height={60}
-                sx={{ mb: 1 }}
-              />
+              <Skeleton key={i} variant="rectangular" height={60} sx={{ mb: 1 }} />
             ))}
           </Box>
         ) : (
@@ -147,15 +142,15 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
               <Box
                 key={conversation.id}
                 sx={{
-                  position: "relative",
+                  position: 'relative',
                   borderRadius: 1,
                   mb: 1,
-                  "&:hover .conversation-action-button": {
+                  '&:hover .conversation-action-button': {
                     opacity: 1,
                   },
                   // On mobile, always show action buttons for easier touch access
                   ...(isMobile && {
-                    "& .conversation-action-button": {
+                    '& .conversation-action-button': {
                       opacity: 0.7,
                     },
                   }),
@@ -165,10 +160,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                   title={
                     <Box sx={{ maxWidth: 360, p: 0.5 }}>
                       {conversation.summary_text ? (
-                        <MarkdownRenderer
-                          content={conversation.summary_text}
-                          isDarkMode={isDarkMode}
-                        />
+                        <MarkdownRenderer content={conversation.summary_text} isDarkMode={isDarkMode} />
                       ) : (
                         <Typography variant="caption" color="text.secondary">
                           No summary yet
@@ -194,14 +186,14 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                         selectedConversationId === conversation.id
                           ? chatStyles.conversationSelectedText
                           : theme.palette.text.primary,
-                      "&.Mui-selected": {
+                      '&.Mui-selected': {
                         bgcolor: chatStyles.conversationSelectedBg,
                         color: chatStyles.conversationSelectedText,
-                        "&:hover": {
+                        '&:hover': {
                           bgcolor: chatStyles.conversationSelectedBg,
                         },
                       },
-                      "&:hover": {
+                      '&:hover': {
                         bgcolor: chatStyles.conversationHoverBg,
                       },
                     }}
@@ -209,26 +201,20 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     <ListItemText
                       primary={conversation.title}
                       secondary={
-                        <Box
-                          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                        >
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Typography
                             variant="caption"
                             sx={{
                               color:
                                 selectedConversationId === conversation.id
-                                  ? alpha(
-                                      chatStyles.conversationSelectedText,
-                                      0.85,
-                                    )
+                                  ? alpha(chatStyles.conversationSelectedText, 0.85)
                                   : theme.palette.text.secondary,
                               fontWeight: 500,
                             }}
                           >
                             {conversation.model_configuration?.name}
                           </Typography>
-                          {conversation.model_configuration?.knowledge_bases
-                            ?.length > 0 && (
+                          {conversation.model_configuration?.knowledge_bases?.length > 0 && (
                             <KnowledgeBaseIcon
                               sx={{
                                 fontSize: 12,
@@ -272,30 +258,22 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
 
                 <IconButton
                   className="conversation-action-button"
-                  aria-label={
-                    conversation.is_favorite
-                      ? "Remove from favorites"
-                      : "Add to favorites"
-                  }
+                  aria-label={conversation.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
                   onClick={(event) => {
                     event.stopPropagation();
                     onToggleFavorite?.(conversation);
                   }}
                   sx={{
-                    position: "absolute",
+                    position: 'absolute',
                     bottom: 4,
                     right: 72,
                     opacity: 0,
-                    transition: "opacity 0.2s",
-                    color: conversation.is_favorite
-                      ? theme.palette.warning.main
-                      : theme.palette.text.secondary,
-                    "&:hover": {
+                    transition: 'opacity 0.2s',
+                    color: conversation.is_favorite ? theme.palette.warning.main : theme.palette.text.secondary,
+                    '&:hover': {
                       bgcolor: alpha(
-                        conversation.is_favorite
-                          ? theme.palette.warning.main
-                          : theme.palette.primary.main,
-                        0.12,
+                        conversation.is_favorite ? theme.palette.warning.main : theme.palette.primary.main,
+                        0.12
                       ),
                     },
                     width: 28,
@@ -318,13 +296,13 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     onRenameConversation(conversation);
                   }}
                   sx={{
-                    position: "absolute",
+                    position: 'absolute',
                     bottom: 4,
                     right: 40,
                     opacity: 0,
-                    transition: "opacity 0.2s",
+                    transition: 'opacity 0.2s',
                     color: theme.palette.text.secondary,
-                    "&:hover": {
+                    '&:hover': {
                       bgcolor: alpha(theme.palette.primary.main, 0.12),
                     },
                     width: 28,
@@ -343,13 +321,13 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     onDeleteConversation(conversation);
                   }}
                   sx={{
-                    position: "absolute",
+                    position: 'absolute',
                     bottom: 4,
                     right: 8,
                     opacity: 0,
-                    transition: "opacity 0.2s",
+                    transition: 'opacity 0.2s',
                     color: theme.palette.error.main,
-                    "&:hover": {
+                    '&:hover': {
                       bgcolor: alpha(theme.palette.error.main, 0.12),
                     },
                     width: 28,
@@ -367,22 +345,22 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
 
       <Box
         sx={{
-          mt: "auto",
+          mt: 'auto',
           p: 2,
           backgroundColor: alpha(branding.primaryMain, 0.0),
           borderTop: `1px solid ${alpha(branding.primaryMain, 0.0)}`,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
         }}
       >
         <img
           src={branding.logoUrl}
           alt={branding.appDisplayName}
           style={{
-            height: "60px",
-            width: "auto",
-            maxWidth: "100%",
+            height: '60px',
+            width: 'auto',
+            maxWidth: '100%',
           }}
         />
       </Box>

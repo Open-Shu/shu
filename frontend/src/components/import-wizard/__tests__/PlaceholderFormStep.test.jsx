@@ -1,10 +1,10 @@
-import React from "react";
-import { render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "react-query";
-import PlaceholderFormStep from "../PlaceholderFormStep";
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from 'react-query';
+import PlaceholderFormStep from '../PlaceholderFormStep';
 
 // Mock the API calls
-jest.mock("../../../services/api", () => ({
+jest.mock('../../../services/api', () => ({
   modelConfigurationsAPI: {
     list: jest.fn(() => Promise.resolve({ data: { items: [] } })),
   },
@@ -12,34 +12,23 @@ jest.mock("../../../services/api", () => ({
 }));
 
 // Mock the shared components to avoid complex dependencies
-jest.mock("../../shared/TriggerConfiguration", () => {
-  return function MockTriggerConfiguration({
-    triggerType,
-    onTriggerTypeChange,
-    validationErrors,
-    required,
-  }) {
+jest.mock('../../shared/TriggerConfiguration', () => {
+  return function MockTriggerConfiguration({ triggerType, onTriggerTypeChange, validationErrors, required }) {
     return (
       <div data-testid="trigger-configuration">
-        <label htmlFor="trigger-type">Trigger Type {required ? "*" : ""}</label>
-        <select
-          id="trigger-type"
-          value={triggerType}
-          onChange={(e) => onTriggerTypeChange(e.target.value)}
-        >
+        <label htmlFor="trigger-type">Trigger Type {required ? '*' : ''}</label>
+        <select id="trigger-type" value={triggerType} onChange={(e) => onTriggerTypeChange(e.target.value)}>
           <option value="manual">Manual</option>
           <option value="scheduled">Scheduled</option>
           <option value="cron">Cron</option>
         </select>
-        {validationErrors.trigger_type && (
-          <div>{validationErrors.trigger_type}</div>
-        )}
+        {validationErrors.trigger_type && <div>{validationErrors.trigger_type}</div>}
       </div>
     );
   };
 });
 
-jest.mock("../../shared/ModelConfigurationSelector", () => {
+jest.mock('../../shared/ModelConfigurationSelector', () => {
   return function MockModelConfigurationSelector({
     modelConfigurationId,
     onModelConfigurationChange,
@@ -49,11 +38,11 @@ jest.mock("../../shared/ModelConfigurationSelector", () => {
     return (
       <div data-testid="model-configuration-selector">
         <label htmlFor="model-configuration">
-          {label} {required ? "*" : ""}
+          {label} {required ? '*' : ''}
         </label>
         <select
           id="model-configuration"
-          value={modelConfigurationId || ""}
+          value={modelConfigurationId || ''}
           onChange={(e) => onModelConfigurationChange(e.target.value)}
         >
           <option value="">None</option>
@@ -73,12 +62,12 @@ const createWrapper = () => {
     },
   });
 
-  return ({ children }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
+  const TestWrapper = ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  TestWrapper.displayName = 'TestWrapper';
+  return TestWrapper;
 };
 
-describe("PlaceholderFormStep", () => {
+describe('PlaceholderFormStep', () => {
   const mockOnValuesChange = jest.fn();
   const mockOnValidationChange = jest.fn();
 
@@ -86,7 +75,7 @@ describe("PlaceholderFormStep", () => {
     jest.clearAllMocks();
   });
 
-  test("renders success message when no placeholders are provided", () => {
+  test('renders success message when no placeholders are provided', () => {
     render(
       <PlaceholderFormStep
         placeholders={[]}
@@ -94,86 +83,78 @@ describe("PlaceholderFormStep", () => {
         onValuesChange={mockOnValuesChange}
         onValidationChange={mockOnValidationChange}
       />,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper() }
     );
 
-    expect(screen.getByText("Configuration Complete")).toBeInTheDocument();
-    expect(
-      screen.getByText(/No configuration placeholders found/),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Configuration Complete')).toBeInTheDocument();
+    expect(screen.getByText(/No configuration placeholders found/)).toBeInTheDocument();
   });
 
-  test("renders form fields for supported placeholders", () => {
+  test('renders form fields for supported placeholders', () => {
     render(
       <PlaceholderFormStep
-        placeholders={["max_run_seconds"]}
+        placeholders={['max_run_seconds']}
         values={{}}
         onValuesChange={mockOnValuesChange}
         onValidationChange={mockOnValidationChange}
       />,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper() }
     );
 
-    expect(screen.getByText("Configure Import Settings")).toBeInTheDocument();
+    expect(screen.getByText('Configure Import Settings')).toBeInTheDocument();
     expect(screen.getByLabelText(/Max Run Time/)).toBeInTheDocument();
   });
 
-  test("handles YAML without model configuration placeholders gracefully", () => {
+  test('handles YAML without model configuration placeholders gracefully', () => {
     // This test specifically addresses the bug where YAML without model_configuration_id
     // placeholder would cause the component to fail
     render(
       <PlaceholderFormStep
-        placeholders={["trigger_type", "max_run_seconds"]}
+        placeholders={['trigger_type', 'max_run_seconds']}
         values={{}}
         onValuesChange={mockOnValuesChange}
         onValidationChange={mockOnValidationChange}
       />,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper() }
     );
 
     // Should render without crashing
-    expect(screen.getByText("Configure Import Settings")).toBeInTheDocument();
+    expect(screen.getByText('Configure Import Settings')).toBeInTheDocument();
     expect(screen.getByLabelText(/Trigger Type/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Max Run Time/)).toBeInTheDocument();
 
     // Should NOT render model configuration selector since that placeholder isn't present
-    expect(
-      screen.queryByTestId("model-configuration-selector"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId('model-configuration-selector')).not.toBeInTheDocument();
   });
 
-  test("renders model configuration selector when model_configuration_id placeholder is present", () => {
+  test('renders model configuration selector when model_configuration_id placeholder is present', () => {
     render(
       <PlaceholderFormStep
-        placeholders={["model_configuration_id"]}
+        placeholders={['model_configuration_id']}
         values={{}}
         onValuesChange={mockOnValuesChange}
         onValidationChange={mockOnValidationChange}
       />,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper() }
     );
 
-    expect(screen.getByText("Configure Import Settings")).toBeInTheDocument();
-    expect(
-      screen.getByTestId("model-configuration-selector"),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Configure Import Settings')).toBeInTheDocument();
+    expect(screen.getByTestId('model-configuration-selector')).toBeInTheDocument();
     expect(screen.getByLabelText(/Model Configuration/)).toBeInTheDocument();
   });
 
-  test("shows warning for unsupported placeholders", () => {
+  test('shows warning for unsupported placeholders', () => {
     render(
       <PlaceholderFormStep
-        placeholders={["max_run_seconds", "unsupported_placeholder"]}
+        placeholders={['max_run_seconds', 'unsupported_placeholder']}
         values={{}}
         onValuesChange={mockOnValuesChange}
         onValidationChange={mockOnValidationChange}
       />,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper() }
     );
 
-    expect(
-      screen.getByText(/Some placeholders in your YAML are not configurable/),
-    ).toBeInTheDocument();
-    expect(screen.getByText("unsupported_placeholder")).toBeInTheDocument();
+    expect(screen.getByText(/Some placeholders in your YAML are not configurable/)).toBeInTheDocument();
+    expect(screen.getByText('unsupported_placeholder')).toBeInTheDocument();
   });
 });

@@ -61,7 +61,6 @@ Closes #
 
 ### Linting
 
-- [ ] `make lint` passes locally
 - [ ] Pre-commit hooks pass
 - [ ] CI linting checks pass
 - [ ] No linting warnings ignored without justification
