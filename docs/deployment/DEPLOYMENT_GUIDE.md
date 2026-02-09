@@ -90,7 +90,9 @@ Shu routes jobs to queues based on workload type:
 
 | WorkloadType | Queue Name | Purpose |
 |--------------|------------|---------|
-| `INGESTION` | `shu:ingestion` | Plugin feed ingestion, document uploads |
+| `INGESTION` | `shu:ingestion` | Plugin feed ingestion (Gmail, Drive, Outlook, etc.) |
+| `INGESTION_OCR` | `shu:ingestion_ocr` | OCR/text extraction stage of document pipeline |
+| `INGESTION_EMBED` | `shu:ingestion_embed` | Embedding stage of document pipeline |
 | `PROFILING` | `shu:profiling` | LLM-powered document/chunk profiling |
 | `LLM_WORKFLOW` | `shu:llm_workflow` | Experience execution, chat workflows |
 | `MAINTENANCE` | `shu:maintenance` | Cleanup, scheduled maintenance tasks |

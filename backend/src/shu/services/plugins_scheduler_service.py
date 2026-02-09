@@ -1,6 +1,6 @@
-"""In-process Plugin Feeds Scheduler service.
+"""Plugin Feeds Scheduler service.
 
-- Enqueue due PluginFeed rows into QueueBackend as jobs with MAINTENANCE WorkloadType
+- Enqueue due PluginFeed rows into QueueBackend as jobs with INGESTION WorkloadType
 - Workers dequeue and process jobs from the queue
 - PluginExecution records track execution state for idempotency and observability
 - Exposed start_plugins_scheduler() to run in FastAPI lifespan
@@ -9,8 +9,9 @@ DRY: API endpoints delegate to this service.
 Concurrency: uses QueueBackend for job distribution and SELECT ... FOR UPDATE SKIP LOCKED
 for database-level idempotency guards.
 
-Migration Note (SHU-211): Migrated from direct execution to queue-based job distribution.
-Jobs are now enqueued to QueueBackend with MAINTENANCE WorkloadType and processed by workers.
+The scheduler is enqueue-only: it creates PluginExecution records and enqueues jobs
+for worker processing. Actual plugin execution happens in the worker handler
+(_handle_plugin_execution_job in worker.py).
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ class PluginsSchedulerService:
         """Atomically claim due schedules and enqueue executions to QueueBackend.
 
         Creates PluginExecution records for tracking and idempotency, then enqueues
-        jobs to QueueBackend with MAINTENANCE WorkloadType for worker processing.
+        jobs to QueueBackend with INGESTION WorkloadType for worker processing.
 
         Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j, "queue_enqueued": p}
         """
@@ -146,13 +147,14 @@ class PluginsSchedulerService:
             self.db.add(exec_rec)
             await self.db.flush()  # Flush to get exec_rec.id
 
-            # Enqueue job to QueueBackend with MAINTENANCE WorkloadType
+            # Enqueue job to QueueBackend with INGESTION WorkloadType
             if queue_backend:
                 try:
                     job = await enqueue_job(
                         queue_backend,
-                        WorkloadType.MAINTENANCE,
+                        WorkloadType.INGESTION,
                         payload={
+                            "action": "plugin_feed_execution",
                             "execution_id": str(exec_rec.id),
                             "schedule_id": str(s.id),
                             "plugin_name": s.plugin_name,
@@ -176,7 +178,7 @@ class PluginsSchedulerService:
                     logger.error(
                         f"Failed to enqueue job to queue: {e}", extra={"execution_id": exec_rec.id, "schedule_id": s.id}
                     )
-                    # Continue - the PluginExecution record is created, so run_pending can still process it
+                    # Continue - the PluginExecution record is created, so the worker can still process it
 
             # Advance schedule to next time; safe under lock
             s.schedule_next()
@@ -615,22 +617,16 @@ async def start_plugins_scheduler():
                     # orphaned by a server restart.
                     stale_cleaned = await svc.cleanup_stale_executions()
                     e = await svc.enqueue_due_schedules(limit=batch)
-                    r = await svc.run_pending(limit=batch)
-                    if (e.get("enqueued") or 0) or (r.get("ran") or 0) or stale_cleaned:
+                    if (e.get("enqueued") or 0) or stale_cleaned:
                         logger.info(
-                            "Plugins scheduler tick | due=%s enq=%s queue_enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s attempted=%s ran=%s failed_owner_required=%s skipped_disabled=%s stale_cleaned=%s deferred_429=%s",
+                            "Plugins scheduler tick | due=%s enq=%s queue_enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s stale_cleaned=%s",
                             e.get("due"),
                             e.get("enqueued"),
                             e.get("queue_enqueued"),
                             e.get("skipped_no_owner"),
                             e.get("skipped_missing_plugin"),
                             e.get("skipped_already_enqueued"),
-                            r.get("attempted"),
-                            r.get("ran"),
-                            r.get("failed_owner_required"),
-                            r.get("skipped_disabled"),
                             stale_cleaned,
-                            r.get("deferred_429"),
                         )
                         try:
                             TICK_HISTORY.append(
@@ -638,7 +634,6 @@ async def start_plugins_scheduler():
                                     "ts": datetime.now(UTC).isoformat(),
                                     "stale_cleaned": stale_cleaned,
                                     "enqueue": e,
-                                    "run": r,
                                 }
                             )
                         except Exception:

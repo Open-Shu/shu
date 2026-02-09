@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select
 
 from shu.core.queue_backend import get_queue_backend, reset_queue_backend, Job
-from shu.core.workload_routing import WorkloadType, get_queue_name
+from shu.core.workload_routing import WorkloadType
 from shu.models.document import Document
 from shu.models.plugin_feed import PluginFeed
 from shu.models.plugin_execution import PluginExecution, PluginExecutionStatus
@@ -61,9 +61,7 @@ async def test_profiling_job_enqueued(client, db, auth_headers):
 
             # Check that a profiling job was enqueued
             backend = await get_queue_backend()
-            queue_name = get_queue_name(WorkloadType.PROFILING)
-
-            # Peek at the queue to see if job is there
+            queue_name = WorkloadType.PROFILING.queue_name
             jobs = await backend.peek(queue_name, limit=10)
 
             # Find the job for our document
@@ -119,7 +117,7 @@ async def test_profiling_job_can_be_dequeued(client, db, auth_headers):
 
             # Dequeue the job
             backend = await get_queue_backend()
-            queue_name = get_queue_name(WorkloadType.PROFILING)
+            queue_name = WorkloadType.PROFILING.queue_name
 
             job = await backend.dequeue(queue_name, timeout_seconds=1)
 
@@ -178,7 +176,7 @@ async def test_scheduler_jobs_enqueued(client, db, auth_headers):
     
     # Check that a job was enqueued to the queue
     backend = await get_queue_backend()
-    queue_name = get_queue_name(WorkloadType.MAINTENANCE)
+    queue_name = WorkloadType.INGESTION.queue_name
     
     jobs = await backend.peek(queue_name, limit=10)
     
@@ -190,6 +188,7 @@ async def test_scheduler_jobs_enqueued(client, db, auth_headers):
             break
     
     assert scheduler_job is not None, "Scheduler job should be enqueued"
+    assert scheduler_job.payload["action"] == "plugin_feed_execution"
     assert scheduler_job.payload["plugin_name"] == "test_schema"
     assert scheduler_job.payload["schedule_id"] == feed_id
     assert scheduler_job.max_attempts == 3
@@ -264,7 +263,7 @@ async def test_scheduler_idempotency_preserved(client, db, auth_headers):
     
     # Check that only one job is in the queue
     backend = await get_queue_backend()
-    queue_name = get_queue_name(WorkloadType.MAINTENANCE)
+    queue_name = WorkloadType.INGESTION.queue_name
     
     # Count jobs for this feed
     jobs = await backend.peek(queue_name, limit=100)
@@ -312,7 +311,7 @@ async def test_scheduler_job_can_be_dequeued(client, db, auth_headers):
     
     # Dequeue the job
     backend = await get_queue_backend()
-    queue_name = get_queue_name(WorkloadType.MAINTENANCE)
+    queue_name = WorkloadType.INGESTION.queue_name
     
     job = await backend.dequeue(queue_name, timeout_seconds=1)
     
