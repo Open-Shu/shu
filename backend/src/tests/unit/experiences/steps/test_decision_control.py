@@ -4,8 +4,10 @@ This module tests the decision control step implementation for experience workfl
 ensuring that deterministic decision logic works correctly for all decision types.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from shu.experiences.steps.decision_control import DecisionControlStep
 
 
@@ -15,7 +17,7 @@ class TestDecisionControlStep:
     @pytest.fixture
     def decision_step(self):
         """Create a DecisionControlStep instance for testing.
-        
+
         Returns:
             DecisionControlStep instance
         """
@@ -24,7 +26,7 @@ class TestDecisionControlStep:
     @pytest.fixture
     def mock_host(self):
         """Create a mock host object with audit capabilities.
-        
+
         Returns:
             Mock host object
         """
@@ -38,14 +40,9 @@ class TestDecisionControlStep:
         """Test car service decision returns approval."""
         config = {}
         context = {}
-        
-        result = await decision_step.execute(
-            step_key="car_service_decision",
-            config=config,
-            context=context,
-            host=None
-        )
-        
+
+        result = await decision_step.execute(step_key="car_service_decision", config=config, context=context, host=None)
+
         assert result["should_execute"] is True
         assert "Car service approved" in result["rationale"]
         assert result["confidence"] == 1.0
@@ -56,14 +53,11 @@ class TestDecisionControlStep:
         """Test tailor notification decision returns approval."""
         config = {}
         context = {}
-        
+
         result = await decision_step.execute(
-            step_key="tailor_notification_decision",
-            config=config,
-            context=context,
-            host=None
+            step_key="tailor_notification_decision", config=config, context=context, host=None
         )
-        
+
         assert result["should_execute"] is True
         assert "Tailor hold applied" in result["rationale"]
         assert result["confidence"] == 1.0
@@ -74,14 +68,9 @@ class TestDecisionControlStep:
         """Test restaurant reservation decision returns approval."""
         config = {}
         context = {}
-        
-        result = await decision_step.execute(
-            step_key="restaurant_decision",
-            config=config,
-            context=context,
-            host=None
-        )
-        
+
+        result = await decision_step.execute(step_key="restaurant_decision", config=config, context=context, host=None)
+
         assert result["should_execute"] is True
         assert "Restaurant reservation approved" in result["rationale"]
         assert result["confidence"] == 1.0
@@ -92,14 +81,9 @@ class TestDecisionControlStep:
         """Test spa service decision returns decline based on preferences."""
         config = {}
         context = {}
-        
-        result = await decision_step.execute(
-            step_key="spa_service_decision",
-            config=config,
-            context=context,
-            host=None
-        )
-        
+
+        result = await decision_step.execute(step_key="spa_service_decision", config=config, context=context, host=None)
+
         assert result["should_execute"] is False
         assert "don't enjoy spa treatments" in result["rationale"]
         assert result["confidence"] == 1.0
@@ -110,14 +94,11 @@ class TestDecisionControlStep:
         """Test unknown decision type returns safe default."""
         config = {}
         context = {}
-        
+
         result = await decision_step.execute(
-            step_key="unknown_decision_type",
-            config=config,
-            context=context,
-            host=None
+            step_key="unknown_decision_type", config=config, context=context, host=None
         )
-        
+
         assert result["should_execute"] is False
         assert "Unrecognized decision" in result["rationale"]
         assert "unknown_decision_type" in result["rationale"]
@@ -129,26 +110,23 @@ class TestDecisionControlStep:
         """Test that errors are logged to host audit when available."""
         config = {}
         context = {}
-        
+
         # Mock the _simple_decision to raise an exception
         original_method = decision_step._simple_decision
         decision_step._simple_decision = MagicMock(side_effect=ValueError("Test error"))
-        
+
         result = await decision_step.execute(
-            step_key="car_service_decision",
-            config=config,
-            context=context,
-            host=mock_host
+            step_key="car_service_decision", config=config, context=context, host=mock_host
         )
-        
+
         # Restore original method
         decision_step._simple_decision = original_method
-        
+
         assert result["should_execute"] is False
         assert "Decision evaluation failed" in result["rationale"]
         assert result["confidence"] == 0.0
         assert result["error"] is True
-        
+
         # Verify audit log was called
         mock_host.audit.log.assert_called_once()
         call_args = mock_host.audit.log.call_args[0][0]
@@ -163,21 +141,16 @@ class TestDecisionControlStep:
         """Test that errors are handled gracefully when host is not available."""
         config = {}
         context = {}
-        
+
         # Mock the _simple_decision to raise an exception
         original_method = decision_step._simple_decision
         decision_step._simple_decision = MagicMock(side_effect=ValueError("Test error"))
-        
-        result = await decision_step.execute(
-            step_key="car_service_decision",
-            config=config,
-            context=context,
-            host=None
-        )
-        
+
+        result = await decision_step.execute(step_key="car_service_decision", config=config, context=context, host=None)
+
         # Restore original method
         decision_step._simple_decision = original_method
-        
+
         assert result["should_execute"] is False
         assert "Decision evaluation failed" in result["rationale"]
         # Verify correlation ID is present (not raw exception)
@@ -189,7 +162,7 @@ class TestDecisionControlStep:
     def test_simple_decision_true(self, decision_step):
         """Test _simple_decision helper with should_execute=True."""
         result = decision_step._simple_decision(True, "Test rationale for approval")
-        
+
         assert result["should_execute"] is True
         assert result["rationale"] == "Test rationale for approval"
         assert result["confidence"] == 1.0
@@ -197,7 +170,7 @@ class TestDecisionControlStep:
     def test_simple_decision_false(self, decision_step):
         """Test _simple_decision helper with should_execute=False."""
         result = decision_step._simple_decision(False, "Test rationale for decline")
-        
+
         assert result["should_execute"] is False
         assert result["rationale"] == "Test rationale for decline"
         assert result["confidence"] == 1.0
@@ -210,17 +183,12 @@ class TestDecisionControlStep:
             "tailor_notification_decision",
             "restaurant_decision",
             "spa_service_decision",
-            "unknown_decision"
+            "unknown_decision",
         ]
-        
+
         for decision_type in decision_types:
-            result = await decision_step.execute(
-                step_key=decision_type,
-                config={},
-                context={},
-                host=None
-            )
-            
+            result = await decision_step.execute(step_key=decision_type, config={}, context={}, host=None)
+
             # Verify all results have required keys
             assert "should_execute" in result
             assert "rationale" in result
@@ -234,14 +202,9 @@ class TestDecisionControlStep:
         """Test execute method accepts config and context parameters."""
         config = {"some_config": "value"}
         context = {"player_data": {"tier": "platinum"}}
-        
+
         # Should not raise any errors even with populated config/context
-        result = await decision_step.execute(
-            step_key="car_service_decision",
-            config=config,
-            context=context,
-            host=None
-        )
-        
+        result = await decision_step.execute(step_key="car_service_decision", config=config, context=context, host=None)
+
         assert result["should_execute"] is True
         assert "error" not in result

@@ -1,6 +1,6 @@
 # Experience Export: Dubai Hotel VIP Arrival Experience
 # Generated on: 2026-01-23 12:15:19
-# 
+#
 # This YAML file contains placeholders for user-specific values:
 # - { trigger_type }: How the experience will be triggered (Cron, Scheduled, Manual)
 # - { trigger_config }: The actual trigger value, depending on the schedule type
