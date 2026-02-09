@@ -54,10 +54,7 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
       thead: ({ children, ...props }) => (
         <thead
           style={{
-            backgroundColor: alpha(
-              theme.palette.primary.main,
-              isDarkMode ? 0.1 : 0.05
-            ),
+            backgroundColor: alpha(theme.palette.primary.main, isDarkMode ? 0.1 : 0.05),
           }}
           {...props}
         >
@@ -69,9 +66,7 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
           style={{
             border: `1px solid ${theme.palette.divider}`,
             padding: '8px 12px',
-            backgroundColor: isDarkMode
-              ? alpha(theme.palette.primary.main, 0.15)
-              : theme.palette.action.hover,
+            backgroundColor: isDarkMode ? alpha(theme.palette.primary.main, 0.15) : theme.palette.action.hover,
             fontWeight: 'bold',
             textAlign: 'left',
           }}
@@ -127,10 +122,7 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
           margin: '0.25em 0',
         },
         '& code': {
-          backgroundColor: alpha(
-            theme.palette.text.primary,
-            isDarkMode ? 0.1 : 0.05
-          ),
+          backgroundColor: alpha(theme.palette.text.primary, isDarkMode ? 0.1 : 0.05),
           padding: '0.2em 0.4em',
           borderRadius: '3px',
           fontFamily: 'monospace',
@@ -140,10 +132,7 @@ const MarkdownRenderer = React.memo(function MarkdownRenderer({
           maxWidth: '100%',
         },
         '& pre': {
-          backgroundColor: alpha(
-            theme.palette.text.primary,
-            isDarkMode ? 0.12 : 0.05
-          ),
+          backgroundColor: alpha(theme.palette.text.primary, isDarkMode ? 0.12 : 0.05),
           padding: '1em',
           borderRadius: '6px',
           overflow: 'auto',

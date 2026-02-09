@@ -18,4 +18,3 @@ export default function HelpTooltip({ title, placement = 'right', ariaLabel = 'h
     </Tooltip>
   );
 }
-

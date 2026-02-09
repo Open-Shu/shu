@@ -19,7 +19,6 @@ const useChatComposer = ({
   pluginsEnabled,
   selectedPlugin,
   onSlashCommand,
-  inputRef,
   fileInputRef,
   scheduleScrollToBottom,
   ragRewriteMode,
@@ -31,10 +30,7 @@ const useChatComposer = ({
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [plusAnchorEl, setPlusAnchorEl] = useState(null);
 
-  const latestUserMessageContent = useMemo(
-    () => getLatestUserMessageContent(messages),
-    [messages]
-  );
+  const latestUserMessageContent = useMemo(() => getLatestUserMessageContent(messages), [messages]);
 
   const buildRenamePayload = useCallback(
     (explicitFallback) => buildRenamePayloadBase(latestUserMessageContent, explicitFallback),
@@ -113,7 +109,10 @@ const useChatComposer = ({
       !initialRenameTriggeredRef.current.has(conversationId)
     ) {
       initialRenameTriggeredRef.current.add(conversationId);
-      runAutoRename({ conversationId, payload: buildRenamePayload(userMessage) });
+      runAutoRename({
+        conversationId,
+        payload: buildRenamePayload(userMessage),
+      });
     }
 
     const optimisticAttachments = pendingAttachments.map((attachment) => ({

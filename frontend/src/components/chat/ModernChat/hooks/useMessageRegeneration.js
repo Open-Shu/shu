@@ -54,7 +54,7 @@ const useMessageRegeneration = ({
         return rebuildCache(oldData, updated);
       });
     },
-    [queryClient],
+    [queryClient]
   );
 
   const handleRegenerate = useCallback(
@@ -148,8 +148,7 @@ const useMessageRegeneration = ({
         const group = msgs
           .filter(
             (m) =>
-              m.role === 'assistant' &&
-              ((m.parent_message_id && m.parent_message_id === parentId) || m.id === parentId),
+              m.role === 'assistant' && ((m.parent_message_id && m.parent_message_id === parentId) || m.id === parentId)
           )
           .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
@@ -160,7 +159,10 @@ const useMessageRegeneration = ({
             focusMessageById?.(latestVariantId);
           }
         }
-        setVariantSelection((prev) => ({ ...prev, [parentId]: Number.MAX_SAFE_INTEGER }));
+        setVariantSelection((prev) => ({
+          ...prev,
+          [parentId]: Number.MAX_SAFE_INTEGER,
+        }));
       }, 0);
 
       let cleanupRan = false;
@@ -179,164 +181,164 @@ const useMessageRegeneration = ({
       };
 
       try {
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
 
-          const abortController = new AbortController();
-          abortControllerRef.current = abortController;
+        const response = await chatRegenerateAPI.streamRegenerate(
+          messageId,
+          {
+            parent_message_id: parentId,
+            rag_rewrite_mode: ragRewriteMode,
+          },
+          { signal: abortController.signal }
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-          const response = await chatRegenerateAPI.streamRegenerate(
-            messageId,
-            {
-              parent_message_id: parentId,
-              rag_rewrite_mode: ragRewriteMode,
-            },
-            { signal: abortController.signal },
-          );
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('Regenerate stream: missing response body');
+        }
+
+        let regenAccum = '';
+        let hasContentStarted = false;
+
+        for await (const payload of iterateSSE(reader)) {
+          if (!isMountedRef.current) {
+            break;
           }
 
-          const reader = response.body?.getReader();
-          if (!reader) {
-            throw new Error('Regenerate stream: missing response body');
-          }
-
-          let regenAccum = '';
-          let hasContentStarted = false;
-
-          for await (const payload of iterateSSE(reader)) {
-            if (!isMountedRef.current) {
-              break;
-            }
-
-            if (payload === '[DONE]') {
-              try {
-                queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-                  const existing = getMessagesFromCache(oldData);
-                  const updated = existing.map((m) =>
-                    m.id === tempId ? { ...m, isStreaming: false, isPlaceholder: false } : m,
-                  );
-                  return rebuildCache(oldData, updated);
-                });
-              } catch (_) {}
-
-              markCompleted();
-              return;
-            }
-
-            const parsed = tryParseJSON(payload);
-            if (!parsed) {
-              log.warn('Failed to parse SSE payload (regenerate)', payload);
-              continue;
-            }
-
-            const eventType = parsed?.event;
-            if (eventType === 'final_message' && parsed?.content) {
-              const created = {
-                ...(parsed.content || {}),
-                content:
-                  typeof parsed.text === 'string'
-                    ? parsed.text
-                    : typeof parsed.content?.content === 'string'
-                    ? parsed.content.content
-                    : parsed.content?.content,
-              };
+          if (payload === '[DONE]') {
+            try {
               queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
                 const existing = getMessagesFromCache(oldData);
-                const withoutPlaceholders = existing.filter((m) => {
-                  if (!m?.isPlaceholder) return true;
-                  return m.role !== 'assistant' || m.id === tempId;
-                });
-                const mergedMap = new Map();
-                withoutPlaceholders.forEach((m) => {
-                  if (m.id !== tempId) mergedMap.set(m.id, m);
-                });
-                mergedMap.set(created.id, created);
-                const merged = Array.from(mergedMap.values());
-                return rebuildCache(oldData, merged);
-              });
-              markCompleted();
-              continue;
-            }
-
-            if (eventType === 'error') {
-              throw new Error(parsed?.error || 'Streaming error');
-            }
-
-            if (eventType === 'content_delta') {
-              const chunkText =
-                typeof parsed.text === 'string'
-                  ? parsed.text
-                  : typeof parsed.content === 'string'
-                  ? parsed.content
-                  : '';
-              if (!chunkText) continue;
-
-              regenAccum += chunkText;
-              const extra = {};
-              if (!hasContentStarted) {
-                hasContentStarted = true;
-                extra.reasoning_collapsed = true;
-              }
-              updateTempRegenContent(conversationId, tempId, regenAccum, extra);
-              continue;
-            }
-
-            if (eventType === 'reasoning_delta') {
-              const delta =
-                typeof parsed.text === 'string'
-                  ? parsed.text
-                  : typeof parsed.content === 'string'
-                  ? parsed.content
-                  : '';
-              if (!delta) continue;
-
-              queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-                const existing = getMessagesFromCache(oldData);
-                const updated = existing.map((m) => {
-                  if (m.id !== tempId) return m;
-                  const prev =
-                    typeof m.reasoning_stream === 'string'
-                      ? m.reasoning_stream
-                      : Array.isArray(m.reasoning_stream)
-                      ? m.reasoning_stream.join('')
-                      : '';
-                  const stream = `${prev}${delta}`;
-                  return {
-                    ...m,
-                    reasoning_stream: stream,
-                    reasoning_collapsed: m.reasoning_collapsed ?? false,
-                  };
-                });
+                const updated = existing.map((m) =>
+                  m.id === tempId ? { ...m, isStreaming: false, isPlaceholder: false } : m
+                );
                 return rebuildCache(oldData, updated);
               });
+            } catch (_) {
+              // Ignore error
+            }
+
+            markCompleted();
+            return;
+          }
+
+          const parsed = tryParseJSON(payload);
+          if (!parsed) {
+            log.warn('Failed to parse SSE payload (regenerate)', payload);
+            continue;
+          }
+
+          const eventType = parsed?.event;
+          if (eventType === 'final_message' && parsed?.content) {
+            const created = {
+              ...(parsed.content || {}),
+              content:
+                typeof parsed.text === 'string'
+                  ? parsed.text
+                  : typeof parsed.content?.content === 'string'
+                    ? parsed.content.content
+                    : parsed.content?.content,
+            };
+            queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+              const existing = getMessagesFromCache(oldData);
+              const withoutPlaceholders = existing.filter((m) => {
+                if (!m?.isPlaceholder) {
+                  return true;
+                }
+                return m.role !== 'assistant' || m.id === tempId;
+              });
+              const mergedMap = new Map();
+              withoutPlaceholders.forEach((m) => {
+                if (m.id !== tempId) {
+                  mergedMap.set(m.id, m);
+                }
+              });
+              mergedMap.set(created.id, created);
+              const merged = Array.from(mergedMap.values());
+              return rebuildCache(oldData, merged);
+            });
+            markCompleted();
+            continue;
+          }
+
+          if (eventType === 'error') {
+            throw new Error(parsed?.error || 'Streaming error');
+          }
+
+          if (eventType === 'content_delta') {
+            const chunkText =
+              typeof parsed.text === 'string' ? parsed.text : typeof parsed.content === 'string' ? parsed.content : '';
+            if (!chunkText) {
               continue;
             }
 
-            const content =
-              typeof parsed?.content === 'string'
-                ? parsed.content
-                : '';
-            if (!content) continue;
-
-            regenAccum += content;
+            regenAccum += chunkText;
             const extra = {};
             if (!hasContentStarted) {
               hasContentStarted = true;
               extra.reasoning_collapsed = true;
             }
             updateTempRegenContent(conversationId, tempId, regenAccum, extra);
+            continue;
           }
 
-          queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
-            const existing = getMessagesFromCache(oldData);
-            const updated = existing
-              .map((m) =>
-                m.id === tempId ? { ...m, isStreaming: false, isPlaceholder: false } : m,
-              )
-              .filter((m) => m.id !== tempId);
-            return rebuildCache(oldData, updated);
-          });
-          markCompleted();
+          if (eventType === 'reasoning_delta') {
+            const delta =
+              typeof parsed.text === 'string' ? parsed.text : typeof parsed.content === 'string' ? parsed.content : '';
+            if (!delta) {
+              continue;
+            }
+
+            queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+              const existing = getMessagesFromCache(oldData);
+              const updated = existing.map((m) => {
+                if (m.id !== tempId) {
+                  return m;
+                }
+                const prev =
+                  typeof m.reasoning_stream === 'string'
+                    ? m.reasoning_stream
+                    : Array.isArray(m.reasoning_stream)
+                      ? m.reasoning_stream.join('')
+                      : '';
+                const stream = `${prev}${delta}`;
+                return {
+                  ...m,
+                  reasoning_stream: stream,
+                  reasoning_collapsed: m.reasoning_collapsed ?? false,
+                };
+              });
+              return rebuildCache(oldData, updated);
+            });
+            continue;
+          }
+
+          const content = typeof parsed?.content === 'string' ? parsed.content : '';
+          if (!content) {
+            continue;
+          }
+
+          regenAccum += content;
+          const extra = {};
+          if (!hasContentStarted) {
+            hasContentStarted = true;
+            extra.reasoning_collapsed = true;
+          }
+          updateTempRegenContent(conversationId, tempId, regenAccum, extra);
+        }
+
+        queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+          const existing = getMessagesFromCache(oldData);
+          const updated = existing
+            .map((m) => (m.id === tempId ? { ...m, isStreaming: false, isPlaceholder: false } : m))
+            .filter((m) => m.id !== tempId);
+          return rebuildCache(oldData, updated);
+        });
+        markCompleted();
       } catch (error) {
         if (error?.name === 'AbortError' || error?.message === 'The user aborted a request.') {
           // Treat abort as a graceful completion.
@@ -349,17 +351,12 @@ const useMessageRegeneration = ({
 
         if (isMountedRef.current) {
           setError(`Regenerate failed: ${readable}`);
-          updateTempRegenContent(
-            conversationId,
-            tempId,
-            `Regeneration failed: ${readable}`,
-            {
-              isStreaming: false,
-              isPlaceholder: false,
-              role: 'assistant',
-              parent_message_id: parentId,
-            },
-          );
+          updateTempRegenContent(conversationId, tempId, `Regeneration failed: ${readable}`, {
+            isStreaming: false,
+            isPlaceholder: false,
+            role: 'assistant',
+            parent_message_id: parentId,
+          });
         }
 
         markCompleted();
@@ -387,7 +384,7 @@ const useMessageRegeneration = ({
       shouldAutoFollowRef,
       focusMessageById,
       conversationRef,
-    ],
+    ]
   );
 
   return { handleRegenerate };

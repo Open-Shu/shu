@@ -1,15 +1,11 @@
 import React from 'react';
-import {
-  Box,
-  Typography,
-  Paper,
-  Chip,
-  Divider,
-} from '@mui/material';
+import { Box, Typography, Paper, Chip, Divider } from '@mui/material';
 
 function safeGet(obj, keys, fallback = '') {
   for (const k of keys) {
-    if (obj && obj[k] !== undefined && obj[k] !== null) return obj[k];
+    if (obj && obj[k] !== undefined && obj[k] !== null) {
+      return obj[k];
+    }
   }
   return fallback;
 }
@@ -37,7 +33,9 @@ export default function SourcePreview({ title = 'Sources', sources = [], searchQ
       )}
       <Divider sx={{ mb: 1 }} />
       {items.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">No sources to display.</Typography>
+        <Typography variant="body2" color="text.secondary">
+          No sources to display.
+        </Typography>
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           {items.slice(0, 20).map((src, idx) => {
@@ -63,7 +61,11 @@ export default function SourcePreview({ title = 'Sources', sources = [], searchQ
                 )}
                 <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   {score !== null && (
-                    <Chip size="small" label={`score: ${typeof score === 'number' ? score.toFixed(3) : score}`} variant="outlined" />
+                    <Chip
+                      size="small"
+                      label={`score: ${typeof score === 'number' ? score.toFixed(3) : score}`}
+                      variant="outlined"
+                    />
                   )}
                   {src.document_id && <Chip size="small" label={`doc: ${src.document_id}`} variant="outlined" />}
                   {src.source_type && <Chip size="small" label={`type: ${src.source_type}`} variant="outlined" />}
@@ -76,4 +78,3 @@ export default function SourcePreview({ title = 'Sources', sources = [], searchQ
     </Box>
   );
 }
-

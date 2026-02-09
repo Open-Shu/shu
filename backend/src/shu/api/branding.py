@@ -1,6 +1,4 @@
-"""
-Branding configuration API endpoints.
-"""
+"""Branding configuration API endpoints."""
 
 from fastapi import (
     APIRouter,
@@ -37,7 +35,7 @@ async def patch_branding(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Partially update branding configuration."""
+    """Update branding configuration, partially."""
     service = BrandingService(db)
     try:
         branding = await service.update_branding(payload, user_id=current_user.id)

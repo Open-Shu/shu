@@ -1,8 +1,10 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jmespath
 
+from shu.core.logging import get_logger
+from shu.models.plugin_execution import CallableTool
 from shu.services.providers.parameter_definitions import (
     ArrayParameter,
     BooleanParameter,
@@ -14,58 +16,57 @@ from shu.services.providers.parameter_definitions import (
     Option,
     StringParameter,
 )
-from shu.core.logging import get_logger
 
 from ..adapter_base import (
     BaseProviderAdapter,
+    ChatContext,
+    ChatMessage,
     ProviderAdapterContext,
     ProviderCapabilities,
-    ProviderInformation,
-    register_adapter,
     ProviderContentDeltaEventResult,
     ProviderEventResult,
     ProviderFinalEventResult,
+    ProviderInformation,
     ProviderToolCallEventResult,
     ToolCallInstructions,
-    ChatContext,
-    ChatMessage,
+    register_adapter,
 )
-from shu.models.plugin_execution import CallableTool
 
 logger = get_logger(__name__)
 
 
 class AnthropicAdapter(BaseProviderAdapter):
-
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         super().__init__(context)
-        self._latest_usage_event: Optional[Dict[str, Any]] = None
-        self._stream_content: List[str] = []
-        self._stream_tool_calls: Dict[int, Dict[str, Any]] = {}
+        self._latest_usage_event: dict[str, Any] | None = None
+        self._stream_content: list[str] = []
+        self._stream_tool_calls: dict[int, dict[str, Any]] = {}
 
     async def _build_assistant_and_result_messages(
         self,
-        assistant_blocks: List[Dict[str, Any]],
-        tool_blocks: List[Dict[str, Any]],
+        assistant_blocks: list[dict[str, Any]],
+        tool_blocks: list[dict[str, Any]],
         tool_calls: list[ToolCallInstructions],
-    ) -> tuple[Optional[ChatMessage], List[ChatMessage]]:
+    ) -> tuple[ChatMessage | None, list[ChatMessage]]:
         assistant_message = ChatMessage.build(role="assistant", content=assistant_blocks) if assistant_blocks else None
-        result_messages: List[ChatMessage] = [
+        result_messages: list[ChatMessage] = [
             ChatMessage.build(
                 role="user",
                 content=[
                     {
                         "type": "tool_result",
                         "tool_use_id": block.get("id", ""),
-                        "content": await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
+                        "content": await self._call_plugin(
+                            tool_call.plugin_name, tool_call.operation, tool_call.args_dict
+                        ),
                     }
                 ],
             )
-            for block, tool_call in zip(tool_blocks, tool_calls)
+            for block, tool_call in zip(tool_blocks, tool_calls, strict=False)
         ]
         return assistant_message, result_messages
 
-    def _extract_usage(self, payload: Dict[str, Any]) -> None:
+    def _extract_usage(self, payload: dict[str, Any]) -> None:
         usage = jmespath.search("usage", payload) if isinstance(payload, dict) else None
         if not usage:
             return
@@ -97,13 +98,13 @@ class AnthropicAdapter(BaseProviderAdapter):
     def get_models_endpoint(self) -> str:
         return "/models"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         return {
             "scheme": "x-api-key",
             "headers": {"x-api-key": f"{self.api_key}", "anthropic-version": "2023-06-01"},
         }
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             # Sampling / generation controls
             "temperature": NumberParameter(
@@ -133,9 +134,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             "max_tokens": IntegerParameter(
                 min=1,
                 label="Max Tokens",
-                description=(
-                    "Maximum number of tokens the model can generate in this response (output tokens only)."
-                ),
+                description=("Maximum number of tokens the model can generate in this response (output tokens only)."),
             ),
             "stop_sequences": ArrayParameter(
                 label="Stop Sequences",
@@ -147,7 +146,6 @@ class AnthropicAdapter(BaseProviderAdapter):
                     placeholder="e.g. </END>",
                 ),
             ),
-
             # Tools & tool choice (Anthropic Messages API)
             # Built-in & custom tools
             "tools": ArrayParameter(
@@ -333,9 +331,7 @@ class AnthropicAdapter(BaseProviderAdapter):
                         ),
                         "input_schema": StringParameter(
                             label="Input schema (JSON)",
-                            description=(
-                                "JSON Schema for the tool's arguments, as a JSON object."
-                            ),
+                            description=("JSON Schema for the tool's arguments, as a JSON object."),
                             placeholder='e.g. {"type":"object","properties":{...}}',
                         ),
                         "defer_loading": BooleanParameter(
@@ -349,7 +345,6 @@ class AnthropicAdapter(BaseProviderAdapter):
                     required=["name", "input_schema"],
                 ),
             ),
-
             # Tool choice
             "tool_choice": ObjectParameter(
                 label="Tool Choice",
@@ -389,7 +384,6 @@ class AnthropicAdapter(BaseProviderAdapter):
                     ),
                 ],
             ),
-
             # TODO: Currently broken. Opus 4.5 requires us to send thinking segments back to the provider for follow-ups. We need to fix this before we can support the thinking settings.
             # Extended thinking (Claude 4 / thinking models)
             # "thinking": ObjectParameter(
@@ -428,7 +422,6 @@ class AnthropicAdapter(BaseProviderAdapter):
             #         ),
             #     ],
             # ),
-
             # Metadata / routing
             "metadata": ObjectParameter(
                 label="Metadata",
@@ -455,68 +448,70 @@ class AnthropicAdapter(BaseProviderAdapter):
         source_type: str,
         media_type: str,
         data: str,
-        title: Optional[str] = None
-    ) -> Dict[str, Any]:
+        title: str | None = None,
+    ) -> dict[str, Any]:
         """Build an Anthropic content block (image or document) with consistent structure."""
-        block: Dict[str, Any] = {
+        block: dict[str, Any] = {
             "type": block_type,
-            "source": {
-                "type": source_type,
-                "media_type": media_type,
-                "data": data
-            }
+            "source": {"type": source_type, "media_type": media_type, "data": data},
         }
         if title:
             block["title"] = title
         return block
 
-    def _format_attachments_for_content(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+    def _format_attachments_for_content(self, attachments: list[Any]) -> list[dict[str, Any]]:
         """Format attachments into Anthropic API content parts."""
-        parts: List[Dict[str, Any]] = []
-        
+        parts: list[dict[str, Any]] = []
+
         for att in attachments:
             if self._is_image_attachment(att):
                 b64_data = self._read_attachment_base64(att)
                 if b64_data:
                     # https://platform.claude.com/docs/en/api/messages/create
-                    parts.append(self._build_anthropic_content_block(
-                        "image", "base64", att.mime_type, b64_data
-                    ))
+                    parts.append(self._build_anthropic_content_block("image", "base64", att.mime_type, b64_data))
             else:
                 b64_data = self._read_attachment_base64(att)
                 # https://platform.claude.com/docs/en/api/messages/create
                 # Anthropic really only supports PDF and plain, so when it isn't PDF, we'll just use what we extracted
                 if b64_data and att.mime_type == "application/pdf":
-                    parts.append(self._build_anthropic_content_block(
-                        "document", "base64", "application/pdf", b64_data, att.original_filename
-                    ))
+                    parts.append(
+                        self._build_anthropic_content_block(
+                            "document", "base64", "application/pdf", b64_data, att.original_filename
+                        )
+                    )
                 elif att.extracted_text:
-                    parts.append(self._build_anthropic_content_block(
-                        "document", "text", "text/plain", att.extracted_text, att.original_filename
-                    ))
-        
+                    parts.append(
+                        self._build_anthropic_content_block(
+                            "document",
+                            "text",
+                            "text/plain",
+                            att.extracted_text,
+                            att.original_filename,
+                        )
+                    )
+
         return parts
 
-    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
-        formatted_messages: List[Dict[str, Any]] = []
+    async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:
+        formatted_messages: list[dict[str, Any]] = []
 
         for msg in messages.messages:
             role = getattr(msg, "role", "")
             content = getattr(msg, "content", "")
             attachments = getattr(msg, "attachments", []) or []
-            
+
             # Handle user messages with attachments (multimodal)
             if role == "user" and attachments:
-                content_parts: List[Dict[str, Any]] = []
+                content_parts: list[dict[str, Any]] = []
                 # Add text content first
                 if isinstance(content, str) and content:
                     content_parts.append({"type": "text", "text": content})
                 elif isinstance(content, list):
                     content_parts.extend(content)
-                
+
                 # Add formatted attachments
                 content_parts.extend(self._format_attachments_for_content(attachments))
-                
+
                 formatted_messages.append({"role": role, "content": content_parts if content_parts else content})
             else:
                 formatted_messages.append({"role": role, "content": content})
@@ -527,18 +522,22 @@ class AnthropicAdapter(BaseProviderAdapter):
         payload["messages"] = formatted_messages
         return payload
 
-    async def inject_streaming_parameter(self, should_stream: bool, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_streaming_parameter(self, should_stream: bool, payload: dict[str, Any]) -> dict[str, Any]:
         payload["stream"] = should_stream
         return payload
 
-    async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         anthropic_tools = []
         for tool in tools:
             title = None
             if isinstance(tool.enum_labels, dict):
                 title = tool.enum_labels.get(str(tool.op))
             tool_name = f"{tool.name}__{tool.op}"
-            input_schema = tool.schema or {"type": "object", "properties": {}, "additionalProperties": True}
+            input_schema = tool.schema or {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            }
             props = input_schema.setdefault("properties", {})
             props["op"] = {
                 "type": "string",
@@ -565,7 +564,7 @@ class AnthropicAdapter(BaseProviderAdapter):
 
         return payload
 
-    def _tool_call_from_block(self, block: Dict[str, Any]) -> ToolCallInstructions:
+    def _tool_call_from_block(self, block: dict[str, Any]) -> ToolCallInstructions:
         tool_name = block.get("name", "")
         try:
             plugin_name, op = tool_name.split("__", 1)
@@ -591,22 +590,25 @@ class AnthropicAdapter(BaseProviderAdapter):
     def get_model_information_path(self) -> str:
         return "data[*].{id: id, name: id}"
 
-    async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:
-
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         content_delta = jmespath.search("type=='content_block_delta' && delta.text", chunk)
         if content_delta:
             self._stream_content.append(content_delta)
             return ProviderContentDeltaEventResult(content=content_delta)
-        
+
         if "usage" in chunk:
             self._latest_usage_event = chunk
 
-        _, index, start_event = jmespath.search("type=='content_block_start' && content_block.type == 'tool_use' && *", chunk) or (None, None, None)
+        _, index, start_event = jmespath.search(
+            "type=='content_block_start' && content_block.type == 'tool_use' && *", chunk
+        ) or (None, None, None)
         if start_event:
             start_event["_input_buffer"] = ""
             self._stream_tool_calls[index] = start_event
 
-        _, index, delta_event = jmespath.search("type=='content_block_delta' && delta.type == 'input_json_delta' && *", chunk) or (None, None, None)
+        _, index, delta_event = jmespath.search(
+            "type=='content_block_delta' && delta.type == 'input_json_delta' && *", chunk
+        ) or (None, None, None)
         if delta_event and index is not None and index in self._stream_tool_calls:
             block = self._stream_tool_calls[index]
             block["_input_buffer"] = block.get("_input_buffer", "") + (delta_event.get("partial_json") or "")
@@ -617,20 +619,20 @@ class AnthropicAdapter(BaseProviderAdapter):
         if stop_reason == "end_turn":
             final_text = "".join(self._stream_content)
             return ProviderFinalEventResult(content=final_text, metadata={"usage": self.usage})
+        return None
 
-    async def finalize_provider_events(self) -> List[ProviderEventResult]:
-
+    async def finalize_provider_events(self) -> list[ProviderEventResult]:
         if not self._stream_tool_calls:
             return []
 
         tool_blocks = [self._stream_tool_calls[k] for k in sorted(self._stream_tool_calls.keys())]
         tool_calls = [self._tool_call_from_block(block) for block in tool_blocks]
 
-        assistant_blocks: List[Dict[str, Any]] = []
+        assistant_blocks: list[dict[str, Any]] = []
         final_text = "".join(self._stream_content)
         if final_text:
             assistant_blocks.append({"type": "text", "text": final_text})
-        for block, tool_call in zip(tool_blocks, tool_calls):
+        for block, tool_call in zip(tool_blocks, tool_calls, strict=False):
             assistant_blocks.append(
                 {
                     "type": "tool_use",
@@ -662,13 +664,12 @@ class AnthropicAdapter(BaseProviderAdapter):
             )
         ]
 
-    async def handle_provider_completion(self, data: Dict[str, Any]) -> List[ProviderEventResult]:
-
+    async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
         self._extract_usage(data)
 
         content_blocks = data.get("content") or []
-        text_parts: List[str] = []
-        tool_blocks: List[Dict[str, Any]] = []
+        text_parts: list[str] = []
+        tool_blocks: list[dict[str, Any]] = []
 
         for block in content_blocks:
             if block.get("type") == "text":
@@ -679,10 +680,10 @@ class AnthropicAdapter(BaseProviderAdapter):
         final_text = "".join(text_parts)
         tool_calls = [self._tool_call_from_block(block) for block in tool_blocks]
 
-        assistant_blocks: List[Dict[str, Any]] = []
+        assistant_blocks: list[dict[str, Any]] = []
         if final_text:
             assistant_blocks.append({"type": "text", "text": final_text})
-        for block, tool_call in zip(tool_blocks, tool_calls):
+        for block, tool_call in zip(tool_blocks, tool_calls, strict=False):
             assistant_blocks.append(
                 {
                     "type": "tool_use",
@@ -698,12 +699,12 @@ class AnthropicAdapter(BaseProviderAdapter):
             tool_calls,
         )
 
-        additional_messages: List[ChatMessage] = []
+        additional_messages: list[ChatMessage] = []
         if assistant_message:
             additional_messages.append(assistant_message)
         additional_messages.extend(result_messages)
 
-        events: List[ProviderEventResult] = []
+        events: list[ProviderEventResult] = []
         if tool_calls:
             events.append(
                 ProviderToolCallEventResult(
@@ -719,22 +720,23 @@ class AnthropicAdapter(BaseProviderAdapter):
 
         return events
 
-    async def post_process_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def post_process_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Inject default values for required Anthropic parameters.
-        
+
         Anthropic requires max_tokens to be specified. If not provided,
         inject a reasonable default of 4096 tokens.
-        
+
         Args:
             payload: The request payload to be sent to Anthropic
-            
+
         Returns:
             The payload with defaults injected
+
         """
         # Inject default max_tokens if not provided
         if "max_tokens" not in payload:
             payload["max_tokens"] = 4096
-            
+
         return payload
 
 

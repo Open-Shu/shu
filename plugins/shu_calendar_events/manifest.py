@@ -11,45 +11,34 @@ PLUGIN_MANIFEST = {
     # - kb: write Knowledge Objects (KO) into a knowledge base
     # Note: 'cursor' is auto-included when 'kb' is declared
     "capabilities": ["http", "identity", "auth", "storage", "kb"],
-
     # Feed policy: ingestion is the background-safe operation
     "default_feed_op": "ingest",
     "allowed_feed_ops": ["ingest"],
-
     # Chat-callable safe operations (read-only)
     "chat_callable_ops": ["list"],
-
     # Identity requirements (user OAuth Calendar scopes)
     "required_identities": [
         {
             "provider": "google",
             "mode": "user",
-            "scopes": [
-                "https://www.googleapis.com/auth/calendar.readonly"
-            ]
+            "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
         }
     ],
-
     # Per-op auth configuration
     "op_auth": {
         "list": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/calendar.readonly"
-            ],
-            "subject_hint": "identity:google_email"
+            "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+            "subject_hint": "identity:google_email",
         },
         "ingest": {
             "provider": "google",
             "mode": "user",
             "allowed_modes": ["user", "domain_delegate"],
-            "scopes": [
-                "https://www.googleapis.com/auth/calendar.readonly"
-            ],
-            "subject_hint": "identity:google_email"
-        }
-    }
+            "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+            "subject_hint": "identity:google_email",
+        },
+    },
 }
-

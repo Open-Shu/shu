@@ -17,7 +17,7 @@ import {
   Grid,
   Card,
   CardContent,
-  CardActions
+  CardActions,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -30,7 +30,7 @@ import {
   CheckBox as CheckBoxIcon,
   CheckBoxOutlineBlank as CheckBoxOutlineBlankIcon,
   Close as RemoveIcon,
-  FilterList as FilterIcon
+  FilterList as FilterIcon,
 } from '@mui/icons-material';
 import { llmAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
@@ -42,8 +42,12 @@ import { formatConnectionTestError } from '../utils/providerSetupGuide';
 const createDefaultProviderCapabilities = () => ({});
 
 const pickCapabilities = (caps, fallbackCaps) => {
-  if (caps && Object.keys(caps).length > 0) return caps;
-  if (fallbackCaps && Object.keys(fallbackCaps).length > 0) return fallbackCaps;
+  if (caps && Object.keys(caps).length > 0) {
+    return caps;
+  }
+  if (fallbackCaps && Object.keys(fallbackCaps).length > 0) {
+    return fallbackCaps;
+  }
   return {};
 };
 
@@ -68,7 +72,7 @@ const LLMProviders = () => {
 
   // Manual model entry state
   const [manualModelId, setManualModelId] = useState('');
-const [manualModels, setManualModels] = useState([]);
+  const [manualModels, setManualModels] = useState([]);
 
   const [newProvider, setNewProvider] = useState(() => ({
     name: '',
@@ -78,24 +82,20 @@ const [manualModels, setManualModels] = useState([]);
     organization_id: '',
     is_active: true,
     provider_capabilities: createDefaultProviderCapabilities(),
-    rate_limit_rpm: 0,  // 0 = unlimited
-    rate_limit_tpm: 0,  // 0 = unlimited
-    budget_limit_monthly: null
+    rate_limit_rpm: 0, // 0 = unlimited
+    rate_limit_tpm: 0, // 0 = unlimited
+    budget_limit_monthly: null,
   }));
   const [error, setError] = useState(null);
   const queryClient = useQueryClient();
 
   // Fetch providers
-  const { data: providersResponse, isLoading } = useQuery(
-    'llm-providers',
-    llmAPI.getProviders,
-    {
-      enabled: canManageUsers(),
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const { data: providersResponse, isLoading } = useQuery('llm-providers', llmAPI.getProviders, {
+    enabled: canManageUsers(),
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   const endpointsOverrideHandler = (prev, key, field, value) => {
     return {
@@ -115,7 +115,9 @@ const [manualModels, setManualModels] = useState([]);
     if (val && typeof val === 'object') {
       const next = {};
       Object.entries(val).forEach(([k, v]) => {
-        if (k === 'label') return;
+        if (k === 'label') {
+          return;
+        }
         next[k] = stripLabels(v);
       });
       return next;
@@ -138,21 +140,17 @@ const [manualModels, setManualModels] = useState([]);
   );
 
   // Provider types list (for dynamic Provider Type dropdown)
-  const { data: providerTypesResp } = useQuery(
-    ['llm-provider-types'],
-    () => llmAPI.getProviderTypes()
-  );
-  const providerTypes = useMemo(
-    () => extractDataFromResponse(providerTypesResp) || [],
-    [providerTypesResp]
-  );
+  const { data: providerTypesResp } = useQuery(['llm-provider-types'], () => llmAPI.getProviderTypes());
+  const providerTypes = useMemo(() => extractDataFromResponse(providerTypesResp) || [], [providerTypesResp]);
 
   const providerTypeDef = useMemo(() => extractDataFromResponse(providerTypeDefResp), [providerTypeDefResp]);
 
   // --- Edit dialog endpoint overrides helpers (hooks must be before any early returns)
-  const baseEndpoints = useMemo(() => (providerTypeDef?.endpoints || {}), [providerTypeDef]);
+  const baseEndpoints = useMemo(() => providerTypeDef?.endpoints || {}, [providerTypeDef]);
   const providerCapabilities = useMemo(() => providerTypeDef?.provider_capabilities || {}, [providerTypeDef]);
-  const updateEndpointField = (key, field, value) => {setEndpointsOverrideEdit((prev) => endpointsOverrideHandler(prev, key, field, value));};
+  const updateEndpointField = (key, field, value) => {
+    setEndpointsOverrideEdit((prev) => endpointsOverrideHandler(prev, key, field, value));
+  };
 
   // --- Create dialog endpoint overrides helpers ---
   const [endpointsOverrideCreate, setEndpointsOverrideCreate] = useState({});
@@ -162,15 +160,31 @@ const [manualModels, setManualModels] = useState([]);
     () => llmAPI.getProviderType(providerTypeKeyForCreate),
     { enabled: !!providerTypeKeyForCreate && createDialogOpen }
   );
-  const providerTypeDefCreate = useMemo(() => extractDataFromResponse(providerTypeDefCreateResp), [providerTypeDefCreateResp]);
-  const baseEndpointsCreate = useMemo(() => (providerTypeDefCreate?.endpoints || {}), [providerTypeDefCreate]);
-  const providerCapabilitiesCreate = useMemo(() => providerTypeDefCreate?.provider_capabilities || {}, [providerTypeDefCreate]);
-  const updateEndpointFieldCreate = (key, field, value) => {setEndpointsOverrideCreate((prev) => endpointsOverrideHandler(prev, key, field, value));};
+  const providerTypeDefCreate = useMemo(
+    () => extractDataFromResponse(providerTypeDefCreateResp),
+    [providerTypeDefCreateResp]
+  );
+  const baseEndpointsCreate = useMemo(() => providerTypeDefCreate?.endpoints || {}, [providerTypeDefCreate]);
+  const providerCapabilitiesCreate = useMemo(
+    () => providerTypeDefCreate?.provider_capabilities || {},
+    [providerTypeDefCreate]
+  );
+  const updateEndpointFieldCreate = (key, field, value) => {
+    setEndpointsOverrideCreate((prev) => endpointsOverrideHandler(prev, key, field, value));
+  };
 
   // Auto-fill API endpoint from provider type definition if user hasn't set it
   useEffect(() => {
-    if (createDialogOpen && providerTypeDefCreate?.base_url_template && !apiEndpointDirtyCreate && !newProvider.api_endpoint) {
-      setNewProvider((prev) => ({ ...prev, api_endpoint: providerTypeDefCreate.base_url_template }));
+    if (
+      createDialogOpen &&
+      providerTypeDefCreate?.base_url_template &&
+      !apiEndpointDirtyCreate &&
+      !newProvider.api_endpoint
+    ) {
+      setNewProvider((prev) => ({
+        ...prev,
+        api_endpoint: providerTypeDefCreate.base_url_template,
+      }));
     }
   }, [createDialogOpen, providerTypeDefCreate, apiEndpointDirtyCreate, newProvider.api_endpoint]);
 
@@ -198,8 +212,11 @@ const [manualModels, setManualModels] = useState([]);
   }, [createDialogOpen, providerTypeDefCreate]);
 
   useEffect(() => {
-    if (editDialogOpen && providerTypeDef?.base_url_template && !apiEndpointDirtyEdit && (!editProvider?.api_endpoint)) {
-      setEditProvider((prev) => ({ ...prev, api_endpoint: providerTypeDef.base_url_template }));
+    if (editDialogOpen && providerTypeDef?.base_url_template && !apiEndpointDirtyEdit && !editProvider?.api_endpoint) {
+      setEditProvider((prev) => ({
+        ...prev,
+        api_endpoint: providerTypeDef.base_url_template,
+      }));
     }
   }, [editDialogOpen, providerTypeDef, apiEndpointDirtyEdit, editProvider?.api_endpoint]);
 
@@ -207,7 +224,9 @@ const [manualModels, setManualModels] = useState([]);
   useEffect(() => {
     if (editDialogOpen && providerCapabilities && !providerCapabilitiesDirtyEdit) {
       setEditProvider((prev) => {
-        if (!prev) return prev;
+        if (!prev) {
+          return prev;
+        }
         if (prev.provider_capabilities && Object.keys(prev.provider_capabilities).length > 0) {
           return prev;
         }
@@ -228,7 +247,12 @@ const [manualModels, setManualModels] = useState([]);
 
   // Initialize create overrides from base endpoints when available and still empty
   useEffect(() => {
-    if (createDialogOpen && baseEndpointsCreate && Object.keys(baseEndpointsCreate).length > 0 && Object.keys(endpointsOverrideCreate).length === 0) {
+    if (
+      createDialogOpen &&
+      baseEndpointsCreate &&
+      Object.keys(baseEndpointsCreate).length > 0 &&
+      Object.keys(endpointsOverrideCreate).length === 0
+    ) {
       // Deep clone base endpoints as starting overrides
       const cloned = JSON.parse(JSON.stringify(baseEndpointsCreate));
       setEndpointsOverrideCreate(cloned);
@@ -237,111 +261,100 @@ const [manualModels, setManualModels] = useState([]);
 
   // Initialize edit overrides to the effective endpoints (base overlaid with existing overrides) when still empty
   useEffect(() => {
-    if (editDialogOpen && baseEndpoints && Object.keys(baseEndpoints).length > 0 && editProvider && Object.keys(endpointsOverrideEdit).length === 0) {
-      const existing = (editProvider.endpoints || {});
+    if (
+      editDialogOpen &&
+      baseEndpoints &&
+      Object.keys(baseEndpoints).length > 0 &&
+      editProvider &&
+      Object.keys(endpointsOverrideEdit).length === 0
+    ) {
+      const existing = editProvider.endpoints || {};
       const merged = {};
       const keys = new Set([...Object.keys(baseEndpoints), ...Object.keys(existing)]);
       keys.forEach((k) => {
         const b = baseEndpoints[k] || {};
         const o = existing[k] || {};
-        merged[k] = { ...(typeof b === 'object' ? b : {}), ...(typeof o === 'object' ? o : {}) };
+        merged[k] = {
+          ...(typeof b === 'object' ? b : {}),
+          ...(typeof o === 'object' ? o : {}),
+        };
       });
       setEndpointsOverrideEdit(merged);
     }
   }, [editDialogOpen, baseEndpoints, editProvider, endpointsOverrideEdit]);
 
   // Fetch all models to show enabled counts per provider
-  const { data: allModelsResponse } = useQuery(
-    'all-llm-models',
-    () => llmAPI.getModels(),
-    {
-      enabled: canManageUsers(),
-      onError: (err) => {
-        log.error('Error fetching models:', err);
-      }
-    }
-  );
+  const { data: allModelsResponse } = useQuery('all-llm-models', () => llmAPI.getModels(), {
+    enabled: canManageUsers(),
+    onError: (err) => {
+      log.error('Error fetching models:', err);
+    },
+  });
 
   // Create provider mutation
-  const createProviderMutation = useMutation(
-    (providerData) => llmAPI.createProvider(providerData),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('llm-providers');
-        setCreateDialogOpen(false);
-        resetNewProvider();
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const createProviderMutation = useMutation((providerData) => llmAPI.createProvider(providerData), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('llm-providers');
+      setCreateDialogOpen(false);
+      resetNewProvider();
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Update provider mutation
-  const updateProviderMutation = useMutation(
-    ({ id, data }) => llmAPI.updateProvider(id, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('llm-providers');
-        setEditDialogOpen(false);
-        setEditProvider(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const updateProviderMutation = useMutation(({ id, data }) => llmAPI.updateProvider(id, data), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('llm-providers');
+      setEditDialogOpen(false);
+      setEditProvider(null);
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Delete provider mutation
-  const deleteProviderMutation = useMutation(
-    (id) => llmAPI.deleteProvider(id),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('llm-providers');
-        setDeleteDialogOpen(false);
-        setProviderToDelete(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const deleteProviderMutation = useMutation((id) => llmAPI.deleteProvider(id), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('llm-providers');
+      setDeleteDialogOpen(false);
+      setProviderToDelete(null);
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Test provider mutation
-  const testProviderMutation = useMutation(
-    (id) => llmAPI.testProvider(id),
-    {
-      onSuccess: (_res, id) => {
-        setTestResults(prev => ({
-          ...prev,
-          [id]: { success: true, message: 'Connection successful' }
-        }));
-      },
-      onError: (err, id) => {
-        const statusCode = err.response?.status;
-        const errorResult = formatConnectionTestError(err, statusCode);
-        
-        setTestResults(prev => ({
-          ...prev,
-          [id]: { 
-            success: false, 
-            message: errorResult.message,
-            suggestions: errorResult.suggestions
-          }
-        }));
-      }
-    }
-  );
+  const testProviderMutation = useMutation((id) => llmAPI.testProvider(id), {
+    onSuccess: (_res, id) => {
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: { success: true, message: 'Connection successful' },
+      }));
+    },
+    onError: (err, id) => {
+      const statusCode = err.response?.status;
+      const errorResult = formatConnectionTestError(err, statusCode);
+
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: {
+          success: false,
+          message: errorResult.message,
+          suggestions: errorResult.suggestions,
+        },
+      }));
+    },
+  });
 
   if (!canManageUsers()) {
-    return (
-      <Alert severity="error">
-        You don't have permission to manage LLM providers.
-      </Alert>
-    );
+    return <Alert severity="error">You don't have permission to manage LLM providers.</Alert>;
   }
 
   const providers = extractDataFromResponse(providersResponse) || [];
@@ -349,7 +362,7 @@ const [manualModels, setManualModels] = useState([]);
 
   // Helper function to get enabled models for a provider
   const getProviderModels = (providerId) => {
-    return allModels.filter(model => model.provider_id === providerId && model.is_active);
+    return allModels.filter((model) => model.provider_id === providerId && model.is_active);
   };
 
   // Helper function to get model count for a provider
@@ -359,10 +372,8 @@ const [manualModels, setManualModels] = useState([]);
 
   // Helper function to check if a model is already enabled
   const isModelEnabled = (providerId, modelName) => {
-    return allModels.some(model =>
-      model.provider_id === providerId &&
-      model.model_name === modelName &&
-      model.is_active
+    return allModels.some(
+      (model) => model.provider_id === providerId && model.model_name === modelName && model.is_active
     );
   };
 
@@ -373,17 +384,22 @@ const [manualModels, setManualModels] = useState([]);
     // Filter by search term
     if (modelFilter.trim()) {
       const filterLower = modelFilter.toLowerCase();
-      models = models.filter(model =>
-        model.id.toLowerCase().includes(filterLower) ||
-        (model.owned_by && model.owned_by.toLowerCase().includes(filterLower))
+      models = models.filter(
+        (model) =>
+          model.id.toLowerCase().includes(filterLower) ||
+          (model.owned_by && model.owned_by.toLowerCase().includes(filterLower))
       );
     }
 
     // Sort by model name, with manual models marked
     models.sort((a, b) => {
       // Sort manual models to the top, then alphabetically
-      if (a.manual && !b.manual) return -1;
-      if (!a.manual && b.manual) return 1;
+      if (a.manual && !b.manual) {
+        return -1;
+      }
+      if (!a.manual && b.manual) {
+        return 1;
+      }
       return a.id.localeCompare(b.id);
     });
 
@@ -396,37 +412,37 @@ const [manualModels, setManualModels] = useState([]);
     return models.sort((a, b) => (a.display_name || a.model_name).localeCompare(b.display_name || b.model_name));
   };
 
-const resetNewProvider = () => {
-  setNewProvider({
-    name: '',
-    provider_type: 'openai',
-    api_endpoint: '',
+  const resetNewProvider = () => {
+    setNewProvider({
+      name: '',
+      provider_type: 'openai',
+      api_endpoint: '',
       api_key: '',
       organization_id: '',
       is_active: true,
-    provider_capabilities: createDefaultProviderCapabilities(),
-    rate_limit_rpm: 0,  // 0 = unlimited
-    rate_limit_tpm: 0,  // 0 = unlimited
-    budget_limit_monthly: null,
-  });
-  setApiEndpointDirtyCreate(false);
-  setProviderCapabilitiesDirtyCreate(false);
-};
+      provider_capabilities: createDefaultProviderCapabilities(),
+      rate_limit_rpm: 0, // 0 = unlimited
+      rate_limit_tpm: 0, // 0 = unlimited
+      budget_limit_monthly: null,
+    });
+    setApiEndpointDirtyCreate(false);
+    setProviderCapabilitiesDirtyCreate(false);
+  };
 
-const handleEditProvider = (provider) => {
-  setEditProvider({
-    ...provider,
-    provider_capabilities: provider.provider_capabilities && Object.keys(provider.provider_capabilities).length > 0
-      ? provider.provider_capabilities
-      : {},
-  });
-  // Let the effect initialize overrides from effective endpoints
-  setEndpointsOverrideEdit({});
-  setApiEndpointDirtyEdit(false);
-  setProviderCapabilitiesDirtyEdit(false);
-  setEditDialogOpen(true);
-};
-
+  const handleEditProvider = (provider) => {
+    setEditProvider({
+      ...provider,
+      provider_capabilities:
+        provider.provider_capabilities && Object.keys(provider.provider_capabilities).length > 0
+          ? provider.provider_capabilities
+          : {},
+    });
+    // Let the effect initialize overrides from effective endpoints
+    setEndpointsOverrideEdit({});
+    setApiEndpointDirtyEdit(false);
+    setProviderCapabilitiesDirtyEdit(false);
+    setEditDialogOpen(true);
+  };
 
   const handleDeleteProvider = (provider) => {
     setProviderToDelete(provider);
@@ -442,9 +458,7 @@ const handleEditProvider = (provider) => {
       const payload = {
         ...editProvider,
         endpoints: stripLabels(endpointsOverrideEdit),
-        provider_capabilities: stripLabels(
-          pickCapabilities(editProvider.provider_capabilities, providerCapabilities)
-        ),
+        provider_capabilities: stripLabels(pickCapabilities(editProvider.provider_capabilities, providerCapabilities)),
       };
       updateProviderMutation.mutate({ id: editProvider.id, data: payload });
     }
@@ -460,7 +474,6 @@ const handleEditProvider = (provider) => {
     };
     createProviderMutation.mutate(payload);
   };
-
 
   const handleConfirmDelete = () => {
     if (providerToDelete) {
@@ -481,7 +494,9 @@ const handleEditProvider = (provider) => {
   };
 
   const handleDiscoverModels = async () => {
-    if (!selectedProvider) return;
+    if (!selectedProvider) {
+      return;
+    }
 
     setModelDiscoveryLoading(true);
     try {
@@ -508,26 +523,28 @@ const handleEditProvider = (provider) => {
   };
 
   const handleSyncModels = async () => {
-    if (!selectedProvider || selectedModels.size === 0) return;
+    if (!selectedProvider || selectedModels.size === 0) {
+      return;
+    }
 
     setModelSyncLoading(true);
     try {
       const selectedModelsList = Array.from(selectedModels);
 
       // For manual models, we need to create them individually first
-      const manualModelIds = manualModels.map(model => model.id);
-      const selectedManualModels = selectedModelsList.filter(modelId => manualModelIds.includes(modelId));
+      const manualModelIds = manualModels.map((model) => model.id);
+      const selectedManualModels = selectedModelsList.filter((modelId) => manualModelIds.includes(modelId));
 
       // Create manual models first
       for (const modelId of selectedManualModels) {
-        const manualModel = manualModels.find(model => model.id === modelId);
+        const manualModel = manualModels.find((model) => model.id === modelId);
         if (manualModel) {
           try {
             await llmAPI.createModel(selectedProvider.id, {
               model_name: modelId,
               display_name: modelId,
               model_type: 'chat',
-              is_active: true
+              is_active: true,
             });
           } catch (err) {
             log.warn(`Failed to create manual model ${modelId}:`, err);
@@ -537,7 +554,7 @@ const handleEditProvider = (provider) => {
       }
 
       // Then sync discovered models (if any)
-      const discoveredModelIds = selectedModelsList.filter(modelId => !manualModelIds.includes(modelId));
+      const discoveredModelIds = selectedModelsList.filter((modelId) => !manualModelIds.includes(modelId));
       if (discoveredModelIds.length > 0) {
         await llmAPI.syncModels(selectedProvider.id, discoveredModelIds);
       }
@@ -554,8 +571,8 @@ const handleEditProvider = (provider) => {
         ...testResults,
         [selectedProvider.id]: {
           success: true,
-          message: `Successfully synced ${selectedModels.size} models`
-        }
+          message: `Successfully synced ${selectedModels.size} models`,
+        },
       });
     } catch (err) {
       setError(formatError(err).message);
@@ -565,9 +582,11 @@ const handleEditProvider = (provider) => {
   };
 
   const handleRemoveModel = async (modelId) => {
-    if (!selectedProvider) return;
+    if (!selectedProvider) {
+      return;
+    }
 
-    setModelRemovalLoading(prev => new Set([...prev, modelId]));
+    setModelRemovalLoading((prev) => new Set([...prev, modelId]));
     try {
       await llmAPI.disableModel(selectedProvider.id, modelId);
 
@@ -579,7 +598,7 @@ const handleEditProvider = (provider) => {
     } catch (err) {
       setError(formatError(err).message);
     } finally {
-      setModelRemovalLoading(prev => {
+      setModelRemovalLoading((prev) => {
         const newSet = new Set(prev);
         newSet.delete(modelId);
         return newSet;
@@ -590,12 +609,15 @@ const handleEditProvider = (provider) => {
   // Manual model entry functions
   const handleAddManualModel = () => {
     const modelId = manualModelId.trim();
-    if (!modelId) return;
+    if (!modelId) {
+      return;
+    }
 
     // Check if model already exists in discovered or manual models
-    const existsInDiscovered = discoveredModels.some(model => model.id === modelId);
-    const existsInManual = manualModels.some(model => model.id === modelId);
-    const isAlreadyEnabled = selectedProvider && getProviderModels(selectedProvider.id).some(model => model.model_name === modelId);
+    const existsInDiscovered = discoveredModels.some((model) => model.id === modelId);
+    const existsInManual = manualModels.some((model) => model.id === modelId);
+    const isAlreadyEnabled =
+      selectedProvider && getProviderModels(selectedProvider.id).some((model) => model.model_name === modelId);
 
     if (existsInDiscovered || existsInManual || isAlreadyEnabled) {
       setError(`Model "${modelId}" is already in the list or enabled`);
@@ -609,18 +631,18 @@ const handleEditProvider = (provider) => {
       created: Date.now() / 1000,
       owned_by: selectedProvider?.provider_type || 'manual',
       description: `Manually added model: ${modelId}`,
-      manual: true
+      manual: true,
     };
 
-    setManualModels(prev => [...prev, newManualModel]);
-    setSelectedModels(prev => new Set([...prev, modelId]));
+    setManualModels((prev) => [...prev, newManualModel]);
+    setSelectedModels((prev) => new Set([...prev, modelId]));
     setManualModelId('');
     setError(null);
   };
 
   const handleRemoveManualModel = (modelId) => {
-    setManualModels(prev => prev.filter(model => model.id !== modelId));
-    setSelectedModels(prev => {
+    setManualModels((prev) => prev.filter((model) => model.id !== modelId));
+    setSelectedModels((prev) => {
       const newSet = new Set(prev);
       newSet.delete(modelId);
       return newSet;
@@ -656,11 +678,7 @@ const handleEditProvider = (provider) => {
           'For local models (Ollama), ensure the service is running and accessible',
         ]}
         actions={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setCreateDialogOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
             Add Provider
           </Button>
         }
@@ -681,11 +699,7 @@ const handleEditProvider = (provider) => {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Add your first LLM provider to start using AI capabilities
           </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setCreateDialogOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
             Add Provider
           </Button>
         </Paper>
@@ -695,7 +709,14 @@ const handleEditProvider = (provider) => {
             <Grid item xs={12} md={6} lg={4} key={provider.id}>
               <Card>
                 <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      mb: 2,
+                    }}
+                  >
                     <Typography variant="h6" component="div">
                       {provider.name}
                     </Typography>
@@ -715,12 +736,14 @@ const handleEditProvider = (provider) => {
                   </Typography>
 
                   <Typography variant="body2" color="text.secondary" gutterBottom>
-                    <strong>Rate Limit:</strong> {provider.rate_limit_rpm ?? 0} RPM / {provider.rate_limit_tpm?.toLocaleString() ?? '—'} TPM
+                    <strong>Rate Limit:</strong> {provider.rate_limit_rpm ?? 0} RPM /{' '}
+                    {provider.rate_limit_tpm?.toLocaleString() ?? '—'} TPM
                   </Typography>
 
                   {provider.budget_limit_monthly && (
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      <strong>Budget:</strong> ${provider.budget_limit_monthly}/month
+                      <strong>Budget:</strong> ${provider.budget_limit_monthly}
+                      /month
                     </Typography>
                   )}
 
@@ -812,7 +835,9 @@ const handleEditProvider = (provider) => {
             <LLMProviderForm
               provider={newProvider}
               onProviderChange={(next) => {
-                if (next.api_endpoint !== newProvider.api_endpoint) setApiEndpointDirtyCreate(true);
+                if (next.api_endpoint !== newProvider.api_endpoint) {
+                  setApiEndpointDirtyCreate(true);
+                }
                 if (next.provider_capabilities !== newProvider.provider_capabilities) {
                   setProviderCapabilitiesDirtyCreate(true);
                 }
@@ -856,40 +881,38 @@ const handleEditProvider = (provider) => {
           {editProvider && (
             <Box sx={{ pt: 1 }}>
               <LLMProviderForm
-              provider={editProvider}
-              onProviderChange={(next) => {
-                if (next.api_endpoint !== editProvider.api_endpoint) setApiEndpointDirtyEdit(true);
-                if (next.provider_capabilities !== editProvider.provider_capabilities) {
-                  setProviderCapabilitiesDirtyEdit(true);
-                }
-                setEditProvider(next);
-              }}
+                provider={editProvider}
+                onProviderChange={(next) => {
+                  if (next.api_endpoint !== editProvider.api_endpoint) {
+                    setApiEndpointDirtyEdit(true);
+                  }
+                  if (next.provider_capabilities !== editProvider.provider_capabilities) {
+                    setProviderCapabilitiesDirtyEdit(true);
+                  }
+                  setEditProvider(next);
+                }}
                 providerTypes={providerTypes}
-              onProviderTypeChange={(type) => {
-                setEditProvider((prev) => ({
-                  ...prev,
-                  provider_type: type,
-                  provider_capabilities: {},
-                }));
-                setApiEndpointDirtyEdit(false);
-                setEndpointsOverrideEdit({});
-                setProviderCapabilitiesDirtyEdit(false);
-              }}
+                onProviderTypeChange={(type) => {
+                  setEditProvider((prev) => ({
+                    ...prev,
+                    provider_type: type,
+                    provider_capabilities: {},
+                  }));
+                  setApiEndpointDirtyEdit(false);
+                  setEndpointsOverrideEdit({});
+                  setProviderCapabilitiesDirtyEdit(false);
+                }}
                 baseEndpoints={baseEndpoints}
                 providerCapabilities={providerCapabilities}
                 endpointsOverride={endpointsOverrideEdit}
                 onUpdateEndpointField={(k, f, v) => updateEndpointField(k, f, v)}
-            />
+              />
             </Box>
           )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleSaveProvider}
-            variant="contained"
-            disabled={updateProviderMutation.isLoading}
-          >
+          <Button onClick={handleSaveProvider} variant="contained" disabled={updateProviderMutation.isLoading}>
             {updateProviderMutation.isLoading ? 'Saving...' : 'Save Changes'}
           </Button>
         </DialogActions>
@@ -911,7 +934,8 @@ const handleEditProvider = (provider) => {
                 <strong>Type:</strong> {getProviderTypeLabel(providerToDelete.provider_type)}
               </Typography>
               <Alert severity="warning" sx={{ mt: 2 }}>
-                <strong>Warning:</strong> This action cannot be undone. All associated models and usage data will be permanently removed.
+                <strong>Warning:</strong> This action cannot be undone. All associated models and usage data will be
+                permanently removed.
               </Alert>
             </Box>
           )}
@@ -930,20 +954,20 @@ const handleEditProvider = (provider) => {
       </Dialog>
 
       {/* Model Management Dialog */}
-      <Dialog
-        open={modelDialogOpen}
-        onClose={() => setModelDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          Manage Models - {selectedProvider?.name}
-        </DialogTitle>
+      <Dialog open={modelDialogOpen} onClose={() => setModelDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Manage Models - {selectedProvider?.name}</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
             {/* Show currently enabled models */}
             {selectedProvider && getProviderModelCount(selectedProvider.id) > 0 && (
-              <Box sx={{ mb: 3, p: 2, backgroundColor: 'action.hover', borderRadius: 1 }}>
+              <Box
+                sx={{
+                  mb: 3,
+                  p: 2,
+                  backgroundColor: 'action.hover',
+                  borderRadius: 1,
+                }}
+              >
                 <Typography variant="h6" gutterBottom>
                   Currently Enabled Models ({getProviderModelCount(selectedProvider.id)})
                 </Typography>
@@ -971,7 +995,15 @@ const handleEditProvider = (provider) => {
             )}
 
             {/* Manual Model Entry Section */}
-            <Box sx={{ mb: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+            <Box
+              sx={{
+                mb: 3,
+                p: 2,
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 1,
+              }}
+            >
               <Typography variant="h6" gutterBottom>
                 Manual Model Entry
               </Typography>
@@ -1046,7 +1078,9 @@ const handleEditProvider = (provider) => {
                   Select models to enable for this provider:
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Found {discoveredModels.length} discovered models{manualModels.length > 0 ? ` and ${manualModels.length} manually added models` : ''}. Select the ones you want to use.
+                  Found {discoveredModels.length} discovered models
+                  {manualModels.length > 0 ? ` and ${manualModels.length} manually added models` : ''}. Select the ones
+                  you want to use.
                 </Typography>
 
                 {/* Filter input */}
@@ -1057,7 +1091,7 @@ const handleEditProvider = (provider) => {
                   value={modelFilter}
                   onChange={(e) => setModelFilter(e.target.value)}
                   InputProps={{
-                    startAdornment: <FilterIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                    startAdornment: <FilterIcon sx={{ mr: 1, color: 'text.secondary' }} />,
                   }}
                   sx={{ mb: 2 }}
                 />
@@ -1068,93 +1102,102 @@ const handleEditProvider = (provider) => {
                       <Typography variant="body2" color="text.secondary">
                         No models found matching "{modelFilter}"
                       </Typography>
-                      <Button
-                        size="small"
-                        onClick={() => setModelFilter('')}
-                        sx={{ mt: 1 }}
-                      >
+                      <Button size="small" onClick={() => setModelFilter('')} sx={{ mt: 1 }}>
                         Clear Filter
                       </Button>
                     </Box>
                   ) : (
                     getSortedFilteredModels().map((model) => {
-                    const isEnabled = selectedProvider && isModelEnabled(selectedProvider.id, model.id);
-                    return (
-                      <Box
-                        key={model.id}
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          p: 1,
-                          border: '1px solid',
-                          borderColor: isEnabled ? 'success.main' : 'divider',
-                          borderRadius: 1,
-                          mb: 1,
-                          cursor: isEnabled ? 'default' : 'pointer',
-                          backgroundColor: isEnabled ? 'success.light' : 'transparent',
-                          opacity: isEnabled ? 0.7 : 1,
-                          '&:hover': {
-                            backgroundColor: isEnabled ? 'success.light' : 'action.hover'
-                          }
-                        }}
-                        onClick={() => !isEnabled && handleToggleModel(model.id)}
-                      >
-                        <IconButton size="small" sx={{ mr: 1 }} disabled={isEnabled}>
-                          {isEnabled ? (
-                            <CheckBoxIcon color="success" />
-                          ) : selectedModels.has(model.id) ? (
-                            <CheckBoxIcon color="primary" />
-                          ) : (
-                            <CheckBoxOutlineBlankIcon />
-                          )}
-                        </IconButton>
-                        <Box sx={{ flexGrow: 1 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="body2" fontWeight="medium">
-                              {model.id}
-                            </Typography>
-                            {model.manual && (
-                              <Chip
-                                label="Manual"
-                                size="small"
-                                color="secondary"
-                                variant="outlined"
-                                sx={{ fontSize: '0.7rem', height: '18px' }}
-                              />
+                      const isEnabled = selectedProvider && isModelEnabled(selectedProvider.id, model.id);
+                      return (
+                        <Box
+                          key={model.id}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            p: 1,
+                            border: '1px solid',
+                            borderColor: isEnabled ? 'success.main' : 'divider',
+                            borderRadius: 1,
+                            mb: 1,
+                            cursor: isEnabled ? 'default' : 'pointer',
+                            backgroundColor: isEnabled ? 'success.light' : 'transparent',
+                            opacity: isEnabled ? 0.7 : 1,
+                            '&:hover': {
+                              backgroundColor: isEnabled ? 'success.light' : 'action.hover',
+                            },
+                          }}
+                          onClick={() => !isEnabled && handleToggleModel(model.id)}
+                        >
+                          <IconButton size="small" sx={{ mr: 1 }} disabled={isEnabled}>
+                            {isEnabled ? (
+                              <CheckBoxIcon color="success" />
+                            ) : selectedModels.has(model.id) ? (
+                              <CheckBoxIcon color="primary" />
+                            ) : (
+                              <CheckBoxOutlineBlankIcon />
                             )}
-                            {isEnabled && (
-                              <Chip
-                                label="Enabled"
-                                size="small"
-                                color="success"
-                                variant="filled"
-                                sx={{ fontSize: '0.7rem', height: '18px' }}
-                              />
+                          </IconButton>
+                          <Box sx={{ flexGrow: 1 }}>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1,
+                              }}
+                            >
+                              <Typography variant="body2" fontWeight="medium">
+                                {model.id}
+                              </Typography>
+                              {model.manual && (
+                                <Chip
+                                  label="Manual"
+                                  size="small"
+                                  color="secondary"
+                                  variant="outlined"
+                                  sx={{ fontSize: '0.7rem', height: '18px' }}
+                                />
+                              )}
+                              {isEnabled && (
+                                <Chip
+                                  label="Enabled"
+                                  size="small"
+                                  color="success"
+                                  variant="filled"
+                                  sx={{ fontSize: '0.7rem', height: '18px' }}
+                                />
+                              )}
+                            </Box>
+                            {model.owned_by && (
+                              <Typography variant="caption" color="text.secondary">
+                                Owned by: {model.owned_by}
+                              </Typography>
                             )}
                           </Box>
-                          {model.owned_by && (
-                            <Typography variant="caption" color="text.secondary">
-                              Owned by: {model.owned_by}
-                            </Typography>
-                          )}
                         </Box>
-                      </Box>
-                    );
-                  }))}
+                      );
+                    })
+                  )}
                 </Box>
 
-                <Box sx={{ mt: 2, p: 2, backgroundColor: 'action.hover', borderRadius: 1 }}>
+                <Box
+                  sx={{
+                    mt: 2,
+                    p: 2,
+                    backgroundColor: 'action.hover',
+                    borderRadius: 1,
+                  }}
+                >
                   <Typography variant="body2">
-                    <strong>Showing:</strong> {getSortedFilteredModels().length} of {discoveredModels.length + manualModels.length} models
+                    <strong>Showing:</strong> {getSortedFilteredModels().length} of{' '}
+                    {discoveredModels.length + manualModels.length} models
                     {manualModels.length > 0 && (
                       <span style={{ marginLeft: 8, color: 'text.secondary' }}>
                         ({discoveredModels.length} discovered, {manualModels.length} manual)
                       </span>
                     )}
                     {modelFilter && (
-                      <span style={{ marginLeft: 8, fontStyle: 'italic' }}>
-                        (filtered by "{modelFilter}")
-                      </span>
+                      <span style={{ marginLeft: 8, fontStyle: 'italic' }}>(filtered by "{modelFilter}")</span>
                     )}
                   </Typography>
                   <Typography variant="body2">
@@ -1166,9 +1209,7 @@ const handleEditProvider = (provider) => {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setModelDialogOpen(false)}>
-            Cancel
-          </Button>
+          <Button onClick={() => setModelDialogOpen(false)}>Cancel</Button>
           {discoveredModels.length === 0 && manualModels.length === 0 ? (
             <Button
               variant="contained"

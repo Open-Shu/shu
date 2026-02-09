@@ -1,5 +1,4 @@
-"""
-Error sanitization service for Shu.
+"""Error sanitization service for Shu.
 
 This module provides utilities for sanitizing error messages before displaying
 them to users, ensuring sensitive information like API keys and full URLs are
@@ -8,10 +7,9 @@ not exposed in production environments.
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 import httpx
-
 
 # Patterns for sensitive data that should be sanitized
 API_KEY_PATTERNS = [
@@ -45,22 +43,24 @@ class SanitizedError:
         status_code: HTTP status code.
         suggestions: List of suggested fixes for the error.
         details: Additional context (only included in development mode).
+
     """
 
     message: str
-    error_type: Optional[str] = None
-    error_code: Optional[str] = None
-    status_code: Optional[int] = None
-    suggestions: List[str] = field(default_factory=list)
-    details: Optional[Dict[str, Any]] = None
+    error_type: str | None = None
+    error_code: str | None = None
+    status_code: int | None = None
+    suggestions: list[str] = field(default_factory=list)
+    details: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation.
 
         Returns:
             Dictionary with all non-None fields.
+
         """
-        result: Dict[str, Any] = {"message": self.message}
+        result: dict[str, Any] = {"message": self.message}
         if self.error_type is not None:
             result["error_type"] = self.error_type
         if self.error_code is not None:
@@ -83,7 +83,7 @@ class ErrorSanitizer:
     """
 
     # Error guidance messages for common HTTP status codes
-    ERROR_GUIDANCE: Dict[int, Dict[str, Any]] = {
+    ERROR_GUIDANCE: ClassVar[dict[int, dict[str, Any]]] = {
         400: {
             "message": "The request was invalid or malformed",
             "suggestions": [
@@ -166,6 +166,7 @@ class ErrorSanitizer:
 
         Returns:
             Sanitized string with sensitive data replaced.
+
         """
         if not text:
             return text
@@ -190,7 +191,7 @@ class ErrorSanitizer:
         return result
 
     @staticmethod
-    def sanitize_dict(data: Dict[str, Any], keys_to_redact: Optional[List[str]] = None) -> Dict[str, Any]:
+    def sanitize_dict(data: dict[str, Any], keys_to_redact: list[str] | None = None) -> dict[str, Any]:
         """Recursively sanitize a dictionary.
 
         Args:
@@ -199,6 +200,7 @@ class ErrorSanitizer:
 
         Returns:
             Sanitized dictionary.
+
         """
         if keys_to_redact is None:
             keys_to_redact = [
@@ -214,7 +216,7 @@ class ErrorSanitizer:
                 "x-api-key",
             ]
 
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         for key, value in data.items():
             lower_key = key.lower()
 
@@ -240,7 +242,7 @@ class ErrorSanitizer:
         return result
 
     @classmethod
-    def extract_provider_error(cls, response: httpx.Response) -> Dict[str, Any]:
+    def extract_provider_error(cls, response: httpx.Response) -> dict[str, Any]:
         """Extract structured error information from a provider response.
 
         This method attempts to parse the response body and extract
@@ -256,8 +258,9 @@ class ErrorSanitizer:
                 - error_code: The error code
                 - status_code: HTTP status code
                 - raw_body: The raw response body (for debugging)
+
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "message": None,
             "error_type": None,
             "error_code": None,
@@ -297,9 +300,7 @@ class ErrorSanitizer:
                 or error_section.get("status")
             )
             result["error_type"] = (
-                error_section.get("type")
-                or error_section.get("status")
-                or error_section.get("reason")
+                error_section.get("type") or error_section.get("status") or error_section.get("reason")
             )
             result["error_code"] = error_section.get("code") or error_section.get("status")
 
@@ -307,16 +308,8 @@ class ErrorSanitizer:
             # Array of errors format
             first_error = error_section[0]
             if isinstance(first_error, dict):
-                result["message"] = (
-                    first_error.get("message")
-                    or first_error.get("detail")
-                    or first_error.get("error")
-                )
-                result["error_type"] = (
-                    first_error.get("type")
-                    or first_error.get("status")
-                    or first_error.get("reason")
-                )
+                result["message"] = first_error.get("message") or first_error.get("detail") or first_error.get("error")
+                result["error_type"] = first_error.get("type") or first_error.get("status") or first_error.get("reason")
                 result["error_code"] = first_error.get("code") or first_error.get("status")
             elif isinstance(first_error, str):
                 result["message"] = first_error
@@ -344,7 +337,7 @@ class ErrorSanitizer:
     @classmethod
     def sanitize_error(
         cls,
-        error_details: Dict[str, Any],
+        error_details: dict[str, Any],
     ) -> SanitizedError:
         """Sanitize error details for safe display to users.
 
@@ -363,16 +356,14 @@ class ErrorSanitizer:
 
         Returns:
             SanitizedError with sanitized information safe for display.
+
         """
         status_code = error_details.get("status_code") or error_details.get("status")
         error_type = error_details.get("error_type") or error_details.get("provider_error_type")
         error_code = error_details.get("error_code") or error_details.get("provider_error_code")
 
         # Get the provider message
-        provider_message = (
-            error_details.get("message")
-            or error_details.get("provider_message")
-        )
+        provider_message = error_details.get("message") or error_details.get("provider_message")
 
         # Get guidance for this status code
         guidance = cls.ERROR_GUIDANCE.get(status_code, {})
@@ -380,13 +371,10 @@ class ErrorSanitizer:
         suggestions = list(guidance.get("suggestions", []))
 
         # Always sanitize the provider message
-        if provider_message:
-            message = cls.sanitize_string(provider_message)
-        else:
-            message = default_message
+        message = cls.sanitize_string(provider_message) if provider_message else default_message
 
         # No details dict in any environment for security
-        details: Optional[Dict[str, Any]] = None
+        details: dict[str, Any] | None = None
 
         return SanitizedError(
             message=message,
@@ -398,7 +386,7 @@ class ErrorSanitizer:
         )
 
     @classmethod
-    def get_error_guidance(cls, status_code: int) -> Dict[str, Any]:
+    def get_error_guidance(cls, status_code: int) -> dict[str, Any]:
         """Get error guidance for a specific HTTP status code.
 
         Args:
@@ -406,6 +394,7 @@ class ErrorSanitizer:
 
         Returns:
             Dictionary with 'message' and 'suggestions' keys.
+
         """
         return cls.ERROR_GUIDANCE.get(
             status_code,

@@ -1,16 +1,14 @@
-"""
-Configuration management for Shu RAG Backend.
+"""Configuration management for Shu RAG Backend.
 
 Uses Pydantic Settings for type-safe, environment-based configuration.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Union
-import os
-from functools import lru_cache
+from typing import Any
+
 from dotenv import load_dotenv
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load environment variables from .env file
 # Use override=True to ensure .env changes take effect immediately
@@ -27,11 +25,11 @@ class Settings(BaseSettings):
     version: str = Field("0.0.0-dev", alias="SHU_APP_VERSION")
     git_sha: str = Field("unknown", alias="SHU_GIT_SHA")
     build_timestamp: str = Field("unknown", alias="SHU_BUILD_TIMESTAMP")
-    db_release: Optional[str] = Field(None, alias="SHU_DB_RELEASE")
+    db_release: str | None = Field(None, alias="SHU_DB_RELEASE")
 
     # API configuration
     api_v1_prefix: str = "/api/v1"
-    api_host: str = Field("0.0.0.0", alias="SHU_API_HOST")
+    api_host: str = Field("127.0.0.1", alias="SHU_API_HOST")
     api_port: int = Field(8000, alias="SHU_API_PORT")
     environment: str = Field("development", alias="SHU_ENVIRONMENT")
     reload: bool = Field(False, alias="SHU_RELOAD")
@@ -51,34 +49,36 @@ class Settings(BaseSettings):
     redis_required: bool = Field(False, alias="SHU_REDIS_REQUIRED")
 
     # Google Drive configuration
-    google_service_account_json: Optional[str] = Field(None, alias="GOOGLE_SERVICE_ACCOUNT_JSON")
+    google_service_account_json: str | None = Field(None, alias="GOOGLE_SERVICE_ACCOUNT_JSON")
 
     # Unified OAuth redirect URI (shared by all providers)
     oauth_redirect_uri: str = Field("http://localhost:8000/auth/callback", alias="OAUTH_REDIRECT_URI")
 
     # Google SSO configuration
-    google_client_id: Optional[str] = Field(None, alias="GOOGLE_CLIENT_ID")
-    google_client_secret: Optional[str] = Field(None, alias="GOOGLE_CLIENT_SECRET")
+    google_client_id: str | None = Field(None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(None, alias="GOOGLE_CLIENT_SECRET")
     # Legacy: Use OAUTH_REDIRECT_URI instead. This is kept for backward compatibility.
-    google_redirect_uri: Optional[str] = Field(None, alias="GOOGLE_REDIRECT_URI")
+    google_redirect_uri: str | None = Field(None, alias="GOOGLE_REDIRECT_URI")
 
     # Microsoft 365 OAuth configuration
-    microsoft_client_id: Optional[str] = Field(None, alias="MICROSOFT_CLIENT_ID")
-    microsoft_client_secret: Optional[str] = Field(None, alias="MICROSOFT_CLIENT_SECRET")
-    microsoft_tenant_id: Optional[str] = Field(None, alias="MICROSOFT_TENANT_ID")
+    microsoft_client_id: str | None = Field(None, alias="MICROSOFT_CLIENT_ID")
+    microsoft_client_secret: str | None = Field(None, alias="MICROSOFT_CLIENT_SECRET")
+    microsoft_tenant_id: str | None = Field(None, alias="MICROSOFT_TENANT_ID")
 
     # Google Workspace configuration for organizational intelligence
-    google_service_account_file: Optional[str] = Field(None, alias="GOOGLE_SERVICE_ACCOUNT_FILE")
-    google_admin_user_email: Optional[str] = Field(None, alias="GOOGLE_ADMIN_USER_EMAIL") # only needed for Admin Directory API integration tests
-    google_domain: Optional[str] = Field(None, alias="GOOGLE_DOMAIN")
+    google_service_account_file: str | None = Field(None, alias="GOOGLE_SERVICE_ACCOUNT_FILE")
+    google_admin_user_email: str | None = Field(
+        None, alias="GOOGLE_ADMIN_USER_EMAIL"
+    )  # only needed for Admin Directory API integration tests
+    google_domain: str | None = Field(None, alias="GOOGLE_DOMAIN")
 
     # JWT configuration
-    jwt_secret_key: Optional[str] = Field(None, alias="JWT_SECRET_KEY")
+    jwt_secret_key: str | None = Field(None, alias="JWT_SECRET_KEY")
     jwt_access_token_expire_minutes: int = Field(60, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     jwt_refresh_token_expire_days: int = Field(30, alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
 
     # Admin configuration
-    admin_emails: List[str] = Field(default_factory=list, alias="ADMIN_EMAILS")
+    admin_emails: list[str] = Field(default_factory=list, alias="ADMIN_EMAILS")
 
     # Embedding configuration
     default_embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", alias="SHU_EMBEDDING_MODEL")
@@ -97,7 +97,9 @@ class Settings(BaseSettings):
 
     # Text extraction timeout configuration (system-level, not user-configurable)
     text_extraction_timeout_default: int = Field(1800, alias="SHU_TEXT_EXTRACTION_TIMEOUT")  # 30 minutes for OCR
-    text_extraction_fast_timeout_default: int = Field(300, alias="SHU_TEXT_EXTRACTION_FAST_TIMEOUT")  # 5 minutes for fast extraction
+    text_extraction_fast_timeout_default: int = Field(
+        300, alias="SHU_TEXT_EXTRACTION_FAST_TIMEOUT"
+    )  # 5 minutes for fast extraction
 
     # Vector database configuration
     vector_index_type: str = Field("ivfflat", alias="SHU_VECTOR_INDEX_TYPE")
@@ -105,7 +107,7 @@ class Settings(BaseSettings):
 
     # Performance configuration
     batch_size: int = Field(10, alias="SHU_BATCH_SIZE")
-    max_workers: int = Field(4, alias="SHU_MAX_WORKERS")
+    embedding_threads: int = Field(4, alias="SHU_EMBEDDING_THREADS")  # Thread pool size for CPU-bound embedding work
     download_concurrency: int = Field(3, alias="SHU_DOWNLOAD_CONCURRENCY")
     cache_ttl: int = Field(3600, alias="SHU_CACHE_TTL")
 
@@ -117,19 +119,25 @@ class Settings(BaseSettings):
     branding_assets_dir: str = Field("./data/branding", alias="SHU_BRANDING_ASSETS_DIR")
     branding_default_logo_url: str = Field("/logo-wide.png", alias="SHU_BRANDING_DEFAULT_LOGO_URL")
     branding_default_favicon_url: str = Field("/favicon.png", alias="SHU_BRANDING_DEFAULT_FAVICON_URL")
-    branding_allowed_logo_extensions: List[str] = Field(default_factory=lambda: ["png", "jpg", "jpeg", "svg", "webp"], alias="SHU_BRANDING_ALLOWED_LOGO_EXTENSIONS")
-    branding_allowed_favicon_extensions: List[str] = Field(default_factory=lambda: ["ico", "png", "svg", "webp"], alias="SHU_BRANDING_ALLOWED_FAVICON_EXTENSIONS")
+    branding_allowed_logo_extensions: list[str] = Field(
+        default_factory=lambda: ["png", "jpg", "jpeg", "svg", "webp"],
+        alias="SHU_BRANDING_ALLOWED_LOGO_EXTENSIONS",
+    )
+    branding_allowed_favicon_extensions: list[str] = Field(
+        default_factory=lambda: ["ico", "png", "svg", "webp"],
+        alias="SHU_BRANDING_ALLOWED_FAVICON_EXTENSIONS",
+    )
     branding_max_asset_size_bytes: int = Field(2 * 1024 * 1024, alias="SHU_BRANDING_MAX_ASSET_SIZE_BYTES")
 
     # Security configuration
-    api_key: Optional[str] = Field(None, alias="SHU_API_KEY")
+    api_key: str | None = Field(None, alias="SHU_API_KEY")
     # When using the global API key (Tier 0), map it to this user's identity for RBAC
-    api_key_user_email: Optional[str] = Field(None, alias="SHU_API_KEY_USER_EMAIL")
-    secret_key: Optional[str] = Field(None, alias="SHU_SECRET_KEY")
-    allowed_origins: List[str] = ["*"]
+    api_key_user_email: str | None = Field(None, alias="SHU_API_KEY_USER_EMAIL")
+    secret_key: str | None = Field(None, alias="SHU_SECRET_KEY")
+    allowed_origins: list[str] = ["*"]
     cors_credentials: bool = True
     # Trusted hosts for Host header validation (non-dev)
-    allowed_hosts: List[str] = Field(default=["*"], alias="SHU_ALLOWED_HOSTS")
+    allowed_hosts: list[str] = Field(default=["*"], alias="SHU_ALLOWED_HOSTS")
 
     # Monitoring configuration
     enable_metrics: bool = True
@@ -140,10 +148,16 @@ class Settings(BaseSettings):
     sync_timeout: int = Field(3600, alias="SHU_SYNC_TIMEOUT")  # 1 hour
     sync_retry_attempts: int = Field(3, alias="SHU_SYNC_RETRY_ATTEMPTS")  # Default retry attempts
 
-    # Worker mode configuration
-    worker_mode: str = Field("inline", alias="SHU_WORKER_MODE")  # "inline" or "dedicated"
+    # Worker configuration
+    workers_enabled: bool = Field(True, alias="SHU_WORKERS_ENABLED")  # Run background workers in this process
+    worker_concurrency: int = Field(10, alias="SHU_WORKER_CONCURRENCY")  # Number of concurrent worker tasks per process
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
+
+    # File staging configuration (for document ingestion pipeline)
+    file_staging_ttl: int = Field(
+        3600, alias="SHU_FILE_STAGING_TTL"
+    )  # TTL in seconds for staged files (default: 1 hour)
 
     # API Rate Limiting (HTTP request throttling, not LLM-specific)
     enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
@@ -154,8 +168,12 @@ class Settings(BaseSettings):
 
     # LLM Provider Rate Limiting Defaults (0 = unlimited)
     # These are used as defaults when creating new providers; per-provider overrides are stored in the database
-    llm_rate_limit_rpm_default: int = Field(0, alias="SHU_LLM_RATE_LIMIT_RPM_DEFAULT")  # requests per minute, 0 = unlimited
-    llm_rate_limit_tpm_default: int = Field(0, alias="SHU_LLM_RATE_LIMIT_TPM_DEFAULT")  # tokens per minute, 0 = unlimited
+    llm_rate_limit_rpm_default: int = Field(
+        0, alias="SHU_LLM_RATE_LIMIT_RPM_DEFAULT"
+    )  # requests per minute, 0 = unlimited
+    llm_rate_limit_tpm_default: int = Field(
+        0, alias="SHU_LLM_RATE_LIMIT_TPM_DEFAULT"
+    )  # tokens per minute, 0 = unlimited
 
     # Quotas (per-plugin/per-user)
     plugin_quota_daily_requests_default: int = Field(0, alias="SHU_PLUGIN_QUOTA_DAILY_REQUESTS_DEFAULT")
@@ -168,7 +186,7 @@ class Settings(BaseSettings):
 
     # HTTP Egress Policy for HostCapabilities.http
     # Comma-separated domain suffixes or exact hosts; empty = allow all (development default)
-    http_egress_allowlist: Optional[List[str]] = Field(default=None, alias="SHU_HTTP_EGRESS_ALLOWLIST")
+    http_egress_allowlist: list[str] | None = Field(default=None, alias="SHU_HTTP_EGRESS_ALLOWLIST")
     # Default timeout (seconds) for host.http requests
     http_default_timeout: float = Field(30.0, alias="SHU_HTTP_DEFAULT_TIMEOUT")
 
@@ -178,23 +196,39 @@ class Settings(BaseSettings):
     max_batch_size: int = Field(100, alias="SHU_MAX_BATCH_SIZE")  # items per batch
     max_request_size: int = Field(10 * 1024 * 1024, alias="SHU_MAX_REQUEST_SIZE")  # 10MB in bytes
 
-
     # Plugin execution size caps (0 disables limit for that direction)
     plugin_exec_input_max_bytes: int = Field(256 * 1024, alias="SHU_PLUGIN_EXEC_INPUT_MAX_BYTES")
     plugin_exec_output_max_bytes: int = Field(1 * 1024 * 1024, alias="SHU_PLUGIN_EXEC_OUTPUT_MAX_BYTES")
 
     # Chat attachments
     chat_attachment_max_size: int = Field(20 * 1024 * 1024, alias="SHU_CHAT_ATTACHMENT_MAX_SIZE")  # 20MB
-    chat_attachment_allowed_types: List[str] = Field(default_factory=lambda: ["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "gif", "webp"], alias="SHU_CHAT_ATTACHMENT_ALLOWED_TYPES")
+    chat_attachment_allowed_types: list[str] = Field(
+        default_factory=lambda: ["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "gif", "webp"],
+        alias="SHU_CHAT_ATTACHMENT_ALLOWED_TYPES",
+    )
     chat_attachment_ttl_days: int = Field(14, alias="SHU_CHAT_ATTACHMENT_TTL_DAYS")
     chat_attachment_storage_dir: str = Field("./data/attachments", alias="SHU_CHAT_ATTACHMENT_STORAGE_DIR")
     chat_ensemble_max_models: int = Field(3, alias="SHU_CHAT_ENSEMBLE_MAX_MODELS")
 
     # KB document upload (types supported by text extractor - no standalone image OCR)
     kb_upload_max_size: int = Field(50 * 1024 * 1024, alias="SHU_KB_UPLOAD_MAX_SIZE")  # 50MB
-    kb_upload_allowed_types: List[str] = Field(
-        default_factory=lambda: ["pdf", "docx", "doc", "txt", "md", "rtf", "html", "htm", "csv", "py", "js", "xlsx", "pptx"],
-        alias="SHU_KB_UPLOAD_ALLOWED_TYPES"
+    kb_upload_allowed_types: list[str] = Field(
+        default_factory=lambda: [
+            "pdf",
+            "docx",
+            "doc",
+            "txt",
+            "md",
+            "rtf",
+            "html",
+            "htm",
+            "csv",
+            "py",
+            "js",
+            "xlsx",
+            "pptx",
+        ],
+        alias="SHU_KB_UPLOAD_ALLOWED_TYPES",
     )
 
     # Shu RAG Document Profiling (SHU-343)
@@ -248,15 +282,16 @@ class Settings(BaseSettings):
             return v
 
     # LLM Configuration
-    llm_encryption_key: Optional[str] = Field(None, alias="SHU_LLM_ENCRYPTION_KEY")
+    llm_encryption_key: str | None = Field(None, alias="SHU_LLM_ENCRYPTION_KEY")
 
     # Chat attachment context limits
     chat_attachment_max_chars_per_file: int = Field(5000, alias="SHU_CHAT_ATTACHMENT_MAX_CHARS_PER_FILE")
     chat_attachment_max_total_chars: int = Field(15000, alias="SHU_CHAT_ATTACHMENT_MAX_TOTAL_CHARS")
 
-
     # Attachment cleanup scheduler
-    chat_attachment_cleanup_interval_seconds: int = Field(6 * 3600, alias="SHU_CHAT_ATTACHMENT_CLEANUP_INTERVAL_SECONDS")
+    chat_attachment_cleanup_interval_seconds: int = Field(
+        6 * 3600, alias="SHU_CHAT_ATTACHMENT_CLEANUP_INTERVAL_SECONDS"
+    )
 
     # Conversation automation defaults
     conversation_summary_prompt: str = Field(
@@ -273,18 +308,14 @@ class Settings(BaseSettings):
             - No prose, no headers, no explanations—just bullets.
             - If evidence is thin, append " (?)" at the end of that bullet.
         """,
-        alias="SHU_CONVERSATION_SUMMARY_PROMPT"
+        alias="SHU_CONVERSATION_SUMMARY_PROMPT",
     )
     conversation_summary_timeout_ms: int = Field(15000, alias="SHU_CONVERSATION_SUMMARY_TIMEOUT_MS")
-    conversation_summary_max_recent_messages: int = Field(
-        40, alias="SHU_CONVERSATION_SUMMARY_MAX_RECENT_MESSAGES"
-    )
+    conversation_summary_max_recent_messages: int = Field(40, alias="SHU_CONVERSATION_SUMMARY_MAX_RECENT_MESSAGES")
     conversation_summary_search_min_token_length: int = Field(
         3, alias="SHU_CONVERSATION_SUMMARY_SEARCH_MIN_TOKEN_LENGTH"
     )
-    conversation_summary_search_max_tokens: int = Field(
-        10, alias="SHU_CONVERSATION_SUMMARY_SEARCH_MAX_TOKENS"
-    )
+    conversation_summary_search_max_tokens: int = Field(10, alias="SHU_CONVERSATION_SUMMARY_SEARCH_MAX_TOKENS")
 
     conversation_auto_rename_prompt: str = Field(
         """
@@ -297,7 +328,7 @@ class Settings(BaseSettings):
             - Do not use bullet points.
             - No prose, no headers, no explanations—just text.
         """,
-        alias="SHU_CONVERSATION_AUTO_RENAME_PROMPT"
+        alias="SHU_CONVERSATION_AUTO_RENAME_PROMPT",
     )
     conversation_auto_rename_timeout_ms: int = Field(8000, alias="SHU_CONVERSATION_AUTO_RENAME_TIMEOUT_MS")
 
@@ -310,20 +341,19 @@ class Settings(BaseSettings):
 
     plugins_scheduler_retry_backoff_seconds: int = Field(5, alias="SHU_PLUGINS_SCHEDULER_RETRY_BACKOFF_SECONDS")
 
-
     # Chat Plugins (disabled by default; enable when Chat M1 slice resumes)
     chat_plugins_enabled: bool = Field(False, alias="SHU_CHAT_PLUGINS_ENABLED")
 
     llm_dev_mode: bool = Field(False, alias="SHU_LLM_DEV_MODE")
 
     # OAuth Token Encryption
-    oauth_encryption_key: Optional[str] = Field(None, alias="SHU_OAUTH_ENCRYPTION_KEY")
+    oauth_encryption_key: str | None = Field(None, alias="SHU_OAUTH_ENCRYPTION_KEY")
 
     # Development fallback LLM configuration
     default_llm_provider: str = Field("openai", alias="SHU_DEFAULT_LLM_PROVIDER")
     default_llm_model: str = Field("gpt-4", alias="SHU_DEFAULT_LLM_MODEL")
-    openai_api_key: Optional[str] = Field(None, alias="OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = Field(None, alias="ANTHROPIC_API_KEY")
+    openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None = Field(None, alias="ANTHROPIC_API_KEY")
 
     # Global LLM limits
     llm_global_timeout: int = Field(30, alias="SHU_LLM_GLOBAL_TIMEOUT")
@@ -381,7 +411,7 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def validate_database_url(cls, v):
+    def validate_database_url(cls, v: str) -> str:
         """Validate database URL format."""
         if not v.startswith(("postgresql://", "postgresql+psycopg2://", "postgresql+asyncpg://")):
             raise ValueError("Database URL must be PostgreSQL")
@@ -389,7 +419,7 @@ class Settings(BaseSettings):
 
     @field_validator("log_level")
     @classmethod
-    def validate_log_level(cls, v):
+    def validate_log_level(cls, v: str) -> str:
         """Validate log level."""
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if v.upper() not in valid_levels:
@@ -398,7 +428,7 @@ class Settings(BaseSettings):
 
     @field_validator("log_format")
     @classmethod
-    def validate_log_format(cls, v):
+    def validate_log_format(cls, v: str) -> str:
         """Validate log format."""
         valid_formats = ["text", "json"]
         if v.lower() not in valid_formats:
@@ -407,7 +437,7 @@ class Settings(BaseSettings):
 
     @field_validator("environment")
     @classmethod
-    def validate_environment(cls, v):
+    def validate_environment(cls, v: str) -> str:
         """Validate environment setting."""
         valid_environments = ["development", "staging", "production"]
         if v.lower() not in valid_environments:
@@ -416,7 +446,7 @@ class Settings(BaseSettings):
 
     @field_validator("vector_index_type")
     @classmethod
-    def validate_vector_index_type(cls, v):
+    def validate_vector_index_type(cls, v: str) -> str:
         """Validate vector index type."""
         valid_types = ["ivfflat", "hnsw"]
         if v.lower() not in valid_types:
@@ -425,7 +455,7 @@ class Settings(BaseSettings):
 
     @field_validator("google_service_account_json")
     @classmethod
-    def validate_google_credentials(cls, v):
+    def validate_google_credentials(cls, v: str) -> str | None:
         """Validate Google service account credentials."""
         if v and not v.strip():
             return None
@@ -433,7 +463,7 @@ class Settings(BaseSettings):
 
     @field_validator("http_egress_allowlist", mode="before")
     @classmethod
-    def validate_http_allowlist(cls, v):
+    def validate_http_allowlist(cls, v: str | list) -> list | None:
         """Allow comma-separated string or list for egress allowlist. Empty => None (allow all)."""
         if v is None:
             return None
@@ -450,24 +480,15 @@ class Settings(BaseSettings):
 
     @field_validator("admin_emails", mode="before")
     @classmethod
-    def validate_admin_emails(cls, v):
+    def validate_admin_emails(cls, v: str | list) -> list:
         """Parse admin emails from comma-separated string or list."""
         if isinstance(v, str):
             if not v.strip():
                 return []
             return [email.strip() for email in v.split(",") if email.strip()]
-        elif isinstance(v, list):
+        if isinstance(v, list):
             return [email.strip() for email in v if email.strip()]
         return []
-
-    @field_validator("worker_mode")
-    @classmethod
-    def validate_worker_mode(cls, v):
-        """Validate worker mode setting."""
-        valid_modes = ["inline", "dedicated"]
-        if v.lower() not in valid_modes:
-            raise ValueError(f"Worker mode must be one of: {valid_modes}")
-        return v.lower()
 
     def get_oauth_redirect_uri(self, provider: str = "google") -> str:
         """Get the effective OAuth redirect URI for a provider.
@@ -480,8 +501,10 @@ class Settings(BaseSettings):
 
         Returns:
             The effective redirect URI to use
+
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         # Check for legacy Google-specific setting
@@ -498,7 +521,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
-        extra="ignore"  # Ignore extra environment variables instead of forbidding them
+        extra="ignore",  # Ignore extra environment variables instead of forbidding them
     )
 
 
@@ -513,16 +536,15 @@ settings = None
 
 def get_settings_instance() -> Settings:
     """Get the global settings instance, creating it if necessary."""
-    global settings
+    global settings  # noqa: PLW0603 # It is currently working, so we'll leave it as is
     if settings is None:
         settings = get_settings()
     return settings
 
 
 class ConfigurationManager:
-    """
-    Centralized configuration manager that handles the priority cascade:
-    User Preferences → Model Config → KB Config → Global Defaults
+    """Centralized configuration manager that handles the priority cascade:
+    User Preferences → Model Config → KB Config → Global Defaults.
 
     This replaces hardcoded values throughout the codebase and ensures
     consistent configuration resolution following the established hierarchy.
@@ -531,18 +553,17 @@ class ConfigurationManager:
     and loose coupling. Use get_config_manager() dependency in FastAPI endpoints.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     # RAG Configuration Resolution
     def get_rag_search_threshold(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> float:
-        """
-        Get search threshold with proper priority cascade.
+        """Get search threshold with proper priority cascade.
 
         Priority: user_prefs → model_config → kb_config → global_default
         Note: Currently user_prefs should NOT override KB settings (per user feedback)
@@ -556,9 +577,9 @@ class ConfigurationManager:
 
     def get_rag_max_results(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
         """Get max results with proper priority cascade."""
         # Skip user preferences for RAG settings
@@ -570,9 +591,9 @@ class ConfigurationManager:
 
     def get_rag_search_type(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> str:
         """Get search type with proper priority cascade."""
         # Skip user preferences for RAG settings
@@ -584,9 +605,9 @@ class ConfigurationManager:
 
     def get_rag_context_format(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> str:
         """Get context format with proper priority cascade."""
         # Skip user preferences for RAG settings
@@ -598,9 +619,9 @@ class ConfigurationManager:
 
     def get_rag_reference_format(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> str:
         """Get reference format with proper priority cascade."""
         # Skip user preferences for RAG settings
@@ -612,9 +633,9 @@ class ConfigurationManager:
 
     def get_rag_include_references(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> bool:
         """Get include references with proper priority cascade."""
         # Skip user preferences for RAG settings
@@ -626,9 +647,9 @@ class ConfigurationManager:
 
     def get_rag_chunk_overlap_ratio(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> float:
         """Get chunk overlap ratio with proper priority cascade."""
         # Skip user preferences for RAG settings
@@ -638,17 +659,14 @@ class ConfigurationManager:
             return float(model_config["chunk_overlap_ratio"])
         return self.settings.rag_chunk_overlap_ratio_default
 
-
-
     # LLM Configuration Resolution
     def get_llm_temperature(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> float:
-        """
-        Get LLM temperature with proper priority cascade.
+        """Get LLM temperature with proper priority cascade.
 
         Priority: model_config → global_default
         Note: User preferences should NOT override model configuration
@@ -659,9 +677,9 @@ class ConfigurationManager:
 
     def get_llm_max_tokens(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
         """Get LLM max tokens with proper priority cascade."""
         if model_config and model_config.get("max_tokens") is not None:
@@ -671,12 +689,11 @@ class ConfigurationManager:
     # User Preferences Resolution (legitimate user settings)
     def get_user_memory_depth(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
-        """
-        Get user memory depth with proper priority cascade.
+        """Get user memory depth with proper priority cascade.
 
         Priority: user_prefs → global_default
         This is a legitimate user preference that users can control.
@@ -687,9 +704,9 @@ class ConfigurationManager:
 
     def get_user_memory_similarity_threshold(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> float:
         """Get user memory similarity threshold with proper priority cascade."""
         if user_prefs and user_prefs.get("memory_similarity_threshold") is not None:
@@ -698,9 +715,9 @@ class ConfigurationManager:
 
     def get_user_theme(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> str:
         """Get user theme with proper priority cascade."""
         if user_prefs and user_prefs.get("theme"):
@@ -709,9 +726,9 @@ class ConfigurationManager:
 
     def get_user_language(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> str:
         """Get user language with proper priority cascade."""
         if user_prefs and user_prefs.get("language"):
@@ -720,9 +737,9 @@ class ConfigurationManager:
 
     def get_user_timezone(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> str:
         """Get user timezone with proper priority cascade."""
         if user_prefs and user_prefs.get("timezone"):
@@ -730,12 +747,8 @@ class ConfigurationManager:
         return self.settings.user_timezone_default
 
     # Hybrid Search Configuration Methods
-    def get_hybrid_similarity_weight(
-        self,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> float:
-        """
-        Get hybrid search similarity weight with proper priority cascade.
+    def get_hybrid_similarity_weight(self, kb_config: dict[str, Any] | None = None) -> float:
+        """Get hybrid search similarity weight with proper priority cascade.
 
         Priority: kb_config → global_default
         """
@@ -743,12 +756,8 @@ class ConfigurationManager:
             return float(kb_config["hybrid_similarity_weight"])
         return self.settings.hybrid_similarity_weight_default
 
-    def get_hybrid_keyword_weight(
-        self,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> float:
-        """
-        Get hybrid search keyword weight with proper priority cascade.
+    def get_hybrid_keyword_weight(self, kb_config: dict[str, Any] | None = None) -> float:
+        """Get hybrid search keyword weight with proper priority cascade.
 
         Priority: kb_config → global_default
         """
@@ -756,29 +765,22 @@ class ConfigurationManager:
             return float(kb_config["hybrid_keyword_weight"])
         return self.settings.hybrid_keyword_weight_default
 
-    def get_hybrid_search_weights(
-        self,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, float]:
-        """
-        Get hybrid search weights with proper priority cascade.
+    def get_hybrid_search_weights(self, kb_config: dict[str, Any] | None = None) -> dict[str, float]:
+        """Get hybrid search weights with proper priority cascade.
 
         Returns a dictionary with 'similarity_weight' and 'keyword_weight'.
         """
         similarity_weight = self.get_hybrid_similarity_weight(kb_config)
         keyword_weight = self.get_hybrid_keyword_weight(kb_config)
 
-        return {
-            "similarity_weight": similarity_weight,
-            "keyword_weight": keyword_weight
-        }
+        return {"similarity_weight": similarity_weight, "keyword_weight": keyword_weight}
 
     # Title Search Configuration Methods
     def get_title_weighting_enabled(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> bool:
         """Get whether title weighting is enabled."""
         # Skip user preferences for RAG settings
@@ -790,9 +792,9 @@ class ConfigurationManager:
 
     def get_title_weight_multiplier(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> float:
         """Get title weight multiplier."""
         # Skip user preferences for RAG settings
@@ -804,9 +806,9 @@ class ConfigurationManager:
 
     def get_title_chunk_enabled(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> bool:
         """Get whether title chunks are enabled."""
         # Skip user preferences for RAG settings
@@ -818,9 +820,9 @@ class ConfigurationManager:
 
     def get_max_chunks_per_document(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
         """Get maximum chunks per document."""
         # Skip user preferences for RAG settings
@@ -832,9 +834,9 @@ class ConfigurationManager:
 
     def get_rag_minimum_query_words(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
         """Get minimum query words required for RAG processing."""
         # Skip user preferences for RAG settings
@@ -847,12 +849,11 @@ class ConfigurationManager:
     # Utility Methods
     def get_rag_config_dict(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Get complete RAG configuration as a dictionary.
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Get complete RAG configuration as a dictionary.
 
         This replaces all the hardcoded default dictionaries scattered
         throughout the codebase (like in query_service.py, chat_service.py, etc.)
@@ -870,45 +871,43 @@ class ConfigurationManager:
             "title_weighting_enabled": self.get_title_weighting_enabled(user_prefs, model_config, kb_config),
             "title_weight_multiplier": self.get_title_weight_multiplier(user_prefs, model_config, kb_config),
             "title_chunk_enabled": self.get_title_chunk_enabled(user_prefs, model_config, kb_config),
-
             # Chunking
             "max_chunks_per_document": self.get_max_chunks_per_document(user_prefs, model_config, kb_config),
-
             # Query
             "minimum_query_words": self.get_rag_minimum_query_words(user_prefs, model_config, kb_config),
-
             # Full document escalation
             "fetch_full_documents": self.get_full_document_enabled(user_prefs, model_config, kb_config),
             "full_doc_max_docs": self.get_full_document_max_docs(user_prefs, model_config, kb_config),
             "full_doc_token_cap": self.get_full_document_token_cap(user_prefs, model_config, kb_config),
-
             # Version
             "version": "1.0",
         }
 
-
     def get_llm_config_dict(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Return the resolved LLM configuration built from optional user, model, and KB overrides.
-        
-        Parameters:
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return the resolved LLM configuration built from optional user, model, and KB overrides.
+
+        Parameters
+        ----------
             user_prefs (Optional[Dict[str, Any]]): User-specific LLM preferences that can override model or KB settings.
             model_config (Optional[Dict[str, Any]]): Model-specific LLM configuration that can override KB defaults.
             kb_config (Optional[Dict[str, Any]]): Knowledge-base-specific LLM configuration with the lowest override precedence.
-        
-        Returns:
+
+        Returns
+        -------
             Dict[str, Any]: Dictionary with keys:
                 - "temperature" (float): Resolved sampling temperature.
                 - "max_tokens" (int): Resolved maximum token count for responses.
                 - "timeout" (float): Global LLM request timeout from settings.
-        
-        Notes:
+
+        Notes
+        -----
             Rate limits are provider-specific and are not included in this dictionary.
+
         """
         return {
             "temperature": self.get_llm_temperature(user_prefs, model_config, kb_config),
@@ -918,26 +917,29 @@ class ConfigurationManager:
 
     def get_user_preferences_dict(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Assembles the effective user-controllable preferences by resolving available overrides.
-        
-        Parameters:
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Assembles the effective user-controllable preferences by resolving available overrides.
+
+        Parameters
+        ----------
             user_prefs (Optional[Dict[str, Any]]): User-provided preference overrides.
             model_config (Optional[Dict[str, Any]]): Model-level preference overrides.
             kb_config (Optional[Dict[str, Any]]): Knowledge-base-level preference overrides.
-        
-        Returns:
+
+        Returns
+        -------
             Dict[str, Any]: Dictionary with keys `memory_depth`, `memory_similarity_threshold`, `theme`, `language`, and `timezone`, resolved with priority: user_prefs → model_config → kb_config → global defaults.
+
         """
         return {
             # Memory settings (legitimate user preferences)
             "memory_depth": self.get_user_memory_depth(user_prefs, model_config, kb_config),
-            "memory_similarity_threshold": self.get_user_memory_similarity_threshold(user_prefs, model_config, kb_config),
-
+            "memory_similarity_threshold": self.get_user_memory_similarity_threshold(
+                user_prefs, model_config, kb_config
+            ),
             # UI/UX preferences (legitimate user preferences)
             "theme": self.get_user_theme(user_prefs, model_config, kb_config),
             "language": self.get_user_language(user_prefs, model_config, kb_config),
@@ -947,9 +949,9 @@ class ConfigurationManager:
     # Full Document Escalation Methods
     def get_full_document_enabled(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> bool:
         if kb_config and kb_config.get("fetch_full_documents") is not None:
             return bool(kb_config["fetch_full_documents"])
@@ -959,9 +961,9 @@ class ConfigurationManager:
 
     def get_full_document_max_docs(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
         if kb_config and kb_config.get("full_doc_max_docs") is not None:
             return int(kb_config["full_doc_max_docs"])
@@ -971,9 +973,9 @@ class ConfigurationManager:
 
     def get_full_document_token_cap(
         self,
-        user_prefs: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        kb_config: Optional[Dict[str, Any]] = None
+        user_prefs: dict[str, Any] | None = None,
+        model_config: dict[str, Any] | None = None,
+        kb_config: dict[str, Any] | None = None,
     ) -> int:
         if kb_config and kb_config.get("full_doc_token_cap") is not None:
             return int(kb_config["full_doc_token_cap"])
@@ -982,13 +984,8 @@ class ConfigurationManager:
         return self.settings.rag_full_doc_token_cap_default
 
     # Text Extraction Configuration (System-level, not user-configurable)
-    def get_text_extraction_timeout(
-        self,
-        use_ocr: bool = True,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> int:
-        """
-        Get text extraction timeout based on processing method.
+    def get_text_extraction_timeout(self, use_ocr: bool = True, kb_config: dict[str, Any] | None = None) -> int:
+        """Get text extraction timeout based on processing method.
 
         Args:
             use_ocr: Whether OCR processing is being used
@@ -996,6 +993,7 @@ class ConfigurationManager:
 
         Returns:
             Timeout in seconds
+
         """
         # Future: Could allow KB-level timeout overrides
         if kb_config and "text_extraction_timeout" in kb_config:
@@ -1004,16 +1002,12 @@ class ConfigurationManager:
         # Use OCR timeout for OCR processing, fast timeout for text extraction
         if use_ocr:
             return self.settings.text_extraction_timeout_default
-        else:
-            return self.settings.text_extraction_fast_timeout_default
+        return self.settings.text_extraction_fast_timeout_default
 
     def get_text_extraction_configuration(
-        self,
-        use_ocr: bool = True,
-        kb_config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Get complete text extraction configuration.
+        self, use_ocr: bool = True, kb_config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Get complete text extraction configuration.
 
         Args:
             use_ocr: Whether OCR processing is being used
@@ -1021,41 +1015,40 @@ class ConfigurationManager:
 
         Returns:
             Dictionary with text extraction configuration
+
         """
         return {
             "timeout": self.get_text_extraction_timeout(use_ocr, kb_config),
             "ocr_execution_mode": self.settings.ocr_execution_mode,
             "max_file_size": self.settings.max_file_size,
-            "processing_method": "ocr" if use_ocr else "fast_extraction"
+            "processing_method": "ocr" if use_ocr else "fast_extraction",
         }
 
 
 # Global configuration manager instance (for backward compatibility)
-_config_manager: Optional[ConfigurationManager] = None
+_config_manager: ConfigurationManager | None = None
 
 
 def get_config_manager() -> ConfigurationManager:
-    """
-    Get the global configuration manager instance.
+    """Get the global configuration manager instance.
 
     Note: This function provides backward compatibility for existing code.
     For new code, prefer dependency injection using get_config_manager_dependency().
     """
-    global _config_manager
+    global _config_manager  # noqa: PLW0603 # This is currently working, so we'll leave it as is
     if _config_manager is None:
         _config_manager = ConfigurationManager(get_settings_instance())
     return _config_manager
 
 
 def get_config_manager_dependency() -> ConfigurationManager:
-    """
-    Dependency injection function for ConfigurationManager.
+    """Dependency injection function for ConfigurationManager.
 
     Use this in FastAPI endpoints and services for better testability:
 
     ```python
     async def some_endpoint(
-        config_manager: ConfigurationManager = Depends(get_config_manager_dependency)
+        config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
     ):
         config = await config_manager.get_rag_configuration(kb_id, user_id)
     ```

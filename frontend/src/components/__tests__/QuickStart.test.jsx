@@ -24,9 +24,7 @@ const TestWrapper = ({ children }) => {
   const theme = createTheme();
   return (
     <BrowserRouter>
-      <ThemeProvider theme={theme}>
-        {children}
-      </ThemeProvider>
+      <ThemeProvider theme={theme}>{children}</ThemeProvider>
     </BrowserRouter>
   );
 };
@@ -35,18 +33,18 @@ describe('QuickStart Component - Experiences Card', () => {
   beforeEach(() => {
     // Reset mocks
     jest.clearAllMocks();
-    
+
     // Mock theme context
     useAppTheme.mockReturnValue({
-      branding: { app_name: 'Test App' }
+      branding: { app_name: 'Test App' },
     });
-    
+
     // Mock branding utility
     getBrandingAppName.mockReturnValue('Test App');
-    
+
     // Mock extractDataFromResponse
     api.extractDataFromResponse = jest.fn().mockImplementation((response) => response.data);
-    
+
     // Mock setup API with default status
     api.setupAPI = {
       getStatus: jest.fn().mockResolvedValue({
@@ -58,8 +56,8 @@ describe('QuickStart Component - Experiences Card', () => {
           plugins_enabled: true,
           plugin_feed_created: true,
           experience_created: false,
-        }
-      })
+        },
+      }),
     };
   });
 
@@ -77,11 +75,11 @@ describe('QuickStart Component - Experiences Card', () => {
 
     // Check that Experiences card exists
     expect(screen.getByText('Experiences')).toBeInTheDocument();
-    
+
     // Verify it's in the Getting Started section by checking it appears after "Getting Started" heading
     const gettingStartedHeading = screen.getByText('Getting Started');
     const experiencesCard = screen.getByText('Experiences');
-    
+
     expect(gettingStartedHeading).toBeInTheDocument();
     expect(experiencesCard).toBeInTheDocument();
   });
@@ -99,11 +97,13 @@ describe('QuickStart Component - Experiences Card', () => {
 
     // Check title
     expect(screen.getByText('Experiences')).toBeInTheDocument();
-    
+
     // Check description parts
-    expect(screen.getByText(/Create automated workflows that combine plugins, knowledge bases, and AI synthesis/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Create automated workflows that combine plugins, knowledge bases, and AI synthesis/)
+    ).toBeInTheDocument();
     expect(screen.getByText(/Build signature experiences like Morning Briefing/)).toBeInTheDocument();
-    
+
     // Check that the card is clickable (has CardActionArea)
     const experiencesCard = screen.getByText('Experiences').closest('.MuiCardActionArea-root');
     expect(experiencesCard).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe('QuickStart Component - Experiences Card', () => {
         plugins_enabled: false,
         plugin_feed_created: false,
         experience_created: true, // Only this one is true
-      }
+      },
     });
 
     render(
@@ -173,13 +173,11 @@ describe('QuickStart Component - Experiences Card', () => {
 
     // Find the Experiences card container
     const experiencesCard = screen.getByText('Experiences').closest('.MuiCard-root');
-    
+
     // Check that "Done" chip is not present in the Experiences card
     const doneChips = screen.queryAllByText('Done');
-    const experiencesCardHasDone = doneChips.some(chip => 
-      experiencesCard && experiencesCard.contains(chip)
-    );
-    
+    const experiencesCardHasDone = doneChips.some((chip) => experiencesCard && experiencesCard.contains(chip));
+
     expect(experiencesCardHasDone).toBe(false);
   });
 
@@ -199,7 +197,9 @@ describe('QuickStart Component - Experiences Card', () => {
 
     // Card should still render even if API fails
     expect(screen.getByText('Experiences')).toBeInTheDocument();
-    expect(screen.getByText(/Create automated workflows that combine plugins, knowledge bases, and AI synthesis/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Create automated workflows that combine plugins, knowledge bases, and AI synthesis/)
+    ).toBeInTheDocument();
   });
 
   test('Experiences card uses same SectionCard component and design patterns', async () => {
@@ -227,11 +227,11 @@ describe('QuickStart Component - Experiences Card', () => {
 
     // Check that the Experiences card specifically has the "Open" text (same as other cards)
     expect(experiencesCard.textContent).toContain('Open');
-    
+
     // Verify the card has proper styling and structure (check for border presence)
     const computedStyle = window.getComputedStyle(experiencesCard);
     expect(computedStyle.borderWidth).toBe('1px');
-    
+
     // Check that the card title is properly styled
     const titleElement = screen.getByText('Experiences');
     expect(titleElement).toHaveClass('MuiTypography-subtitle1');
@@ -254,7 +254,7 @@ describe('QuickStart Component - Experiences Card', () => {
 
     // Verify it has responsive classes (Grid system)
     expect(experiencesCard).toHaveClass('MuiGrid-item');
-    
+
     // The card should be in a container with proper spacing
     const gridContainer = experiencesCard.parentElement;
     expect(gridContainer).toHaveClass('MuiGrid-container');

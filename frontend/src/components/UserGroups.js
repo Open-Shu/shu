@@ -30,7 +30,6 @@ import {
   MenuItem,
   ListItemIcon,
   Autocomplete,
-
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -39,7 +38,7 @@ import {
   People as PeopleIcon,
   MoreVert as MoreVertIcon,
   Groups as GroupsIcon,
-  Person as PersonIcon
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import { groupsAPI, authAPI, extractItemsFromResponse, formatError } from '../services/api';
 import AdminLayout from '../layouts/AdminLayout';
@@ -57,38 +56,30 @@ const UserGroups = () => {
   const [newGroup, setNewGroup] = useState({
     name: '',
     description: '',
-    is_active: true
+    is_active: true,
   });
   const [newMember, setNewMember] = useState({
     user_id: '',
-    role: 'member'
+    role: 'member',
   });
 
   const queryClient = useQueryClient();
 
   // Fetch groups
-  const { data: groupsResponse, isLoading } = useQuery(
-    'userGroups',
-    groupsAPI.list,
-    {
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const { data: groupsResponse, isLoading } = useQuery('userGroups', groupsAPI.list, {
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
   const groups = extractItemsFromResponse(groupsResponse) || [];
 
   // Fetch users for member management
-  const { data: usersResponse } = useQuery(
-    'users',
-    authAPI.getUsers,
-    {
-      onError: (err) => {
-        log.error('Error fetching users:', err);
-      }
-    }
-  );
+  const { data: usersResponse } = useQuery('users', authAPI.getUsers, {
+    onError: (err) => {
+      log.error('Error fetching users:', err);
+    },
+  });
 
   const users = extractItemsFromResponse(usersResponse) || [];
 
@@ -99,91 +90,76 @@ const UserGroups = () => {
     {
       enabled: !!selectedGroup?.id && membersDialogOpen,
       onError: (err) => {
-        setError(formatError(err).message);
-      }
+        setError(formatError(err));
+      },
     }
   );
 
   const members = extractItemsFromResponse(membersResponse) || [];
 
   // Create group mutation
-  const createGroupMutation = useMutation(
-    (groupData) => groupsAPI.create(groupData),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('userGroups');
-        setCreateDialogOpen(false);
-        setNewGroup({ name: '', description: '', is_active: true });
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const createGroupMutation = useMutation((groupData) => groupsAPI.create(groupData), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('userGroups');
+      setCreateDialogOpen(false);
+      setNewGroup({ name: '', description: '', is_active: true });
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
   // Update group mutation
-  const updateGroupMutation = useMutation(
-    ({ groupId, data }) => groupsAPI.update(groupId, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('userGroups');
-        setEditDialogOpen(false);
-        setSelectedGroup(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const updateGroupMutation = useMutation(({ groupId, data }) => groupsAPI.update(groupId, data), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('userGroups');
+      setEditDialogOpen(false);
+      setSelectedGroup(null);
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
   // Delete group mutation
-  const deleteGroupMutation = useMutation(
-    (groupId) => groupsAPI.delete(groupId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('userGroups');
-        setDeleteDialogOpen(false);
-        setSelectedGroup(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const deleteGroupMutation = useMutation((groupId) => groupsAPI.delete(groupId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('userGroups');
+      setDeleteDialogOpen(false);
+      setSelectedGroup(null);
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
   // Add member mutation
-  const addMemberMutation = useMutation(
-    ({ groupId, userId }) => groupsAPI.addMember(groupId, userId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['groupMembers', selectedGroup?.id]);
-        queryClient.invalidateQueries('userGroups');
-        setNewMember({ user_id: '', role: 'member' });
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const addMemberMutation = useMutation(({ groupId, userId }) => groupsAPI.addMember(groupId, userId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries(['groupMembers', selectedGroup?.id]);
+      queryClient.invalidateQueries('userGroups');
+      setNewMember({ user_id: '', role: 'member' });
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
   // Remove member mutation
-  const removeMemberMutation = useMutation(
-    ({ groupId, userId }) => groupsAPI.removeMember(groupId, userId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['groupMembers', selectedGroup?.id]);
-        queryClient.invalidateQueries('userGroups');
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const removeMemberMutation = useMutation(({ groupId, userId }) => groupsAPI.removeMember(groupId, userId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries(['groupMembers', selectedGroup?.id]);
+      queryClient.invalidateQueries('userGroups');
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
   const handleCreateGroup = () => {
     if (newGroup.name.trim()) {
@@ -194,7 +170,7 @@ const UserGroups = () => {
   const handleEditGroup = (group) => {
     setSelectedGroup({
       ...group,
-      is_active: group.is_active !== undefined ? group.is_active : true
+      is_active: group.is_active !== undefined ? group.is_active : true,
     });
     setEditDialogOpen(true);
     handleMenuClose();
@@ -207,8 +183,8 @@ const UserGroups = () => {
         data: {
           name: selectedGroup.name,
           description: selectedGroup.description,
-          is_active: selectedGroup.is_active
-        }
+          is_active: selectedGroup.is_active,
+        },
       });
     }
   };
@@ -245,7 +221,7 @@ const UserGroups = () => {
     if (newMember.user_id && selectedGroup) {
       addMemberMutation.mutate({
         groupId: selectedGroup.id,
-        userId: newMember.user_id
+        userId: newMember.user_id,
       });
     }
   };
@@ -254,13 +230,15 @@ const UserGroups = () => {
     if (selectedGroup) {
       removeMemberMutation.mutate({
         groupId: selectedGroup.id,
-        userId: userId
+        userId: userId,
       });
     }
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
+    if (!dateString) {
+      return 'N/A';
+    }
     return new Date(dateString).toLocaleDateString();
   };
 
@@ -287,11 +265,7 @@ const UserGroups = () => {
           'Deactivate groups to temporarily revoke their permissions without deleting',
         ]}
         actions={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setCreateDialogOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
             Create Group
           </Button>
         }
@@ -343,11 +317,7 @@ const UserGroups = () => {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          label={`${group.member_count || 0} members`}
-                          size="small"
-                          variant="outlined"
-                        />
+                        <Chip label={`${group.member_count || 0} members`} size="small" variant="outlined" />
                       </TableCell>
                       <TableCell>
                         <Chip
@@ -362,10 +332,7 @@ const UserGroups = () => {
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        <IconButton
-                          onClick={(e) => handleMenuOpen(e, group)}
-                          size="small"
-                        >
+                        <IconButton onClick={(e) => handleMenuOpen(e, group)} size="small">
                           <MoreVertIcon />
                         </IconButton>
                       </TableCell>
@@ -378,31 +345,27 @@ const UserGroups = () => {
         </CardContent>
       </Card>
 
-              {/* Action Menu */}
-        <Menu
-          anchorEl={menuAnchor}
-          open={Boolean(menuAnchor)}
-          onClose={handleMenuClose}
-        >
-          <MenuItem onClick={() => handleManageMembers(menuGroup)}>
-            <ListItemIcon>
-              <PeopleIcon fontSize="small" />
-            </ListItemIcon>
-            Manage Members
-          </MenuItem>
-          <MenuItem onClick={() => handleEditGroup(menuGroup)}>
-            <ListItemIcon>
-              <EditIcon fontSize="small" />
-            </ListItemIcon>
-            Edit Group
-          </MenuItem>
-          <MenuItem onClick={() => handleDeleteGroup(menuGroup)}>
-            <ListItemIcon>
-              <DeleteIcon fontSize="small" />
-            </ListItemIcon>
-            Delete Group
-          </MenuItem>
-        </Menu>
+      {/* Action Menu */}
+      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={handleMenuClose}>
+        <MenuItem onClick={() => handleManageMembers(menuGroup)}>
+          <ListItemIcon>
+            <PeopleIcon fontSize="small" />
+          </ListItemIcon>
+          Manage Members
+        </MenuItem>
+        <MenuItem onClick={() => handleEditGroup(menuGroup)}>
+          <ListItemIcon>
+            <EditIcon fontSize="small" />
+          </ListItemIcon>
+          Edit Group
+        </MenuItem>
+        <MenuItem onClick={() => handleDeleteGroup(menuGroup)}>
+          <ListItemIcon>
+            <DeleteIcon fontSize="small" />
+          </ListItemIcon>
+          Delete Group
+        </MenuItem>
+      </Menu>
 
       {/* Create Group Dialog */}
       <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
@@ -473,14 +436,24 @@ const UserGroups = () => {
             rows={3}
             variant="outlined"
             value={selectedGroup?.description || ''}
-            onChange={(e) => setSelectedGroup({ ...selectedGroup, description: e.target.value })}
+            onChange={(e) =>
+              setSelectedGroup({
+                ...selectedGroup,
+                description: e.target.value,
+              })
+            }
             sx={{ mb: 2 }}
           />
           <FormControlLabel
             control={
               <Switch
                 checked={selectedGroup?.is_active || false}
-                onChange={(e) => setSelectedGroup({ ...selectedGroup, is_active: e.target.checked })}
+                onChange={(e) =>
+                  setSelectedGroup({
+                    ...selectedGroup,
+                    is_active: e.target.checked,
+                  })
+                }
               />
             }
             label="Active"
@@ -498,155 +471,142 @@ const UserGroups = () => {
         </DialogActions>
       </Dialog>
 
-              {/* Delete Group Dialog */}
-        <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="sm">
-          <DialogTitle>Delete User Group</DialogTitle>
-          <DialogContent>
-            <Typography>
-              Are you sure you want to delete the group "{selectedGroup?.name}"?
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              This action cannot be undone. All group memberships will be removed.
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-            <Button
-              onClick={handleConfirmDelete}
-              variant="contained"
-              color="error"
-              disabled={deleteGroupMutation.isLoading}
-            >
-              {deleteGroupMutation.isLoading ? <CircularProgress size={20} /> : 'Delete'}
-            </Button>
-          </DialogActions>
-        </Dialog>
+      {/* Delete Group Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="sm">
+        <DialogTitle>Delete User Group</DialogTitle>
+        <DialogContent>
+          <Typography>Are you sure you want to delete the group "{selectedGroup?.name}"?</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            This action cannot be undone. All group memberships will be removed.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleConfirmDelete}
+            variant="contained"
+            color="error"
+            disabled={deleteGroupMutation.isLoading}
+          >
+            {deleteGroupMutation.isLoading ? <CircularProgress size={20} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-        {/* Manage Members Dialog */}
-        <Dialog open={membersDialogOpen} onClose={() => setMembersDialogOpen(false)} maxWidth="md" fullWidth>
-          <DialogTitle>
-            Manage Members - {selectedGroup?.name}
-          </DialogTitle>
-          <DialogContent>
-            {error && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                {error}
-              </Alert>
-            )}
+      {/* Manage Members Dialog */}
+      <Dialog open={membersDialogOpen} onClose={() => setMembersDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Manage Members - {selectedGroup?.name}</DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
 
-            {/* Add Member Section */}
-            <Box sx={{ mb: 3 }}>
-              <Typography variant="h6" gutterBottom>
-                Add Member
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
-                <Autocomplete
-                  options={
-                    users
-                    // Ensure that only options that aren't already added are shown
-                    .filter(user => !members.some(member => member.user_id === user.user_id))
-                  }
-                  getOptionLabel={(option) => `${option.email} (${option.name || 'No name'})`}
-                  value={users.find(user => user.user_id === newMember.user_id) || null}
-                  onChange={(event, newValue) => {
-                    setNewMember(prev => ({ ...prev, user_id: (newValue?.user_id || '') }));
-                  }}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Select User"
-                      fullWidth
-                    />
-                  )}
-                  sx={{ flexGrow: 1 }}
-                />
-                <Button
-                  onClick={handleAddMember}
-                  variant="contained"
-                  disabled={!newMember.user_id || addMemberMutation.isLoading}
-                  startIcon={<AddIcon />}
-                >
-                  {addMemberMutation.isLoading ? <CircularProgress size={20} /> : 'Add'}
-                </Button>
+          {/* Add Member Section */}
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Add Member
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
+              <Autocomplete
+                options={users
+                  // Ensure that only options that aren't already added are shown
+                  .filter((user) => !members.some((member) => member.user_id === user.user_id))}
+                getOptionLabel={(option) => `${option.email} (${option.name || 'No name'})`}
+                value={users.find((user) => user.user_id === newMember.user_id) || null}
+                onChange={(event, newValue) => {
+                  setNewMember((prev) => ({
+                    ...prev,
+                    user_id: newValue?.user_id || '',
+                  }));
+                }}
+                renderInput={(params) => <TextField {...params} label="Select User" fullWidth />}
+                sx={{ flexGrow: 1 }}
+              />
+              <Button
+                onClick={handleAddMember}
+                variant="contained"
+                disabled={!newMember.user_id || addMemberMutation.isLoading}
+                startIcon={<AddIcon />}
+              >
+                {addMemberMutation.isLoading ? <CircularProgress size={20} /> : 'Add'}
+              </Button>
+            </Box>
+          </Box>
+
+          {/* Current Members Section */}
+          <Box>
+            <Typography variant="h6" gutterBottom>
+              Current Members ({members.length})
+            </Typography>
+            {membersLoading ? (
+              <Box display="flex" justifyContent="center" p={3}>
+                <CircularProgress />
               </Box>
-            </Box>
-
-            {/* Current Members Section */}
-            <Box>
-              <Typography variant="h6" gutterBottom>
-                Current Members ({members.length})
+            ) : members.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No members in this group.
               </Typography>
-              {membersLoading ? (
-                <Box display="flex" justifyContent="center" p={3}>
-                  <CircularProgress />
-                </Box>
-              ) : members.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  No members in this group.
-                </Typography>
-              ) : (
-                <TableContainer component={Paper} variant="outlined">
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>User</TableCell>
-                        <TableCell>Role</TableCell>
-                        <TableCell>Added</TableCell>
-                        <TableCell align="right">Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {members.map((member) => (
-                        <TableRow key={member.id} hover>
-                          <TableCell>
-                            <Box display="flex" alignItems="center">
-                              <PersonIcon sx={{ mr: 1, color: 'primary.main' }} />
-                              <Box>
-                                <Typography variant="body2" fontWeight="medium">
-                                  {member.user_email || 'Unknown User'}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {member.user_name || 'No name'}
-                                </Typography>
-                              </Box>
+            ) : (
+              <TableContainer component={Paper} variant="outlined">
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>User</TableCell>
+                      <TableCell>Role</TableCell>
+                      <TableCell>Added</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {members.map((member) => (
+                      <TableRow key={member.id} hover>
+                        <TableCell>
+                          <Box display="flex" alignItems="center">
+                            <PersonIcon sx={{ mr: 1, color: 'primary.main' }} />
+                            <Box>
+                              <Typography variant="body2" fontWeight="medium">
+                                {member.user_email || 'Unknown User'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {member.user_name || 'No name'}
+                              </Typography>
                             </Box>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={member.role}
-                              size="small"
-                              color="primary"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" color="text.secondary">
-                              {formatDate(member.granted_at)}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <IconButton
-                              onClick={() => handleRemoveMember(member.user_id)}
-                              size="small"
-                              color="error"
-                              disabled={removeMemberMutation.isLoading}
-                            >
-                              <DeleteIcon />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              )}
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setMembersDialogOpen(false)}>Close</Button>
-          </DialogActions>
-        </Dialog>
-      </Box>
-    );
-  };
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Chip label={member.role} size="small" color="primary" />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" color="text.secondary">
+                            {formatDate(member.granted_at)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <IconButton
+                            onClick={() => handleRemoveMember(member.user_id)}
+                            size="small"
+                            color="error"
+                            disabled={removeMemberMutation.isLoading}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMembersDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
 
 export default UserGroups;

@@ -1,13 +1,13 @@
-"""
-Plugins registry: resolve enabled plugins from DB and load the plugin instance.
+"""Plugins registry: resolve enabled plugins from DB and load the plugin instance.
 Caches loaded plugins in-process.
 """
-from __future__ import annotations
-import logging
-from typing import Dict, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
+
+import logging
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.plugin_registry import PluginDefinition  # v0 registry model reused for v1 enablement checks
 from .base import Plugin
@@ -17,16 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 class PluginRegistry:
-    def __init__(self):
+    def __init__(self) -> None:
         self._loader = PluginLoader()
-        self._manifest: Dict[str, PluginRecord] = {}
-        self._cache: Dict[str, Plugin] = {}
+        self._manifest: dict[str, PluginRecord] = {}
+        self._cache: dict[str, Plugin] = {}
 
     def refresh(self) -> None:
         self._manifest = self._loader.discover()
         self._cache.clear()
 
-    def get_manifest(self, refresh_if_empty: bool = True) -> Dict[str, 'PluginRecord']:
+    def get_manifest(self, refresh_if_empty: bool = True) -> dict[str, PluginRecord]:
         """Return current manifest; optionally refresh if empty.
         Do not raise on errors; return empty dict on failures.
         """
@@ -37,12 +37,13 @@ class PluginRegistry:
         except Exception:
             return {}
 
-    async def sync(self, session: AsyncSession) -> dict:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def sync(self, session: AsyncSession) -> dict:  # noqa: PLR0912, PLR0915
         """Auto-register discovered plugins into PluginDefinition.
         - Creates a row if missing (enabled=False by default)
         - Updates input_schema/output_schema if provided by plugin
         - Purges DB rows for plugins no longer present on disk
-        - Does not flip enabled state automatically
+        - Does not flip enabled state automatically.
         """
         created = 0
         updated = 0
@@ -125,9 +126,14 @@ class PluginRegistry:
                         await session.rollback()
         except Exception:
             pass
-        return {"created": created, "updated": updated, "purged": purged, "discovered": len(self._manifest)}
+        return {
+            "created": created,
+            "updated": updated,
+            "purged": purged,
+            "discovered": len(self._manifest),
+        }
 
-    async def resolve(self, name: str, session: AsyncSession) -> Optional[Plugin]:
+    async def resolve(self, name: str, session: AsyncSession) -> Plugin | None:
         # If cached, verify enablement from DB before returning to honor runtime toggles
         if name in self._cache:
             try:
@@ -161,4 +167,3 @@ class PluginRegistry:
 
 
 REGISTRY = PluginRegistry()
-

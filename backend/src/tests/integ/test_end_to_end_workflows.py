@@ -12,14 +12,12 @@ These tests address the gap where individual components work but
 the complete workflow has integration issues.
 """
 
-import sys
-import os
 import asyncio
-import time
-from typing import List, Callable
-from integ.response_utils import extract_data
+import sys
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
+from integ.response_utils import extract_data
 
 
 async def test_complete_admin_setup_workflow(client, db, auth_headers):
@@ -33,11 +31,14 @@ async def test_complete_admin_setup_workflow(client, db, auth_headers):
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "api_key": "test-complete-workflow-key",
-        "is_active": True
+        "is_active": True,
     }
-    
+
     provider_response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
-    assert provider_response.status_code in [200, 201], f"Provider creation failed: {provider_response.status_code} - {getattr(provider_response, 'text', '')}"
+    assert provider_response.status_code in [
+        200,
+        201,
+    ], f"Provider creation failed: {provider_response.status_code} - {getattr(provider_response, 'text', '')}"
     provider_id = extract_data(provider_response)["id"]
 
     # Step 2: Admin adds models to provider
@@ -51,20 +52,28 @@ async def test_complete_admin_setup_workflow(client, db, auth_headers):
         "supports_functions": True,
         "cost_per_input_token": 0.00001,
         "cost_per_output_token": 0.00003,
-        "is_active": True
+        "is_active": True,
     }
-    
-    model_response = await client.post(f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers)
-    assert model_response.status_code in [200, 201], f"Model creation failed: {model_response.status_code} - {getattr(model_response, 'text', '')}"
+
+    model_response = await client.post(
+        f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers
+    )
+    assert model_response.status_code in [
+        200,
+        201,
+    ], f"Model creation failed: {model_response.status_code} - {getattr(model_response, 'text', '')}"
 
     # Step 3: Admin creates knowledge base
     kb_data = {
         "name": "Complete Workflow Test Knowledge Base",
-        "description": "KB for complete workflow testing"
+        "description": "KB for complete workflow testing",
     }
 
     kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
-    assert kb_response.status_code in [200, 201], f"KB creation failed: {kb_response.status_code} - {getattr(kb_response, 'text', '')}"
+    assert kb_response.status_code in [
+        200,
+        201,
+    ], f"KB creation failed: {kb_response.status_code} - {getattr(kb_response, 'text', '')}"
     kb_id = extract_data(kb_response)["id"]
 
     # Step 4: Admin creates prompt
@@ -72,11 +81,14 @@ async def test_complete_admin_setup_workflow(client, db, auth_headers):
         "name": "Complete Workflow Test Prompt",
         "content": "You are a helpful assistant for complete workflow testing. Use provided context to answer questions accurately and cite sources.",
         "entity_type": "model_configuration",
-        "is_active": True
+        "is_active": True,
     }
-    
+
     prompt_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
-    assert prompt_response.status_code in [200, 201], f"Prompt creation failed: {prompt_response.status_code} - {getattr(prompt_response, 'text', '')}"
+    assert prompt_response.status_code in [
+        200,
+        201,
+    ], f"Prompt creation failed: {prompt_response.status_code} - {getattr(prompt_response, 'text', '')}"
     prompt_id = extract_data(prompt_response)["id"]
 
     # Step 5: Admin creates model configuration with all components
@@ -88,16 +100,21 @@ async def test_complete_admin_setup_workflow(client, db, auth_headers):
         "prompt_id": prompt_id,
         "knowledge_base_ids": [kb_id],
         "is_active": True,
-        "created_by": "test-admin"
+        "created_by": "test-admin",
     }
-    
+
     config_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
-    assert config_response.status_code in [200, 201], f"Model configuration creation failed: {config_response.status_code} - {getattr(config_response, 'text', '')}"
+    assert config_response.status_code in [
+        200,
+        201,
+    ], f"Model configuration creation failed: {config_response.status_code} - {getattr(config_response, 'text', '')}"
     model_config_id = extract_data(config_response)["id"]
 
     # Step 6: Verify complete configuration is accessible
     get_config_response = await client.get(f"/api/v1/model-configurations/{model_config_id}", headers=auth_headers)
-    assert get_config_response.status_code in [200, 201], f"Get model configuration failed: {getattr(get_config_response, 'status_code', 'n/a')} - {getattr(get_config_response, 'text', '')}"
+    assert (
+        get_config_response.status_code in [200, 201]
+    ), f"Get model configuration failed: {getattr(get_config_response, 'status_code', 'n/a')} - {getattr(get_config_response, 'text', '')}"
 
     config_data = extract_data(get_config_response)
     assert config_data["name"] == "Complete Workflow Assistant"
@@ -130,11 +147,14 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "api_key": "test-user-workflow-key",
-        "is_active": True
+        "is_active": True,
     }
-    
+
     provider_response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
-    assert provider_response.status_code in [200, 201], f"Provider creation failed: {provider_response.status_code} - {getattr(provider_response, 'text', '')}"
+    assert provider_response.status_code in [
+        200,
+        201,
+    ], f"Provider creation failed: {provider_response.status_code} - {getattr(provider_response, 'text', '')}"
     provider_id = extract_data(provider_response)["id"]
 
     model_data = {
@@ -147,11 +167,16 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
         "supports_functions": True,
         "cost_per_input_token": 0.00001,
         "cost_per_output_token": 0.00003,
-        "is_active": True
+        "is_active": True,
     }
-    
-    model_response = await client.post(f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers)
-    assert model_response.status_code in [200, 201], f"Model creation failed: {model_response.status_code} - {getattr(model_response, 'text', '')}"
+
+    model_response = await client.post(
+        f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers
+    )
+    assert model_response.status_code in [
+        200,
+        201,
+    ], f"Model creation failed: {model_response.status_code} - {getattr(model_response, 'text', '')}"
 
     config_data = {
         "name": "User Workflow Assistant",
@@ -159,11 +184,14 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
         "llm_provider_id": provider_id,
         "model_name": model_data["model_name"],
         "is_active": True,
-        "created_by": "test-admin"
+        "created_by": "test-admin",
     }
-    
+
     config_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
-    assert config_response.status_code in [200, 201], f"Model configuration creation failed: {config_response.status_code} - {getattr(config_response, 'text', '')}"
+    assert config_response.status_code in [
+        200,
+        201,
+    ], f"Model configuration creation failed: {config_response.status_code} - {getattr(config_response, 'text', '')}"
     model_config_id = extract_data(config_response)["id"]
 
     # User Workflow Step 1: User lists available model configurations
@@ -182,13 +210,13 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
     assert available_config["is_active"] == True
 
     # User Workflow Step 2: User creates conversation with selected model config
-    conversation_data = {
-        "title": "My Research Chat",
-        "model_configuration_id": model_config_id
-    }
-    
+    conversation_data = {"title": "My Research Chat", "model_configuration_id": model_config_id}
+
     conv_response = await client.post("/api/v1/chat/conversations", json=conversation_data, headers=auth_headers)
-    assert conv_response.status_code in [200, 201], f"Conversation creation failed: {conv_response.status_code} - {getattr(conv_response, 'text', '')}"
+    assert conv_response.status_code in [
+        200,
+        201,
+    ], f"Conversation creation failed: {conv_response.status_code} - {getattr(conv_response, 'text', '')}"
     conversation_id = extract_data(conv_response)["id"]
 
     # User Workflow Step 3: User sends first message
@@ -196,14 +224,17 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
         "message": "Hello! I'm starting a new research project on machine learning.",
         "rag_rewrite_mode": "no_rag",
     }
-    
+
     msg1_response = await client.post(
         f"/api/v1/chat/conversations/{conversation_id}/send",
         json=message1_data,
-        headers=auth_headers
+        headers=auth_headers,
     )
     try:
-        assert msg1_response.status_code in [200, 201], f"First message send failed: {msg1_response.status_code} - {getattr(msg1_response, 'text', '')}"
+        assert msg1_response.status_code in [
+            200,
+            201,
+        ], f"First message send failed: {msg1_response.status_code} - {getattr(msg1_response, 'text', '')}"
     finally:
         try:
             if hasattr(msg1_response, "aclose"):
@@ -218,14 +249,17 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
         "message": "Can you help me understand neural networks?",
         "rag_rewrite_mode": "raw_query",  # User enables RAG for this question
     }
-    
+
     msg2_response = await client.post(
         f"/api/v1/chat/conversations/{conversation_id}/send",
         json=message2_data,
-        headers=auth_headers
+        headers=auth_headers,
     )
     try:
-        assert msg2_response.status_code in [200, 201], f"Second message send failed: {msg2_response.status_code} - {getattr(msg2_response, 'text', '')}"
+        assert msg2_response.status_code in [
+            200,
+            201,
+        ], f"Second message send failed: {msg2_response.status_code} - {getattr(msg2_response, 'text', '')}"
     finally:
         try:
             if hasattr(msg2_response, "aclose"):
@@ -238,25 +272,28 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
     # User Workflow Step 5: User views conversation history
     history_response = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages", headers=auth_headers)
     assert history_response.status_code == 200
-    
+
     messages = extract_data(history_response)
     assert len(messages) >= 4  # 2 user messages + 2 assistant responses
-    
+
     # Verify message structure
     user_messages = [msg for msg in messages if msg["role"] == "user"]
     assistant_messages = [msg for msg in messages if msg["role"] == "assistant"]
-    
+
     assert len(user_messages) == 2
     assert len(assistant_messages) == 2
-    
+
     # User Workflow Step 6: User lists their conversations
     user_convs_response = await client.get("/api/v1/chat/conversations", headers=auth_headers)
-    assert user_convs_response.status_code in [200, 201], f"List conversations failed: {user_convs_response.status_code} - {getattr(user_convs_response, 'text', '')}"
+    assert user_convs_response.status_code in [
+        200,
+        201,
+    ], f"List conversations failed: {user_convs_response.status_code} - {getattr(user_convs_response, 'text', '')}"
 
     conversations = extract_data(user_convs_response)
     user_conv_titles = [conv["title"] for conv in conversations]
     assert "My Research Chat" in user_conv_titles
-    
+
     return True
 
 
@@ -270,11 +307,14 @@ async def test_error_recovery_workflow(client, db, auth_headers):
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "api_key": "test-error-recovery-key",
-        "is_active": True
+        "is_active": True,
     }
-    
+
     provider_response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
-    assert provider_response.status_code in [200, 201], f"Provider creation failed: {provider_response.status_code} - {getattr(provider_response, 'text', '')}"
+    assert provider_response.status_code in [
+        200,
+        201,
+    ], f"Provider creation failed: {provider_response.status_code} - {getattr(provider_response, 'text', '')}"
     provider_id = extract_data(provider_response)["id"]
 
     model_data = {
@@ -287,11 +327,16 @@ async def test_error_recovery_workflow(client, db, auth_headers):
         "supports_functions": True,
         "cost_per_input_token": 0.00001,
         "cost_per_output_token": 0.00003,
-        "is_active": True
+        "is_active": True,
     }
-    
-    model_response = await client.post(f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers)
-    assert model_response.status_code in [200, 201], f"Model creation failed: {model_response.status_code} - {getattr(model_response, 'text', '')}"
+
+    model_response = await client.post(
+        f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers
+    )
+    assert model_response.status_code in [
+        200,
+        201,
+    ], f"Model creation failed: {model_response.status_code} - {getattr(model_response, 'text', '')}"
 
     config_data = {
         "name": "Error Recovery Assistant",
@@ -299,30 +344,36 @@ async def test_error_recovery_workflow(client, db, auth_headers):
         "llm_provider_id": provider_id,
         "model_name": model_data["model_name"],
         "is_active": True,
-        "created_by": "test-admin"
+        "created_by": "test-admin",
     }
-    
+
     config_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
-    assert config_response.status_code in [200, 201], f"Model configuration creation failed: {config_response.status_code} - {getattr(config_response, 'text', '')}"
+    assert config_response.status_code in [
+        200,
+        201,
+    ], f"Model configuration creation failed: {config_response.status_code} - {getattr(config_response, 'text', '')}"
     model_config_id = extract_data(config_response)["id"]
 
     # Error Scenario 1: Try to create conversation with invalid model config
     invalid_conv_data = {
         "title": "Invalid Config Conversation",
-        "model_configuration_id": "invalid-config-id"
+        "model_configuration_id": "invalid-config-id",
     }
-    
+
     invalid_response = await client.post("/api/v1/chat/conversations", json=invalid_conv_data, headers=auth_headers)
     assert invalid_response.status_code in [400, 404], "Should reject invalid model config ID"
-    
+
     # Error Scenario 2: Create valid conversation
     valid_conv_data = {
         "title": "Valid Error Recovery Conversation",
-        "model_configuration_id": model_config_id
+        "model_configuration_id": model_config_id,
     }
-    
+
     conv_response = await client.post("/api/v1/chat/conversations", json=valid_conv_data, headers=auth_headers)
-    assert conv_response.status_code in [200, 201], f"Conversation creation failed: {conv_response.status_code} - {getattr(conv_response, 'text', '')}"
+    assert conv_response.status_code in [
+        200,
+        201,
+    ], f"Conversation creation failed: {conv_response.status_code} - {getattr(conv_response, 'text', '')}"
     conversation_id = extract_data(conv_response)["id"]
 
     # Error Scenario 3: Send message with invalid parameters
@@ -330,11 +381,11 @@ async def test_error_recovery_workflow(client, db, auth_headers):
         "message": "",  # Empty message
         "rag_rewrite_mode": "invalid",  # Invalid boolean
     }
-    
+
     invalid_msg_response = await client.post(
         f"/api/v1/chat/conversations/{conversation_id}/send",
         json=invalid_message_data,
-        headers=auth_headers
+        headers=auth_headers,
     )
     try:
         assert invalid_msg_response.status_code in [400, 422], "Should reject invalid message data"
@@ -346,20 +397,22 @@ async def test_error_recovery_workflow(client, db, auth_headers):
                 invalid_msg_response.close()
         except Exception:
             pass
-    
+
     # Error Scenario 4: Send valid message (should work despite previous errors)
     valid_message_data = {
         "message": "This is a valid message after error recovery",
         "rag_rewrite_mode": "no_rag",
     }
-    
+
     valid_msg_response = await client.post(
         f"/api/v1/chat/conversations/{conversation_id}/send",
         json=valid_message_data,
-        headers=auth_headers
+        headers=auth_headers,
     )
     try:
-        assert valid_msg_response.status_code in [200, 201], f"Should recover and process valid message. Got {valid_msg_response.status_code} - {getattr(valid_msg_response, 'text', '')}"
+        assert (
+            valid_msg_response.status_code in [200, 201]
+        ), f"Should recover and process valid message. Got {valid_msg_response.status_code} - {getattr(valid_msg_response, 'text', '')}"
     finally:
         try:
             if hasattr(valid_msg_response, "aclose"):
@@ -371,18 +424,24 @@ async def test_error_recovery_workflow(client, db, auth_headers):
 
     # Error Scenario 5: Deactivate model configuration and try to use it
     deactivate_data = {"is_active": False}
-    await client.patch(f"/api/v1/model-configurations/{model_config_id}", json=deactivate_data, headers=auth_headers)
-    
+    await client.patch(
+        f"/api/v1/model-configurations/{model_config_id}",
+        json=deactivate_data,
+        headers=auth_headers,
+    )
+
     # Try to create new conversation with deactivated config
     deactivated_conv_data = {
         "title": "Deactivated Config Conversation",
-        "model_configuration_id": model_config_id
+        "model_configuration_id": model_config_id,
     }
-    
-    deactivated_response = await client.post("/api/v1/chat/conversations", json=deactivated_conv_data, headers=auth_headers)
+
+    deactivated_response = await client.post(
+        "/api/v1/chat/conversations", json=deactivated_conv_data, headers=auth_headers
+    )
     # Should either reject or handle gracefully
     assert deactivated_response.status_code in [200, 400, 422]
-    
+
     return True
 
 
@@ -396,9 +455,9 @@ async def test_concurrent_user_workflow(client, db, auth_headers):
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "api_key": "test-concurrent-key",
-        "is_active": True
+        "is_active": True,
     }
-    
+
     provider_response = await client.post("/api/v1/llm/providers", json=provider_data, headers=auth_headers)
     provider_id = extract_data(provider_response)["id"]
 
@@ -412,10 +471,12 @@ async def test_concurrent_user_workflow(client, db, auth_headers):
         "supports_functions": True,
         "cost_per_input_token": 0.00001,
         "cost_per_output_token": 0.00003,
-        "is_active": True
+        "is_active": True,
     }
-    
-    model_response = await client.post(f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers)
+
+    model_response = await client.post(
+        f"/api/v1/llm/providers/{provider_id}/models", json=model_data, headers=auth_headers
+    )
     assert model_response.status_code in [200, 201]
 
     config_data = {
@@ -424,9 +485,9 @@ async def test_concurrent_user_workflow(client, db, auth_headers):
         "llm_provider_id": provider_id,
         "model_name": model_data["model_name"],
         "is_active": True,
-        "created_by": "test-admin"
+        "created_by": "test-admin",
     }
-    
+
     config_response = await client.post("/api/v1/model-configurations", json=config_data, headers=auth_headers)
     assert config_response.status_code in [200, 201]
     model_config_id = extract_data(config_response)["id"]
@@ -435,33 +496,31 @@ async def test_concurrent_user_workflow(client, db, auth_headers):
     async def create_conversation(conv_num):
         conv_data = {
             "title": f"Concurrent Test Conversation {conv_num}",
-            "model_configuration_id": model_config_id
+            "model_configuration_id": model_config_id,
         }
-        
+
         response = await client.post("/api/v1/chat/conversations", json=conv_data, headers=auth_headers)
         return response.status_code in [200, 201], extract_data(response).get("id")
 
     # Test concurrent conversation creation
     tasks = [create_conversation(i) for i in range(5)]
     results = await asyncio.gather(*tasks)
-    
+
     successful_creations = [result[0] for result in results]
     conversation_ids = [result[1] for result in results if result[1]]
-    
+
     assert all(successful_creations), "All concurrent conversation creations should succeed"
     assert len(conversation_ids) == 5, "Should create 5 conversations"
-    
+
     # Test concurrent message sending
     async def send_message(conv_id, msg_num):
         message_data = {
             "message": f"Concurrent test message {msg_num}",
             "rag_rewrite_mode": "no_rag",
         }
-        
+
         response = await client.post(
-            f"/api/v1/chat/conversations/{conv_id}/send",
-            json=message_data,
-            headers=auth_headers
+            f"/api/v1/chat/conversations/{conv_id}/send", json=message_data, headers=auth_headers
         )
         try:
             return response.status_code in [200, 201]
@@ -477,17 +536,19 @@ async def test_concurrent_user_workflow(client, db, auth_headers):
     # Send messages to all conversations concurrently
     message_tasks = [send_message(conv_id, i) for i, conv_id in enumerate(conversation_ids)]
     message_results = await asyncio.gather(*message_tasks)
-    
+
     successful_messages = sum(message_results)
-    assert successful_messages >= 3, f"At least 3 out of 5 concurrent messages should succeed, got {successful_messages}"
-    
+    assert (
+        successful_messages >= 3
+    ), f"At least 3 out of 5 concurrent messages should succeed, got {successful_messages}"
+
     return True
 
 
 class EndToEndWorkflowTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for end-to-end workflows."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return end-to-end workflow test functions."""
         return [
             test_complete_admin_setup_workflow,
@@ -507,7 +568,9 @@ class EndToEndWorkflowTestSuite(BaseIntegrationTestSuite):
 
 if __name__ == "__main__":
     import asyncio
+
     suite = EndToEndWorkflowTestSuite()
     exit_code = asyncio.run(suite.run_suite())
     import sys
+
     sys.exit(exit_code)

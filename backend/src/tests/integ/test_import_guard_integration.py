@@ -1,6 +1,7 @@
 """
 Integration tests for plugin import guards: static scan and runtime deny-hook.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,8 +31,8 @@ async def test_loader_static_scan_blocks_shu_import(client, db, auth_headers):
 
 
 async def test_runtime_import_hook_blocks_dynamic_src_shu(client, db, auth_headers):
-    from shu.plugins.loader import PluginLoader
     from shu.plugins.executor import EXECUTOR
+    from shu.plugins.loader import PluginLoader
 
     loader = PluginLoader()
     records = loader.discover()
@@ -60,4 +61,3 @@ class ImportGuardsSuite(BaseIntegrationTestSuite):
 
 if __name__ == "__main__":
     create_test_runner_script(ImportGuardsSuite, globals())
-

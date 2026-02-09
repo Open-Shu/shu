@@ -12,15 +12,8 @@ import {
   Box,
 } from '@mui/material';
 
-const EnsembleModeDialog = ({
-  open,
-  onClose,
-  onSave,
-  availableModelConfigs,
-  selectedIds,
-  currentModelConfigId,
-}) => {
-  const safeSelectedIds = useMemo(() => Array.isArray(selectedIds) ? selectedIds : [], [selectedIds]);
+const EnsembleModeDialog = ({ open, onClose, onSave, availableModelConfigs, selectedIds, currentModelConfigId }) => {
+  const safeSelectedIds = useMemo(() => (Array.isArray(selectedIds) ? selectedIds : []), [selectedIds]);
   const [pendingSelection, setPendingSelection] = useState(() => new Set(safeSelectedIds));
 
   useEffect(() => {
@@ -45,7 +38,7 @@ const EnsembleModeDialog = ({
 
   const handleApply = () => {
     // Filter out the current model ID before saving - backend includes it automatically
-    const idsToSave = Array.from(pendingSelection).filter(id => id !== currentModelConfigId);
+    const idsToSave = Array.from(pendingSelection).filter((id) => id !== currentModelConfigId);
     onSave(idsToSave);
   };
 
@@ -54,7 +47,7 @@ const EnsembleModeDialog = ({
   };
 
   // Count only additional models (not the current one)
-  const additionalSelectionCount = Array.from(pendingSelection).filter(id => id !== currentModelConfigId).length;
+  const additionalSelectionCount = Array.from(pendingSelection).filter((id) => id !== currentModelConfigId).length;
   const hasSelection = additionalSelectionCount > 0;
 
   return (
@@ -86,15 +79,12 @@ const EnsembleModeDialog = ({
                     }
                     label={
                       <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                        <Typography
-                          variant="body2"
-                          sx={isCurrentModel ? { fontStyle: 'italic' } : undefined}
-                        >
+                        <Typography variant="body2" sx={isCurrentModel ? { fontStyle: 'italic' } : undefined}>
                           {config.name}
                           {isCurrentModel && ' (current)'}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {(config.llm_provider?.name || 'Provider')} • {config.model_name}
+                          {config.llm_provider?.name || 'Provider'} • {config.model_name}
                         </Typography>
                       </Box>
                     }

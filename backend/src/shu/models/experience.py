@@ -1,5 +1,4 @@
-"""
-Experience models for Shu.
+"""Experience models for Shu.
 
 This module defines the Experience abstraction - configurable compositions
 of data sources (plugins, knowledge bases), prompts, and LLM synthesis that
@@ -12,7 +11,9 @@ Design Decision:
 - Run history is persisted for auditing and cross-run continuity
 """
 
-from sqlalchemy import Column, String, Text, Boolean, Integer, ForeignKey, Index
+from datetime import UTC
+
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON, TIMESTAMP
 from sqlalchemy.orm import relationship
 
@@ -24,13 +25,13 @@ logger = get_logger(__name__)
 
 
 class Experience(BaseModel):
-    """
-    Configurable composition of data sources, prompts, and LLM synthesis.
+    """Configurable composition of data sources, prompts, and LLM synthesis.
 
     Examples:
     - "Morning Briefing": gmail + calendar + gchat plugins → synthesis prompt
     - "Inbox Triage": gmail plugin → prioritization prompt
     - "Project Pulse": gmail + calendar + drive + jira → project status prompt
+
     """
 
     __tablename__ = "experiences"
@@ -78,7 +79,7 @@ class Experience(BaseModel):
         "ExperienceStep",
         back_populates="experience",
         order_by="ExperienceStep.order",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
     runs = relationship("ExperienceRun", back_populates="experience", cascade="all, delete-orphan")
     model_configuration = relationship("ModelConfiguration")
@@ -86,44 +87,45 @@ class Experience(BaseModel):
     parent_version = relationship("Experience", remote_side="Experience.id")
     creator = relationship("User", foreign_keys=[created_by])
 
-    def schedule_next(self, user_timezone: str = None) -> None:
-        """
-        Compute and set the next_run_at based on trigger_type and trigger_config.
-        
+    def schedule_next(self, user_timezone: str | None = None) -> None:
+        """Compute and set the next_run_at based on trigger_type and trigger_config.
+
         Args:
             user_timezone: Optional user timezone from UserPreferences. Used as fallback
                           if trigger_config doesn't specify a timezone override.
-        
+
         Timezone priority:
         1. trigger_config["timezone"] - per-experience override
-        2. user_timezone - from user preferences  
+        2. user_timezone - from user preferences
         3. "UTC" - default fallback
-        
+
         Called after each scheduled execution to advance to the next window.
         Manual experiences will have next_run_at = None.
+
         """
-        from datetime import datetime, timezone as tz, timedelta
-        
+        from datetime import datetime, timedelta
+
         if self.trigger_type == "manual":
             self.next_run_at = None
             return
-        
+
         config = self.trigger_config or {}
-        now = datetime.now(tz.utc)
-        
+        now = datetime.now(UTC)
+
         # Timezone priority: config override > user preference > UTC
         tz_name = config.get("timezone") or user_timezone or "UTC"
         try:
             import zoneinfo
+
             local_tz = zoneinfo.ZoneInfo(tz_name)
         except Exception:
             logger.warning(
                 "Invalid timezone '%s' for experience %s. Falling back to UTC.",
                 tz_name,
-                self.id or self.name
+                self.id or self.name,
             )
-            local_tz = tz.utc
-        
+            local_tz = UTC
+
         if self.trigger_type == "scheduled":
             # One-time execution (scheduled_at)
             # We strictly enforce scheduled_at for "scheduled" type now.
@@ -136,9 +138,9 @@ class Experience(BaseModel):
                         # Assuming the naive datetime provided is in the user's local time or UTC if unknown
                         # Ideally frontend sends ISO with timezone, but if not we assume local_tz
                         target = target.replace(tzinfo=local_tz)
-                    
-                    target_utc = target.astimezone(tz.utc)
-                    
+
+                    target_utc = target.astimezone(UTC)
+
                     # If we have already run at or after this time, don't run again
                     # We use a small tolerance (1 second) to handle precision issues
                     if self.last_run_at and self.last_run_at >= (target_utc - timedelta(seconds=1)):
@@ -150,19 +152,20 @@ class Experience(BaseModel):
                     logger.error("Invalid scheduled_at format: %s", e)
                     self.next_run_at = None
                     return
-            
+
             # If no scheduled_at provided, we can't schedule anything
             self.next_run_at = None
-            
+
         elif self.trigger_type == "cron":
             # Cron expression
             cron_expr = config.get("cron", "0 8 * * *")
             try:
                 from croniter import croniter
+
                 local_now = now.astimezone(local_tz)
                 cron = croniter(cron_expr, local_now)
                 next_local = cron.get_next(datetime)
-                self.next_run_at = next_local.astimezone(tz.utc)
+                self.next_run_at = next_local.astimezone(UTC)
             except Exception as e:
                 logger.error("Could not get next run: %s", e)
                 # Fallback: schedule for next hour
@@ -171,12 +174,12 @@ class Experience(BaseModel):
             self.next_run_at = None
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<Experience(id={self.id}, name='{self.name}', visibility='{self.visibility}')>"
 
 
 class ExperienceStep(BaseModel):
-    """
-    Single step in an Experience: plugin call, KB query, or future step types.
+    """Single step in an Experience: plugin call, KB query, or future step types.
 
     Steps execute sequentially by order. Each step's output is available
     to subsequent steps and the final prompt template via the context:
@@ -218,12 +221,12 @@ class ExperienceStep(BaseModel):
     knowledge_base = relationship("KnowledgeBase")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ExperienceStep(id={self.id}, step_key='{self.step_key}', type='{self.step_type}')>"
 
 
 class ExperienceRun(BaseModel):
-    """
-    Execution record of an Experience.
+    """Execution record of an Experience.
 
     Stores the complete state of a run including:
     - Input parameters provided at run time
@@ -276,14 +279,15 @@ class ExperienceRun(BaseModel):
     previous_run = relationship("ExperienceRun", remote_side="ExperienceRun.id")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ExperienceRun(id={self.id}, experience_id='{self.experience_id}', status='{self.status}')>"
 
 
 # Database indexes for performance
-Index('idx_experiences_visibility', Experience.visibility)
-Index('idx_experiences_created_by', Experience.created_by)
-Index('idx_experiences_active_version', Experience.is_active_version)
-Index('idx_experience_steps_experience', ExperienceStep.experience_id)
-Index('idx_experience_runs_experience', ExperienceRun.experience_id)
-Index('idx_experience_runs_user', ExperienceRun.user_id)
-Index('idx_experience_runs_status', ExperienceRun.status)
+Index("idx_experiences_visibility", Experience.visibility)
+Index("idx_experiences_created_by", Experience.created_by)
+Index("idx_experiences_active_version", Experience.is_active_version)
+Index("idx_experience_steps_experience", ExperienceStep.experience_id)
+Index("idx_experience_runs_experience", ExperienceRun.experience_id)
+Index("idx_experience_runs_user", ExperienceRun.user_id)
+Index("idx_experience_runs_status", ExperienceRun.status)

@@ -1,7 +1,6 @@
 from __future__ import annotations
+
 import logging
-from typing import List
-import sys, os
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
@@ -36,7 +35,9 @@ async def test_execute_denied_when_unsubscribed(client, db, auth_headers):
     assert resp2.status_code == 403, resp2.text
     data2 = resp2.json() if resp2.headers.get("content-type", "").startswith("application/json") else {}
     # Envelope: {"error": {"code": "HTTP_403", "message": {"error": {"code": "subscription_required", ...}}, "details": {}}}
-    err_obj = ((data2.get("error") or {}).get("message") or {}).get("error") if isinstance(data2.get("error"), dict) else None
+    err_obj = (
+        ((data2.get("error") or {}).get("message") or {}).get("error") if isinstance(data2.get("error"), dict) else None
+    )
     assert isinstance(err_obj, dict), data2
     assert err_obj.get("code") == "subscription_required", data2
 
@@ -47,7 +48,11 @@ async def test_scheduler_denied_when_unsubscribed(client, db, auth_headers):
     await _enable_plugin(client, auth_headers, "gdrive_files")
 
     # Subscribe only to gmail_digest
-    resp = await client.post("/api/v1/host/auth/subscriptions", json={"provider": "google", "plugin_name": "gmail_digest"}, headers=auth_headers)
+    resp = await client.post(
+        "/api/v1/host/auth/subscriptions",
+        json={"provider": "google", "plugin_name": "gmail_digest"},
+        headers=auth_headers,
+    )
     assert resp.status_code == 200, resp.text
 
     # Create a feed for gdrive_files (unsubscribed)
@@ -69,7 +74,11 @@ async def test_scheduler_denied_when_unsubscribed(client, db, auth_headers):
     assert rn.status_code == 200, rn.text
 
     # Process the pending execution
-    rp = await client.post("/api/v1/plugins/admin/executions/run-pending", json={"limit": 1, "schedule_id": schedule_id}, headers=auth_headers)
+    rp = await client.post(
+        "/api/v1/plugins/admin/executions/run-pending",
+        json={"limit": 1, "schedule_id": schedule_id},
+        headers=auth_headers,
+    )
     assert rp.status_code == 200, rp.text
 
     # Verify execution failed with subscription_required
@@ -101,5 +110,5 @@ if __name__ == "__main__":
     suite = SubscriptionEnforcementTestSuite()
     exit_code = suite.run()
     import sys as _sys
-    _sys.exit(exit_code)
 
+    _sys.exit(exit_code)

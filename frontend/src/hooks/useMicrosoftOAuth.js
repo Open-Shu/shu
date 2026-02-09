@@ -8,7 +8,7 @@ const OAUTH_POPUP_TIMEOUT_MS = 180000;
 
 /**
  * Custom hook for Microsoft OAuth popup authentication flow.
- * 
+ *
  * @param {Object} options
  * @param {Function} options.onSuccess - Called with tokens on successful login
  * @param {Function} options.onError - Called with error message on failure
@@ -17,7 +17,7 @@ const OAUTH_POPUP_TIMEOUT_MS = 180000;
  */
 export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
   const [loading, setLoading] = useState(false);
-  
+
   // Refs for popup and listener management
   const messageHandlerRef = useRef(null);
   const timeoutRef = useRef(null);
@@ -50,7 +50,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
 
   const startLogin = useCallback(async () => {
     setLoading(true);
-    
+
     try {
       const url = `${getApiV1Base()}/auth/microsoft/login`;
       const popup = window.open(
@@ -72,16 +72,20 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
 
       const onMessage = async (event) => {
         try {
-          if (event.origin !== expectedOrigin) return;
+          if (event.origin !== expectedOrigin) {
+            return;
+          }
           const data = event.data || {};
-          if (!data || !data.code || data.provider !== 'microsoft') return;
+          if (!data || !data.code || data.provider !== 'microsoft') {
+            return;
+          }
 
           // Cleanup listener/timeout and close popup
           cleanup();
 
           const resp = await authAPI.exchangeMicrosoftLogin(data.code);
           const payload = extractDataFromResponse(resp);
-          
+
           // Check for pending activation (201 response without tokens)
           if (!payload || !payload.access_token) {
             log.info('Microsoft OAuth: account pending activation');
@@ -112,7 +116,7 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
             setLoading(false);
             return;
           }
-          
+
           const errorMessage = ex.response?.data?.detail || ex.message || 'Microsoft login failed';
           log.error('Microsoft OAuth exchange failed', { error: errorMessage });
           if (onError) {
@@ -134,7 +138,6 @@ export function useMicrosoftOAuth({ onSuccess, onError, onPendingActivation }) {
           onError('Login window timed out. Please try again.');
         }
       }, OAUTH_POPUP_TIMEOUT_MS);
-      
     } catch (err) {
       const errorMessage = err.message || 'Failed to start Microsoft login';
       log.error('Microsoft OAuth start failed', { error: errorMessage });

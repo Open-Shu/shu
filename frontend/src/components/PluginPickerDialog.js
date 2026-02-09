@@ -1,8 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, TextField, List, ListItemButton, ListItemText,
-  CircularProgress, Tooltip
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  TextField,
+  List,
+  ListItemButton,
+  ListItemText,
+  CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import { useQuery } from 'react-query';
 import { pluginsAPI } from '../services/pluginsApi';
@@ -12,7 +20,7 @@ import { pluginDisplayName, pluginPrimaryLabel } from '../utils/plugins';
 export default function PluginPickerDialog({ open, onClose, onSelect }) {
   const [filter, setFilter] = useState('');
   const { data, isLoading, isFetching, error } = useQuery(
-    ['plugins','list'],
+    ['plugins', 'list'],
     () => pluginsAPI.list().then(extractDataFromResponse),
     { enabled: open, staleTime: 10000 }
   );
@@ -20,8 +28,12 @@ export default function PluginPickerDialog({ open, onClose, onSelect }) {
   const tools = useMemo(() => (Array.isArray(data) ? data : []), [data]);
   const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    if (!f) return tools;
-    return tools.filter(t => (pluginDisplayName(t) || '').toLowerCase().includes(f) || (t.name || '').toLowerCase().includes(f));
+    if (!f) {
+      return tools;
+    }
+    return tools.filter(
+      (t) => (pluginDisplayName(t) || '').toLowerCase().includes(f) || (t.name || '').toLowerCase().includes(f)
+    );
   }, [tools, filter]);
 
   return (
@@ -63,4 +75,3 @@ export default function PluginPickerDialog({ open, onClose, onSelect }) {
     </Dialog>
   );
 }
-

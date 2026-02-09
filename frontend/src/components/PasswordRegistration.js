@@ -1,14 +1,5 @@
 import React, { useState } from 'react';
-import {
-  Button,
-  TextField,
-  Box,
-  Typography,
-  Alert,
-  CircularProgress,
-  Paper,
-  Container
-} from '@mui/material';
+import { Button, TextField, Box, Typography, Alert, CircularProgress, Paper, Container } from '@mui/material';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import api from '../services/api';
 
@@ -17,7 +8,7 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
     email: '',
     password: '',
     confirmPassword: '',
-    name: ''
+    name: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -26,10 +17,12 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
   const handleChange = (e) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     });
     // Clear error when user starts typing
-    if (error) setError(null);
+    if (error) {
+      setError(null);
+    }
   };
 
   const validateForm = () => {
@@ -59,7 +52,7 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
@@ -72,16 +65,14 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
       await api.post('/auth/register', {
         email: formData.email,
         password: formData.password,
-        name: formData.name
+        name: formData.name,
       });
 
       // Registration successful but user needs admin activation
       setSuccess(true);
-
     } catch (err) {
-      const errorMessage = err.response?.data?.error?.message || 
-                          err.response?.data?.detail || 
-                          'Registration failed. Please try again.';
+      const errorMessage =
+        err.response?.data?.error?.message || err.response?.data?.detail || 'Registration failed. Please try again.';
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -105,16 +96,14 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
                 Registration Successful!
               </Typography>
               <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                Your account has been created successfully. However, it requires administrator activation before you can log in.
+                Your account has been created successfully. However, it requires administrator activation before you can
+                log in.
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Please contact your administrator to activate your account. You will receive an email confirmation once your account is activated.
+                Please contact your administrator to activate your account. You will receive an email confirmation once
+                your account is activated.
               </Typography>
-              <Button
-                variant="contained"
-                onClick={onSwitchToLogin}
-                sx={{ mt: 2 }}
-              >
+              <Button variant="contained" onClick={onSwitchToLogin} sx={{ mt: 2 }}>
                 Return to Login
               </Button>
             </Box>
@@ -164,7 +153,7 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
               onChange={handleChange}
               disabled={loading}
             />
-            
+
             <TextField
               margin="normal"
               required
@@ -178,7 +167,7 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
               onChange={handleChange}
               disabled={loading}
             />
-            
+
             <TextField
               margin="normal"
               required
@@ -193,7 +182,7 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
               disabled={loading}
               helperText="Password must be at least 8 characters long"
             />
-            
+
             <TextField
               margin="normal"
               required
@@ -206,8 +195,6 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
               onChange={handleChange}
               disabled={loading}
             />
-
-
 
             <Button
               type="submit"
@@ -222,11 +209,7 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
             </Button>
 
             <Box sx={{ textAlign: 'center', mt: 2 }}>
-              <Button
-                variant="text"
-                onClick={onSwitchToLogin}
-                disabled={loading}
-              >
+              <Button variant="text" onClick={onSwitchToLogin} disabled={loading}>
                 Already have an account? Sign in
               </Button>
             </Box>

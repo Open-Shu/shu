@@ -49,13 +49,11 @@ const TestWrapper = ({ children }) => {
     },
   });
   const theme = createTheme();
-  
+
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider theme={theme}>
-          {children}
-        </ThemeProvider>
+        <ThemeProvider theme={theme}>{children}</ThemeProvider>
       </QueryClientProvider>
     </BrowserRouter>
   );
@@ -92,10 +90,10 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     // Mock extractDataFromResponse
     api.extractDataFromResponse = jest.fn().mockImplementation((response) => response.data);
-    
+
     // Mock formatError
     api.formatError = jest.fn().mockImplementation((error) => error.message || 'An error occurred');
   });
@@ -107,12 +105,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-123"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId="run-123" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -132,12 +125,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-456"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId="run-456" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -145,7 +133,9 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
       expect(screen.getByText('Run Details')).toBeInTheDocument();
     });
 
-    const button = screen.queryByRole('button', { name: /start conversation/i });
+    const button = screen.queryByRole('button', {
+      name: /start conversation/i,
+    });
     expect(button).not.toBeInTheDocument();
   });
 
@@ -156,19 +146,14 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     // Mock a delayed response
     api.chatAPI = {
-      createConversationFromExperience: jest.fn().mockImplementation(() => 
-        new Promise(resolve => setTimeout(() => resolve({ data: mockConversation }), 100))
-      ),
+      createConversationFromExperience: jest
+        .fn()
+        .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve({ data: mockConversation }), 100))),
     };
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-123"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId="run-123" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -190,7 +175,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
   test('navigates to conversation view on successful creation', async () => {
     const mockOnClose = jest.fn();
-    
+
     api.experiencesAPI = {
       getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
     };
@@ -201,12 +186,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={mockOnClose}
-          runId="run-123"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={mockOnClose} runId="run-123" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -239,12 +219,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-123"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId="run-123" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -270,19 +245,14 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     // Mock a delayed response to test disabled state
     api.chatAPI = {
-      createConversationFromExperience: jest.fn().mockImplementation(() => 
-        new Promise(resolve => setTimeout(() => resolve({ data: mockConversation }), 200))
-      ),
+      createConversationFromExperience: jest
+        .fn()
+        .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve({ data: mockConversation }), 200))),
     };
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-123"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId="run-123" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -314,12 +284,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId="run-123"
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId="run-123" timezone="America/New_York" />
       </TestWrapper>
     );
 
@@ -335,10 +300,10 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
     });
 
     // Find the alert close button specifically (not the dialog close button)
-    const alertCloseButtons = screen.getAllByRole('button').filter(btn => 
-      btn.getAttribute('aria-label') === 'Close' && btn.getAttribute('title') === 'Close'
-    );
-    
+    const alertCloseButtons = screen
+      .getAllByRole('button')
+      .filter((btn) => btn.getAttribute('aria-label') === 'Close' && btn.getAttribute('title') === 'Close');
+
     expect(alertCloseButtons.length).toBeGreaterThan(0);
     fireEvent.click(alertCloseButtons[0]);
 
@@ -349,7 +314,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
   test('calls API with correct runId parameter', async () => {
     const testRunId = 'test-run-id-123';
-    
+
     api.experiencesAPI = {
       getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
     };
@@ -360,12 +325,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
 
     render(
       <TestWrapper>
-        <ExperienceRunDetailDialog
-          open={true}
-          onClose={jest.fn()}
-          runId={testRunId}
-          timezone="America/New_York"
-        />
+        <ExperienceRunDetailDialog open={true} onClose={jest.fn()} runId={testRunId} timezone="America/New_York" />
       </TestWrapper>
     );
 

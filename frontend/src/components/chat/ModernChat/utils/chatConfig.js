@@ -3,7 +3,9 @@
 
 const parsePositiveInt = (envKey, fallback) => {
   const raw = process.env[envKey];
-  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (raw === undefined || raw === null || raw === '') {
+    return fallback;
+  }
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
@@ -11,7 +13,9 @@ const parsePositiveInt = (envKey, fallback) => {
 // Allow 0 for parameters where zero is meaningful (e.g., overscan, thresholds)
 const parseNonNegativeInt = (envKey, fallback) => {
   const raw = process.env[envKey];
-  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (raw === undefined || raw === null || raw === '') {
+    return fallback;
+  }
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 };
@@ -19,17 +23,21 @@ const parseNonNegativeInt = (envKey, fallback) => {
 // Boolean parser for feature toggles
 const parseBoolean = (envKey, fallback = false) => {
   const raw = process.env[envKey];
-  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (raw === undefined || raw === null || raw === '') {
+    return fallback;
+  }
   const val = String(raw).trim().toLowerCase();
-  if (val === 'true') return true;
-  if (val === 'false') return false;
+  if (val === 'true') {
+    return true;
+  }
+  if (val === 'false') {
+    return false;
+  }
   return fallback;
-
 };
 
 // Feature toggles
 export const CHAT_PLUGINS_ENABLED = parseBoolean('REACT_APP_CHAT_PLUGINS_ENABLED', false);
-
 
 // Windowing + scroll thresholds
 export const CHAT_WINDOW_SIZE = parsePositiveInt('REACT_APP_CHAT_WINDOW_SIZE', 15);
@@ -50,4 +58,3 @@ export const DEFAULT_SUMMARY_SEARCH_MAX_TOKENS = parsePositiveInt('REACT_APP_SUM
 export const STORAGE_KEY_RAG_REWRITE_MODE = 'shu.chat.ragRewriteMode';
 export const PLACEHOLDER_THINKING = 'Thinking…';
 export const DEFAULT_NEW_CHAT_TITLE = 'New Chat';
-

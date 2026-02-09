@@ -22,7 +22,7 @@ import {
 
 /**
  * PageHelpHeader - A reusable component for displaying page help information
- * 
+ *
  * @param {string} title - The page title
  * @param {string} description - Main description of the page's purpose
  * @param {string[]} tips - Array of usage tips or hints
@@ -30,14 +30,7 @@ import {
  * @param {boolean} defaultExpanded - Whether tips are expanded by default (default: false)
  * @param {React.ReactNode} actions - Optional action buttons to display on the right
  */
-const PageHelpHeader = ({ 
-  title, 
-  description, 
-  tips = [], 
-  icon,
-  defaultExpanded = false,
-  actions
-}) => {
+const PageHelpHeader = ({ title, description, tips = [], icon, defaultExpanded = false, actions }) => {
   const [tipsExpanded, setTipsExpanded] = useState(defaultExpanded);
   const theme = useTheme();
 
@@ -54,7 +47,13 @@ const PageHelpHeader = ({
         borderRadius: 2,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+        }}
+      >
         <Box sx={{ display: 'flex', alignItems: 'flex-start', flex: 1 }}>
           <Box
             sx={{
@@ -81,11 +80,7 @@ const PageHelpHeader = ({
             </Typography>
           </Box>
         </Box>
-        {actions && (
-          <Box sx={{ ml: 2, flexShrink: 0 }}>
-            {actions}
-          </Box>
-        )}
+        {actions && <Box sx={{ ml: 2, flexShrink: 0 }}>{actions}</Box>}
       </Box>
 
       {hasTips && (
@@ -101,10 +96,7 @@ const PageHelpHeader = ({
             onClick={() => setTipsExpanded(!tipsExpanded)}
           >
             <TipIcon sx={{ fontSize: 18, color: theme.palette.warning.main, mr: 1 }} />
-            <Typography
-              variant="body2"
-              sx={{ fontWeight: 500, color: theme.palette.text.secondary }}
-            >
+            <Typography variant="body2" sx={{ fontWeight: 500, color: theme.palette.text.secondary }}>
               {tipsExpanded ? 'Hide tips' : `${tips.length} helpful tip${tips.length > 1 ? 's' : ''}`}
             </Typography>
             <IconButton size="small" sx={{ ml: 0.5 }}>
@@ -136,4 +128,3 @@ const PageHelpHeader = ({
 };
 
 export default PageHelpHeader;
-

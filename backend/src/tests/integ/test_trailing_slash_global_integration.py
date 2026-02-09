@@ -8,9 +8,8 @@ Covers:
 """
 
 import sys
-import os
-from typing import List, Callable
 import uuid
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 
@@ -47,7 +46,7 @@ async def test_kb_get_trailing_slash(client, db, auth_headers):
 
 
 class GlobalTrailingSlashSmokeSuite(BaseIntegrationTestSuite):
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_health_trailing_slash,
             test_kb_list_trailing_slash,
@@ -65,4 +64,3 @@ if __name__ == "__main__":
     suite = GlobalTrailingSlashSmokeSuite()
     exit_code = suite.run()
     sys.exit(exit_code)
-

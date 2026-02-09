@@ -5,21 +5,21 @@ Tests the pure LLM logic for document and chunk profiling, mocking the SideCallS
 """
 
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from shu.services.profiling_service import (
-    ProfilingService,
-    DOCUMENT_PROFILE_SYSTEM_PROMPT,
-    CHUNK_PROFILE_SYSTEM_PROMPT,
-    AGGREGATE_PROFILE_SYSTEM_PROMPT,
-)
-from shu.services.side_call_service import SideCallResult
+import pytest
+
 from shu.schemas.profiling import (
     ChunkData,
     ChunkProfile,
     DocumentType,
 )
+from shu.services.profiling_service import (
+    AGGREGATE_PROFILE_SYSTEM_PROMPT,
+    DOCUMENT_PROFILE_SYSTEM_PROMPT,
+    ProfilingService,
+)
+from shu.services.side_call_service import SideCallResult
 
 
 @pytest.fixture
@@ -51,20 +51,20 @@ class TestDocumentProfiling:
     @pytest.mark.asyncio
     async def test_profile_document_success(self, profiling_service, mock_side_call_service):
         """Test successful document profiling."""
-        llm_response = json.dumps({
-            "synopsis": "A technical document about API design patterns.",
-            "document_type": "technical",
-            "capability_manifest": {
-                "answers_questions_about": ["API design", "REST conventions"],
-                "provides_information_type": ["instructions", "facts"],
-                "authority_level": "primary",
-                "completeness": "complete",
-                "question_domains": ["what", "how"],
+        llm_response = json.dumps(
+            {
+                "synopsis": "A technical document about API design patterns.",
+                "document_type": "technical",
+                "capability_manifest": {
+                    "answers_questions_about": ["API design", "REST conventions"],
+                    "provides_information_type": ["instructions", "facts"],
+                    "authority_level": "primary",
+                    "completeness": "complete",
+                    "question_domains": ["what", "how"],
+                },
             }
-        })
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=150
         )
+        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=150)
 
         profile, result = await profiling_service.profile_document("Sample document text")
 
@@ -85,12 +85,12 @@ class TestDocumentProfiling:
             success=True,
             tokens_used=100,
         )
-        
+
         await profiling_service.profile_document(
             "Document text",
             document_metadata={"title": "My Doc", "source": "email"},
         )
-        
+
         call_kwargs = mock_side_call_service.call.call_args[1]
         user_message = call_kwargs["message_sequence"][0]["content"]
         assert "My Doc" in user_message
@@ -127,9 +127,7 @@ class TestDocumentProfiling:
         llm_response = """```json
 {"synopsis":"Wrapped in code blocks","document_type":"narrative","capability_manifest":{}}
 ```"""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=100
-        )
+        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=100)
 
         profile, result = await profiling_service.profile_document("Document text")
 
@@ -156,13 +154,21 @@ class TestChunkProfiling:
     @pytest.mark.asyncio
     async def test_profile_chunks_success(self, profiling_service, mock_side_call_service):
         """Test successful chunk profiling."""
-        llm_response = json.dumps([
-            {"summary": "First chunk about users", "keywords": ["user", "auth"], "topics": ["security"]},
-            {"summary": "Second chunk about APIs", "keywords": ["REST", "HTTP"], "topics": ["integration"]},
-        ])
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=200
+        llm_response = json.dumps(
+            [
+                {
+                    "summary": "First chunk about users",
+                    "keywords": ["user", "auth"],
+                    "topics": ["security"],
+                },
+                {
+                    "summary": "Second chunk about APIs",
+                    "keywords": ["REST", "HTTP"],
+                    "topics": ["integration"],
+                },
+            ]
         )
+        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=200)
 
         chunks = [
             ChunkData(chunk_id="c1", chunk_index=0, content="User auth content"),
@@ -194,16 +200,16 @@ class TestChunkProfiling:
 
         # Mock returns profiles for batch
         def make_response(call_count):
-            profiles = [{"summary": f"Profile {i}", "keywords": [], "topics": []}
-                       for i in range(2)]
+            profiles = [{"summary": f"Profile {i}", "keywords": [], "topics": []} for i in range(2)]
             return SideCallResult(content=json.dumps(profiles), success=True, tokens_used=100)
 
         mock_side_call_service.call.side_effect = [
-            make_response(0), make_response(1), make_response(2)
+            make_response(0),
+            make_response(1),
+            make_response(2),
         ]
 
-        chunks = [ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}")
-                  for i in range(5)]
+        chunks = [ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}") for i in range(5)]
         results, tokens_used = await profiling_service.profile_chunks(chunks)
 
         # Should have 3 calls: 2+2+1 chunks
@@ -214,9 +220,7 @@ class TestChunkProfiling:
     @pytest.mark.asyncio
     async def test_profile_chunks_llm_failure(self, profiling_service, mock_side_call_service):
         """Test handling of LLM failure during chunk profiling."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content="", success=False, error_message="Timeout"
-        )
+        mock_side_call_service.call.return_value = SideCallResult(content="", success=False, error_message="Timeout")
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
         results, tokens_used = await profiling_service.profile_chunks(chunks)
@@ -232,14 +236,16 @@ class TestChunkProfiling:
         """Test that excessively long profile data is truncated."""
         long_summary = "x" * 1000
         long_keywords = [f"kw{i}" for i in range(50)]
-        llm_response = json.dumps([{
-            "summary": long_summary,
-            "keywords": long_keywords,
-            "topics": [f"t{i}" for i in range(20)],
-        }])
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=500
+        llm_response = json.dumps(
+            [
+                {
+                    "summary": long_summary,
+                    "keywords": long_keywords,
+                    "topics": [f"t{i}" for i in range(20)],
+                }
+            ]
         )
+        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=500)
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
         results, tokens_used = await profiling_service.profile_chunks(chunks)
@@ -258,29 +264,31 @@ class TestAggregateProfiles:
         """Test successful aggregation of chunk profiles."""
         from shu.schemas.profiling import ChunkProfileResult
 
-        llm_response = json.dumps({
-            "synopsis": "Aggregated document about APIs and security.",
-            "document_type": "technical",
-            "capability_manifest": {
-                "answers_questions_about": ["APIs", "security"],
-                "provides_information_type": ["instructions"],
-                "authority_level": "primary",
-                "completeness": "complete",
-                "question_domains": ["how"],
+        llm_response = json.dumps(
+            {
+                "synopsis": "Aggregated document about APIs and security.",
+                "document_type": "technical",
+                "capability_manifest": {
+                    "answers_questions_about": ["APIs", "security"],
+                    "provides_information_type": ["instructions"],
+                    "authority_level": "primary",
+                    "completeness": "complete",
+                    "question_domains": ["how"],
+                },
             }
-        })
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=300
         )
+        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=300)
 
         chunk_profiles = [
             ChunkProfileResult(
-                chunk_id="c1", chunk_index=0,
+                chunk_id="c1",
+                chunk_index=0,
                 profile=ChunkProfile(summary="About APIs", keywords=["REST"], topics=["integration"]),
                 success=True,
             ),
             ChunkProfileResult(
-                chunk_id="c2", chunk_index=1,
+                chunk_id="c2",
+                chunk_index=1,
                 profile=ChunkProfile(summary="About security", keywords=["auth"], topics=["security"]),
                 success=True,
             ),
@@ -311,12 +319,14 @@ class TestAggregateProfiles:
 
         chunk_profiles = [
             ChunkProfileResult(
-                chunk_id="c1", chunk_index=0,
+                chunk_id="c1",
+                chunk_index=0,
                 profile=ChunkProfile(summary="Good profile", keywords=["key"], topics=["topic"]),
                 success=True,
             ),
             ChunkProfileResult(
-                chunk_id="c2", chunk_index=1,
+                chunk_id="c2",
+                chunk_index=1,
                 profile=ChunkProfile(summary="", keywords=[], topics=[]),
                 success=False,
                 error="Failed to profile",
@@ -329,4 +339,3 @@ class TestAggregateProfiles:
         assert "Good profile" in user_content
         # Failed chunk summary should not appear (empty string)
         assert "Chunk 1:" not in user_content  # Only successful chunks included
-

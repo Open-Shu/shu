@@ -1,15 +1,17 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional
+
+from typing import Any
+
 
 # Local ToolResult shim
 class ToolResult:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status = status
         self.data = data or {}
         self.error = error
 
     @classmethod
-    def ok(cls, data: Optional[Dict[str, Any]] = None):
+    def ok(cls, data: dict[str, Any] | None = None):
         return cls(status="success", data=data)
 
     @classmethod
@@ -22,18 +24,29 @@ class TestCapDenyPlugin:
     version = "1"
     _capabilities = ["identity"]  # align with manifest
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "op": {"type": ["string", "null"], "enum": ["try_secrets"], "default": "try_secrets", "x-ui": {"help": "Attempt to use a denied capability.", "enum_labels": {"try_secrets": "Try Secrets"}, "enum_help": {"try_secrets": "Call host.secrets without declaring capability; should be denied by host"}}},
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": ["try_secrets"],
+                    "default": "try_secrets",
+                    "x-ui": {
+                        "help": "Attempt to use a denied capability.",
+                        "enum_labels": {"try_secrets": "Try Secrets"},
+                        "enum_help": {
+                            "try_secrets": "Call host.secrets without declaring capability; should be denied by host"
+                        },
+                    },
+                },
             },
             "required": ["op"],
             "additionalProperties": True,
         }
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> ToolResult:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> ToolResult:
         # Attempt to use an undeclared capability (should be denied at host boundary)
         try:
             if params.get("op") == "try_secrets":
@@ -42,4 +55,3 @@ class TestCapDenyPlugin:
         except Exception as e:
             return ToolResult.err(str(e))
         return ToolResult.ok({"ok": True})
-

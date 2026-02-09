@@ -1,13 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Button,
-  Box,
-  Typography,
-  Alert,
-  CircularProgress,
-  Paper,
-  Container
-} from '@mui/material';
+import { Button, Box, Typography, Alert, CircularProgress, Paper, Container } from '@mui/material';
 import GoogleIcon from '@mui/icons-material/Google';
 import { useAuth } from '../hooks/useAuth';
 import { authAPI, extractDataFromResponse } from '../services/api';
@@ -68,40 +60,44 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
   const popupRef = useRef(null);
 
   // Stable handler for GIS callback
-  const handleCredentialResponse = useCallback(async (response) => {
-    try {
-      // Send the Google token to our backend
-      const result = await login(response.credential);
+  const handleCredentialResponse = useCallback(
+    async (response) => {
+      try {
+        // Send the Google token to our backend
+        const result = await login(response.credential);
 
-      if (result?.status === 'pending_activation') {
-        setSuccessMessage(
-          result.message ||
-          'Your account has been created but requires administrator activation before you can sign in.'
-        );
+        if (result?.status === 'pending_activation') {
+          setSuccessMessage(
+            result.message ||
+              'Your account has been created but requires administrator activation before you can sign in.'
+          );
+          setLoading(false);
+          return;
+        }
+
+        if (result?.status && result.status !== 'authenticated') {
+          setError('Unexpected response from authentication service. Please try again.');
+          setLoading(false);
+          return;
+        }
+
+        // Redirect to main app (the auth wrapper will handle the redirect)
+        window.location.href = '/';
+      } catch (err) {
+        setError(err.message || 'Login failed');
         setLoading(false);
-        return;
       }
+    },
+    [login]
+  );
 
-      if (result?.status && result.status !== 'authenticated') {
-        setError('Unexpected response from authentication service. Please try again.');
-        setLoading(false);
-        return;
-      }
-
-      // Redirect to main app (the auth wrapper will handle the redirect)
-      window.location.href = '/';
-    } catch (err) {
-      setError(err.message || 'Login failed');
-      setLoading(false);
-    }
-  }, [login]);
-
-  
   // Initialize GIS with FedCM and render the official button when ready
   useEffect(() => {
     const initGIS = async () => {
       try {
-        if (!configLoaded || !googleLoaded || !window.google) return;
+        if (!configLoaded || !googleLoaded || !window.google) {
+          return;
+        }
 
         const googleClientId = configService.getGoogleClientId();
         if (!googleClientId) {
@@ -130,7 +126,6 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
         // Do not auto-prompt. We only show account chooser after the user clicks the button.
       } catch (e) {
         log.error('Failed to initialize Google Identity Services', e);
-
       }
     };
 
@@ -148,12 +143,16 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
           clearTimeout(timeoutRef.current);
           timeoutRef.current = null;
         }
-        try { popupRef.current && popupRef.current.close(); } catch (_) {}
-      } catch (_) {}
+        try {
+          popupRef.current && popupRef.current.close();
+        } catch (_) {
+          // Ignore error
+        }
+      } catch (_) {
+        // Ignore error
+      }
     };
   }, []);
-
-
 
   const handleRedirectLogin = async () => {
     setLoading(true);
@@ -182,9 +181,13 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
 
       const onMessage = async (event) => {
         try {
-          if (event.origin !== expectedOrigin) return;
+          if (event.origin !== expectedOrigin) {
+            return;
+          }
           const data = event.data || {};
-          if (!data || !data.code || data.provider !== 'google') return;
+          if (!data || !data.code || data.provider !== 'google') {
+            return;
+          }
 
           // Cleanup listener/timeout and close popup
           if (messageHandlerRef.current) {
@@ -195,7 +198,11 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
           }
-          try { popupRef.current && popupRef.current.close(); } catch (_) {}
+          try {
+            popupRef.current && popupRef.current.close();
+          } catch (_) {
+            // Ignore error
+          }
 
           const resp = await authAPI.exchangeGoogleLogin(data.code);
           const payload = extractDataFromResponse(resp);
@@ -227,7 +234,11 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
             window.removeEventListener('message', messageHandlerRef.current);
             messageHandlerRef.current = null;
           }
-          try { popupRef.current && popupRef.current.close(); } catch (_) {}
+          try {
+            popupRef.current && popupRef.current.close();
+          } catch (_) {
+            // Ignore error
+          }
         } finally {
           setLoading(false);
           setError('Login window timed out. Please try again or use the primary Google button.');
@@ -238,8 +249,6 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
       setLoading(false);
     }
   };
-
-  
 
   return (
     <Container maxWidth="sm">
@@ -326,11 +335,7 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
 
           {onSwitchToPassword && (
             <Box sx={{ textAlign: 'center', mt: 2 }}>
-              <Button
-                variant="text"
-                onClick={onSwitchToPassword}
-                disabled={loading}
-              >
+              <Button variant="text" onClick={onSwitchToPassword} disabled={loading}>
                 Sign in with email and password instead
               </Button>
             </Box>

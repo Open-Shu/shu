@@ -12,17 +12,17 @@ steps:
     step_type: "plugin"
 `;
       const result = YAMLProcessor.parseYAML(yamlContent);
-      
+
       expect(result).toEqual({
-        name: "Test Experience",
-        description: "A test experience",
+        name: 'Test Experience',
+        description: 'A test experience',
         version: 1,
         steps: [
           {
-            step_key: "test",
-            step_type: "plugin"
-          }
-        ]
+            step_key: 'test',
+            step_type: 'plugin',
+          },
+        ],
       });
     });
 
@@ -67,29 +67,29 @@ steps:
     step_type: "plugin"
     plugin_name: "gmail"
 `;
-      
+
       const payload = YAMLProcessor.convertToExperiencePayload(yamlContent);
-      
+
       expect(payload).toEqual({
-        name: "Morning Briefing",
-        description: "Daily summary of emails and calendar",
+        name: 'Morning Briefing',
+        description: 'Daily summary of emails and calendar',
         version: 1,
-        visibility: "published",
-        trigger_type: "cron",
+        visibility: 'published',
+        trigger_type: 'cron',
         trigger_config: {
-          cron: "0 7 * * *",
-          timezone: "America/New_York"
+          cron: '0 7 * * *',
+          timezone: 'America/New_York',
         },
         include_previous_run: true,
-        model_configuration_id: "config-1",
-        inline_prompt_template: "Summarize the following...",
+        model_configuration_id: 'config-1',
+        inline_prompt_template: 'Summarize the following...',
         steps: [
           {
-            step_key: "emails",
-            step_type: "plugin",
-            plugin_name: "gmail"
-          }
-        ]
+            step_key: 'emails',
+            step_type: 'plugin',
+            plugin_name: 'gmail',
+          },
+        ],
       });
     });
 
@@ -98,9 +98,9 @@ steps:
 name: "Simple Experience"
 description: "A simple test experience"
 `;
-      
+
       const payload = YAMLProcessor.convertToExperiencePayload(yamlContent);
-      
+
       expect(payload.version).toBe(1);
       expect(payload.visibility).toBe('draft');
       expect(payload.trigger_type).toBe('manual');
@@ -114,9 +114,10 @@ description: "A simple test experience"
       const yamlContent = `
 name: "Test Experience"
 `;
-      
-      expect(() => YAMLProcessor.convertToExperiencePayload(yamlContent))
-        .toThrow('Missing required fields: description');
+
+      expect(() => YAMLProcessor.convertToExperiencePayload(yamlContent)).toThrow(
+        'Missing required fields: description'
+      );
     });
 
     it('throws error for invalid steps format', () => {
@@ -125,9 +126,8 @@ name: "Test Experience"
 description: "Test description"
 steps: "not an array"
 `;
-      
-      expect(() => YAMLProcessor.convertToExperiencePayload(yamlContent))
-        .toThrow('Steps must be an array');
+
+      expect(() => YAMLProcessor.convertToExperiencePayload(yamlContent)).toThrow('Steps must be an array');
     });
   });
 
@@ -142,9 +142,9 @@ steps:
     plugin_name: "test_plugin"
     plugin_op: "test_op"
 `;
-      
+
       const result = YAMLProcessor.validateExperienceYAML(yamlContent);
-      
+
       expect(result.isValid).toBe(true);
       expect(result.errors).toEqual([]);
     });
@@ -157,9 +157,9 @@ trigger_type: "cron"
 trigger_config:
   timezone: "America/New_York"
 `;
-      
+
       const result = YAMLProcessor.validateExperienceYAML(yamlContent);
-      
+
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('Cron trigger requires cron expression in trigger_config');
     });
@@ -172,9 +172,9 @@ steps:
   - step_type: "plugin"
   - step_key: "test"
 `;
-      
+
       const result = YAMLProcessor.validateExperienceYAML(yamlContent);
-      
+
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('Step 1 is missing step_key');
       expect(result.errors).toContain('Step 2 is missing step_type');
@@ -185,9 +185,9 @@ steps:
 name: "Test Experience"
 description: "Invalid YAML
 `;
-      
+
       const result = YAMLProcessor.validateExperienceYAML(yamlContent);
-      
+
       expect(result.isValid).toBe(false);
       expect(result.errors.length).toBeGreaterThan(0);
       // The error is now an object with enhanced information

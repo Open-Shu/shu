@@ -3,24 +3,18 @@ Comprehensive RBAC Integration Tests for Shu
 
 These tests verify the complete Role-Based Access Control system:
 - User groups CRUD operations
-- Group membership management  
+- Group membership management
 - Knowledge base permissions
 - Permission inheritance and expiration
 - RBAC enforcement (endpoint dependencies)
 - Permission level hierarchy
 """
 
-import sys
-import os
 import logging
-from typing import List, Callable, Dict, Any
-from datetime import datetime, timezone, timedelta
+import sys
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.expected_error_context import expect_authentication_errors, ExpectedErrorContext
-from shu.models.rbac import UserGroup, UserGroupMembership, KnowledgeBasePermission, PermissionLevel, GroupRole
-from shu.models.knowledge_base import KnowledgeBase
-from shu.auth.models import User, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +26,7 @@ async def test_user_groups_full_crud(client, db, auth_headers):
     # Create a group
     group_data = {
         "name": "Engineering Team",
-        "description": "Software engineering team with KB access"
+        "description": "Software engineering team with KB access",
     }
 
     response = await client.post("/api/v1/groups", json=group_data, headers=auth_headers)
@@ -57,7 +51,7 @@ async def test_user_groups_full_crud(client, db, auth_headers):
     # Update the group
     update_data = {
         "description": "Updated: Software engineering team with expanded access",
-        "is_active": True
+        "is_active": True,
     }
     response = await client.put(f"/api/v1/groups/{group_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200, f"Failed to update group: {response.text}"
@@ -144,10 +138,7 @@ async def test_permission_level_enforcement(client, db, auth_headers):
     logger.info("Testing permission level enforcement")
 
     # Test admin access to admin-only endpoints
-    admin_endpoints = [
-        "/api/v1/groups",
-        "/api/v1/llm/providers"
-    ]
+    admin_endpoints = ["/api/v1/groups", "/api/v1/llm/providers"]
 
     for endpoint in admin_endpoints:
         response = await client.get(endpoint, headers=auth_headers)
@@ -169,7 +160,9 @@ async def test_rbac_enforcement_comprehensive(client, db, auth_headers):
         if method == "GET":
             response = await client.get(endpoint, headers=auth_headers)
 
-        assert response.status_code == expected_status, f"Expected {expected_status} for {method} {endpoint}, got {response.status_code}"
+        assert (
+            response.status_code == expected_status
+        ), f"Expected {expected_status} for {method} {endpoint}, got {response.status_code}"
 
 
 async def test_protected_endpoints_require_auth(client, db, auth_headers):
@@ -189,10 +182,7 @@ async def test_protected_endpoints_require_auth(client, db, auth_headers):
 
 async def test_public_health_endpoints(client, db, auth_headers):
     """Test that health endpoints are publicly accessible."""
-    public_endpoints = [
-        "/api/v1/health/liveness",
-        "/api/v1/health/readiness"
-    ]
+    public_endpoints = ["/api/v1/health/liveness", "/api/v1/health/readiness"]
 
     for endpoint in public_endpoints:
         response = await client.get(endpoint)
@@ -206,7 +196,7 @@ async def test_public_health_endpoints(client, db, auth_headers):
 class ComprehensiveRBACTestSuite(BaseIntegrationTestSuite):
     """Comprehensive RBAC integration test suite with full coverage."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return list of test functions for this suite."""
         return [
             test_user_groups_full_crud,

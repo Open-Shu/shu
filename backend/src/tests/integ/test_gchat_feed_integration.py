@@ -10,13 +10,12 @@ Requires:
 - TEST_GOOGLE_IMPERSONATE_EMAIL or GOOGLE_ADMIN_USER_EMAIL set for domain delegation
 - Chat scopes enabled on the account
 """
+
 from __future__ import annotations
-import sys
-from os.path import abspath, dirname, join
 
 import os
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 from integ.integration_test_runner import run_integration_tests
 
@@ -45,11 +44,12 @@ async def test_gchat_feed_run_now_domain_delegate(client, db, auth_headers):
 
         # Resolve impersonation subject if using domain delegation
         from shu.core.config import get_settings_instance
+
         settings = get_settings_instance()
         subject = os.getenv("TEST_GOOGLE_IMPERSONATE_EMAIL") or (settings.google_admin_user_email or None)
 
         # Create feed
-        feed_body: Dict[str, Any] = {
+        feed_body: dict[str, Any] = {
             "name": f"GChat Feed {uuid.uuid4().hex[:6]}",
             "plugin_name": "gchat_digest",
             "params": {
@@ -76,7 +76,11 @@ async def test_gchat_feed_run_now_domain_delegate(client, db, auth_headers):
         assert rn.status_code == 200, rn.text
 
         # Process the pending execution
-        rp = await client.post("/api/v1/plugins/admin/executions/run-pending", json={"limit": 1, "schedule_id": schedule_id}, headers=auth_headers)
+        rp = await client.post(
+            "/api/v1/plugins/admin/executions/run-pending",
+            json={"limit": 1, "schedule_id": schedule_id},
+            headers=auth_headers,
+        )
         assert rp.status_code == 200, rp.text
 
         # Fetch executions for this schedule
@@ -86,7 +90,7 @@ async def test_gchat_feed_run_now_domain_delegate(client, db, auth_headers):
         assert len(rows) >= 1
         last = rows[-1]
         assert last.get("status") in ("completed",)
-        result = (last.get("result") or {})
+        result = last.get("result") or {}
         data = result.get("data") or {}
         # Expect keys from gchat ingest
         assert "last_ts" in data or "count" in data, data
@@ -108,5 +112,5 @@ async def test_gchat_feed_run_now_domain_delegate(client, db, auth_headers):
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(run_integration_tests([test_gchat_feed_run_now_domain_delegate], enable_file_logging=True))
 
+    asyncio.run(run_integration_tests([test_gchat_feed_run_now_domain_delegate], enable_file_logging=True))

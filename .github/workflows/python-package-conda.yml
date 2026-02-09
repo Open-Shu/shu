@@ -1,6 +1,6 @@
-name: Unit Tests
+name: Python Unit Tests
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build-linux:
@@ -12,20 +12,57 @@ jobs:
       # This URL only needs to be syntactically valid for unit tests; CI does not touch the DB.
       SHU_DATABASE_URL: postgresql://test:test@localhost:5432/shu_test
       JWT_SECRET_KEY: supersecretkey
+      PYTHONPATH: ${{ github.workspace }}/backend/src
 
     steps:
     - uses: actions/checkout@v4
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v3
       with:
         python-version: '3.11'
+
     - name: Add conda to system path
       run: |
         # $CONDA is an environment variable pointing to the root of the miniconda directory
         echo $CONDA/bin >> $GITHUB_PATH
+
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
-    - name: run_all_unit_tests
+
+    - name: Run unit tests with coverage
       run: |
-        python -m pytest backend/src/tests/unit
+        python -m pytest backend/src/tests/unit \
+          --cov=backend/src/shu \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --cov-report=xml
+
+    - name: Upload coverage reports as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-coverage-report
+        path: htmlcov/
+        retention-days: 30
+
+    - name: Upload coverage to Codecov
+      if: success()
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: python
+        name: python-coverage
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      uses: py-cov-action/python-coverage-comment-action@v3
+      with:
+        GITHUB_TOKEN: ${{ github.token }}
+        MINIMUM_GREEN: 80
+        MINIMUM_ORANGE: 60
+      continue-on-error: true

@@ -63,4 +63,3 @@ const AutomationMenu = React.memo(function AutomationMenu({
 });
 
 export default AutomationMenu;
-

@@ -1,20 +1,6 @@
 import React from 'react';
-import {
-  AppBar,
-  Toolbar,
-  Typography,
-  IconButton,
-  Box,
-  Menu,
-  MenuItem,
-  Divider,
-  ListItemIcon
-} from '@mui/material';
-import {
-  Logout as LogoutIcon,
-  Person as PersonIcon,
-  AdminPanelSettings as AdminIcon
-} from '@mui/icons-material';
+import { AppBar, Toolbar, Typography, IconButton, Box, Menu, MenuItem, Divider, ListItemIcon } from '@mui/material';
+import { Logout as LogoutIcon, Person as PersonIcon, AdminPanelSettings as AdminIcon } from '@mui/icons-material';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
@@ -53,7 +39,10 @@ const TopBar = ({
   const [anchorEl, setAnchorEl] = React.useState(null);
   const handleUserMenuOpen = (e) => setAnchorEl(e.currentTarget);
   const handleUserMenuClose = () => setAnchorEl(null);
-  const handleLogout = () => { handleUserMenuClose(); logout(); };
+  const handleLogout = () => {
+    handleUserMenuClose();
+    logout();
+  };
 
   const handleAdminPanel = () => {
     handleUserMenuClose();
@@ -92,14 +81,35 @@ const TopBar = ({
           }}
         >
           <img src={faviconUrl} alt={appDisplayName} style={{ height: 48, width: 'auto', marginRight: 8 }} />
-          <Typography variant="h2" sx={{ fontWeight: 600, color: '#000000ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{appDisplayName || ''}</Typography>
+          <Typography
+            variant="h2"
+            sx={{
+              fontWeight: 600,
+              color: '#000000ff',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {appDisplayName || ''}
+          </Typography>
         </Box>
 
         {/* Optional section title aligned with content start */}
         {sectionTitle ? (
-          <Box sx={{ position: 'absolute', left: `${leftOffset}px`, display: 'flex', alignItems: 'center', height: '100%' }}>
+          <Box
+            sx={{
+              position: 'absolute',
+              left: `${leftOffset}px`,
+              display: 'flex',
+              alignItems: 'center',
+              height: '100%',
+            }}
+          >
             {sectionIcon ? <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>{sectionIcon}</Box> : null}
-            <Typography variant="h6" sx={{ color: '#FFFFFF', fontWeight: 600 }}>{sectionTitle}</Typography>
+            <Typography variant="h6" sx={{ color: '#FFFFFF', fontWeight: 600 }}>
+              {sectionTitle}
+            </Typography>
           </Box>
         ) : null}
 
@@ -111,7 +121,10 @@ const TopBar = ({
           edge="end"
           onClick={handleUserMenuOpen}
           className="user-menu"
-          sx={{ color: '#FFFFFF', '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' } }}
+          sx={{
+            color: '#FFFFFF',
+            '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' },
+          }}
         >
           <UserAvatar user={user} size={32} fallbackChar={user?.name?.charAt(0) || 'U'} />
         </IconButton>
@@ -122,12 +135,21 @@ const TopBar = ({
               <PersonIcon fontSize="small" />
             </ListItemIcon>
             <Box>
-              <Typography variant="body2" fontWeight="bold">{user?.name}</Typography>
-              <Typography variant="caption" color="text.secondary">{user?.email}</Typography>
+              <Typography variant="body2" fontWeight="bold">
+                {user?.name}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {user?.email}
+              </Typography>
             </Box>
           </MenuItem>
           <Divider />
-          <UserMenuCommonItems onNavigate={(path) => { handleUserMenuClose(); navigate(path); }} />
+          <UserMenuCommonItems
+            onNavigate={(path) => {
+              handleUserMenuClose();
+              navigate(path);
+            }}
+          />
           {showAdminLink && canAccessAdmin && (
             <MenuItem onClick={handleAdminPanel}>
               <ListItemIcon>
@@ -149,7 +171,7 @@ const TopBar = ({
                 sx={{
                   color: 'text.disabled',
                   fontSize: '0.7rem',
-                  fontStyle: 'italic'
+                  fontStyle: 'italic',
                 }}
               >
                 {displayVersion}

@@ -38,7 +38,16 @@ import usePluginFlow from './chat/ModernChat/hooks/usePluginFlow';
 import ModernChatView from './chat/ModernChat/ModernChatView';
 import useEnsembleMode from './chat/ModernChat/hooks/useEnsembleMode';
 
-import { CHAT_WINDOW_SIZE, CHAT_OVERSCAN, SUMMARY_SEARCH_DEBOUNCE_MS, DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH, DEFAULT_SUMMARY_SEARCH_MAX_TOKENS, STORAGE_KEY_RAG_REWRITE_MODE, DEFAULT_NEW_CHAT_TITLE, CHAT_PLUGINS_ENABLED } from './chat/ModernChat/utils/chatConfig';
+import {
+  CHAT_WINDOW_SIZE,
+  CHAT_OVERSCAN,
+  SUMMARY_SEARCH_DEBOUNCE_MS,
+  DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
+  DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
+  STORAGE_KEY_RAG_REWRITE_MODE,
+  DEFAULT_NEW_CHAT_TITLE,
+  CHAT_PLUGINS_ENABLED,
+} from './chat/ModernChat/utils/chatConfig';
 
 const SIDE_CALL_NOT_CONFIGURED_TOOLTIP =
   'Side-caller agent not configured. Configure a model configuration and set it as the side-caller to restore conversation naming and summary generation functionality.';
@@ -60,12 +69,8 @@ const ModernChat = () => {
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const isPinnedToBottomRef = useRef(true);
-  const clearEnsembleModeRef = useRef(() => { });
-  const {
-    markFreshConversation,
-    clearFreshConversation,
-    isConversationFresh,
-  } = useFreshConversations();
+  const clearEnsembleModeRef = useRef(() => {});
+  const { markFreshConversation, clearFreshConversation, isConversationFresh } = useFreshConversations();
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
 
   // State management
@@ -204,10 +209,10 @@ const ModernChat = () => {
       model_name: mc.model_name,
       provider: mc.llm_provider
         ? {
-          id: mc.llm_provider.id,
-          name: mc.llm_provider.name,
-          provider_type: mc.llm_provider.provider_type,
-        }
+            id: mc.llm_provider.id,
+            name: mc.llm_provider.name,
+            provider_type: mc.llm_provider.provider_type,
+          }
         : undefined,
     };
   }, [selectedConversation]);
@@ -244,10 +249,12 @@ const ModernChat = () => {
       if (stored && stored === 'no_rag') {
         return 'raw_query';
       }
-      if (stored && RAG_REWRITE_OPTIONS.some(opt => opt.value === stored)) {
+      if (stored && RAG_REWRITE_OPTIONS.some((opt) => opt.value === stored)) {
         return stored;
       }
-    } catch (_) { }
+    } catch (_) {
+      // Ignore error
+    }
     return 'raw_query';
   });
 
@@ -261,40 +268,26 @@ const ModernChat = () => {
     }
   }, [ragRewriteMode]);
 
-  const { isLoading: loadingModels } = useQuery(
-    'llm-models',
-    () => llmAPI.getModels(),
-    {
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const { isLoading: loadingModels } = useQuery('llm-models', () => llmAPI.getModels(), {
+    onError: (err) => {
+      setError(formatError(err));
+    },
+  });
 
-  useQuery(
-    'side-call-config',
-    () => sideCallsAPI.getConfig(),
-    {
-      enabled: canManageUsers(),
-      select: (data) => data ?? null,
-      onSuccess: (config) => {
-        const configured = Boolean(config?.side_call_model_config);
-        setIsSideCallConfigured(configured);
-        setSideCallWarning(
-          configured ? null : SIDE_CALL_NOT_CONFIGURED_TOOLTIP
-        );
-      },
-      onError: (err) => {
-        // For non-admin users this will typically be 403; log but do not
-        // treat it as "not configured" so we don't block automation.
-        log.warn(
-          'Failed to fetch side-call config:',
-          formatError(err).message
-        );
-      },
-    }
-  );
-
+  useQuery('side-call-config', () => sideCallsAPI.getConfig(), {
+    enabled: canManageUsers(),
+    select: (data) => data ?? null,
+    onSuccess: (config) => {
+      const configured = Boolean(config?.side_call_model_config);
+      setIsSideCallConfigured(configured);
+      setSideCallWarning(configured ? null : SIDE_CALL_NOT_CONFIGURED_TOOLTIP);
+    },
+    onError: (err) => {
+      // For non-admin users this will typically be 403; log but do not
+      // treat it as "not configured" so we don't block automation.
+      log.warn('Failed to fetch side-call config:', formatError(err).message);
+    },
+  });
 
   const {
     summaryIsLoading,
@@ -316,28 +309,25 @@ const ModernChat = () => {
   });
 
   // Fetch user preferences
-  useQuery(
-    'user-preferences',
-    userPreferencesAPI.getPreferences,
-    {
-      onSuccess: (response) => {
-        const preferences = extractDataFromResponse(response);
-        if (preferences && typeof preferences === 'object') {
-          setUserPreferences((prev) => ({
-            ...prev,
-            ...preferences,
-            advanced_settings: preferences.advanced_settings ?? prev.advanced_settings ?? {},
-            summary_search_min_token_length: preferences.summary_search_min_token_length ?? prev.summary_search_min_token_length,
-            summary_search_max_tokens: preferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
-          }));
-        }
-      },
-      onError: (err) => {
-        log.warn('Failed to load user preferences:', formatError(err).message);
-        // Don't show error to user for preferences - use defaults
+  useQuery('user-preferences', userPreferencesAPI.getPreferences, {
+    onSuccess: (response) => {
+      const preferences = extractDataFromResponse(response);
+      if (preferences && typeof preferences === 'object') {
+        setUserPreferences((prev) => ({
+          ...prev,
+          ...preferences,
+          advanced_settings: preferences.advanced_settings ?? prev.advanced_settings ?? {},
+          summary_search_min_token_length:
+            preferences.summary_search_min_token_length ?? prev.summary_search_min_token_length,
+          summary_search_max_tokens: preferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
+        }));
       }
-    }
-  );
+    },
+    onError: (err) => {
+      log.warn('Failed to load user preferences:', formatError(err).message);
+      // Don't show error to user for preferences - use defaults
+    },
+  });
 
   const switchModelMutation = useMutation(
     ({ conversationId, payload }) => chatAPI.switchConversationModel(conversationId, payload),
@@ -346,7 +336,12 @@ const ModernChat = () => {
         const apiConversation = extractDataFromResponse(response);
         const { config, conversationId, payload } = variables;
         const resolvedConfig = apiConversation?.model_configuration || config || null;
-        const resolvedConfigId = apiConversation?.model_configuration_id || resolvedConfig?.id || config?.id || payload?.model_configuration_id || null;
+        const resolvedConfigId =
+          apiConversation?.model_configuration_id ||
+          resolvedConfig?.id ||
+          config?.id ||
+          payload?.model_configuration_id ||
+          null;
         let mergedConversation = null;
 
         if (apiConversation) {
@@ -372,7 +367,9 @@ const ModernChat = () => {
 
         queryClient.setQueryData(conversationQueryKey, (oldData) => {
           const existing = extractDataFromResponse(oldData);
-          if (!Array.isArray(existing)) return oldData;
+          if (!Array.isArray(existing)) {
+            return oldData;
+          }
           const updated = existing.map((conv) => {
             if (conv.id !== conversationId) {
               return conv;
@@ -398,7 +395,7 @@ const ModernChat = () => {
         } else if (selectedConversation?.model_configuration_id) {
           selectPreferredModelConfig(selectedConversation.model_configuration_id);
         }
-      }
+      },
     }
   );
 
@@ -418,39 +415,40 @@ const ModernChat = () => {
 
   // moved below after dependencies are defined
 
-
   const handleUserPreferencesChange = useCallback((updates) => {
     setUserPreferences((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  const handleAutomationSettingsChange = useCallback((updates) => {
-    updateAutomationSettings(updates);
-  }, [updateAutomationSettings]);
+  const handleAutomationSettingsChange = useCallback(
+    (updates) => {
+      updateAutomationSettings(updates);
+    },
+    [updateAutomationSettings]
+  );
 
   const handleCopyMessage = useCallback((content) => {
-    if (!content) return;
+    if (!content) {
+      return;
+    }
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(content).catch(() => { });
+      navigator.clipboard.writeText(content).catch(() => {});
     }
   }, []);
 
   // Delete conversation mutation
-  const deleteConversationMutation = useMutation(
-    (conversationId) => chatAPI.deleteConversation(conversationId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('conversations');
-        setSelectedConversation(null);
-        syncConversationParam(null);
-        closeDeleteDialog();
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-        closeDeleteDialog();
-      }
-    }
-  );
+  const deleteConversationMutation = useMutation((conversationId) => chatAPI.deleteConversation(conversationId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('conversations');
+      setSelectedConversation(null);
+      syncConversationParam(null);
+      closeDeleteDialog();
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+      closeDeleteDialog();
+    },
+  });
 
   const renameConversationMutation = useMutation(
     ({ conversationId, title }) => chatAPI.updateConversation(conversationId, { title }),
@@ -467,7 +465,7 @@ const ModernChat = () => {
           if (!prev || prev.id !== variables.conversationId) {
             return prev;
           }
-          const merged = (updatedConversation && typeof updatedConversation === 'object') ? updatedConversation : {};
+          const merged = updatedConversation && typeof updatedConversation === 'object' ? updatedConversation : {};
           return { ...prev, ...merged, title: nextTitle };
         });
         closeRenameDialog();
@@ -479,7 +477,7 @@ const ModernChat = () => {
         setRenameErrorState(
           typeof renameMessage === 'string' ? renameMessage : renameMessage?.message || 'Failed to rename conversation'
         );
-      }
+      },
     }
   );
 
@@ -494,7 +492,8 @@ const ModernChat = () => {
             ...prev,
             ...updatedPreferences,
             advanced_settings: updatedPreferences.advanced_settings ?? prev.advanced_settings ?? {},
-            summary_search_min_token_length: updatedPreferences.summary_search_min_token_length ?? prev.summary_search_min_token_length,
+            summary_search_min_token_length:
+              updatedPreferences.summary_search_min_token_length ?? prev.summary_search_min_token_length,
             summary_search_max_tokens: updatedPreferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
           }));
         }
@@ -504,15 +503,14 @@ const ModernChat = () => {
       },
       onError: (err) => {
         setError(formatError(err).message);
-      }
+      },
     }
   );
 
-  const {
-    preferredModelConfig,
-    selectPreferredModelConfig,
-    resolveInitialModelConfig,
-  } = usePreferredModelConfig(availableModelConfigs, selectedConversation);
+  const { preferredModelConfig, selectPreferredModelConfig, resolveInitialModelConfig } = usePreferredModelConfig(
+    availableModelConfigs,
+    selectedConversation
+  );
 
   useEffect(() => {
     if (!lastCreatedConversation) {
@@ -557,13 +555,7 @@ const ModernChat = () => {
     [scrollToBottom]
   );
 
-  const {
-    messages,
-    loadingMessages,
-    hasMoreMessages,
-    loadingOlderMessages,
-    loadOlderMessages,
-  } = useMessageStream({
+  const { messages, loadingMessages, hasMoreMessages, loadingOlderMessages, loadOlderMessages } = useMessageStream({
     selectedConversation,
     queryClient,
     setError,
@@ -621,17 +613,16 @@ const ModernChat = () => {
   );
 
   const focusMessageById = useCallback((messageId, options = {}) => {
-    if (!messageId) return;
+    if (!messageId) {
+      return;
+    }
     messageListRef.current?.scrollToMessage(messageId, {
       align: options.align || 'start',
       behavior: options.behavior || 'auto',
     });
   }, []);
 
-  const {
-    handleStreamingResponse,
-    handleRegenerate,
-  } = useChatStreaming({
+  const { handleStreamingResponse, handleRegenerate } = useChatStreaming({
     queryClient,
     setError,
     setStreamingConversationId,
@@ -685,16 +676,21 @@ const ModernChat = () => {
     onEnsembleRunComplete: clearEnsembleSelection,
   });
 
-  const isStreamingForSelectedConversation =
-    streamingConversationId === selectedConversation?.id;
+  const isStreamingForSelectedConversation = streamingConversationId === selectedConversation?.id;
 
-  const isSendDisabled =
-    isStreamingForSelectedConversation;
+  const isSendDisabled = isStreamingForSelectedConversation;
 
-  const { visibleMessages: windowMessages, expandWindow, advanceWindow, visibleOffset, windowStart } = useMessageWindow(
-    flattenedMessages,
-    { windowSize: CHAT_WINDOW_SIZE, overscan: CHAT_OVERSCAN, pinned: isPinnedToBottom }
-  );
+  const {
+    visibleMessages: windowMessages,
+    expandWindow,
+    advanceWindow,
+    visibleOffset,
+    windowStart,
+  } = useMessageWindow(flattenedMessages, {
+    windowSize: CHAT_WINDOW_SIZE,
+    overscan: CHAT_OVERSCAN,
+    pinned: isPinnedToBottom,
+  });
   const windowMessageCount = windowMessages.length;
 
   useEffect(() => {
@@ -757,11 +753,7 @@ const ModernChat = () => {
     });
   }, [flattenedMessages, windowStart, advanceWindow, captureScrollSnapshot, restoreScrollSnapshot]);
 
-
-  const latestUserMessageContent = useMemo(
-    () => getLatestUserMessageContent(flattenedMessages),
-    [flattenedMessages]
-  );
+  const latestUserMessageContent = useMemo(() => getLatestUserMessageContent(flattenedMessages), [flattenedMessages]);
 
   const buildRenamePayload = useCallback(
     (explicitFallback) => buildRenamePayloadBase(latestUserMessageContent, explicitFallback),
@@ -785,19 +777,34 @@ const ModernChat = () => {
     } finally {
       closeAutomationMenu();
     }
-  }, [selectedConversation?.id, selectedConversation?.meta?.title_locked, runSummaryAsync, runAutoRenameAsync, buildRenamePayload, closeAutomationMenu]);
+  }, [
+    selectedConversation?.id,
+    selectedConversation?.meta?.title_locked,
+    runSummaryAsync,
+    runAutoRenameAsync,
+    buildRenamePayload,
+    closeAutomationMenu,
+  ]);
 
   // Assistant reply count and latest assistant message id (collapsed variants, ignore placeholders)
   const { assistantReplyCount, lastAssistantMessageId, messagesMatchSelectedConversation } = useMemo(() => {
     const all = Array.isArray(flattenedMessages) ? flattenedMessages : [];
     const matches = all.every((m) => !m?.conversation_id || m.conversation_id === selectedConversation?.id);
     if (!matches) {
-      return { assistantReplyCount: 0, lastAssistantMessageId: null, messagesMatchSelectedConversation: false };
+      return {
+        assistantReplyCount: 0,
+        lastAssistantMessageId: null,
+        messagesMatchSelectedConversation: false,
+      };
     }
     const assistants = all.filter((m) => m.role === 'assistant' && !m.isPlaceholder);
     const count = assistants.length;
     const lastId = count > 0 ? assistants[assistants.length - 1].id : null;
-    return { assistantReplyCount: count, lastAssistantMessageId: lastId, messagesMatchSelectedConversation: true };
+    return {
+      assistantReplyCount: count,
+      lastAssistantMessageId: lastId,
+      messagesMatchSelectedConversation: true,
+    };
   }, [flattenedMessages, selectedConversation?.id]);
 
   // Automation cadence: summary and auto-rename based on assistant reply count
@@ -835,8 +842,7 @@ const ModernChat = () => {
     const cid = searchParams.get('conversationId');
     const pendingTarget = pendingConversationParamRef.current;
     if (pendingTarget) {
-      const matches =
-        pendingTarget === CLEAR_PARAM_SENTINEL ? !cid : cid === pendingTarget;
+      const matches = pendingTarget === CLEAR_PARAM_SENTINEL ? !cid : cid === pendingTarget;
       if (matches) {
         pendingConversationParamRef.current = null;
         if (pendingTarget === CLEAR_PARAM_SENTINEL) {
@@ -860,7 +866,7 @@ const ModernChat = () => {
       return;
     }
 
-    const found = Array.isArray(conversations) ? conversations.find(c => c.id === cid) : null;
+    const found = Array.isArray(conversations) ? conversations.find((c) => c.id === cid) : null;
     if (found) {
       setSelectedConversation(found);
       return;
@@ -870,7 +876,9 @@ const ModernChat = () => {
       try {
         const resp = await chatAPI.getConversation(cid);
         const conv = extractDataFromResponse(resp);
-        if (conv) setSelectedConversation(conv);
+        if (conv) {
+          setSelectedConversation(conv);
+        }
       } catch (_) {
         // ignore if not found or unauthorized
       }
@@ -885,10 +893,14 @@ const ModernChat = () => {
 
     const persistedPreference = preferredModelConfig || null;
 
-    const preferredConfigId = selectedConversation?.model_configuration_id || selectedModelConfig || persistedPreference || availableModelConfigs[0]?.id;
+    const preferredConfigId =
+      selectedConversation?.model_configuration_id ||
+      selectedModelConfig ||
+      persistedPreference ||
+      availableModelConfigs[0]?.id;
     let selectedConfig = null;
     if (preferredConfigId) {
-      selectedConfig = availableModelConfigs.find(cfg => cfg.id === preferredConfigId) || null;
+      selectedConfig = availableModelConfigs.find((cfg) => cfg.id === preferredConfigId) || null;
     }
     if (!selectedConfig) {
       selectedConfig = availableModelConfigs[0];
@@ -903,7 +915,7 @@ const ModernChat = () => {
     setError(null);
     createConversationMutation.mutate({
       model_configuration_id: selectedConfig.id,
-      title: experience?.experience_name || DEFAULT_NEW_CHAT_TITLE
+      title: experience?.experience_name || DEFAULT_NEW_CHAT_TITLE,
     });
   };
 
@@ -919,7 +931,7 @@ const ModernChat = () => {
       return;
     }
 
-    const config = availableModelConfigs.find(cfg => cfg.id === newConfigId);
+    const config = availableModelConfigs.find((cfg) => cfg.id === newConfigId);
     if (!config) {
       return;
     }
@@ -928,10 +940,10 @@ const ModernChat = () => {
     switchModelMutation.mutate({
       conversationId: selectedConversation.id,
       payload: {
-        model_configuration_id: config.id
+        model_configuration_id: config.id,
       },
       config,
-      previousConfigId: selectedConversation.model_configuration_id
+      previousConfigId: selectedConversation.model_configuration_id,
     });
   };
 
@@ -980,77 +992,93 @@ const ModernChat = () => {
   };
 
   const getSelectedConfig = () => {
-    return availableModelConfigs.find(config => config.id === selectedModelConfig);
+    return availableModelConfigs.find((config) => config.id === selectedModelConfig);
   };
 
-  const handleSelectConversation = useCallback((conversation) => {
-    setSelectedConversation(conversation);
-    setStreamingConversationId(null);
-    setStreamingStarted(false);
-    syncConversationParam(conversation?.id || null);
-    closeMobileSidebar();
-  }, [syncConversationParam, closeMobileSidebar]);
+  const handleSelectConversation = useCallback(
+    (conversation) => {
+      setSelectedConversation(conversation);
+      setStreamingConversationId(null);
+      setStreamingStarted(false);
+      syncConversationParam(conversation?.id || null);
+      closeMobileSidebar();
+    },
+    [syncConversationParam, closeMobileSidebar]
+  );
 
-  const handleSummarySearchChange = useCallback((value) => {
-    setSummarySearchInput(value);
-  }, [setSummarySearchInput]);
+  const handleSummarySearchChange = useCallback(
+    (value) => {
+      setSummarySearchInput(value);
+    },
+    [setSummarySearchInput]
+  );
 
-  const handleOpenDeleteDialog = useCallback((conversation) => {
-    setSelectedConversation(conversation);
-    openDeleteDialog();
-  }, [openDeleteDialog]);
+  const handleOpenDeleteDialog = useCallback(
+    (conversation) => {
+      setSelectedConversation(conversation);
+      openDeleteDialog();
+    },
+    [openDeleteDialog]
+  );
 
-  const handleToggleFavorite = useCallback(async (conversation) => {
-    if (!conversation?.id) return;
-    
-    try {
-      const newFavoriteStatus = !conversation.is_favorite;
-      
-      // Optimistically update the UI
-      queryClient.setQueryData(conversationQueryKey, (oldData) => {
-        const existing = extractDataFromResponse(oldData);
-        if (!Array.isArray(existing)) return oldData;
-        
-        const updated = existing.map((conv) => {
-          if (conv.id !== conversation.id) {
-            return conv;
-          }
-          return { ...conv, is_favorite: newFavoriteStatus };
-        });
-        
-        // Sort: favorites first, then by updated_at descending
-        updated.sort((a, b) => {
-          if (a.is_favorite !== b.is_favorite) {
-            return b.is_favorite ? 1 : -1;
-          }
-          return new Date(b.updated_at) - new Date(a.updated_at);
-        });
-        
-        return { ...oldData, data: { data: updated } };
-      });
-      
-      // Update selected conversation if it's the one being favorited
-      if (selectedConversation?.id === conversation.id) {
-        setSelectedConversation((prev) => ({
-          ...prev,
-          is_favorite: newFavoriteStatus,
-        }));
+  const handleToggleFavorite = useCallback(
+    async (conversation) => {
+      if (!conversation?.id) {
+        return;
       }
-      
-      // Make the API call
-      await chatAPI.updateConversation(conversation.id, {
-        is_favorite: newFavoriteStatus,
-      });
-      
-      // Refresh conversations to ensure consistency
-      queryClient.invalidateQueries('conversations');
-      setError(null);
-    } catch (err) {
-      // Revert optimistic update on error
-      queryClient.invalidateQueries('conversations');
-      setError(formatError(err).message);
-    }
-  }, [conversationQueryKey, queryClient, selectedConversation, setError]);
+
+      try {
+        const newFavoriteStatus = !conversation.is_favorite;
+
+        // Optimistically update the UI
+        queryClient.setQueryData(conversationQueryKey, (oldData) => {
+          const existing = extractDataFromResponse(oldData);
+          if (!Array.isArray(existing)) {
+            return oldData;
+          }
+
+          const updated = existing.map((conv) => {
+            if (conv.id !== conversation.id) {
+              return conv;
+            }
+            return { ...conv, is_favorite: newFavoriteStatus };
+          });
+
+          // Sort: favorites first, then by updated_at descending
+          updated.sort((a, b) => {
+            if (a.is_favorite !== b.is_favorite) {
+              return b.is_favorite ? 1 : -1;
+            }
+            return new Date(b.updated_at) - new Date(a.updated_at);
+          });
+
+          return { ...oldData, data: { data: updated } };
+        });
+
+        // Update selected conversation if it's the one being favorited
+        if (selectedConversation?.id === conversation.id) {
+          setSelectedConversation((prev) => ({
+            ...prev,
+            is_favorite: newFavoriteStatus,
+          }));
+        }
+
+        // Make the API call
+        await chatAPI.updateConversation(conversation.id, {
+          is_favorite: newFavoriteStatus,
+        });
+
+        // Refresh conversations to ensure consistency
+        queryClient.invalidateQueries('conversations');
+        setError(null);
+      } catch (err) {
+        // Revert optimistic update on error
+        queryClient.invalidateQueries('conversations');
+        setError(formatError(err).message);
+      }
+    },
+    [conversationQueryKey, queryClient, selectedConversation, setError]
+  );
 
   const handleComposerSend = useCallback(() => {
     setIsPinnedToBottom(true);
@@ -1190,7 +1218,12 @@ const ModernChat = () => {
     onClose: closePluginModal,
     plugin: selectedPlugin,
     onStart: ({ plugin }) => setPluginRun({ status: 'running', plugin }),
-    onResult: (data, meta) => setPluginRun({ status: 'success', plugin: meta?.plugin || selectedPlugin, data }),
+    onResult: (data, meta) =>
+      setPluginRun({
+        status: 'success',
+        plugin: meta?.plugin || selectedPlugin,
+        data,
+      }),
   };
 
   const ensembleDialogProps = {

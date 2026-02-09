@@ -1,15 +1,5 @@
 import React from 'react';
-import {
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Menu,
-  MenuItem,
-  TextField,
-  Tooltip,
-  ListItemIcon,
-} from '@mui/material';
+import { Box, Button, Chip, IconButton, Menu, MenuItem, TextField, Tooltip, ListItemIcon } from '@mui/material';
 import {
   Add as AddIcon,
   AttachFile as AttachmentIcon,
@@ -71,12 +61,7 @@ const InputBar = React.memo(function InputBar({
       )}
 
       <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 }, alignItems: 'center' }}>
-        <input
-          type="file"
-          ref={fileInputRef}
-          style={{ display: 'none' }}
-          onChange={onFileSelected}
-        />
+        <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFileSelected} />
         <Tooltip title="Add attachments or run plugins">
           <IconButton
             onClick={(e) => onPlusOpen(e.currentTarget)}

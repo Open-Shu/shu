@@ -42,6 +42,3 @@ export const mergeLatestMessagesIntoCache = (oldData, latestMessages, options = 
   });
   return rebuildCache(oldData, merged);
 };
-
-
-

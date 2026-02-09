@@ -12,17 +12,17 @@ export const PROVIDER_SETUP_INSTRUCTIONS = {
       'Navigate to API Keys section (platform.openai.com/api-keys)',
       'Click "Create new secret key" and copy it immediately',
       'Paste the key below (starts with "sk-", "sk-proj-", or "sk-admin-")',
-      'Set your API endpoint to https://api.openai.com/v1 (default)'
+      'Set your API endpoint to https://api.openai.com/v1 (default)',
     ],
-    apiKeyFormat: 'sk-, sk-proj-, sk-admin-',
-    apiKeyUrl: 'https://platform.openai.com/api-keys',
+    apiKeyFormat: 'sk-, sk-proj-, sk-admin-', // pragma: allowlist secret
+    apiKeyUrl: 'https://platform.openai.com/api-keys', // pragma: allowlist secret
     defaultEndpoint: 'https://api.openai.com/v1',
     testTips: [
       'Ensure your API key has sufficient credits',
       'Check that your organization ID is correct (if using one)',
       'Verify your network can reach api.openai.com',
-      'OpenAI keys may start with sk-, sk-proj-, or sk-admin- depending on key type'
-    ]
+      'OpenAI keys may start with sk-, sk-proj-, or sk-admin- depending on key type',
+    ],
   },
   anthropic: {
     title: 'Anthropic Setup',
@@ -31,16 +31,16 @@ export const PROVIDER_SETUP_INSTRUCTIONS = {
       'Navigate to Settings → API Keys',
       'Click "Create Key" and copy it immediately',
       'Paste the key below (starts with "sk-ant-")',
-      'Set your API endpoint to https://api.anthropic.com (default)'
+      'Set your API endpoint to https://api.anthropic.com (default)',
     ],
-    apiKeyFormat: 'sk-ant-...',
-    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
+    apiKeyFormat: 'sk-ant-...', // pragma: allowlist secret
+    apiKeyUrl: 'https://console.anthropic.com/settings/keys', // pragma: allowlist secret
     defaultEndpoint: 'https://api.anthropic.com',
     testTips: [
       'Ensure your API key has sufficient credits',
       'Anthropic requires max_tokens parameter - this is set automatically',
-      'Verify your network can reach api.anthropic.com'
-    ]
+      'Verify your network can reach api.anthropic.com',
+    ],
   },
   ollama: {
     title: 'Ollama Setup',
@@ -49,17 +49,17 @@ export const PROVIDER_SETUP_INSTRUCTIONS = {
       'Start Ollama service (it runs on localhost:11434 by default)',
       'Pull models using: ollama pull <model-name>',
       'No API key needed for local Ollama',
-      'Set your API endpoint to http://localhost:11434 (default)'
+      'Set your API endpoint to http://localhost:11434 (default)',
     ],
-    apiKeyFormat: 'Not required',
+    apiKeyFormat: 'Not required', // pragma: allowlist secret
     apiKeyUrl: null,
     defaultEndpoint: 'http://localhost:11434',
     testTips: [
       'Ensure Ollama service is running (check with: ollama list)',
       'Verify the endpoint URL matches your Ollama installation',
       'Make sure you have pulled at least one model',
-      'Check firewall settings if using remote Ollama'
-    ]
+      'Check firewall settings if using remote Ollama',
+    ],
   },
   lm_studio: {
     title: 'LM Studio Setup',
@@ -68,17 +68,17 @@ export const PROVIDER_SETUP_INSTRUCTIONS = {
       'Load a model in LM Studio',
       'Start the local server (usually on port 1234)',
       'No API key needed for local LM Studio',
-      'Set your API endpoint to http://localhost:1234/v1 (default)'
+      'Set your API endpoint to http://localhost:1234/v1 (default)',
     ],
-    apiKeyFormat: 'Not required',
+    apiKeyFormat: 'Not required', // pragma: allowlist secret
     apiKeyUrl: null,
     defaultEndpoint: 'http://localhost:1234/v1',
     testTips: [
       'Ensure LM Studio server is running',
       'Verify a model is loaded in LM Studio',
       'Check the port number in LM Studio settings',
-      'Verify your network can reach localhost'
-    ]
+      'Verify your network can reach localhost',
+    ],
   },
   generic_completions: {
     title: 'Generic Completions Setup',
@@ -87,18 +87,18 @@ export const PROVIDER_SETUP_INSTRUCTIONS = {
       'Get your API endpoint from your provider',
       'Get your API key from your provider',
       'Configure the endpoint and key below',
-      'Test the connection to verify it works'
+      'Test the connection to verify it works',
     ],
-    apiKeyFormat: 'Provider-specific',
+    apiKeyFormat: 'Provider-specific', // pragma: allowlist secret
     apiKeyUrl: null,
     defaultEndpoint: 'Provider-specific',
     testTips: [
       'Verify the API endpoint URL is correct',
       'Ensure your API key is valid',
       'Check that the provider uses OpenAI-compatible format',
-      'Test with a simple model first'
-    ]
-  }
+      'Test with a simple model first',
+    ],
+  },
 };
 
 // Common connection test failure suggestions
@@ -110,8 +110,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Check that you copied the entire key without extra spaces',
       'For OpenAI: Ensure the key starts with "sk-"',
       'For Anthropic: Ensure the key starts with "sk-ant-"',
-      'Regenerate your API key if needed and try again'
-    ]
+      'Regenerate your API key if needed and try again',
+    ],
   },
   403: {
     title: 'Access Forbidden',
@@ -119,8 +119,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Your API key may not have permission for this operation',
       'Check your account status and billing',
       'Verify your organization ID is correct (if using one)',
-      'Contact your provider support if the issue persists'
-    ]
+      'Contact your provider support if the issue persists',
+    ],
   },
   404: {
     title: 'Endpoint Not Found',
@@ -128,8 +128,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Verify the API endpoint URL is correct',
       'Check for typos in the endpoint URL',
       'Ensure you are using the correct base URL for your provider',
-      'For Azure: Verify your resource name and region are correct'
-    ]
+      'For Azure: Verify your resource name and region are correct',
+    ],
   },
   429: {
     title: 'Rate Limit Exceeded',
@@ -137,8 +137,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'You have exceeded your rate limit',
       'Wait a few moments before trying again',
       'Consider upgrading your plan for higher limits',
-      'Adjust your rate limit settings in the provider configuration'
-    ]
+      'Adjust your rate limit settings in the provider configuration',
+    ],
   },
   500: {
     title: 'Provider Server Error',
@@ -146,8 +146,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'The provider is experiencing issues',
       'Wait a few moments and try again',
       'Check the provider status page for known issues',
-      'Try again later if the problem persists'
-    ]
+      'Try again later if the problem persists',
+    ],
   },
   timeout: {
     title: 'Connection Timeout',
@@ -156,8 +156,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Verify the endpoint URL is reachable',
       'For local providers: Ensure the service is running',
       'Check firewall settings that may block the connection',
-      'Try increasing the timeout value if the provider is slow'
-    ]
+      'Try increasing the timeout value if the provider is slow',
+    ],
   },
   connection_refused: {
     title: 'Connection Refused',
@@ -166,8 +166,8 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Verify the endpoint URL and port number are correct',
       'Check that the service is listening on the specified port',
       'For remote providers: Verify the server is accessible',
-      'Check firewall settings that may block the connection'
-    ]
+      'Check firewall settings that may block the connection',
+    ],
   },
   network: {
     title: 'Network Error',
@@ -176,9 +176,9 @@ export const CONNECTION_TEST_SUGGESTIONS = {
       'Verify the endpoint URL is correct',
       'For local providers: Ensure the service is running',
       'Check DNS resolution for the endpoint',
-      'Verify firewall or proxy settings'
-    ]
-  }
+      'Verify firewall or proxy settings',
+    ],
+  },
 };
 
 /**
@@ -207,7 +207,7 @@ export const getConnectionTestSuggestions = (statusCodeOrType) => {
  */
 export const formatConnectionTestError = (error, statusCode) => {
   let suggestions = [];
-  
+
   if (statusCode === 401) {
     suggestions = CONNECTION_TEST_SUGGESTIONS[401].suggestions;
   } else if (statusCode === 403) {
@@ -225,9 +225,9 @@ export const formatConnectionTestError = (error, statusCode) => {
   } else {
     suggestions = CONNECTION_TEST_SUGGESTIONS.network.suggestions;
   }
-  
+
   return {
     message: error.message,
-    suggestions: suggestions
+    suggestions: suggestions,
   };
 };

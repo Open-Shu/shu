@@ -5,7 +5,8 @@ These helpers are intentionally minimal and Python-only for use in tests.
 They mirror the envelope format defined in docs/policies/API_RESPONSE_STANDARD.md
 and src/shu/core/response.py without depending on frontend utilities.
 """
-from typing import Any, Dict
+
+from typing import Any
 
 
 def extract_data(resp_or_json: Any) -> Any:
@@ -22,7 +23,7 @@ def extract_data(resp_or_json: Any) -> Any:
     """
     data = resp_or_json
     # Handle Response-like objects that provide .json()
-    if hasattr(resp_or_json, "json") and callable(getattr(resp_or_json, "json")):
+    if hasattr(resp_or_json, "json") and callable(resp_or_json.json):
         try:
             data = resp_or_json.json()
         except Exception:
@@ -32,4 +33,3 @@ def extract_data(resp_or_json: Any) -> Any:
     if isinstance(data, dict) and "data" in data:
         return data["data"]
     return data
-

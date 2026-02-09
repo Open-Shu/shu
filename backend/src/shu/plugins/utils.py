@@ -1,19 +1,19 @@
-"""
-Shared plugin utilities: diagnostics and error logging helpers.
-"""
+"""Shared plugin utilities: diagnostics and error logging helpers."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
 import logging
+from typing import Any
 
 
-def log_plugin_diagnostics(
-    payload: Dict[str, Any] | None,
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+def log_plugin_diagnostics(  # noqa: PLR0912
+    payload: dict[str, Any] | None,
     *,
     plugin_name: str,
-    exec_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    _logger: Optional[logging.Logger] = None,
+    exec_id: str | None = None,
+    user_id: str | None = None,
+    _logger: logging.Logger | None = None,
 ) -> None:
     """Log plugin result diagnostics and errors consistently.
 
@@ -59,23 +59,34 @@ def log_plugin_diagnostics(
             if exec_id and user_id:
                 logger.warning(
                     "Plugin execution error | plugin=%s exec_id=%s user_id=%s code=%s msg=%s",
-                    plugin_name, exec_id, user_id, err_code, (err_msg or ""),
+                    plugin_name,
+                    exec_id,
+                    user_id,
+                    err_code,
+                    (err_msg or ""),
                 )
             elif exec_id:
                 logger.warning(
                     "Plugin execution error | plugin=%s exec_id=%s code=%s msg=%s",
-                    plugin_name, exec_id, err_code, (err_msg or ""),
+                    plugin_name,
+                    exec_id,
+                    err_code,
+                    (err_msg or ""),
                 )
             elif user_id:
                 logger.warning(
                     "Plugin execution error | plugin=%s user_id=%s code=%s msg=%s",
-                    plugin_name, user_id, err_code, (err_msg or ""),
+                    plugin_name,
+                    user_id,
+                    err_code,
+                    (err_msg or ""),
                 )
             else:
                 logger.warning(
                     "Plugin execution error | plugin=%s code=%s msg=%s",
-                    plugin_name, err_code, (err_msg or ""),
+                    plugin_name,
+                    err_code,
+                    (err_msg or ""),
                 )
     except Exception:
         pass
-

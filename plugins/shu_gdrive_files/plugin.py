@@ -1,9 +1,8 @@
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any
 
 
 class _Result:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status, self.data, self.error = status, data or {}, error
 
     @classmethod
@@ -19,31 +18,88 @@ class GoogleDriveFilesPlugin:
     name = "gdrive_files"
     version = "1"
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
                 # Unified container id (drive or folder)
-                "container_id": {"type": "string", "x-ui": {"help": "Enter either a Shared Drive ID or a Folder ID. The plugin will probe Drive first; if not found, it will treat the value as a Folder ID."}},
-                "file_types": {"type": ["array", "null"], "items": {"type": "string"}, "default": ["pdf", "docx", "txt", "md", "py", "js"], "x-ui": {"help": "Allowed file extensions (lowercase)."}},
-                "max_file_size": {"type": ["integer", "null"], "default": 50 * 1024 * 1024, "x-ui": {"help": "Maximum file size in bytes (default 50MB)."}},
-                "include_shared": {"type": ["boolean", "null"], "default": True, "x-ui": {"help": "Include shared files (if permitted)."}},
-                "recursive": {"type": ["boolean", "null"], "default": True, "x-ui": {"help": "Traverse subfolders when a folder is used as the container."}},
-                "delete_missing": {"type": ["boolean", "null"], "default": False, "x-ui": {"help": "When enabled, delete Knowledge Objects for files Google Drive reports as removed during incremental sync. Use with caution."}},
+                "container_id": {
+                    "type": "string",
+                    "x-ui": {
+                        "help": "Enter either a Shared Drive ID or a Folder ID. The plugin will probe Drive first; if not found, it will treat the value as a Folder ID."
+                    },
+                },
+                "file_types": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "default": ["pdf", "docx", "txt", "md", "py", "js"],
+                    "x-ui": {"help": "Allowed file extensions (lowercase)."},
+                },
+                "max_file_size": {
+                    "type": ["integer", "null"],
+                    "default": 50 * 1024 * 1024,
+                    "x-ui": {"help": "Maximum file size in bytes (default 50MB)."},
+                },
+                "include_shared": {
+                    "type": ["boolean", "null"],
+                    "default": True,
+                    "x-ui": {"help": "Include shared files (if permitted)."},
+                },
+                "recursive": {
+                    "type": ["boolean", "null"],
+                    "default": True,
+                    "x-ui": {"help": "Traverse subfolders when a folder is used as the container."},
+                },
+                "delete_missing": {
+                    "type": ["boolean", "null"],
+                    "default": False,
+                    "x-ui": {
+                        "help": "When enabled, delete Knowledge Objects for files Google Drive reports as removed during incremental sync. Use with caution."
+                    },
+                },
                 # Execution
-                "page_size": {"type": ["integer", "null"], "default": 100, "x-ui": {"help": "Page size for Drive listing (max 1000)."}},
-                "op": {"type": ["string", "null"], "enum": ["ingest"], "default": "ingest", "x-ui": {"help": "Choose an operation.", "enum_labels": {"ingest": "Ingest to KB"}, "enum_help": {"ingest": "Ingest matching files into the Knowledge Base."}}},
-                "kb_id": {"type": ["string", "null"], "x-ui": {"hidden": True, "help": "Target Knowledge Base to write documents."}},
-                "debug": {"type": ["boolean", "null"], "default": None, "x-ui": {"help": "Include diagnostic info in output diagnostics (development only)", "hidden": True}},
-                "reset_cursor": {"type": ["boolean", "null"], "default": None, "x-ui": {"help": "Reset the incremental sync cursor before running (forces full rescan)", "hidden": True}},
+                "page_size": {
+                    "type": ["integer", "null"],
+                    "default": 100,
+                    "x-ui": {"help": "Page size for Drive listing (max 1000)."},
+                },
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": ["ingest"],
+                    "default": "ingest",
+                    "x-ui": {
+                        "help": "Choose an operation.",
+                        "enum_labels": {"ingest": "Ingest to KB"},
+                        "enum_help": {"ingest": "Ingest matching files into the Knowledge Base."},
+                    },
+                },
+                "kb_id": {
+                    "type": ["string", "null"],
+                    "x-ui": {"hidden": True, "help": "Target Knowledge Base to write documents."},
+                },
+                "debug": {
+                    "type": ["boolean", "null"],
+                    "default": None,
+                    "x-ui": {
+                        "help": "Include diagnostic info in output diagnostics (development only)",
+                        "hidden": True,
+                    },
+                },
+                "reset_cursor": {
+                    "type": ["boolean", "null"],
+                    "default": None,
+                    "x-ui": {
+                        "help": "Reset the incremental sync cursor before running (forces full rescan)",
+                        "hidden": True,
+                    },
+                },
             },
-
             "required": ["container_id"],
             "additionalProperties": True,
         }
 
-    def get_output_schema(self) -> Optional[Dict[str, Any]]:
+    def get_output_schema(self) -> dict[str, Any] | None:
         return {
             "type": "object",
             "properties": {
@@ -54,7 +110,7 @@ class GoogleDriveFilesPlugin:
             },
         }
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> _Result:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> _Result:
         op = (params.get("op") or "ingest").lower()
         if op != "ingest":
             return _Result.err(f"Unsupported op: {op}")
@@ -73,8 +129,8 @@ class GoogleDriveFilesPlugin:
 
         # Unified container logic: try as Shared Drive first, then fallback to Folder
         container_id = params.get("container_id")
-        drive_id: Optional[str] = None
-        folder_id: Optional[str] = None
+        drive_id: str | None = None
+        folder_id: str | None = None
         if not container_id:
             return _Result.err("container_id is required")
         try:
@@ -95,8 +151,8 @@ class GoogleDriveFilesPlugin:
 
         debug_enabled = bool(params.get("debug")) or bool(getattr(getattr(host, "settings", None), "DEBUG", False))
 
-        user_warnings: List[str] = []
-        diag_warnings: List[str] = []
+        user_warnings: list[str] = []
+        diag_warnings: list[str] = []
         processed_count = ingested_count = skipped_count = deleted_count = 0
 
         # Determine whether drive_id refers to a Shared Drive (vs a folder id)
@@ -108,7 +164,7 @@ class GoogleDriveFilesPlugin:
                 did_is_drive = False
 
         # BFS over folders (if folder_id provided); otherwise list by drive scope
-        folders: List[str] = [folder_id] if folder_id else []
+        folders: list[str] = [folder_id] if folder_id else []
         # Diagnostics (avoid leaking full IDs)
         try:
             exec_feed = None
@@ -131,13 +187,13 @@ class GoogleDriveFilesPlugin:
 
         seen_folders = set([f for f in folders if f])
 
-        async def list_files_in_folder(fid: Optional[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
+        async def list_files_in_folder(fid: str | None) -> tuple[list[dict[str, Any]], list[str]]:
             base = "https://www.googleapis.com/drive/v3/files"
             q_parts = ["trashed = false"]
             if fid:
                 q_parts.append(f"'{fid}' in parents")
             # Do NOT filter by extensions at the Drive query level; filter client-side to avoid invalid queries
-            params_q: Dict[str, Any] = {
+            params_q: dict[str, Any] = {
                 "q": " and ".join(q_parts),
                 "pageSize": page_size,
                 "fields": "nextPageToken, files(id,name,mimeType,modifiedTime,md5Checksum,size,webViewLink,parents)",
@@ -156,7 +212,7 @@ class GoogleDriveFilesPlugin:
                 params_q["corpora"] = "drive"
             # Always constrain to Drive space (excludes appDataFolder)
             params_q["spaces"] = "drive"
-            files: List[Dict[str, Any]] = []
+            files: list[dict[str, Any]] = []
             next_token = None
             while True:
                 if next_token:
@@ -177,7 +233,7 @@ class GoogleDriveFilesPlugin:
             child_folders = [f["id"] for f in files if f.get("mimeType") == "application/vnd.google-apps.folder"]
             return files, child_folders
 
-        all_files: List[Dict[str, Any]] = []
+        all_files: list[dict[str, Any]] = []
         if folder_id:
             queue = [folder_id]
             while queue:
@@ -191,23 +247,22 @@ class GoogleDriveFilesPlugin:
                     for sf in subfolders:
                         if sf not in seen_folders:
                             queue.append(sf)
+        elif drive_id and not did_is_drive:
+            queue = [drive_id]
+            while queue:
+                fid = queue.pop(0)
+                if fid in seen_folders:
+                    pass
+                seen_folders.add(fid)
+                files, subfolders = await list_files_in_folder(fid)
+                all_files.extend([f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"])
+                if recursive:
+                    for sf in subfolders:
+                        if sf not in seen_folders:
+                            queue.append(sf)
         else:
-            if drive_id and not did_is_drive:
-                queue = [drive_id]
-                while queue:
-                    fid = queue.pop(0)
-                    if fid in seen_folders:
-                        pass
-                    seen_folders.add(fid)
-                    files, subfolders = await list_files_in_folder(fid)
-                    all_files.extend([f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"])
-                    if recursive:
-                        for sf in subfolders:
-                            if sf not in seen_folders:
-                                queue.append(sf)
-            else:
-                files, _ = await list_files_in_folder(None)
-                all_files = [f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"]
+            files, _ = await list_files_in_folder(None)
+            all_files = [f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"]
 
         # Emit a minimal diagnostic about discovery counts so empty results are explainable
         try:
@@ -217,8 +272,7 @@ class GoogleDriveFilesPlugin:
 
         # Process files
 
-
-        async def _download_file(file: Dict[str, Any]) -> Tuple[bytes, str]:
+        async def _download_file(file: dict[str, Any]) -> tuple[bytes, str]:
             file_id = file["id"]
             mime = file.get("mimeType") or ""
             # Google Docs types: export
@@ -244,7 +298,6 @@ class GoogleDriveFilesPlugin:
             data = await self._http_bytes(host, "GET", url, headers, params=params_d)
             return data, (mime or "application/octet-stream")
 
-
         # If requested, reset cursor by clearing stored token
         reset_cursor = bool(params.get("reset_cursor"))
         if reset_cursor:
@@ -267,20 +320,31 @@ class GoogleDriveFilesPlugin:
         diag_warnings.append(f"diag:existing_token:{'found' if existing_token else 'none'}")
         if existing_token and not reset_cursor:
             # Optional folder scoping for changes: precompute subtree IDs
-            subtree_ids: Optional[set] = None
+            subtree_ids: set | None = None
             if folder_id:
                 try:
-                    ids = await self._list_child_folders(host, headers, parent_id=folder_id, include_shared=include_shared, recursive=recursive)
+                    ids = await self._list_child_folders(
+                        host,
+                        headers,
+                        parent_id=folder_id,
+                        include_shared=include_shared,
+                        recursive=recursive,
+                    )
                     subtree_ids = set(ids + [folder_id])
                 except Exception:
                     subtree_ids = set([folder_id])
             # Fetch changes
             changed_files, removed_ids, new_start = await self._iter_changes(
-                host, headers, page_token=existing_token, did_is_drive=did_is_drive, drive_id=drive_id, include_shared=include_shared
+                host,
+                headers,
+                page_token=existing_token,
+                did_is_drive=did_is_drive,
+                drive_id=drive_id,
+                include_shared=include_shared,
             )
             # Apply folder scope filter
             if subtree_ids is not None:
-                scoped_files: List[Dict[str, Any]] = []
+                scoped_files: list[dict[str, Any]] = []
                 for f in changed_files:
                     parents = f.get("parents") or []
                     if any(p in subtree_ids for p in parents):
@@ -289,7 +353,7 @@ class GoogleDriveFilesPlugin:
             # Process deletions first
             if removed_ids:
                 if delete_missing:
-                    deleted_ids: List[str] = []
+                    deleted_ids: list[str] = []
                     for rid in removed_ids:
                         try:
                             await host.kb.delete_ko(external_id=rid)
@@ -377,8 +441,15 @@ class GoogleDriveFilesPlugin:
             except Exception:
                 diag_warnings.append("diag:saved_new_start_token:error")
             warnings_out = user_warnings + (diag_warnings if debug_enabled else [])
-            return _Result.ok({"processed": processed_count, "ingested": ingested_count, "skipped": skipped_count, "deleted": deleted_count, "diagnostics": warnings_out[:20]})
-
+            return _Result.ok(
+                {
+                    "processed": processed_count,
+                    "ingested": ingested_count,
+                    "skipped": skipped_count,
+                    "deleted": deleted_count,
+                    "diagnostics": warnings_out[:20],
+                }
+            )
 
         # Process initial scan results
         for f in all_files:
@@ -444,10 +515,8 @@ class GoogleDriveFilesPlugin:
                     pass
             processed_count += 1
 
-
-
         # Initial full discovery path (no token yet)
-        start_token: Optional[str] = None
+        start_token: str | None = None
         try:
             start_token = await self._get_start_page_token(host, headers, did_is_drive=did_is_drive, drive_id=drive_id)
         except Exception:
@@ -464,9 +533,17 @@ class GoogleDriveFilesPlugin:
             diag_warnings.append("diag:saved_start_token:error")
 
         warnings_out = user_warnings + (diag_warnings if debug_enabled else [])
-        return _Result.ok({"processed": processed_count, "ingested": ingested_count, "skipped": skipped_count, "deleted": deleted_count, "diagnostics": warnings_out[:20]})
+        return _Result.ok(
+            {
+                "processed": processed_count,
+                "ingested": ingested_count,
+                "skipped": skipped_count,
+                "deleted": deleted_count,
+                "diagnostics": warnings_out[:20],
+            }
+        )
 
-    async def _is_shared_drive(self, host: Any, headers: Dict[str, str], drive_id: str) -> bool:
+    async def _is_shared_drive(self, host: Any, headers: dict[str, str], drive_id: str) -> bool:
         try:
             url = f"https://www.googleapis.com/drive/v3/drives/{drive_id}"
             data = await self._http_json(host, "GET", url, headers)
@@ -474,10 +551,11 @@ class GoogleDriveFilesPlugin:
         except Exception:
             return False
 
-
-    async def _get_start_page_token(self, host: Any, headers: Dict[str, str], *, did_is_drive: bool, drive_id: Optional[str]) -> Optional[str]:
+    async def _get_start_page_token(
+        self, host: Any, headers: dict[str, str], *, did_is_drive: bool, drive_id: str | None
+    ) -> str | None:
         url = "https://www.googleapis.com/drive/v3/changes/startPageToken"
-        params_q: Dict[str, Any] = {"supportsAllDrives": "true"}
+        params_q: dict[str, Any] = {"supportsAllDrives": "true"}
         if did_is_drive and drive_id:
             params_q["driveId"] = drive_id
         resp = await self._http_json(host, "GET", url, headers, params=params_q)
@@ -485,9 +563,18 @@ class GoogleDriveFilesPlugin:
             return resp.get("startPageToken")
         return None
 
-    async def _iter_changes(self, host: Any, headers: Dict[str, str], *, page_token: str, did_is_drive: bool, drive_id: Optional[str], include_shared: bool) -> Tuple[List[Dict[str, Any]], List[str], Optional[str]]:
+    async def _iter_changes(
+        self,
+        host: Any,
+        headers: dict[str, str],
+        *,
+        page_token: str,
+        did_is_drive: bool,
+        drive_id: str | None,
+        include_shared: bool,
+    ) -> tuple[list[dict[str, Any]], list[str], str | None]:
         url = "https://www.googleapis.com/drive/v3/changes"
-        params_q: Dict[str, Any] = {
+        params_q: dict[str, Any] = {
             "pageToken": page_token,
             "supportsAllDrives": "true",
             "includeItemsFromAllDrives": "true" if include_shared else "false",
@@ -496,10 +583,10 @@ class GoogleDriveFilesPlugin:
         }
         if did_is_drive and drive_id:
             params_q["driveId"] = drive_id
-        files: List[Dict[str, Any]] = []
-        removed_ids: List[str] = []
-        next_token: Optional[str] = None
-        new_start: Optional[str] = None
+        files: list[dict[str, Any]] = []
+        removed_ids: list[str] = []
+        next_token: str | None = None
+        new_start: str | None = None
         while True:
             if next_token:
                 params_q["pageToken"] = next_token
@@ -507,7 +594,7 @@ class GoogleDriveFilesPlugin:
             if not isinstance(resp, dict):
                 break
             new_start = resp.get("newStartPageToken") or new_start
-            for ch in (resp.get("changes") or []):
+            for ch in resp.get("changes") or []:
                 if ch.get("removed"):
                     fid = ch.get("fileId") or (ch.get("file") or {}).get("id")
                     if fid:
@@ -528,7 +615,15 @@ class GoogleDriveFilesPlugin:
                 break
         return files, removed_ids, new_start
 
-    async def _list_child_folders(self, host: Any, headers: Dict[str, str], *, parent_id: str, include_shared: bool, recursive: bool = True) -> List[str]:
+    async def _list_child_folders(
+        self,
+        host: Any,
+        headers: dict[str, str],
+        *,
+        parent_id: str,
+        include_shared: bool,
+        recursive: bool = True,
+    ) -> list[str]:
         """List all child folder IDs under parent_id.
 
         If recursive=True (default), performs BFS to collect all nested subfolders.
@@ -536,15 +631,15 @@ class GoogleDriveFilesPlugin:
         """
         base = "https://www.googleapis.com/drive/v3/files"
 
-        async def _list_direct_children(fid: str) -> List[str]:
-            params_q: Dict[str, Any] = {
+        async def _list_direct_children(fid: str) -> list[str]:
+            params_q: dict[str, Any] = {
                 "q": f"trashed = false and '{fid}' in parents and mimeType = 'application/vnd.google-apps.folder'",
                 "pageSize": 1000,
                 "fields": "nextPageToken, files(id)",
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true" if include_shared else "false",
             }
-            children: List[str] = []
+            children: list[str] = []
             next_token = None
             while True:
                 if next_token:
@@ -563,7 +658,7 @@ class GoogleDriveFilesPlugin:
             return direct_children
 
         # BFS to collect all nested subfolders
-        all_folders: List[str] = list(direct_children)
+        all_folders: list[str] = list(direct_children)
         seen: set = set(direct_children)
         queue = list(direct_children)
 
@@ -582,7 +677,7 @@ class GoogleDriveFilesPlugin:
 
         return all_folders
 
-    async def _resolve_token(self, host: Any) -> tuple[Optional[str], Optional[str]]:
+    async def _resolve_token(self, host: Any) -> tuple[str | None, str | None]:
         auth = getattr(host, "auth", None)
         if not auth:
             return None, None
@@ -595,8 +690,16 @@ class GoogleDriveFilesPlugin:
             return None, None
         return token, target
 
-    async def _http_json(self, host: Any, method: str, url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None, json_body: Optional[Dict[str, Any]] = None) -> Any:
-        kwargs: Dict[str, Any] = {"headers": headers}
+    async def _http_json(
+        self,
+        host: Any,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {"headers": headers}
         if params:
             kwargs["params"] = params
         if json_body is not None:
@@ -605,8 +708,15 @@ class GoogleDriveFilesPlugin:
         body = resp.get("body") if isinstance(resp, dict) else None
         return body
 
-    async def _http_bytes(self, host: Any, method: str, url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> bytes:
-        kwargs: Dict[str, Any] = {"headers": headers}
+    async def _http_bytes(
+        self,
+        host: Any,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+    ) -> bytes:
+        kwargs: dict[str, Any] = {"headers": headers}
         if params:
             kwargs["params"] = params
         if hasattr(host.http, "fetch_bytes"):

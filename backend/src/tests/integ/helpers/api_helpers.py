@@ -1,4 +1,5 @@
 import json
+
 from integ.response_utils import extract_data
 
 
@@ -17,7 +18,7 @@ async def execute_plugin(client, plugin, auth_headers):
                 "op": "mark_read",
                 "user_email": "someone@example.com",
                 "message_ids": ["abc123", "def456"],
-                "preview": True
+                "preview": True,
             }
         },
         headers=auth_headers,

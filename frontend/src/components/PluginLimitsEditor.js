@@ -12,17 +12,20 @@ export default function PluginLimitsEditor({ name }) {
     { enabled: !!name }
   );
 
-  const initial = useMemo(() => ({
-    rate_limit_user_requests: data?.limits?.rate_limit_user_requests ?? '',
-    rate_limit_user_period: data?.limits?.rate_limit_user_period ?? '',
-    quota_daily_requests: data?.limits?.quota_daily_requests ?? '',
-    quota_monthly_requests: data?.limits?.quota_monthly_requests ?? '',
-    // Provider caps (shared across plugins that declare the same provider)
-    provider_name: data?.limits?.provider_name ?? '',
-    provider_rpm: data?.limits?.provider_rpm ?? '',
-    provider_window_seconds: data?.limits?.provider_window_seconds ?? '',
-    provider_concurrency: data?.limits?.provider_concurrency ?? '',
-  }), [data]);
+  const initial = useMemo(
+    () => ({
+      rate_limit_user_requests: data?.limits?.rate_limit_user_requests ?? '',
+      rate_limit_user_period: data?.limits?.rate_limit_user_period ?? '',
+      quota_daily_requests: data?.limits?.quota_daily_requests ?? '',
+      quota_monthly_requests: data?.limits?.quota_monthly_requests ?? '',
+      // Provider caps (shared across plugins that declare the same provider)
+      provider_name: data?.limits?.provider_name ?? '',
+      provider_rpm: data?.limits?.provider_rpm ?? '',
+      provider_window_seconds: data?.limits?.provider_window_seconds ?? '',
+      provider_concurrency: data?.limits?.provider_concurrency ?? '',
+    }),
+    [data]
+  );
 
   const [form, setForm] = useState(initial);
   React.useEffect(() => setForm(initial), [initial]);
@@ -38,23 +41,25 @@ export default function PluginLimitsEditor({ name }) {
     setForm((prev) => ({ ...prev, [k]: v }));
   };
 
-
   const mutation = useMutation(
-    () => pluginsAPI.setLimits(name, {
-      rate_limit_user_requests: form.rate_limit_user_requests === '' ? undefined : form.rate_limit_user_requests,
-      rate_limit_user_period: form.rate_limit_user_period === '' ? undefined : form.rate_limit_user_period,
-      quota_daily_requests: form.quota_daily_requests === '' ? undefined : form.quota_daily_requests,
-      quota_monthly_requests: form.quota_monthly_requests === '' ? undefined : form.quota_monthly_requests,
-      // Provider caps
-      provider_name: form.provider_name === '' ? undefined : form.provider_name,
-      provider_rpm: form.provider_rpm === '' ? undefined : form.provider_rpm,
-      provider_window_seconds: form.provider_window_seconds === '' ? undefined : form.provider_window_seconds,
-      provider_concurrency: form.provider_concurrency === '' ? undefined : form.provider_concurrency,
-    }).then(extractDataFromResponse),
+    () =>
+      pluginsAPI
+        .setLimits(name, {
+          rate_limit_user_requests: form.rate_limit_user_requests === '' ? undefined : form.rate_limit_user_requests,
+          rate_limit_user_period: form.rate_limit_user_period === '' ? undefined : form.rate_limit_user_period,
+          quota_daily_requests: form.quota_daily_requests === '' ? undefined : form.quota_daily_requests,
+          quota_monthly_requests: form.quota_monthly_requests === '' ? undefined : form.quota_monthly_requests,
+          // Provider caps
+          provider_name: form.provider_name === '' ? undefined : form.provider_name,
+          provider_rpm: form.provider_rpm === '' ? undefined : form.provider_rpm,
+          provider_window_seconds: form.provider_window_seconds === '' ? undefined : form.provider_window_seconds,
+          provider_concurrency: form.provider_concurrency === '' ? undefined : form.provider_concurrency,
+        })
+        .then(extractDataFromResponse),
     {
       onSuccess: () => {
         qc.invalidateQueries(['plugins', 'limits', name]);
-      }
+      },
     }
   );
 
@@ -64,8 +69,8 @@ export default function PluginLimitsEditor({ name }) {
         <Stack spacing={2}>
           <Typography variant="h6">Limits & Quotas</Typography>
           <Typography variant="body2" color="text.secondary">
-            These overrides apply per plugin/version and per user. Leave a field blank to keep the existing value.
-            Set 0 to disable a limit (e.g., disable quotas).
+            These overrides apply per plugin/version and per user. Leave a field blank to keep the existing value. Set 0
+            to disable a limit (e.g., disable quotas).
           </Typography>
           {isLoading && <Typography variant="body2">Loading limits…</Typography>}
           {error && <Typography color="error">{formatError(error)}</Typography>}
@@ -111,9 +116,12 @@ export default function PluginLimitsEditor({ name }) {
               />
             </Grid>
           </Grid>
-          <Typography variant="subtitle1" sx={{ mt: 2 }}>Provider caps</Typography>
+          <Typography variant="subtitle1" sx={{ mt: 2 }}>
+            Provider caps
+          </Typography>
           <Typography variant="body2" color="text.secondary">
-            These limits are enforced at the provider/model level and shared across all plugins using the same provider_name.
+            These limits are enforced at the provider/model level and shared across all plugins using the same
+            provider_name.
           </Typography>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6} md={3}>
@@ -163,7 +171,9 @@ export default function PluginLimitsEditor({ name }) {
               {mutation.isLoading ? 'Saving…' : 'Save'}
             </Button>
             {mutation.error && (
-              <Typography color="error" sx={{ mt: 1 }}>{formatError(mutation.error)}</Typography>
+              <Typography color="error" sx={{ mt: 1 }}>
+                {formatError(mutation.error)}
+              </Typography>
             )}
           </Box>
         </Stack>
@@ -171,4 +181,3 @@ export default function PluginLimitsEditor({ name }) {
     </Card>
   );
 }
-

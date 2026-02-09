@@ -26,9 +26,7 @@ const usePluginFlow = ({ pluginsEnabled }) => {
     if (!chatPluginDescriptors.length) {
       return '';
     }
-    return chatPluginDescriptors
-      .map((entry) => entry.title || `${entry.name}:${entry.op}`)
-      .join(', ');
+    return chatPluginDescriptors.map((entry) => entry.title || `${entry.name}:${entry.op}`).join(', ');
   }, [chatPluginDescriptors]);
 
   const showPluginInfoBanner =

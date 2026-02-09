@@ -1,15 +1,5 @@
 import React, { useState } from 'react';
-import {
-  Button,
-  TextField,
-  Box,
-  Typography,
-  Alert,
-  CircularProgress,
-  Paper,
-  Container,
-  Divider
-} from '@mui/material';
+import { Button, TextField, Box, Typography, Alert, CircularProgress, Paper, Container, Divider } from '@mui/material';
 import LoginIcon from '@mui/icons-material/Login';
 import GoogleIcon from '@mui/icons-material/Google';
 import api, { extractDataFromResponse } from '../services/api';
@@ -20,24 +10,18 @@ import { useMicrosoftOAuth } from '../hooks/useMicrosoftOAuth';
 // Microsoft logo - using official asset from Microsoft identity platform branding guidelines
 // https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
 const MicrosoftIcon = () => (
-  <img 
-    src="/ms-symbollockup_mssymbol_19.svg" 
-    alt="" 
-    width="20" 
-    height="20" 
-    style={{ display: 'block' }}
-  />
+  <img src="/ms-symbollockup_mssymbol_19.svg" alt="" width="20" height="20" style={{ display: 'block' }} />
 );
 
-const PasswordLogin = ({ 
-  onSwitchToRegister, 
-  onSwitchToGoogle, 
+const PasswordLogin = ({
+  onSwitchToRegister,
+  onSwitchToGoogle,
   isGoogleSsoEnabled = false,
   isMicrosoftSsoEnabled = false,
 }) => {
   const [formData, setFormData] = useState({
     email: '',
-    password: ''
+    password: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -59,19 +43,21 @@ const PasswordLogin = ({
       setError(errorMessage);
     },
     onPendingActivation: () => {
-      setSuccessMessage(
-        'Your account has been created but requires administrator activation before you can sign in.'
-      );
+      setSuccessMessage('Your account has been created but requires administrator activation before you can sign in.');
     },
   });
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     });
-    if (error) setError(null);
-    if (successMessage) setSuccessMessage(null);
+    if (error) {
+      setError(null);
+    }
+    if (successMessage) {
+      setSuccessMessage(null);
+    }
   };
 
   const validateForm = () => {
@@ -91,7 +77,7 @@ const PasswordLogin = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
@@ -103,21 +89,23 @@ const PasswordLogin = ({
     try {
       const response = await api.post('/auth/login/password', {
         email: formData.email,
-        password: formData.password
+        password: formData.password,
       });
 
       const responseData = extractDataFromResponse(response);
       const { access_token, refresh_token } = responseData;
 
       localStorage.setItem('shu_token', access_token);
-      localStorage.setItem('shu_refresh_token', refresh_token);
+      if (refresh_token) {
+        localStorage.setItem('shu_refresh_token', refresh_token);
+      }
 
       window.location.href = '/';
-
     } catch (err) {
-      const errorMessage = err.response?.data?.error?.message || 
-                          err.response?.data?.detail || 
-                          'Login failed. Please check your credentials.';
+      const errorMessage =
+        err.response?.data?.error?.message ||
+        err.response?.data?.detail ||
+        'Login failed. Please check your credentials.';
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -189,7 +177,7 @@ const PasswordLogin = ({
               onChange={handleChange}
               disabled={isAnyLoading}
             />
-            
+
             <TextField
               margin="normal"
               required
@@ -263,11 +251,7 @@ const PasswordLogin = ({
             )}
 
             <Box sx={{ textAlign: 'center', mt: 2 }}>
-              <Button
-                variant="text"
-                onClick={onSwitchToRegister}
-                disabled={isAnyLoading}
-              >
+              <Button variant="text" onClick={onSwitchToRegister} disabled={isAnyLoading}>
                 Don't have an account? Register
               </Button>
             </Box>

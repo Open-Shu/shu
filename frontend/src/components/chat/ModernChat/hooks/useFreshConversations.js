@@ -4,12 +4,16 @@ export default function useFreshConversations() {
   const freshConversationIdsRef = useRef(new Set());
 
   const markFreshConversation = useCallback((conversationId) => {
-    if (!conversationId) return;
+    if (!conversationId) {
+      return;
+    }
     freshConversationIdsRef.current.add(conversationId);
   }, []);
 
   const clearFreshConversation = useCallback((conversationId) => {
-    if (!conversationId) return;
+    if (!conversationId) {
+      return;
+    }
     freshConversationIdsRef.current.delete(conversationId);
   }, []);
 

@@ -39,12 +39,12 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
                   model_configuration: normalizedSnapshot,
                 },
               }
-            : msg,
+            : msg
         );
         return rebuildCache(oldData, updated);
       });
     },
-    [queryClient],
+    [queryClient]
   );
 
   const seedMetaFromCache = useCallback(
@@ -57,7 +57,9 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
         }
 
         Object.entries(placeholderLookup).forEach(([key, id]) => {
-          if (!id) return;
+          if (!id) {
+            return;
+          }
           if (placeholderMetaOption[key]?.created_at) {
             return;
           }
@@ -71,7 +73,7 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
         log.warn('Failed to seed placeholder metadata from cache', error);
       }
     },
-    [queryClient],
+    [queryClient]
   );
 
   const ensurePlaceholderForVariant = useCallback(
@@ -125,7 +127,7 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
 
       return placeholderId;
     },
-    [queryClient],
+    [queryClient]
   );
 
   const syncPlaceholderParentIds = useCallback(
@@ -145,14 +147,14 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
       queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
         const existing = getMessagesFromCache(oldData);
         const updated = existing.map((msg) =>
-          placeholderIdSet.has(msg.id) ? { ...msg, parent_message_id: newParentId } : msg,
+          placeholderIdSet.has(msg.id) ? { ...msg, parent_message_id: newParentId } : msg
         );
         return rebuildCache(oldData, updated);
       });
 
       return newParentId;
     },
-    [queryClient, replaceSideBySideParent],
+    [queryClient, replaceSideBySideParent]
   );
 
   return {
@@ -164,4 +166,3 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
 };
 
 export default useStreamingPlaceholders;
-

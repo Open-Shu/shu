@@ -22,10 +22,14 @@ import {
   Slider,
   Divider,
 } from '@mui/material';
+import { Search as SearchIcon } from '@mui/icons-material';
 import {
-  Search as SearchIcon,
-} from '@mui/icons-material';
-import { knowledgeBaseAPI, queryAPI, formatError, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
+  knowledgeBaseAPI,
+  queryAPI,
+  formatError,
+  extractDataFromResponse,
+  extractItemsFromResponse,
+} from '../services/api';
 import SourcePreview from './SourcePreview';
 import PageHelpHeader from './PageHelpHeader';
 import JSONPretty from 'react-json-pretty';
@@ -51,30 +55,23 @@ function QueryTester() {
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
 
-  const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery(
-    'knowledgeBases',
-    knowledgeBaseAPI.list
-  );
+  const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
   // Extract knowledge bases data from envelope format
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
 
   // Fetch KB config when selectedKB changes to get default threshold and title weighting
-  useQuery(
-    ['kb-config', selectedKB],
-    () => selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null,
-    {
-      enabled: !!selectedKB,
-      onSuccess: (data) => {
-        if (data && threshold === null) {
-          const config = extractDataFromResponse(data);
-          setThreshold(config.search_threshold || 0.7);
-          setTitleWeightingEnabled(config.title_weighting_enabled ?? true);
-          setTitleWeightMultiplier(config.title_weight_multiplier || 3.0);
-        }
+  useQuery(['kb-config', selectedKB], () => (selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null), {
+    enabled: !!selectedKB,
+    onSuccess: (data) => {
+      if (data && threshold === null) {
+        const config = extractDataFromResponse(data);
+        setThreshold(config.search_threshold || 0.7);
+        setTitleWeightingEnabled(config.title_weighting_enabled ?? true);
+        setTitleWeightMultiplier(config.title_weight_multiplier || 3.0);
       }
-    }
-  );
+    },
+  });
 
   const queryMutation = useMutation(
     (params) => {
@@ -113,7 +110,7 @@ function QueryTester() {
     {
       onError: (error) => {
         log.error('Query error:', error);
-      }
+      },
     }
   );
 
@@ -133,8 +130,6 @@ function QueryTester() {
       ragRewriteMode,
     });
   };
-
-
 
   const formatQueryRequest = () => {
     const baseRequest = {
@@ -196,22 +191,18 @@ function QueryTester() {
               </Typography>
 
               <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel 
-                  sx={{ 
+                <InputLabel
+                  sx={{
                     backgroundColor: 'background.paper',
                     px: 0.5,
                     '&.Mui-focused': {
                       backgroundColor: 'background.paper',
-                    }
+                    },
                   }}
                 >
                   Knowledge Base
                 </InputLabel>
-                <Select
-                  value={selectedKB}
-                  onChange={(e) => setSelectedKB(e.target.value)}
-                  disabled={kbLoading}
-                >
+                <Select value={selectedKB} onChange={(e) => setSelectedKB(e.target.value)} disabled={kbLoading}>
                   {knowledgeBases?.map((kb) => (
                     <MenuItem key={kb.id} value={kb.id}>
                       {kb.name}
@@ -221,21 +212,18 @@ function QueryTester() {
               </FormControl>
 
               <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel 
-                  sx={{ 
+                <InputLabel
+                  sx={{
                     backgroundColor: 'background.paper',
                     px: 0.5,
                     '&.Mui-focused': {
                       backgroundColor: 'background.paper',
-                    }
+                    },
                   }}
                 >
                   Search Type
                 </InputLabel>
-                <Select
-                  value={searchType}
-                  onChange={(e) => setSearchType(e.target.value)}
-                >
+                <Select value={searchType} onChange={(e) => setSearchType(e.target.value)}>
                   <MenuItem value="similarity">Similarity Search</MenuItem>
                   <MenuItem value="keyword">Keyword Search</MenuItem>
                   <MenuItem value="hybrid">Hybrid Search</MenuItem>
@@ -255,8 +243,8 @@ function QueryTester() {
                   '& .MuiInputBase-input::placeholder': {
                     color: '#9ca3af',
                     opacity: 0.7,
-                    fontStyle: 'italic'
-                  }
+                    fontStyle: 'italic',
+                  },
                 }}
               />
 
@@ -280,9 +268,11 @@ function QueryTester() {
                   sx={{ mb: 2 }}
                   inputProps={{ min: 0, max: 1, step: 0.1 }}
                   helperText={
-                    searchType === 'similarity' ? "Similarity threshold (0.0 - 1.0)" :
-                    searchType === 'keyword' ? "Score threshold (0.0 - 1.0)" :
-                    "Score threshold (0.0 - 1.0)"
+                    searchType === 'similarity'
+                      ? 'Similarity threshold (0.0 - 1.0)'
+                      : searchType === 'keyword'
+                        ? 'Score threshold (0.0 - 1.0)'
+                        : 'Score threshold (0.0 - 1.0)'
                   }
                 />
               )}
@@ -295,7 +285,7 @@ function QueryTester() {
                     px: 0.5,
                     '&.Mui-focused': {
                       backgroundColor: 'background.paper',
-                    }
+                    },
                   }}
                 >
                   RAG Query Mode
@@ -307,7 +297,7 @@ function QueryTester() {
                   label="RAG Query Mode"
                   onChange={(e) => setRagRewriteMode(e.target.value)}
                 >
-                  {RAG_MODE_OPTIONS.map(option => (
+                  {RAG_MODE_OPTIONS.map((option) => (
                     <MenuItem key={option.value} value={option.value}>
                       {option.label}
                     </MenuItem>
@@ -351,7 +341,7 @@ function QueryTester() {
                           { value: 1.0, label: '1x' },
                           { value: 3.0, label: '3x' },
                           { value: 5.0, label: '5x' },
-                          { value: 10.0, label: '10x' }
+                          { value: 10.0, label: '10x' },
                         ]}
                         valueLabelDisplay="auto"
                         sx={{ mb: 1 }}
@@ -384,11 +374,7 @@ function QueryTester() {
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="h6">Results</Typography>
                 {queryResults && (
-                  <Chip
-                    label={`${queryResults.results?.length || 0} results`}
-                    color="primary"
-                    size="small"
-                  />
+                  <Chip label={`${queryResults.results?.length || 0} results`} color="primary" size="small" />
                 )}
               </Box>
 
@@ -431,15 +417,9 @@ function QueryTester() {
                   {activeTab === 0 && (
                     <Box>
                       {queryResults.results && queryResults.results.length > 0 ? (
-                        <SourcePreview
-                          sources={queryResults.results}
-                          title="Query Results"
-                          searchQuery={queryText}
-                        />
+                        <SourcePreview sources={queryResults.results} title="Query Results" searchQuery={queryText} />
                       ) : (
-                        <Alert severity="info">
-                          No results found for this query.
-                        </Alert>
+                        <Alert severity="info">No results found for this query.</Alert>
                       )}
                     </Box>
                   )}
@@ -449,10 +429,7 @@ function QueryTester() {
                       <Typography variant="subtitle2" gutterBottom>
                         Query Request
                       </Typography>
-                      <JSONPretty
-                        data={formatQueryRequest()}
-                        theme="monokai"
-                      />
+                      <JSONPretty data={formatQueryRequest()} theme="monokai" />
                     </Box>
                   )}
 
@@ -461,10 +438,7 @@ function QueryTester() {
                       <Typography variant="subtitle2" gutterBottom>
                         Full Response
                       </Typography>
-                      <JSONPretty
-                        data={queryResults}
-                        theme="monokai"
-                      />
+                      <JSONPretty data={queryResults} theme="monokai" />
                     </Box>
                   )}
                 </Box>
@@ -477,4 +451,4 @@ function QueryTester() {
   );
 }
 
-export default QueryTester; 
+export default QueryTester;

@@ -2,10 +2,12 @@
 
 Adapters return these objects; serialization is handled via to_dict().
 """
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any
 
 
 def _serialize(value: Any) -> Any:
@@ -22,10 +24,10 @@ def _serialize(value: Any) -> Any:
 class InputField:
     path: str
     type: str = "string"
-    label: Optional[str] = None
+    label: str | None = None
     required: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = {"path": self.path, "type": self.type}
         if self.label is not None:
             data["label"] = self.label
@@ -37,13 +39,13 @@ class InputField:
 @dataclass
 class Option:
     value: Any
-    label: Optional[str] = None
-    help: Optional[str] = None
-    input_fields: List[InputField] = field(default_factory=list)
-    input_schema: Optional["ParameterBase"] = None
+    label: str | None = None
+    help: str | None = None
+    input_fields: list[InputField] = field(default_factory=list)
+    input_schema: ParameterBase | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        data: Dict[str, Any] = {"value": _serialize(self.value)}
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"value": _serialize(self.value)}
         if self.label is not None:
             data["label"] = self.label
         if self.help is not None:
@@ -58,14 +60,14 @@ class Option:
 @dataclass
 class ParameterBase:
     type: str
-    label: Optional[str] = None
-    description: Optional[str] = None
-    placeholder: Optional[str] = None
+    label: str | None = None
+    description: str | None = None
+    placeholder: str | None = None
     default: Any = None
-    options: List[Option] = field(default_factory=list)
+    options: list[Option] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
-        data: Dict[str, Any] = {"type": self.type}
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"type": self.type}
         if self.label is not None:
             data["label"] = self.label
         if self.description is not None:
@@ -81,11 +83,11 @@ class ParameterBase:
 
 @dataclass
 class NumberParameter(ParameterBase):
-    min: Optional[float] = None
-    max: Optional[float] = None
+    min: float | None = None
+    max: float | None = None
     type: str = field(init=False, default="number")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
         if self.min is not None:
             data["min"] = self.min
@@ -107,7 +109,7 @@ class StringParameter(ParameterBase):
 @dataclass
 class BooleanParameter(ParameterBase):
     type: str = field(init=False, default="boolean")
-    options: List[Option] = field(default_factory=list)
+    options: list[Option] = field(default_factory=list)
 
 
 @dataclass
@@ -117,10 +119,10 @@ class EnumParameter(ParameterBase):
 
 @dataclass
 class ArrayParameter(ParameterBase):
-    items: Optional[ParameterBase] = None
+    items: ParameterBase | None = None
     type: str = field(init=False, default="array")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
         if self.items is not None:
             data["items"] = _serialize(self.items)
@@ -130,10 +132,10 @@ class ArrayParameter(ParameterBase):
 @dataclass
 class ObjectParameter(ParameterBase):
     properties: Mapping[str, ParameterBase] = field(default_factory=dict)
-    required: List[str] = field(default_factory=list)
+    required: list[str] = field(default_factory=list)
     type: str = field(init=False, default="object")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
         if self.properties:
             data["properties"] = {k: _serialize(v) for k, v in self.properties.items()}
@@ -142,5 +144,5 @@ class ObjectParameter(ParameterBase):
         return data
 
 
-def serialize_parameter_mapping(mapping: Mapping[str, Any]) -> Dict[str, Any]:
+def serialize_parameter_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
     return {k: _serialize(v) for k, v in (mapping or {}).items()}

@@ -15,11 +15,15 @@ const AuthPage = () => {
     const loadConfig = async () => {
       try {
         await configService.fetchConfig();
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
         setGoogleSsoEnabled(configService.isGoogleSsoEnabled());
         setMicrosoftSsoEnabled(configService.isMicrosoftSsoEnabled());
       } catch (error) {
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
         setGoogleSsoEnabled(false);
         setMicrosoftSsoEnabled(false);
       }
@@ -33,7 +37,9 @@ const AuthPage = () => {
   }, []);
 
   const handleSwitchToGoogle = () => {
-    if (!googleSsoEnabled) return;
+    if (!googleSsoEnabled) {
+      return;
+    }
     setAuthMode('google');
   };
 
@@ -51,22 +57,22 @@ const AuthPage = () => {
 
   switch (authMode) {
     case 'google':
-      return googleSsoEnabled
-        ? <GoogleLogin onSwitchToPassword={handleSwitchToPassword} />
-        : (
-          <PasswordLogin
-            onSwitchToRegister={handleSwitchToRegister}
-            onSwitchToGoogle={handleSwitchToGoogle}
-            isGoogleSsoEnabled={googleSsoEnabled}
-            isMicrosoftSsoEnabled={microsoftSsoEnabled}
-          />
-        );
+      return googleSsoEnabled ? (
+        <GoogleLogin onSwitchToPassword={handleSwitchToPassword} />
+      ) : (
+        <PasswordLogin
+          onSwitchToRegister={handleSwitchToRegister}
+          onSwitchToGoogle={handleSwitchToGoogle}
+          isGoogleSsoEnabled={googleSsoEnabled}
+          isMicrosoftSsoEnabled={microsoftSsoEnabled}
+        />
+      );
     case 'register':
       return <PasswordRegistration onSwitchToLogin={handleSwitchToLogin} />;
     case 'password':
     default:
       return (
-        <PasswordLogin 
+        <PasswordLogin
           onSwitchToRegister={handleSwitchToRegister}
           onSwitchToGoogle={handleSwitchToGoogle}
           isGoogleSsoEnabled={googleSsoEnabled}

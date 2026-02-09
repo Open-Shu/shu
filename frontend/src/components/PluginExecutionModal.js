@@ -25,7 +25,6 @@ import SchemaForm, { buildDefaultValues } from './SchemaForm';
 import ProviderAuthPanel, { authGateDisabled } from './ProviderAuthPanel';
 import { pluginDisplayName } from '../utils/plugins';
 
-
 export default function PluginExecutionModal({ open, onClose, plugin, onStart = null, onResult = null }) {
   const pluginDef = plugin;
   const [schema, setSchema] = useState(pluginDef?.input_schema || null);
@@ -43,17 +42,21 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   // Current operation used to derive auth spec (op_auth)
   const currentOp = useMemo(() => {
     if (rawMode) {
-      try { const obj = JSON.parse(rawJson || '{}'); return String(obj?.op || '').toLowerCase(); } catch (_) {}
+      try {
+        const obj = JSON.parse(rawJson || '{}');
+        return String(obj?.op || '').toLowerCase();
+      } catch (_) {
+        // Ignore error
+      }
     }
     return String(values?.op || '').toLowerCase();
   }, [rawMode, rawJson, values]);
 
   const hasKbId = useMemo(() => Boolean(schema?.properties?.kb_id), [schema]);
-  const kbsQ = useQuery(
-    ['kbs','list'],
-    () => knowledgeBaseAPI.list().then(extractItemsFromResponse),
-    { enabled: hasKbId && !rawMode, staleTime: 10000 }
-  );
+  const kbsQ = useQuery(['kbs', 'list'], () => knowledgeBaseAPI.list().then(extractItemsFromResponse), {
+    enabled: hasKbId && !rawMode,
+    staleTime: 10000,
+  });
 
   useEffect(() => {
     setSchema(pluginDef?.input_schema || null);
@@ -75,14 +78,26 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
         setResult(data);
         setErrorEnvelope(null);
         setShowErrorDetails(false);
-        try { if (typeof onResult === 'function') onResult(data, { mode: 'run', plugin: pluginDef }); } catch {}
+        try {
+          if (typeof onResult === 'function') {
+            onResult(data, { mode: 'run', plugin: pluginDef });
+          }
+        } catch {
+          // Ignore error
+        }
       },
       onError: (err) => {
         try {
           // Capture structured error envelope for details view
-          setErrorEnvelope(err?.response?.data ?? { error: { message: err?.message || String(err) } });
+          setErrorEnvelope(
+            err?.response?.data ?? {
+              error: { message: err?.message || String(err) },
+            }
+          );
         } catch (_e) {
-          setErrorEnvelope({ error: { message: err?.message || 'Unknown error' } });
+          setErrorEnvelope({
+            error: { message: err?.message || 'Unknown error' },
+          });
         }
       },
     }
@@ -99,18 +114,29 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
         setResult(data);
         setErrorEnvelope(null);
         setShowErrorDetails(false);
-        try { if (typeof onResult === 'function') onResult(data, { mode: 'preview', plugin: pluginDef }); } catch {}
+        try {
+          if (typeof onResult === 'function') {
+            onResult(data, { mode: 'preview', plugin: pluginDef });
+          }
+        } catch {
+          // Ignore error
+        }
       },
       onError: (err) => {
         try {
-          setErrorEnvelope(err?.response?.data ?? { error: { message: err?.message || String(err) } });
+          setErrorEnvelope(
+            err?.response?.data ?? {
+              error: { message: err?.message || String(err) },
+            }
+          );
         } catch (_e) {
-          setErrorEnvelope({ error: { message: err?.message || 'Unknown error' } });
+          setErrorEnvelope({
+            error: { message: err?.message || 'Unknown error' },
+          });
         }
       },
     }
   );
-
 
   const onChangeField = (key, type, val) => {
     setValues((prev) => {
@@ -129,18 +155,11 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   };
 
   const renderForm = useMemo(() => {
-    if (!schema || !schema.properties || rawMode) return null;
-    return (
-      <SchemaForm
-        schema={schema}
-        values={values}
-        onChangeField={onChangeField}
-        hideKeys={new Set(['kb_id'])}
-      />
-    );
+    if (!schema || !schema.properties || rawMode) {
+      return null;
+    }
+    return <SchemaForm schema={schema} values={values} onChangeField={onChangeField} hideKeys={new Set(['kb_id'])} />;
   }, [schema, values, rawMode]);
-
-
 
   const handleRun = () => {
     let params = values;
@@ -154,15 +173,27 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
     }
     // Merge auth overlay under reserved __host key
     if (authOverlay && Object.keys(authOverlay).length > 0) {
-      params = { ...params, __host: { ...(params.__host || {}), ...authOverlay } };
+      params = {
+        ...params,
+        __host: { ...(params.__host || {}), ...authOverlay },
+      };
     }
     setShowErrorDetails(false);
     setErrorEnvelope(null);
     setResult(null);
-    try { if (typeof onStart === 'function') onStart({ mode: 'run', plugin: pluginDef, params }); } catch {}
-    execMut.mutate({ name: pluginDef?.name, params, agentKey: agentKey || null });
+    try {
+      if (typeof onStart === 'function') {
+        onStart({ mode: 'run', plugin: pluginDef, params });
+      }
+    } catch {
+      // Ignore error
+    }
+    execMut.mutate({
+      name: pluginDef?.name,
+      params,
+      agentKey: agentKey || null,
+    });
   };
-
 
   const handlePreview = () => {
     let params = values;
@@ -176,14 +207,27 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
     }
     // Merge auth overlay
     if (authOverlay && Object.keys(authOverlay).length > 0) {
-      params = { ...params, __host: { ...(params.__host || {}), ...authOverlay } };
+      params = {
+        ...params,
+        __host: { ...(params.__host || {}), ...authOverlay },
+      };
     }
     params = { ...params, preview: true, approve: false };
     setShowErrorDetails(false);
     setErrorEnvelope(null);
     setResult(null);
-    try { if (typeof onStart === 'function') onStart({ mode: 'preview', plugin: pluginDef, params }); } catch {}
-    previewMut.mutate({ name: pluginDef?.name, params, agentKey: agentKey || null });
+    try {
+      if (typeof onStart === 'function') {
+        onStart({ mode: 'preview', plugin: pluginDef, params });
+      }
+    } catch {
+      // Ignore error
+    }
+    previewMut.mutate({
+      name: pluginDef?.name,
+      params,
+      agentKey: agentKey || null,
+    });
   };
 
   const handleApproveRun = () => {
@@ -198,23 +242,37 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
     }
     // Merge auth overlay
     if (authOverlay && Object.keys(authOverlay).length > 0) {
-      params = { ...params, __host: { ...(params.__host || {}), ...authOverlay } };
+      params = {
+        ...params,
+        __host: { ...(params.__host || {}), ...authOverlay },
+      };
     }
     params = { ...params, preview: false, approve: true };
     setShowErrorDetails(false);
     setErrorEnvelope(null);
     setResult(null);
-    try { if (typeof onStart === 'function') onStart({ mode: 'approve', plugin: pluginDef, params }); } catch {}
-    execMut.mutate({ name: pluginDef?.name, params, agentKey: agentKey || null });
+    try {
+      if (typeof onStart === 'function') {
+        onStart({ mode: 'approve', plugin: pluginDef, params });
+      }
+    } catch {
+      // Ignore error
+    }
+    execMut.mutate({
+      name: pluginDef?.name,
+      params,
+      agentKey: agentKey || null,
+    });
   };
-
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Execute Plugin: {pluginDisplayName(pluginDef) || pluginDef?.name}</DialogTitle>
       <DialogContent dividers>
         {pluginDef?.input_schema ? (
-          <Typography variant="body2" color="text.secondary" mb={2}>Schema-based form. Toggle Raw JSON if needed.</Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Schema-based form. Toggle Raw JSON if needed.
+          </Typography>
         ) : (
           <Alert severity="info" sx={{ mb: 2 }}>
             This plugin does not declare an input schema. Use Raw JSON mode to provide params.
@@ -226,10 +284,20 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
             control={<Switch checked={rawMode} onChange={(e) => setRawMode(e.target.checked)} />}
             label="Raw JSON"
           />
-          <TextField size="small" label="Agent Key (optional)" value={agentKey} onChange={(e) => setAgentKey(e.target.value)} />
+          <TextField
+            size="small"
+            label="Agent Key (optional)"
+            value={agentKey}
+            onChange={(e) => setAgentKey(e.target.value)}
+          />
         </Box>
 
-        <ProviderAuthPanel plugin={pluginDef} op={currentOp} onGateChange={(ok) => setIdentitiesOk(!!ok)} onAuthOverlayChange={(ov) => setAuthOverlay(ov || {})} />
+        <ProviderAuthPanel
+          plugin={pluginDef}
+          op={currentOp}
+          onGateChange={(ok) => setIdentitiesOk(!!ok)}
+          onAuthOverlayChange={(ov) => setAuthOverlay(ov || {})}
+        />
 
         {!rawMode && hasKbId && (
           <FormControl fullWidth size="small" sx={{ mb: 2 }}>
@@ -242,27 +310,30 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
                 const val = e.target.value || '';
                 setValues((prev) => {
                   const next = { ...(prev || {}), kb_id: val };
-                  try { setRawJson(JSON.stringify(next, null, 2)); } catch {}
+                  try {
+                    setRawJson(JSON.stringify(next, null, 2));
+                  } catch {
+                    // Ignore error
+                  }
                   return next;
                 });
               }}
             >
-              <MenuItem value=""><em>None</em></MenuItem>
-              {Array.isArray(kbsQ.data) && kbsQ.data.map((kb) => (
-                <MenuItem key={kb.id} value={kb.id}>{kb.name || kb.id}</MenuItem>
-              ))}
+              <MenuItem value="">
+                <em>None</em>
+              </MenuItem>
+              {Array.isArray(kbsQ.data) &&
+                kbsQ.data.map((kb) => (
+                  <MenuItem key={kb.id} value={kb.id}>
+                    {kb.name || kb.id}
+                  </MenuItem>
+                ))}
             </Select>
           </FormControl>
         )}
 
         {rawMode ? (
-          <TextField
-            fullWidth
-            multiline
-            minRows={10}
-            value={rawJson}
-            onChange={(e) => setRawJson(e.target.value)}
-          />
+          <TextField fullWidth multiline minRows={10} value={rawJson} onChange={(e) => setRawJson(e.target.value)} />
         ) : (
           renderForm
         )}
@@ -276,23 +347,45 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
               </Button>
             </Box>
             <Collapse in={showErrorDetails}>
-              <Box mt={1} sx={{ bgcolor: '#f8fafc', p: 1, borderRadius: 1, border: '1px solid #e2e8f0' }}>
+              <Box
+                mt={1}
+                sx={{
+                  bgcolor: '#f8fafc',
+                  p: 1,
+                  borderRadius: 1,
+                  border: '1px solid #e2e8f0',
+                }}
+              >
                 <JSONPretty data={errorEnvelope || {}} />
               </Box>
             </Collapse>
-            {supportsPreview && errorEnvelope?.error?.code === 'approval_required' && errorEnvelope?.error?.details?.plan && (
-              <Box mt={1}>
-                <Typography variant="subtitle2">Proposed action plan</Typography>
-                <Box mt={1} sx={{ bgcolor: '#f8fafc', p: 1, borderRadius: 1, border: '1px solid #e2e8f0' }}>
-                  <JSONPretty data={errorEnvelope.error.details.plan} />
+            {supportsPreview &&
+              errorEnvelope?.error?.code === 'approval_required' &&
+              errorEnvelope?.error?.details?.plan && (
+                <Box mt={1}>
+                  <Typography variant="subtitle2">Proposed action plan</Typography>
+                  <Box
+                    mt={1}
+                    sx={{
+                      bgcolor: '#f8fafc',
+                      p: 1,
+                      borderRadius: 1,
+                      border: '1px solid #e2e8f0',
+                    }}
+                  >
+                    <JSONPretty data={errorEnvelope.error.details.plan} />
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    sx={{ mt: 1 }}
+                    onClick={handleApproveRun}
+                    disabled={execMut.isLoading || previewMut.isLoading}
+                  >
+                    Approve & Run
+                  </Button>
                 </Box>
-                <Button size="small" variant="contained" sx={{ mt: 1 }} onClick={handleApproveRun} disabled={execMut.isLoading || previewMut.isLoading}>
-                  Approve & Run
-
-                </Button>
-              </Box>
-            )}
-
+              )}
           </Alert>
         )}
 
@@ -307,14 +400,34 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
         <Button onClick={onClose}>Close</Button>
         {supportsPreview ? (
           <>
-            <Button onClick={handlePreview} disabled={execMut.isLoading || previewMut.isLoading || authGateDisabled(pluginDef, currentOp, identitiesOk)}>Preview</Button>
-            <Button variant="contained" onClick={handleApproveRun} disabled={execMut.isLoading || previewMut.isLoading || authGateDisabled(pluginDef, currentOp, identitiesOk)}>Approve & Run</Button>
+            <Button
+              onClick={handlePreview}
+              disabled={
+                execMut.isLoading || previewMut.isLoading || authGateDisabled(pluginDef, currentOp, identitiesOk)
+              }
+            >
+              Preview
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleApproveRun}
+              disabled={
+                execMut.isLoading || previewMut.isLoading || authGateDisabled(pluginDef, currentOp, identitiesOk)
+              }
+            >
+              Approve & Run
+            </Button>
           </>
         ) : (
-          <Button variant="contained" onClick={handleRun} disabled={execMut.isLoading || authGateDisabled(pluginDef, currentOp, identitiesOk)}>Run</Button>
+          <Button
+            variant="contained"
+            onClick={handleRun}
+            disabled={execMut.isLoading || authGateDisabled(pluginDef, currentOp, identitiesOk)}
+          >
+            Run
+          </Button>
         )}
       </DialogActions>
     </Dialog>
-
   );
 }

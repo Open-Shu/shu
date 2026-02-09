@@ -1,10 +1,9 @@
 from __future__ import annotations
-import logging
-from typing import List
-import sys, os
 
-from integ.helpers.api_helpers import list_subscription_plugins
+import logging
+
 from integ.base_integration_test import BaseIntegrationTestSuite
+from integ.helpers.api_helpers import list_subscription_plugins
 from integ.response_utils import extract_data
 
 logger = logging.getLogger(__name__)
@@ -85,9 +84,9 @@ class ConnectedAccountsTestSuite(BaseIntegrationTestSuite):
         return "Tests for consent scopes union and plugin subscriptions CRUD"
 
 
-
 if __name__ == "__main__":
     suite = ConnectedAccountsTestSuite()
     exit_code = suite.run()
     import sys as _sys
+
     _sys.exit(exit_code)

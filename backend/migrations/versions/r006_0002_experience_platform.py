@@ -8,16 +8,13 @@ Creates:
 - experience_runs table - execution history with inputs, outputs, and results
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
-import uuid
-from datetime import datetime, timezone
 
 from migrations.helpers import (
-    table_exists,
-    index_exists,
     drop_table_if_exists,
+    table_exists,
 )
 
 # revision identifiers, used by Alembic.
@@ -40,11 +37,9 @@ def upgrade() -> None:
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
             sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
-
             # Basic information
             sa.Column("name", sa.String(100), nullable=False, index=True),
             sa.Column("description", sa.Text(), nullable=True),
-
             # Ownership & visibility
             sa.Column(
                 "created_by",
@@ -54,14 +49,11 @@ def upgrade() -> None:
                 index=True,
             ),
             sa.Column("visibility", sa.String(20), nullable=False, server_default="draft"),
-
             # Trigger configuration
             sa.Column("trigger_type", sa.String(20), nullable=False, server_default="manual"),
             sa.Column("trigger_config", JSONB(), nullable=True),
-
             # Backlink flag
             sa.Column("include_previous_run", sa.Boolean(), nullable=False, server_default="false"),
-
             # LLM Configuration - using Model Configuration instead of direct provider reference
             sa.Column(
                 "model_configuration_id",
@@ -69,7 +61,6 @@ def upgrade() -> None:
                 sa.ForeignKey("model_configurations.id", ondelete="SET NULL"),
                 nullable=True,
             ),
-
             # Prompt configuration
             sa.Column(
                 "prompt_id",
@@ -78,7 +69,6 @@ def upgrade() -> None:
                 nullable=True,
             ),
             sa.Column("inline_prompt_template", sa.Text(), nullable=True),
-
             # Version control (forward-looking)
             sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
             sa.Column("is_active_version", sa.Boolean(), nullable=False, server_default="true"),
@@ -88,11 +78,9 @@ def upgrade() -> None:
                 sa.ForeignKey("experiences.id", ondelete="SET NULL"),
                 nullable=True,
             ),
-
             # Constraints & budgets
             sa.Column("max_run_seconds", sa.Integer(), nullable=False, server_default="120"),
             sa.Column("token_budget", sa.Integer(), nullable=True),
-
             # Scheduler fields
             sa.Column("next_run_at", TIMESTAMP(timezone=True), nullable=True),
             sa.Column("last_run_at", TIMESTAMP(timezone=True), nullable=True),
@@ -113,7 +101,6 @@ def upgrade() -> None:
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
             sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
-
             # Parent experience
             sa.Column(
                 "experience_id",
@@ -124,14 +111,11 @@ def upgrade() -> None:
             ),
             sa.Column("order", sa.Integer(), nullable=False),
             sa.Column("step_key", sa.String(50), nullable=False),
-
             # Step type
             sa.Column("step_type", sa.String(30), nullable=False, server_default="plugin"),
-
             # Plugin configuration
             sa.Column("plugin_name", sa.String(100), nullable=True),
             sa.Column("plugin_op", sa.String(100), nullable=True),
-
             # Knowledge Base configuration
             sa.Column(
                 "knowledge_base_id",
@@ -140,21 +124,14 @@ def upgrade() -> None:
                 nullable=True,
             ),
             sa.Column("kb_query_template", sa.Text(), nullable=True),
-
             # Parameters template (JSON with Jinja2 expressions)
             sa.Column("params_template", JSONB(), nullable=True),
-
             # Conditional execution (forward-looking)
             sa.Column("condition_template", sa.Text(), nullable=True),
-
             # Required scopes (cached)
             sa.Column("required_scopes", JSONB(), nullable=True),
-
             # Unique constraint: step_key must be unique within an experience
-            sa.UniqueConstraint(
-                "experience_id", "step_key",
-                name="uq_experience_steps_experience_step_key"
-            ),
+            sa.UniqueConstraint("experience_id", "step_key", name="uq_experience_steps_experience_step_key"),
         )
 
     # ========================================================================
@@ -166,7 +143,6 @@ def upgrade() -> None:
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("created_at", TIMESTAMP(timezone=True), nullable=False),
             sa.Column("updated_at", TIMESTAMP(timezone=True), nullable=False),
-
             # Parent experience and user
             sa.Column(
                 "experience_id",
@@ -182,7 +158,6 @@ def upgrade() -> None:
                 nullable=False,
                 index=True,
             ),
-
             # Backlink to previous run
             sa.Column(
                 "previous_run_id",
@@ -190,26 +165,20 @@ def upgrade() -> None:
                 sa.ForeignKey("experience_runs.id", ondelete="SET NULL"),
                 nullable=True,
             ),
-
             # Model configuration used for this run (snapshot at execution time)
             sa.Column("model_configuration_id", sa.String(36), nullable=True),
-
             # Status tracking
             sa.Column("status", sa.String(20), nullable=False, server_default="pending", index=True),
             sa.Column("started_at", TIMESTAMP(timezone=True), nullable=True),
             sa.Column("finished_at", TIMESTAMP(timezone=True), nullable=True),
-
             # Step-by-step execution state
             sa.Column("step_states", JSONB(), nullable=True),
-
             # Inputs & Outputs
             sa.Column("input_params", JSONB(), nullable=True),
             sa.Column("step_outputs", JSONB(), nullable=True),
-
             # Final LLM result
             sa.Column("result_content", sa.Text(), nullable=True),
             sa.Column("result_metadata", JSONB(), nullable=True),
-
             # Error tracking
             sa.Column("error_message", sa.Text(), nullable=True),
             sa.Column("error_details", JSONB(), nullable=True),

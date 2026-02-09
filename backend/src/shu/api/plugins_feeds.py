@@ -1,24 +1,25 @@
+"""Plugins API (admin feeds): create/list/update/delete feeds and run controls
+Preserves original paths under /plugins/admin/feeds*.
 """
-Plugins API (admin feeds): create/list/update/delete feeds and run controls
-Preserves original paths under /plugins/admin/feeds*
-"""
+
 from __future__ import annotations
+
 import asyncio
-from typing import Any, Dict, Optional, List
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
-from ..auth.rbac import require_power_user
 from ..auth.models import User
-from ..core.response import ShuResponse
+from ..auth.rbac import require_power_user
 from ..core.database import get_async_session_local
-from ..models.plugin_feed import PluginFeed
+from ..core.response import ShuResponse
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
+from ..models.plugin_feed import PluginFeed
 from ..plugins.registry import REGISTRY
 from ..services.plugin_identity import compute_identity_status
 from ..services.plugins_feed_policy import enforce_feed_op
@@ -29,28 +30,28 @@ router = APIRouter()
 class CreateScheduleRequest(BaseModel):
     name: str
     plugin_name: str
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     interval_seconds: int = 3600
-    agent_key: Optional[str] = None
+    agent_key: str | None = None
     enabled: bool = True
-    owner_user_id: Optional[str] = None
+    owner_user_id: str | None = None
 
 
 class UpdateScheduleRequest(BaseModel):
-    name: Optional[str] = None
-    plugin_name: Optional[str] = None
-    params: Optional[Dict[str, Any]] = None
-    interval_seconds: Optional[int] = None
-    agent_key: Optional[str] = None
-    enabled: Optional[bool] = None
-    next_run_at: Optional[str] = None
-    owner_user_id: Optional[str] = None
+    name: str | None = None
+    plugin_name: str | None = None
+    params: dict[str, Any] | None = None
+    interval_seconds: int | None = None
+    agent_key: str | None = None
+    enabled: bool | None = None
+    next_run_at: str | None = None
+    owner_user_id: str | None = None
 
 
 class RunPendingRequest(BaseModel):
     limit: int = 10
-    schedule_id: Optional[str] = None
-    execution_id: Optional[str] = None
+    schedule_id: str | None = None
+    execution_id: str | None = None
 
 
 @router.post("/admin/feeds")
@@ -71,7 +72,7 @@ async def admin_create_schedule(
         agent_key=body.agent_key,
         owner_user_id=owner_id,
         enabled=bool(body.enabled),
-        next_run_at=datetime.now(timezone.utc),
+        next_run_at=datetime.now(UTC),
     )
     db.add(sched)
     await db.commit()
@@ -81,9 +82,9 @@ async def admin_create_schedule(
 
 @router.get("/admin/feeds")
 async def admin_list_schedules(
-    plugin_name: Optional[str] = Query(None, description="Filter by plugin name"),
-    owner_user_id: Optional[str] = Query(None, description="Filter by owner user id"),
-    kb_id: Optional[str] = Query(None, description="Filter by params.kb_id"),
+    plugin_name: str | None = Query(None, description="Filter by plugin name"),
+    owner_user_id: str | None = Query(None, description="Filter by owner user id"),
+    kb_id: str | None = Query(None, description="Filter by params.kb_id"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_power_user),
 ):
@@ -94,11 +95,13 @@ async def admin_list_schedules(
     if owner_user_id:
         scheds = [s for s in scheds if (s.owner_user_id or "") == owner_user_id]
     if kb_id:
+
         def _get_kb(p):
             try:
                 return (p or {}).get("kb_id")
             except Exception:
                 return None
+
         scheds = [s for s in scheds if _get_kb(s.params) == kb_id]
 
     out = []
@@ -107,9 +110,7 @@ async def admin_list_schedules(
         row["identity_status"] = await compute_identity_status(db, s.owner_user_id, s.params or {})
         out.append(row)
 
-    return ShuResponse.success(
-        sorted(out, key=lambda x: (not x.get("enabled", False), x.get("name")))
-    )
+    return ShuResponse.success(sorted(out, key=lambda x: (not x.get("enabled", False), x.get("name"))))
 
 
 @router.get("/admin/feeds/{schedule_id}")
@@ -143,7 +144,13 @@ async def admin_update_schedule(
     if body.plugin_name is not None and body.plugin_name != sched.plugin_name:
         plugin = await REGISTRY.resolve(body.plugin_name, db)
         if not plugin:
-            raise HTTPException(status_code=404, detail={"error": "plugin_not_found", "message": f"Plugin '{body.plugin_name}' not found or disabled"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "plugin_not_found",
+                    "message": f"Plugin '{body.plugin_name}' not found or disabled",
+                },
+            )
         sched.plugin_name = body.plugin_name
 
     if body.name is not None:
@@ -162,11 +169,18 @@ async def admin_update_schedule(
     if body.enabled is not None:
         sched.enabled = bool(body.enabled)
         if not sched.enabled:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             await db.execute(
                 update(PluginExecution)
-                .where((PluginExecution.schedule_id == schedule_id) & (PluginExecution.status == PluginExecutionStatus.PENDING))
-                .values(status=PluginExecutionStatus.FAILED, error="cancelled_disabled", completed_at=now)
+                .where(
+                    (PluginExecution.schedule_id == schedule_id)
+                    & (PluginExecution.status == PluginExecutionStatus.PENDING)
+                )
+                .values(
+                    status=PluginExecutionStatus.FAILED,
+                    error="cancelled_disabled",
+                    completed_at=now,
+                )
             )
 
     if body.owner_user_id is not None:
@@ -194,6 +208,7 @@ async def admin_delete_schedule(
     if not sched:
         raise HTTPException(status_code=404, detail="schedule not found")
     from sqlalchemy import delete
+
     await db.execute(delete(PluginExecution).where(PluginExecution.schedule_id == schedule_id))
     await db.delete(sched)
     await db.commit()
@@ -206,6 +221,7 @@ async def admin_enqueue_due_schedules(
     admin: User = Depends(require_power_user),
 ):
     from ..services.plugins_scheduler_service import PluginsSchedulerService
+
     svc = PluginsSchedulerService(db)
     stats = await svc.enqueue_due_schedules(fallback_user_id=str(admin.id))
     return ShuResponse.success(stats)
@@ -243,17 +259,18 @@ async def admin_run_schedule_now(
 
     # Fire-and-forget: spawn background task to run immediately
     # Don't await - return to frontend immediately so it can poll for status
-    async def _run_in_background():
+    async def _run_in_background() -> None:
         try:
             async with get_async_session_local()() as bg_session:
                 from ..services.plugins_scheduler_service import PluginsSchedulerService
+
                 svc = PluginsSchedulerService(bg_session)
                 await svc.run_pending(limit=1, execution_id=exec_id)
         except Exception:
             # Best-effort immediate run; if it fails, scheduler will pick it up
             pass
 
-    asyncio.create_task(_run_in_background())
+    asyncio.create_task(_run_in_background())  # noqa: RUF006 # We run this in the background, currently no way to store
 
     # Return the execution record immediately (status will be PENDING)
     await db.refresh(exec_rec)

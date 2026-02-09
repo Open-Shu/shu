@@ -1,14 +1,11 @@
-"""
-BrandingService manages dynamic branding configuration and related assets.
-"""
+"""BrandingService manages dynamic branding configuration and related assets."""
 
 from __future__ import annotations
 
 import mimetypes
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +19,7 @@ class BrandingService:
 
     SETTINGS_KEY = "app.branding"
 
-    def __init__(self, db: AsyncSession, settings: Optional[Settings] = None):
+    def __init__(self, db: AsyncSession, settings: Settings | None = None) -> None:
         self.db = db
         self.settings = settings or get_settings_instance()
         self.assets_dir = Path(self.settings.branding_assets_dir).resolve()
@@ -44,7 +41,7 @@ class BrandingService:
         self,
         update: BrandingSettingsUpdate,
         *,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> BrandingSettings:
         stored = await self._system_settings.get_value(self.SETTINGS_KEY, {}) or {}
         update_data = update.model_dump(exclude_unset=True)
@@ -55,7 +52,7 @@ class BrandingService:
             else:
                 stored[key] = value
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         stored["updated_at"] = now
         if user_id:
             stored["updated_by"] = user_id
@@ -69,7 +66,7 @@ class BrandingService:
         filename: str,
         file_bytes: bytes,
         asset_type: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> BrandingSettings:
         asset_type = asset_type.lower()
         if asset_type not in {"logo", "favicon"}:
@@ -126,7 +123,7 @@ class BrandingService:
         mime_type, _ = mimetypes.guess_type(str(path))
         return mime_type or "application/octet-stream"
 
-    def _default_payload(self) -> Dict[str, object]:
+    def _default_payload(self) -> dict[str, object]:
         return {
             "logo_url": self.settings.branding_default_logo_url,
             "favicon_url": self.settings.branding_default_favicon_url,
@@ -143,21 +140,19 @@ class BrandingService:
 
         extension = Path(filename).suffix.lower().lstrip(".")
         allowed = (
-            set(ext.lower() for ext in self.settings.branding_allowed_logo_extensions)
+            {ext.lower() for ext in self.settings.branding_allowed_logo_extensions}
             if asset_type == "logo"
-            else set(ext.lower() for ext in self.settings.branding_allowed_favicon_extensions)
+            else {ext.lower() for ext in self.settings.branding_allowed_favicon_extensions}
         )
 
         if extension not in allowed:
-            raise ValueError(
-                f"Invalid file type '.{extension}'. Allowed types: {', '.join(sorted(allowed))}"
-            )
+            raise ValueError(f"Invalid file type '.{extension}'. Allowed types: {', '.join(sorted(allowed))}")
 
         max_size = self.settings.branding_max_asset_size_bytes
         if len(file_bytes) > max_size:
             raise ValueError(f"File size {len(file_bytes)} exceeds limit of {max_size} bytes")
 
-    def _remove_local_asset(self, url: Optional[str], *, exclude_filename: Optional[str] = None) -> None:
+    def _remove_local_asset(self, url: str | None, *, exclude_filename: str | None = None) -> None:
         if not url:
             return
 
@@ -165,7 +160,7 @@ class BrandingService:
         if not url.startswith(prefix):
             return
 
-        filename = url[len(prefix):]
+        filename = url[len(prefix) :]
         if not filename:
             return
 

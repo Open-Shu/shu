@@ -1,34 +1,31 @@
 import os
 import time
-import weakref
-from typing import List, Optional, Dict
-from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from typing import Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
 import sentence_transformers
 
-from ..models.document import DocumentChunk
-from ..models.knowledge_base import KnowledgeBase
 from ..core.config import get_settings_instance
 from ..core.logging import get_logger
+from ..models.document import DocumentChunk
+from ..models.knowledge_base import KnowledgeBase
 
 logger = get_logger(__name__)
 
 
 class RAGServiceManager:
-    """
-    Memory-aware manager for RAGProcessingService instances.
+    """Memory-aware manager for RAGProcessingService instances.
     Replaces the problematic singleton pattern with proper lifecycle management.
     """
 
-    def __init__(self):
-        self._instances: Dict[str, Dict] = {}  # key -> {instance, last_used, created_at}
-        self._executor: Optional[ThreadPoolExecutor] = None
+    def __init__(self) -> None:
+        self._instances: dict[str, dict] = {}  # key -> {instance, last_used, created_at}
+        self._executor: ThreadPoolExecutor | None = None
         self._cache_ttl = 3600  # 1 hour TTL for unused instances
         self._max_instances = 5  # Limit concurrent model instances
 
-    def get_service(self, embedding_model: Optional[str] = None, device: Optional[str] = None) -> 'RAGProcessingService':
+    def get_service(self, embedding_model: str | None = None, device: str | None = None) -> "RAGProcessingService":
         """Get or create a RAGProcessingService instance with memory management."""
         settings = get_settings_instance()
         model_name = embedding_model or settings.default_embedding_model
@@ -43,9 +40,9 @@ class RAGServiceManager:
         # Check if we have a cached instance
         if instance_key in self._instances:
             entry = self._instances[instance_key]
-            entry['last_used'] = current_time
+            entry["last_used"] = current_time
             logger.debug(f"Reusing RAGProcessingService instance for {instance_key}")
-            return entry['instance']
+            return entry["instance"]
 
         # Check instance limit
         if len(self._instances) >= self._max_instances:
@@ -56,9 +53,9 @@ class RAGServiceManager:
         instance = RAGProcessingService(model_name, device_name, self._get_executor())
 
         self._instances[instance_key] = {
-            'instance': instance,
-            'last_used': current_time,
-            'created_at': current_time
+            "instance": instance,
+            "last_used": current_time,
+            "created_at": current_time,
         }
 
         return instance
@@ -67,12 +64,11 @@ class RAGServiceManager:
         """Get or create the shared thread pool executor."""
         if self._executor is None or self._executor._shutdown:
             settings = get_settings_instance()
-            max_workers = max(1, int(getattr(settings, "max_workers", 4)))
+            embedding_threads = max(1, int(getattr(settings, "embedding_threads", 4)))
             self._executor = ThreadPoolExecutor(
-                max_workers=max_workers,
-                thread_name_prefix="rag-embedding-worker"
+                max_workers=embedding_threads, thread_name_prefix="rag-embedding-worker"
             )
-            logger.debug(f"Created new ThreadPoolExecutor for RAG processing (max_workers={max_workers})")
+            logger.debug(f"Created new ThreadPoolExecutor for RAG processing (threads={embedding_threads})")
         return self._executor
 
     def _cleanup_expired_instances(self, current_time: float) -> None:
@@ -80,32 +76,31 @@ class RAGServiceManager:
         expired_keys = []
 
         for key, entry in self._instances.items():
-            if current_time - entry['last_used'] > self._cache_ttl:
+            if current_time - entry["last_used"] > self._cache_ttl:
                 expired_keys.append(key)
 
         for key in expired_keys:
             entry = self._instances.pop(key)
             logger.info(f"Evicting expired RAGProcessingService instance: {key}")
             # Clean up the instance
-            self._cleanup_instance(entry['instance'])
+            self._cleanup_instance(entry["instance"])
 
     def _evict_oldest_instance(self) -> None:
         """Evict the least recently used instance to make room."""
         if not self._instances:
             return
 
-        oldest_key = min(self._instances.keys(),
-                        key=lambda k: self._instances[k]['last_used'])
+        oldest_key = min(self._instances.keys(), key=lambda k: self._instances[k]["last_used"])
 
         entry = self._instances.pop(oldest_key)
         logger.info(f"Evicting oldest RAGProcessingService instance: {oldest_key}")
-        self._cleanup_instance(entry['instance'])
+        self._cleanup_instance(entry["instance"])
 
-    def _cleanup_instance(self, instance: 'RAGProcessingService') -> None:
+    def _cleanup_instance(self, instance: "RAGProcessingService") -> None:
         """Clean up resources associated with an instance."""
         try:
             # Clear model reference to help with garbage collection
-            if hasattr(instance, 'model'):
+            if hasattr(instance, "model"):
                 del instance.model
             logger.debug("Cleaned up RAGProcessingService instance resources")
         except Exception as e:
@@ -117,7 +112,7 @@ class RAGServiceManager:
 
         # Clean up all instances
         for entry in self._instances.values():
-            self._cleanup_instance(entry['instance'])
+            self._cleanup_instance(entry["instance"])
 
         self._instances.clear()
 
@@ -127,33 +122,33 @@ class RAGServiceManager:
             self._executor = None
             logger.debug("Shutdown ThreadPoolExecutor")
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> dict[str, any]:
         """Get statistics about cached instances."""
         current_time = time.time()
         return {
-            'active_instances': len(self._instances),
-            'max_instances': self._max_instances,
-            'cache_ttl': self._cache_ttl,
-            'instances': {
+            "active_instances": len(self._instances),
+            "max_instances": self._max_instances,
+            "cache_ttl": self._cache_ttl,
+            "instances": {
                 key: {
-                    'age_seconds': current_time - entry['created_at'],
-                    'last_used_seconds_ago': current_time - entry['last_used']
+                    "age_seconds": current_time - entry["created_at"],
+                    "last_used_seconds_ago": current_time - entry["last_used"],
                 }
                 for key, entry in self._instances.items()
-            }
+            },
         }
 
 
 # Global service manager instance
 _service_manager = RAGServiceManager()
 
+
 class RAGProcessingService:
-    """
-    Handles text chunking and embedding generation for documents.
+    """Handles text chunking and embedding generation for documents.
     No longer uses singleton pattern - managed by RAGServiceManager.
     """
 
-    def __init__(self, embedding_model: str, device: str, executor: ThreadPoolExecutor):
+    def __init__(self, embedding_model: str, device: str, executor: ThreadPoolExecutor) -> None:
         """Initialize RAGProcessingService with specified model and device."""
         settings = get_settings_instance()
 
@@ -175,9 +170,7 @@ class RAGProcessingService:
 
         # Load model with local caching
         self.model = sentence_transformers.SentenceTransformer(
-            self.embedding_model_name,
-            device=self.device,
-            cache_folder=cache_dir
+            self.embedding_model_name, device=self.device, cache_folder=cache_dir
         )
         logger.info(f"Successfully loaded SentenceTransformer model: {self.embedding_model_name}")
 
@@ -187,7 +180,7 @@ class RAGProcessingService:
         logger.debug(f"Model preloaded successfully, embedding dimension: {len(dummy_embedding[0])}")
 
     @classmethod
-    def get_instance(cls, embedding_model: Optional[str] = None, device: Optional[str] = None) -> 'RAGProcessingService':
+    def get_instance(cls, embedding_model: str | None = None, device: str | None = None) -> "RAGProcessingService":
         """Get or create a RAGProcessingService instance via the service manager."""
         return _service_manager.get_service(embedding_model, device)
 
@@ -197,17 +190,15 @@ class RAGProcessingService:
         _service_manager.clear_all()
         logger.info("RAGProcessingService cache cleared")
 
-    def chunk_text(self, text: str, chunk_size: Optional[int] = None, chunk_overlap: Optional[int] = None) -> List[str]:
-        """
-        Split text into overlapping chunks.
-        """
+    def chunk_text(self, text: str, chunk_size: int | None = None, chunk_overlap: int | None = None) -> list[str]:
+        """Split text into overlapping chunks."""
         if not text:
             return []
-        
+
         settings = get_settings_instance()
         default_chunk_size = chunk_size or settings.default_chunk_size
         default_chunk_overlap = chunk_overlap or settings.default_chunk_overlap
-        
+
         chunks = []
         start = 0
         text_length = len(text)
@@ -225,14 +216,14 @@ class RAGProcessingService:
         document_id: str,
         knowledge_base: KnowledgeBase,
         text: str,
-        document_title: Optional[str] = None,
-        config_manager: Optional['ConfigurationManager'] = None
-    ) -> List[DocumentChunk]:
-        """
-        Chunk the document text and generate embeddings for each chunk.
+        document_title: str | None = None,
+        config_manager: Optional["ConfigurationManager"] = None,  # noqa: F821 # indirect typing is fine here for now
+    ) -> list[DocumentChunk]:
+        """Chunk the document text and generate embeddings for each chunk.
         Returns a list of DocumentChunk objects (not yet added to DB).
         """
         import asyncio
+
         from ..core.config import get_config_manager
 
         settings = get_settings_instance()
@@ -241,12 +232,7 @@ class RAGProcessingService:
         embedding_model = str(knowledge_base.embedding_model or settings.default_embedding_model)
 
         # Get title configuration
-        if config_manager is not None:
-            # Use injected configuration manager (preferred)
-            configuration_manager = config_manager
-        else:
-            # Fall back to singleton pattern for backward compatibility
-            configuration_manager = get_config_manager()
+        configuration_manager = config_manager if config_manager is not None else get_config_manager()
 
         kb_config = knowledge_base.get_rag_config()
         title_chunk_enabled = configuration_manager.get_title_chunk_enabled(kb_config=kb_config)
@@ -267,12 +253,11 @@ class RAGProcessingService:
                 chunks[0] = title_prefix + chunks[0]
 
         # 3. Generate embeddings asynchronously using shared ThreadPoolExecutor
-        import asyncio
 
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(
             self.executor,
-            lambda: self.model.encode(chunks, batch_size=self.batch_size, show_progress_bar=False)
+            lambda: self.model.encode(chunks, batch_size=self.batch_size, show_progress_bar=False),
         )
 
         # 4. Create DocumentChunk objects
@@ -280,11 +265,11 @@ class RAGProcessingService:
         start_char = 0
         title_chunk_offset = 1 if (document_title and title_chunk_enabled) else 0
 
-        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
             end_char = start_char + len(chunk)
 
             # Determine if this is a title chunk
-            is_title_chunk = (idx == 0 and title_chunk_offset == 1)
+            is_title_chunk = idx == 0 and title_chunk_offset == 1
 
             # Create chunk metadata
             chunk_metadata = {}
@@ -292,12 +277,12 @@ class RAGProcessingService:
                 chunk_metadata = {
                     "chunk_type": "title",
                     "title_weighting_enabled": title_weighting_enabled,
-                    "original_title": document_title
+                    "original_title": document_title,
                 }
             else:
                 chunk_metadata = {
                     "chunk_type": "content",
-                    "title_weighting_enabled": title_weighting_enabled
+                    "title_weighting_enabled": title_weighting_enabled,
                 }
 
             doc_chunk = DocumentChunk(
@@ -311,8 +296,8 @@ class RAGProcessingService:
                 end_char=end_char if not is_title_chunk else len(chunk),
                 embedding=embedding.tolist(),
                 embedding_model=embedding_model,
-                embedding_created_at=datetime.now(timezone.utc),
-                chunk_metadata=chunk_metadata
+                embedding_created_at=datetime.now(UTC),
+                chunk_metadata=chunk_metadata,
             )
             document_chunks.append(doc_chunk)
 
@@ -326,7 +311,7 @@ class RAGProcessingService:
 
 
 # Utility functions for memory management and testing
-def get_rag_service_stats() -> Dict[str, any]:
+def get_rag_service_stats() -> dict[str, any]:
     """Get statistics about RAG service instances for monitoring."""
     return _service_manager.get_stats()
 

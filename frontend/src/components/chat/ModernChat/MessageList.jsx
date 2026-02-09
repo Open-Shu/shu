@@ -48,7 +48,9 @@ const MessageList = React.memo(
       () => ({
         scrollToBottom: (behavior = 'auto') => {
           const el = scrollRef.current;
-          if (!el) return;
+          if (!el) {
+            return;
+          }
           if (behavior === 'smooth') {
             el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
           } else {
@@ -57,7 +59,9 @@ const MessageList = React.memo(
         },
         captureScrollSnapshot: () => {
           const el = scrollRef.current;
-          if (!el) return null;
+          if (!el) {
+            return null;
+          }
           return {
             scrollHeight: el.scrollHeight,
             scrollTop: el.scrollTop,
@@ -65,15 +69,21 @@ const MessageList = React.memo(
         },
         restoreScrollSnapshot: (snapshot) => {
           const el = scrollRef.current;
-          if (!el || !snapshot) return;
+          if (!el || !snapshot) {
+            return;
+          }
           const delta = el.scrollHeight - snapshot.scrollHeight;
           el.scrollTop = snapshot.scrollTop + delta;
         },
         scrollToMessage: (messageId, { align = 'start', behavior = 'auto' } = {}) => {
           const container = scrollRef.current;
-          if (!container || !messageId) return;
+          if (!container || !messageId) {
+            return;
+          }
           const target = container.querySelector(`#msg-${messageId}`);
-          if (!target) return;
+          if (!target) {
+            return;
+          }
           target.scrollIntoView({ behavior, block: align });
         },
       }),
@@ -128,7 +138,18 @@ const MessageList = React.memo(
           bottomLoadArmedRef.current = false;
         }
       },
-      [hasMore, isLoadingOlder, onBottomStateChange, onLoadOlder, onUserInteract, baseIndex, onRevealOlderInMemory, onRevealNewerInMemory, items.length, totalCount]
+      [
+        hasMore,
+        isLoadingOlder,
+        onBottomStateChange,
+        onLoadOlder,
+        onUserInteract,
+        baseIndex,
+        onRevealOlderInMemory,
+        onRevealNewerInMemory,
+        items.length,
+        totalCount,
+      ]
     );
 
     return (
@@ -162,9 +183,8 @@ const MessageList = React.memo(
             <Box sx={{ height: 24, flexShrink: 0 }} />
             {items.map((message, index) => {
               const globalIndex = baseIndex + index;
-              const isLastGlobal = typeof totalCount === 'number'
-                ? globalIndex === totalCount - 1
-                : index === items.length - 1;
+              const isLastGlobal =
+                typeof totalCount === 'number' ? globalIndex === totalCount - 1 : index === items.length - 1;
               const parentId = message.parent_message_id || message.id;
               const isSideBySide = sideBySideParents?.has?.(parentId);
               return (

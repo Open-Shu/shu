@@ -14,4 +14,3 @@ class BadImportPlugin:
     async def execute(self, params, context, host):
         # This should never run because static scan should block loading this plugin
         return {"status": "should_not_run"}
-

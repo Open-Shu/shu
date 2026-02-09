@@ -9,20 +9,13 @@ These tests cover the complete prompt management system including:
 """
 
 import sys
-import os
 import uuid
-from typing import List, Callable
+from collections.abc import Callable
+
 from sqlalchemy import text
 
 from integ.base_integration_test import BaseIntegrationTestSuite
-from integ.expected_error_context import (
-    expect_authentication_errors,
-    expect_validation_errors,
-    expect_not_found_errors,
-    ExpectedErrorContext
-)
 from integ.response_utils import extract_data
-
 
 # Test Data Constants
 SAMPLE_PROMPT_DATA = {
@@ -30,7 +23,7 @@ SAMPLE_PROMPT_DATA = {
     "description": "A test prompt for integration testing",
     "content": "You are a helpful AI assistant. Provide clear, accurate, and informative responses.",
     "entity_type": "llm_model",  # Changed from knowledge_base to llm_model
-    "is_active": True
+    "is_active": True,
 }
 
 SAMPLE_KB_DATA = {
@@ -39,7 +32,7 @@ SAMPLE_KB_DATA = {
     "sync_enabled": True,
     "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
     "chunk_size": 1000,
-    "chunk_overlap": 200
+    "chunk_overlap": 200,
 }
 
 
@@ -56,15 +49,11 @@ async def test_create_prompt_success(client, db, auth_headers):
     prompt_data = {
         **SAMPLE_PROMPT_DATA,
         "name": f"Test Prompt {unique_id}",
-        "description": f"Test prompt for integration testing {unique_id}"
+        "description": f"Test prompt for integration testing {unique_id}",
     }
-    
-    response = await client.post(
-        "/api/v1/prompts/",
-        json=prompt_data,
-        headers=auth_headers
-    )
-    
+
+    response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
+
     assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
     response_data = response.json()
     assert "data" in response_data, f"No 'data' key in response: {response_data}"
@@ -83,15 +72,14 @@ async def test_create_prompt_success(client, db, auth_headers):
 
     # Verify data was stored in database
     result = await db.execute(
-        text("SELECT name, content, entity_type FROM prompts WHERE id = :id"),
-        {"id": prompt["id"]}
+        text("SELECT name, content, entity_type FROM prompts WHERE id = :id"), {"id": prompt["id"]}
     )
     db_row = result.fetchone()
     assert db_row is not None
     assert db_row.name == prompt_data["name"]
     assert db_row.content == prompt_data["content"]
     assert db_row.entity_type == prompt_data["entity_type"]
-    
+
     return prompt["id"]
 
 
@@ -99,18 +87,11 @@ async def test_list_prompts(client, db, auth_headers):
     """Test listing prompts."""
     # Create a test prompt first
     unique_id = str(uuid.uuid4())[:8]
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Listing {unique_id}"
-    }
-    
-    create_response = await client.post(
-        "/api/v1/prompts/",
-        json=prompt_data,
-        headers=auth_headers
-    )
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Listing {unique_id}"}
+
+    create_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     assert create_response.status_code == 201
-    
+
     # List prompts
     response = await client.get("/api/v1/prompts/", headers=auth_headers)
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
@@ -131,10 +112,12 @@ async def test_list_prompts(client, db, auth_headers):
         assert isinstance(data["items"], list), f"Items is not a list: {type(data['items'])}"
         assert data["total"] >= 1, f"Expected total >= 1, got {data['total']}"
         prompts_list = data["items"]
-    
+
     # Find our created prompt
     created_prompt = next((p for p in prompts_list if p["name"] == prompt_data["name"]), None)
-    assert created_prompt is not None, f"Could not find prompt with name '{prompt_data['name']}' in {[p['name'] for p in prompts_list]}"
+    assert (
+        created_prompt is not None
+    ), f"Could not find prompt with name '{prompt_data['name']}' in {[p['name'] for p in prompts_list]}"
     assert created_prompt["content"] == prompt_data["content"]
 
 
@@ -142,23 +125,16 @@ async def test_get_prompt_by_id(client, db, auth_headers):
     """Test retrieving a specific prompt by ID."""
     # First create a prompt
     unique_id = str(uuid.uuid4())[:8]
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Retrieval {unique_id}"
-    }
-    
-    create_response = await client.post(
-        "/api/v1/prompts/",
-        json=prompt_data,
-        headers=auth_headers
-    )
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Retrieval {unique_id}"}
+
+    create_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     assert create_response.status_code == 201, f"Create failed: {create_response.status_code}: {create_response.text}"
     prompt_id = extract_data(create_response)["id"]
 
     # Now retrieve it
     response = await client.get(f"/api/v1/prompts/{prompt_id}", headers=auth_headers)
     assert response.status_code == 200
-    
+
     response_data = response.json()
     assert "data" in response_data
     prompt = extract_data(response)
@@ -171,16 +147,9 @@ async def test_update_prompt(client, db, auth_headers):
     """Test updating a prompt."""
     # Create prompt first
     unique_id = str(uuid.uuid4())[:8]
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Update {unique_id}"
-    }
-    
-    create_response = await client.post(
-        "/api/v1/prompts/",
-        json=prompt_data,
-        headers=auth_headers
-    )
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Update {unique_id}"}
+
+    create_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     assert create_response.status_code == 201
     prompt_id = extract_data(create_response)["id"]
 
@@ -188,16 +157,12 @@ async def test_update_prompt(client, db, auth_headers):
     update_data = {
         "name": f"Updated Test Prompt {unique_id}",
         "description": "Updated description for testing",
-        "content": "You are an updated AI assistant. Provide helpful and accurate responses."
+        "content": "You are an updated AI assistant. Provide helpful and accurate responses.",
     }
-    
-    response = await client.put(
-        f"/api/v1/prompts/{prompt_id}",
-        json=update_data,
-        headers=auth_headers
-    )
+
+    response = await client.put(f"/api/v1/prompts/{prompt_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
-    
+
     response_data = response.json()
     assert "data" in response_data
     updated_prompt = extract_data(response)
@@ -206,10 +171,7 @@ async def test_update_prompt(client, db, auth_headers):
     assert updated_prompt["content"] == update_data["content"]
 
     # Verify in database
-    result = await db.execute(
-        text("SELECT name, description, content FROM prompts WHERE id = :id"),
-        {"id": prompt_id}
-    )
+    result = await db.execute(text("SELECT name, description, content FROM prompts WHERE id = :id"), {"id": prompt_id})
     db_row = result.fetchone()
     assert db_row.name == update_data["name"]
     assert db_row.description == update_data["description"]
@@ -220,31 +182,21 @@ async def test_delete_prompt(client, db, auth_headers):
     """Test deleting a prompt."""
     # Create prompt first
     unique_id = str(uuid.uuid4())[:8]
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Deletion {unique_id}"
-    }
-    
-    create_response = await client.post(
-        "/api/v1/prompts/",
-        json=prompt_data,
-        headers=auth_headers
-    )
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Deletion {unique_id}"}
+
+    create_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     assert create_response.status_code == 201
     prompt_id = extract_data(create_response)["id"]
 
     # Delete the prompt
     response = await client.delete(f"/api/v1/prompts/{prompt_id}", headers=auth_headers)
     assert response.status_code == 204
-    
+
     # Verify it's gone from database
-    result = await db.execute(
-        text("SELECT COUNT(*) FROM prompts WHERE id = :id"),
-        {"id": prompt_id}
-    )
+    result = await db.execute(text("SELECT COUNT(*) FROM prompts WHERE id = :id"), {"id": prompt_id})
     count = result.scalar()
     assert count == 0
-    
+
     # Verify 404 when trying to get deleted prompt
     get_response = await client.get(f"/api/v1/prompts/{prompt_id}", headers=auth_headers)
     assert get_response.status_code == 404
@@ -254,44 +206,23 @@ async def test_prompt_assignment_to_knowledge_base_blocked(client, db, auth_head
     """Test that KB prompt assignments fail because knowledge_base is not a supported entity type."""
     # Create a prompt
     unique_id = str(uuid.uuid4())[:8]
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Assignment {unique_id}"
-    }
-    
-    prompt_response = await client.post(
-        "/api/v1/prompts/",
-        json=prompt_data,
-        headers=auth_headers
-    )
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Assignment {unique_id}"}
+
+    prompt_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     assert prompt_response.status_code == 201
     prompt_id = extract_data(prompt_response)["id"]
 
     # Create a knowledge base
-    kb_data = {
-        **SAMPLE_KB_DATA,
-        "name": f"Test KB for Prompt Assignment {unique_id}"
-    }
-    
-    kb_response = await client.post(
-        "/api/v1/knowledge-bases",
-        json=kb_data,
-        headers=auth_headers
-    )
+    kb_data = {**SAMPLE_KB_DATA, "name": f"Test KB for Prompt Assignment {unique_id}"}
+
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
     # Attempt to assign prompt to knowledge base (should fail)
-    assignment_data = {
-        "entity_id": kb_id,
-        "entity_type": "knowledge_base"
-    }
+    assignment_data = {"entity_id": kb_id, "entity_type": "knowledge_base"}
 
-    response = await client.post(
-        f"/api/v1/prompts/{prompt_id}/assignments",
-        json=assignment_data,
-        headers=auth_headers
-    )
+    response = await client.post(f"/api/v1/prompts/{prompt_id}/assignments", json=assignment_data, headers=auth_headers)
 
     # Should return 422 with validation error about unsupported entity type
     assert response.status_code == 422, f"Expected 422 (validation error), got {response.status_code}: {response.text}"
@@ -303,7 +234,7 @@ async def test_prompt_assignment_to_knowledge_base_blocked(client, db, auth_head
     # Verify no assignment was created in database
     result = await db.execute(
         text("SELECT * FROM prompt_assignments WHERE prompt_id = :prompt_id AND entity_id = :entity_id"),
-        {"prompt_id": prompt_id, "entity_id": kb_id}
+        {"prompt_id": prompt_id, "entity_id": kb_id},
     )
     assignment = result.fetchone()
     assert assignment is None
@@ -313,44 +244,36 @@ async def test_prompt_unassignment_from_knowledge_base_blocked(client, db, auth_
     """Test that KB prompt unassignments fail because knowledge_base is not a supported entity type."""
     # Create and assign a prompt (reuse previous test logic)
     unique_id = str(uuid.uuid4())[:8]
-    
+
     # Create prompt
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Unassignment {unique_id}"
-    }
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Unassignment {unique_id}"}
     prompt_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     prompt_id = extract_data(prompt_response)["id"]
 
     # Create knowledge base
-    kb_data = {
-        **SAMPLE_KB_DATA,
-        "name": f"Test KB for Prompt Unassignment {unique_id}"
-    }
+    kb_data = {**SAMPLE_KB_DATA, "name": f"Test KB for Prompt Unassignment {unique_id}"}
     kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
     kb_id = extract_data(kb_response)["id"]
 
     # Attempt to assign prompt (should fail with validation error)
     assignment_data = {"entity_id": kb_id, "entity_type": "knowledge_base"}
-    assign_response = await client.post(f"/api/v1/prompts/{prompt_id}/assignments", json=assignment_data, headers=auth_headers)
+    assign_response = await client.post(
+        f"/api/v1/prompts/{prompt_id}/assignments", json=assignment_data, headers=auth_headers
+    )
     assert assign_response.status_code == 422  # Should be validation error
 
     # Since assignment failed, unassignment should also fail (no assignment exists)
-    response = await client.delete(
-        f"/api/v1/prompts/{prompt_id}/assignments/{kb_id}",
-        headers=auth_headers
-    )
+    response = await client.delete(f"/api/v1/prompts/{prompt_id}/assignments/{kb_id}", headers=auth_headers)
     # Should return 404 because the assignment doesn't exist (was never created)
     assert response.status_code == 404
 
     # Verify no assignment exists in database
     result = await db.execute(
         text("SELECT COUNT(*) FROM prompt_assignments WHERE prompt_id = :prompt_id AND entity_id = :entity_id"),
-        {"prompt_id": prompt_id, "entity_id": kb_id}
+        {"prompt_id": prompt_id, "entity_id": kb_id},
     )
     count = result.scalar()
     assert count == 0
-
 
 
 async def test_unauthorized_access(client, db, auth_headers):
@@ -380,25 +303,17 @@ async def test_invalid_prompt_data_validation(client, db, auth_headers):
         # Missing required 'name' and 'content' fields
     }
 
-    response = await client.post(
-        "/api/v1/prompts/",
-        json=invalid_data,
-        headers=auth_headers
-    )
+    response = await client.post("/api/v1/prompts/", json=invalid_data, headers=auth_headers)
     assert response.status_code == 422  # Validation error
 
     # Test empty content
     invalid_data = {
         "name": "Test Prompt",
         "content": "",  # Empty content should be invalid
-        "description": "Test description"
+        "description": "Test description",
     }
 
-    response = await client.post(
-        "/api/v1/prompts/",
-        json=invalid_data,
-        headers=auth_headers
-    )
+    response = await client.post("/api/v1/prompts/", json=invalid_data, headers=auth_headers)
     assert response.status_code == 422
 
 
@@ -411,11 +326,7 @@ async def test_prompt_not_found_errors(client, db, auth_headers):
     assert response.status_code == 404
 
     # Test update non-existent prompt
-    response = await client.put(
-        f"/api/v1/prompts/{non_existent_id}",
-        json=SAMPLE_PROMPT_DATA,
-        headers=auth_headers
-    )
+    response = await client.put(f"/api/v1/prompts/{non_existent_id}", json=SAMPLE_PROMPT_DATA, headers=auth_headers)
     assert response.status_code == 404
 
     # Test delete non-existent prompt
@@ -423,16 +334,11 @@ async def test_prompt_not_found_errors(client, db, auth_headers):
     assert response.status_code == 404
 
 
-
-
 async def test_invalid_entity_assignment(client, db, auth_headers):
     """Test assignment to invalid entities."""
     # Create a prompt
     unique_id = str(uuid.uuid4())[:8]
-    prompt_data = {
-        **SAMPLE_PROMPT_DATA,
-        "name": f"Test Prompt for Invalid Assignment {unique_id}"
-    }
+    prompt_data = {**SAMPLE_PROMPT_DATA, "name": f"Test Prompt for Invalid Assignment {unique_id}"}
     prompt_response = await client.post("/api/v1/prompts/", json=prompt_data, headers=auth_headers)
     prompt_id = prompt_response.json()["data"]["id"]
 
@@ -442,14 +348,10 @@ async def test_invalid_entity_assignment(client, db, auth_headers):
     non_existent_entity_id = str(uuid.uuid4())
     assignment_data = {
         "entity_id": non_existent_entity_id,
-        "entity_type": "llm_model"  # Required field after KB removal
+        "entity_type": "llm_model",  # Required field after KB removal
     }
 
-    response = await client.post(
-        f"/api/v1/prompts/{prompt_id}/assignments",
-        json=assignment_data,
-        headers=auth_headers
-    )
+    response = await client.post(f"/api/v1/prompts/{prompt_id}/assignments", json=assignment_data, headers=auth_headers)
     # Current behavior: assignment succeeds even for non-existent entities
     # Future enhancement: could add entity validation to return 404
     assert response.status_code == 201, f"Assignment failed: {response.status_code}: {response.text}"
@@ -471,18 +373,18 @@ async def test_prompt_search_and_filtering(client, db, auth_headers):
         {
             **SAMPLE_PROMPT_DATA,
             "name": f"Search Test Prompt Alpha {unique_id}",
-            "description": "First test prompt for search"
+            "description": "First test prompt for search",
         },
         {
             **SAMPLE_PROMPT_DATA,
             "name": f"Search Test Prompt Beta {unique_id}",
-            "description": "Second test prompt for search"
+            "description": "Second test prompt for search",
         },
         {
             **SAMPLE_PROMPT_DATA,
             "name": f"Different Test Name {unique_id}",
-            "description": "Third test prompt with different name"
-        }
+            "description": "Third test prompt with different name",
+        },
     ]
 
     # Create all prompts
@@ -493,7 +395,7 @@ async def test_prompt_search_and_filtering(client, db, auth_headers):
         created_prompts.append(extract_data(response))
 
     # Test search by name (if search functionality exists)
-    response = await client.get(f"/api/v1/prompts?search=Alpha", headers=auth_headers)
+    response = await client.get("/api/v1/prompts?search=Alpha", headers=auth_headers)
     if response.status_code == 200:
         # If search is implemented, verify results
         data = extract_data(response)
@@ -501,7 +403,7 @@ async def test_prompt_search_and_filtering(client, db, auth_headers):
         assert len(alpha_prompts) >= 1
 
     # Test filtering by active status (if filtering exists)
-    response = await client.get(f"/api/v1/prompts?is_active=true", headers=auth_headers)
+    response = await client.get("/api/v1/prompts?is_active=true", headers=auth_headers)
     if response.status_code == 200:
         # If filtering is implemented, all returned prompts should be active
         data = extract_data(response)
@@ -513,8 +415,8 @@ async def test_prompt_search_and_filtering(client, db, auth_headers):
 # Test Suite Class
 class PromptTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for Prompt Management functionality."""
-    
-    def get_test_functions(self) -> List[Callable]:
+
+    def get_test_functions(self) -> list[Callable]:
         """Return all prompt test functions."""
         return [
             test_prompt_health_check,
@@ -531,11 +433,11 @@ class PromptTestSuite(BaseIntegrationTestSuite):
             test_invalid_entity_assignment,
             test_prompt_search_and_filtering,
         ]
-    
+
     def get_suite_name(self) -> str:
         """Return the name of this test suite."""
         return "Prompt Management Integration Tests"
-    
+
     def get_suite_description(self) -> str:
         """Return description of this test suite."""
         return "End-to-end integration tests for Prompt Management CRUD operations, entity assignments, and API functionality"

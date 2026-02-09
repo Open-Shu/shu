@@ -39,7 +39,6 @@ import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName, getBrandingLogoUrl } from '../utils/constants';
 import TopBar from '../components/layout/TopBar.jsx';
 
-
 const DRAWER_WIDTH = 280;
 
 const AdminLayout = ({ children }) => {
@@ -67,26 +66,50 @@ const AdminLayout = ({ children }) => {
 
   const adminMenuItems = [
     { text: 'Quick Start', icon: <QuickStartIcon />, path: '/admin/dashboard' },
-    { text: 'Model Configurations', icon: <ModelConfigIcon />, path: '/admin/model-configurations' },
-    { text: 'Knowledge Bases', icon: <KnowledgeBasesIcon />, path: '/admin/knowledge-bases' },
+    {
+      text: 'Model Configurations',
+      icon: <ModelConfigIcon />,
+      path: '/admin/model-configurations',
+    },
+    {
+      text: 'Knowledge Bases',
+      icon: <KnowledgeBasesIcon />,
+      path: '/admin/knowledge-bases',
+    },
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
     { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
     { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
-    { text: 'Experiences', icon: <ExperiencesIcon />, path: '/admin/experiences' },
-    { text: 'Query Tester', icon: <QueryTesterIcon />, path: '/admin/query-tester' },
+    {
+      text: 'Experiences',
+      icon: <ExperiencesIcon />,
+      path: '/admin/experiences',
+    },
+    {
+      text: 'Query Tester',
+      icon: <QueryTesterIcon />,
+      path: '/admin/query-tester',
+    },
     { text: 'LLM Tester', icon: <LLMTesterIcon />, path: '/admin/llm-tester' },
     { text: 'Health Monitor', icon: <HealthIcon />, path: '/admin/health' },
   ];
 
   const systemMenuItems = [
-    { text: 'LLM Providers', icon: <LLMProvidersIcon />, path: '/admin/llm-providers' },
+    {
+      text: 'LLM Providers',
+      icon: <LLMProvidersIcon />,
+      path: '/admin/llm-providers',
+    },
     { text: 'Branding', icon: <BrandingIcon />, path: '/admin/branding' },
   ];
 
   const rbacMenuItems = [
     { text: 'User Management', icon: <UsersIcon />, path: '/admin/users' },
     { text: 'User Groups', icon: <PeopleIcon />, path: '/admin/user-groups' },
-    { text: 'KB Permissions', icon: <SecurityIcon />, path: '/admin/kb-permissions' },
+    {
+      text: 'KB Permissions',
+      icon: <SecurityIcon />,
+      path: '/admin/kb-permissions',
+    },
   ];
 
   const isActive = (path) => location.pathname === path;
@@ -107,18 +130,14 @@ const AdminLayout = ({ children }) => {
                 fontSize: '0.75rem',
                 color: 'primary.main',
                 fontWeight: 600,
-                letterSpacing: '0.1em'
+                letterSpacing: '0.1em',
               }}
             >
               KNOWLEDGE MANAGEMENT
             </Typography>
           </ListItem>
           {adminMenuItems.map((item) => (
-            <ListItemButton
-              key={item.text}
-              selected={isActive(item.path)}
-              onClick={() => handleNavigation(item.path)}
-            >
+            <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
@@ -136,18 +155,14 @@ const AdminLayout = ({ children }) => {
                 fontSize: '0.75rem',
                 color: 'primary.main',
                 fontWeight: 600,
-                letterSpacing: '0.1em'
+                letterSpacing: '0.1em',
               }}
             >
               System Configuration
             </Typography>
           </ListItem>
           {systemMenuItems.map((item) => (
-            <ListItemButton
-              key={item.text}
-              selected={isActive(item.path)}
-              onClick={() => handleNavigation(item.path)}
-            >
+            <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
@@ -161,18 +176,14 @@ const AdminLayout = ({ children }) => {
                 fontSize: '0.75rem',
                 color: 'primary.main',
                 fontWeight: 600,
-                letterSpacing: '0.1em'
+                letterSpacing: '0.1em',
               }}
             >
               Access Control
             </Typography>
           </ListItem>
           {rbacMenuItems.map((item) => (
-            <ListItemButton
-              key={item.text}
-              selected={isActive(item.path)}
-              onClick={() => handleNavigation(item.path)}
-            >
+            <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
@@ -185,11 +196,11 @@ const AdminLayout = ({ children }) => {
         sx={{
           mt: 'auto',
           p: 2,
-          backgroundColor: alpha(primaryMain, 0.00),
+          backgroundColor: alpha(primaryMain, 0.0),
           borderTop: `1px solid ${alpha(primaryMain, 0.1)}`,
           display: 'flex',
           justifyContent: 'center',
-          alignItems: 'center'
+          alignItems: 'center',
         }}
       >
         <img
@@ -198,7 +209,7 @@ const AdminLayout = ({ children }) => {
           style={{
             height: '60px',
             width: 'auto',
-            maxWidth: '100%'
+            maxWidth: '100%',
           }}
         />
       </Box>
@@ -209,23 +220,25 @@ const AdminLayout = ({ children }) => {
     <Box sx={{ display: 'flex' }}>
       {/* Shared TopBar */}
       <TopBar
-        sectionTitle={isMobile ? undefined : "Admin Panel"}
+        sectionTitle={isMobile ? undefined : 'Admin Panel'}
         sectionIcon={<AdminIcon />}
         leftOffset={isMobile ? 56 : DRAWER_WIDTH + 16}
         appBarPosition="fixed"
         fixedOverDrawer
         showAdminLink={false}
-        hamburgerButton={isMobile ? (
-          <IconButton
-            color="inherit"
-            aria-label="open drawer"
-            edge="start"
-            onClick={handleDrawerToggle}
-            sx={{ mr: 1 }}
-          >
-            <MenuIcon />
-          </IconButton>
-        ) : null}
+        hamburgerButton={
+          isMobile ? (
+            <IconButton
+              color="inherit"
+              aria-label="open drawer"
+              edge="start"
+              onClick={handleDrawerToggle}
+              sx={{ mr: 1 }}
+            >
+              <MenuIcon />
+            </IconButton>
+          ) : null
+        }
       />
 
       {/* Desktop Sidebar */}

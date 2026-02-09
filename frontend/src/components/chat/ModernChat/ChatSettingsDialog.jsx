@@ -38,7 +38,6 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
   onModelChange,
   disableModelSelect,
 }) {
-
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Chat Settings</DialogTitle>
@@ -112,7 +111,9 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
             </Grid>
           </Grid>
 
-          <Typography variant="h6" gutterBottom>Retrieval Strategy</Typography>
+          <Typography variant="h6" gutterBottom>
+            Retrieval Strategy
+          </Typography>
           <Grid container spacing={3} sx={{ mb: 3 }}>
             <Grid item xs={12}>
               <FormControl fullWidth>
@@ -123,7 +124,7 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                     px: 0.5,
                     '&.Mui-focused': {
                       backgroundColor: 'background.paper',
-                    }
+                    },
                   }}
                 >
                   RAG Query Mode
@@ -135,7 +136,7 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                   label="RAG Query Mode"
                   onChange={(e) => setRagRewriteMode(e.target.value)}
                 >
-                  {RAG_REWRITE_OPTIONS.map(option => (
+                  {RAG_REWRITE_OPTIONS.map((option) => (
                     <MenuItem key={option.value} value={option.value}>
                       {option.label}
                     </MenuItem>
@@ -143,8 +144,8 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                 </Select>
               </FormControl>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Choose how Shu prepares knowledge base queries: disable RAG entirely, pass the raw message,
-                distill it to critical terms, or let the side-call rewrite it for retrieval.
+                Choose how Shu prepares knowledge base queries: disable RAG entirely, pass the raw message, distill it
+                to critical terms, or let the side-call rewrite it for retrieval.
               </Typography>
             </Grid>
           </Grid>
@@ -194,10 +195,7 @@ const ChatSettingsDialog = React.memo(function ChatSettingsDialog({
                 value={automationSettings.cadenceInterval}
                 onChange={(e) =>
                   onAutomationSettingsChange({
-                    cadenceInterval: Math.max(
-                      0,
-                      parseInt(e.target.value || '0', 10)
-                    ),
+                    cadenceInterval: Math.max(0, parseInt(e.target.value || '0', 10)),
                   })
                 }
                 inputProps={{ min: 0 }}

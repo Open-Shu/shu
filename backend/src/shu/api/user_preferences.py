@@ -1,5 +1,4 @@
-"""
-User Preferences API endpoints.
+"""User Preferences API endpoints.
 
 Provides REST API for managing legitimate user preferences including:
 - Memory settings (depth, similarity threshold)
@@ -10,35 +9,40 @@ NOTE: RAG and LLM settings are now admin-only configuration managed
 through Knowledge Base and Model Configuration systems.
 """
 
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Any
 
-from .dependencies import get_db
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..auth.models import User
 from ..auth.rbac import get_current_user
+from ..core.config import get_settings_instance
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
-from ..schemas.envelope import SuccessResponse
 from ..models.user_preferences import UserPreferences
-from ..auth.models import User
+from ..schemas.envelope import SuccessResponse
 from ..schemas.user_preferences import (
-    UserPreferencesResponse, UserPreferencesCreate, UserPreferencesUpdate
+    UserPreferencesCreate,
+    UserPreferencesResponse,
+    UserPreferencesUpdate,
 )
-from ..core.config import get_settings_instance
+from .dependencies import get_db
 
 logger = get_logger(__name__)
 router = APIRouter()
 settings = get_settings_instance()
 
 
-def _build_preferences_response(preferences: Optional[UserPreferences] = None, *, defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Construct the user preferences response envelope, augmenting with system-level read-only settings.
+def _build_preferences_response(
+    preferences: UserPreferences | None = None, *, defaults: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Construct the user preferences response envelope, augmenting with system-level read-only settings.
 
     Args:
         preferences: Optional ORM model instance to serialize.
         defaults: Optional dict representing default preferences (used when model is absent).
+
     """
     if preferences is not None:
         base = {
@@ -47,7 +51,7 @@ def _build_preferences_response(preferences: Optional[UserPreferences] = None, *
             "theme": preferences.theme,
             "language": preferences.language,
             "timezone": preferences.timezone,
-            "advanced_settings": preferences.advanced_settings or {}
+            "advanced_settings": preferences.advanced_settings or {},
         }
     else:
         source = defaults if defaults is not None else UserPreferences.get_default_preferences()
@@ -57,28 +61,27 @@ def _build_preferences_response(preferences: Optional[UserPreferences] = None, *
             "theme": source.get("theme", "light"),
             "language": source.get("language", "en"),
             "timezone": source.get("timezone", "UTC"),
-            "advanced_settings": source.get("advanced_settings") or {}
+            "advanced_settings": source.get("advanced_settings") or {},
         }
 
-    base.update({
-        "summary_search_min_token_length": settings.conversation_summary_search_min_token_length,
-        "summary_search_max_tokens": settings.conversation_summary_search_max_tokens,
-    })
+    base.update(
+        {
+            "summary_search_min_token_length": settings.conversation_summary_search_min_token_length,
+            "summary_search_max_tokens": settings.conversation_summary_search_max_tokens,
+        }
+    )
     return base
 
 
 @router.get("/user/preferences", response_model=SuccessResponse[UserPreferencesResponse])
-async def get_user_preferences(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
+async def get_user_preferences(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Get current user's preferences."""
     try:
         # Try to get existing preferences
         stmt = select(UserPreferences).where(UserPreferences.user_id == current_user.id)
         result = await db.execute(stmt)
         preferences = result.scalar_one_or_none()
-        
+
         if not preferences:
             default_prefs = UserPreferences.get_default_preferences()
             logger.info(f"Retrieved default preferences for user {current_user.id}")
@@ -86,12 +89,12 @@ async def get_user_preferences(
 
         logger.info(f"Retrieved preferences for user {current_user.id}")
         return ShuResponse.success(_build_preferences_response(preferences))
-        
+
     except Exception as e:
         logger.error(f"Error retrieving user preferences: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve user preferences"
+            detail="Failed to retrieve user preferences",
         )
 
 
@@ -99,7 +102,7 @@ async def get_user_preferences(
 async def create_or_update_user_preferences(
     preferences_data: UserPreferencesCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Create or completely replace user preferences."""
     try:
@@ -107,7 +110,7 @@ async def create_or_update_user_preferences(
         stmt = select(UserPreferences).where(UserPreferences.user_id == current_user.id)
         result = await db.execute(stmt)
         existing_preferences = result.scalar_one_or_none()
-        
+
         if existing_preferences:
             # Update existing preferences
             for field, value in preferences_data.dict().items():
@@ -115,23 +118,20 @@ async def create_or_update_user_preferences(
             preferences = existing_preferences
         else:
             # Create new preferences
-            preferences = UserPreferences(
-                user_id=current_user.id,
-                **preferences_data.dict()
-            )
+            preferences = UserPreferences(user_id=current_user.id, **preferences_data.dict())
             db.add(preferences)
-        
+
         await db.commit()
         await db.refresh(preferences)
-        
+
         logger.info(f"Created/updated preferences for user {current_user.id}")
         return ShuResponse.success(_build_preferences_response(preferences))
-        
+
     except Exception as e:
         logger.error(f"Error creating/updating user preferences: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create/update user preferences"
+            detail="Failed to create/update user preferences",
         )
 
 
@@ -139,37 +139,34 @@ async def create_or_update_user_preferences(
 async def update_user_preferences_partial(
     preferences_data: UserPreferencesUpdate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """Partially update user preferences."""
+    """Update user preferences, partially."""
     try:
         # Get existing preferences or create with defaults
         stmt = select(UserPreferences).where(UserPreferences.user_id == current_user.id)
         result = await db.execute(stmt)
         preferences = result.scalar_one_or_none()
-        
+
         if not preferences:
             # Create new preferences with defaults, then apply updates
-            preferences = UserPreferences(
-                user_id=current_user.id,
-                **UserPreferences.get_default_preferences()
-            )
+            preferences = UserPreferences(user_id=current_user.id, **UserPreferences.get_default_preferences())
             db.add(preferences)
-        
+
         # Apply partial updates
         update_data = preferences_data.dict(exclude_unset=True)
         for field, value in update_data.items():
             setattr(preferences, field, value)
-        
+
         await db.commit()
         await db.refresh(preferences)
-        
+
         logger.info(f"Partially updated preferences for user {current_user.id}")
         return ShuResponse.success(_build_preferences_response(preferences))
-        
+
     except Exception as e:
         logger.error(f"Error partially updating user preferences: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update user preferences"
+            detail="Failed to update user preferences",
         )

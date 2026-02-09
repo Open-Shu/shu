@@ -19,4 +19,3 @@ Targets (selected)
 - BI/Data: Sheets, Excel Online, Looker, Tableau, Snowflake, BigQuery
 - Messaging/Notify: Slack/Teams cards, Twilio/SendGrid/MixMax
 - Web/External: Web search (Google/Bing), RSS, custom HTTP sources
-

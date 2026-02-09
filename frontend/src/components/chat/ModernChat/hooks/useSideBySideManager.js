@@ -88,8 +88,8 @@ const useSideBySideManager = ({
             reason: !validParents.has(parentId)
               ? 'invalid_parent'
               : regeneratingParentIds.has(parentId)
-              ? 'regenerating'
-              : 'regen_block',
+                ? 'regenerating'
+                : 'regen_block',
           });
           return;
         }
@@ -136,7 +136,9 @@ const useSideBySideManager = ({
 
   const toggleSideBySide = useCallback(
     (parentId) => {
-      if (!parentId) return;
+      if (!parentId) {
+        return;
+      }
       autoSideBySideParentsRef.current.delete(parentId);
       setSideBySideMode((prev) => {
         const nextValue = !prev[parentId];
@@ -149,7 +151,9 @@ const useSideBySideManager = ({
 
   const collapseSideBySideParent = useCallback(
     (parentId) => {
-      if (!parentId) return;
+      if (!parentId) {
+        return;
+      }
       setSideBySideMode((prev) => {
         if (!prev || prev[parentId] === false) {
           return prev;
@@ -205,9 +209,7 @@ const useSideBySideManager = ({
       const stillPending =
         requests &&
         typeof requests.forEach === 'function' &&
-        Array.from(requests.values()).some(
-          (entry) => entry?.parentId === parentId && entry?.status === 'pending'
-        );
+        Array.from(requests.values()).some((entry) => entry?.parentId === parentId && entry?.status === 'pending');
       if (!stillPending) {
         regenerationBlockRef.current.delete(parentId);
         debug('regen_block_end', { parentId });

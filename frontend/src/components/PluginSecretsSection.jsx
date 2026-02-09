@@ -1,5 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { Box, Typography, Paper, Divider, Stack, Button, TextField, IconButton, Collapse, Tooltip } from '@mui/material';
+import {
+  Box,
+  Typography,
+  Paper,
+  Divider,
+  Stack,
+  Button,
+  TextField,
+  IconButton,
+  Collapse,
+  Tooltip,
+} from '@mui/material';
 import { useQueries, useMutation, useQueryClient } from 'react-query';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -12,7 +23,7 @@ import { extractUserConfigurableSecretKeys } from '../utils/pluginSecrets';
 /**
  * Plugin Secrets Section component for Connected Accounts page.
  * Displays and manages user-configurable secrets for plugins.
- * 
+ *
  * @param {Object} props
  * @param {Array} props.plugins - Array of plugin objects from the plugins API
  * @param {Function} props.onSuccess - Callback when a secret is saved/deleted successfully
@@ -59,7 +70,13 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
     {
       onSuccess: (_data, vars) => {
         qc.invalidateQueries(['plugins', 'selfSecrets', vars.pluginName]);
-        setSecretInputs((prev) => ({ ...prev, [vars.pluginName]: { ...(prev[vars.pluginName] || {}), [vars.key]: '' } }));
+        setSecretInputs((prev) => ({
+          ...prev,
+          [vars.pluginName]: {
+            ...(prev[vars.pluginName] || {}),
+            [vars.key]: '',
+          },
+        }));
         onSuccess?.('Secret saved');
       },
       onError: (e) => {
@@ -89,7 +106,9 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
   return (
     <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, mr: 1 }}>Plugin Secrets</Typography>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, mr: 1 }}>
+          Plugin Secrets
+        </Typography>
         <HelpTooltip
           title="Some plugins require API keys or other secrets to function. Configure your own secrets here. System-wide secrets (if configured by admin) are used as fallback."
           ariaLabel="help about plugin secrets"
@@ -105,8 +124,22 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
           const existingKeys = secretsQ?.data?.keys || [];
           const inputs = secretInputs[pl.name] || {};
           return (
-            <Box key={pl.name} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
-              <Stack direction="row" alignItems="center" justifyContent="space-between" onClick={() => setExpandedPlugin(isExpanded ? null : pl.name)} sx={{ cursor: 'pointer' }}>
+            <Box
+              key={pl.name}
+              sx={{
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 1,
+                p: 1,
+              }}
+            >
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                onClick={() => setExpandedPlugin(isExpanded ? null : pl.name)}
+                sx={{ cursor: 'pointer' }}
+              >
                 <Box>
                   <Typography variant="subtitle2">{pl.label}</Typography>
                   <Typography variant="caption" color="text.secondary">
@@ -114,9 +147,7 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
                     {existingKeys.length > 0 && ` | Configured: ${existingKeys.join(', ')}`}
                   </Typography>
                 </Box>
-                <IconButton size="small">
-                  {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                </IconButton>
+                <IconButton size="small">{isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}</IconButton>
               </Stack>
               <Collapse in={isExpanded}>
                 <Divider sx={{ my: 1 }} />
@@ -133,11 +164,18 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
                             size="small"
                             fullWidth
                             value={inputVal}
-                            onChange={(e) => setSecretInputs((prev) => ({
-                              ...prev,
-                              [pl.name]: { ...(prev[pl.name] || {}), [key]: e.target.value }
-                            }))}
-                            placeholder={isConfigured ? '(configured - enter new value to update)' : 'Enter secret value'}
+                            onChange={(e) =>
+                              setSecretInputs((prev) => ({
+                                ...prev,
+                                [pl.name]: {
+                                  ...(prev[pl.name] || {}),
+                                  [key]: e.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={
+                              isConfigured ? '(configured - enter new value to update)' : 'Enter secret value'
+                            }
                             InputProps={{
                               sx: isConfigured ? { backgroundColor: 'action.hover' } : {},
                             }}
@@ -146,7 +184,13 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
                             variant="contained"
                             size="small"
                             disabled={!inputVal || setSecretMut.isLoading}
-                            onClick={() => setSecretMut.mutate({ pluginName: pl.name, key, value: inputVal })}
+                            onClick={() =>
+                              setSecretMut.mutate({
+                                pluginName: pl.name,
+                                key,
+                                value: inputVal,
+                              })
+                            }
                           >
                             Save
                           </Button>
@@ -156,7 +200,12 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
                                 size="small"
                                 color="error"
                                 disabled={deleteSecretMut.isLoading}
-                                onClick={() => deleteSecretMut.mutate({ pluginName: pl.name, key })}
+                                onClick={() =>
+                                  deleteSecretMut.mutate({
+                                    pluginName: pl.name,
+                                    key,
+                                  })
+                                }
                               >
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
@@ -175,4 +224,3 @@ export default function PluginSecretsSection({ plugins, onSuccess, onError }) {
     </Paper>
   );
 }
-

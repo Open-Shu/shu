@@ -1,38 +1,59 @@
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, List, Tuple
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 
 class _Result:
-    def __init__(self, status: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
         self.status = status
         self.data = data
         self.error = error
 
     @classmethod
-    def ok(cls, data: Optional[Dict[str, Any]] = None):
+    def ok(cls, data: dict[str, Any] | None = None):
         return cls("success", data or {})
 
     @classmethod
-    def err(cls, message: str, code: str = "tool_error", details: Optional[Dict[str, Any]] = None):
+    def err(cls, message: str, code: str = "tool_error", details: dict[str, Any] | None = None):
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
 
 class CalendarEventsPlugin:
-
     name = "calendar_events"
     version = "1"
 
-    def get_schema(self) -> Optional[Dict[str, Any]]:
+    def get_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "op": {"type": ["string", "null"], "enum": ["list", "ingest"], "default": "ingest", "x-ui": {"help": "Choose operation"}},
-                "calendar_id": {"type": ["string", "null"], "default": "primary", "x-ui": {"help": "Calendar ID (default: primary)"}},
-                "since_hours": {"type": "integer", "minimum": 1, "maximum": 336, "default": 48, "x-ui": {"help": "Look-back window in hours when no syncToken is present."}},
-                "time_min": {"type": ["string", "null"], "x-ui": {"help": "ISO timeMin override (UTC)."}},
-                "time_max": {"type": ["string", "null"], "x-ui": {"help": "ISO timeMax override (UTC)."}},
+                "op": {
+                    "type": ["string", "null"],
+                    "enum": ["list", "ingest"],
+                    "default": "ingest",
+                    "x-ui": {"help": "Choose operation"},
+                },
+                "calendar_id": {
+                    "type": ["string", "null"],
+                    "default": "primary",
+                    "x-ui": {"help": "Calendar ID (default: primary)"},
+                },
+                "since_hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 336,
+                    "default": 48,
+                    "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
+                },
+                "time_min": {
+                    "type": ["string", "null"],
+                    "x-ui": {"help": "ISO timeMin override (UTC)."},
+                },
+                "time_max": {
+                    "type": ["string", "null"],
+                    "x-ui": {"help": "ISO timeMax override (UTC)."},
+                },
                 "max_results": {"type": "integer", "minimum": 1, "maximum": 250, "default": 50},
                 "kb_id": {"type": ["string", "null"], "x-ui": {"hidden": True}},
             },
@@ -40,7 +61,7 @@ class CalendarEventsPlugin:
             "additionalProperties": True,
         }
 
-    def get_output_schema(self) -> Optional[Dict[str, Any]]:
+    def get_output_schema(self) -> dict[str, Any] | None:
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -55,7 +76,9 @@ class CalendarEventsPlugin:
             "additionalProperties": True,
         }
 
-    async def _resolve_token_and_target(self, host: Any, params: Dict[str, Any], *, op: str) -> tuple[Optional[str], Optional[str]]:
+    async def _resolve_token_and_target(
+        self, host: Any, params: dict[str, Any], *, op: str
+    ) -> tuple[str | None, str | None]:
         auth = getattr(host, "auth", None)
         if not auth:
             return None, None
@@ -65,8 +88,15 @@ class CalendarEventsPlugin:
         except Exception:
             return None, None
 
-    async def _http_json(self, host: Any, method: str, url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Any:
-        kwargs: Dict[str, Any] = {"headers": headers}
+    async def _http_json(
+        self,
+        host: Any,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {"headers": headers}
         if params:
             kwargs["params"] = params
         resp = await host.http.fetch(method, url, **kwargs)
@@ -76,11 +106,12 @@ class CalendarEventsPlugin:
             return body
         try:
             import json
+
             return json.loads(body or "{}")
         except Exception:
             return {}
 
-    def _window(self, since_hours: int, time_min: Optional[str], time_max: Optional[str]) -> Tuple[str, str]:
+    def _window(self, since_hours: int, time_min: str | None, time_max: str | None) -> tuple[str, str]:
         """Compute time window for initial listing.
         If explicit time_min/time_max provided, honor them. Otherwise, include a
         symmetric window around now: [now - since_hours, now + since_hours]. This
@@ -88,12 +119,22 @@ class CalendarEventsPlugin:
         """
         if time_min and time_max:
             return time_min, time_max
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         tmin = now - timedelta(hours=since_hours)
         tmax = now + timedelta(hours=since_hours)
         return tmin.isoformat().replace("+00:00", "Z"), tmax.isoformat().replace("+00:00", "Z")
 
-    async def _list(self, host: Any, params: Dict[str, Any], user_email: Optional[str], calendar_id: str, since_hours: int, time_min: Optional[str], time_max: Optional[str], max_results: int) -> _Result:
+    async def _list(
+        self,
+        host: Any,
+        params: dict[str, Any],
+        user_email: str | None,
+        calendar_id: str,
+        since_hours: int,
+        time_min: str | None,
+        time_max: str | None,
+        max_results: int,
+    ) -> _Result:
         token, target_user = await self._resolve_token_and_target(host, params or {}, op="list")
         if not token:
             return _Result.err("No Google access token available. Connect OAuth or configure host.auth.")
@@ -101,20 +142,25 @@ class CalendarEventsPlugin:
         headers = {"Authorization": f"Bearer {token}"}
 
         # If a syncToken exists, use delta listing
-        sync_token: Optional[str] = None
+        sync_token: str | None = None
         try:
             if hasattr(host, "cursor"):
                 sync_token = await host.cursor.get(params.get("kb_id") or "adhoc")
         except Exception:
             sync_token = None
 
-        events: List[Dict[str, Any]] = []
-        next_sync: Optional[str] = None
+        events: list[dict[str, Any]] = []
+        next_sync: str | None = None
 
         if sync_token:
-            page: Optional[str] = None
+            page: str | None = None
             while True:
-                query: Dict[str, Any] = {"syncToken": sync_token, "showDeleted": True, "singleEvents": True, "maxResults": max_results}
+                query: dict[str, Any] = {
+                    "syncToken": sync_token,
+                    "showDeleted": True,
+                    "singleEvents": True,
+                    "maxResults": max_results,
+                }
                 if page:
                     query["pageToken"] = page
                 data = await self._http_json(host, "GET", f"{base}/events", headers, params=query)
@@ -127,9 +173,9 @@ class CalendarEventsPlugin:
 
         # Initial listing using time window
         tmin, tmax = self._window(since_hours, time_min, time_max)
-        page: Optional[str] = None
+        page: str | None = None
         while True:
-            query: Dict[str, Any] = {
+            query: dict[str, Any] = {
                 "timeMin": tmin,
                 "timeMax": tmax,
                 "singleEvents": True,
@@ -147,7 +193,18 @@ class CalendarEventsPlugin:
                 break
         return _Result.ok({"events": events, "next_sync_token": next_sync, "count": len(events)})
 
-    async def _ingest(self, host: Any, params: Dict[str, Any], user_email: Optional[str], kb_id: Optional[str], calendar_id: str, since_hours: int, time_min: Optional[str], time_max: Optional[str], max_results: int) -> _Result:
+    async def _ingest(
+        self,
+        host: Any,
+        params: dict[str, Any],
+        user_email: str | None,
+        kb_id: str | None,
+        calendar_id: str,
+        since_hours: int,
+        time_min: str | None,
+        time_max: str | None,
+        max_results: int,
+    ) -> _Result:
         if not kb_id:
             return _Result.err("kb_id is required for op=ingest (target Knowledge Base to write KOs)")
         if not hasattr(host, "kb"):
@@ -159,7 +216,7 @@ class CalendarEventsPlugin:
         base = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id or 'primary'}"
         headers = {"Authorization": f"Bearer {token}"}
 
-        async def _upsert_event(ev: Dict[str, Any]) -> None:
+        async def _upsert_event(ev: dict[str, Any]) -> None:
             eid = ev.get("id")
             if not eid:
                 return
@@ -188,26 +245,31 @@ class CalendarEventsPlugin:
 
         # Try delta with syncToken from cursor
         reset_cursor = bool(params.get("reset_cursor"))
-        existing_sync: Optional[str] = None
+        existing_sync: str | None = None
         if hasattr(host, "cursor") and not reset_cursor:
             try:
                 existing_sync = await host.cursor.get(kb_id)
             except Exception:
                 existing_sync = None
 
-        new_sync: Optional[str] = None
+        new_sync: str | None = None
         upserts = 0
         deleted = 0
 
         try:
             if existing_sync:
-                page: Optional[str] = None
+                page: str | None = None
                 while True:
-                    query: Dict[str, Any] = {"syncToken": existing_sync, "showDeleted": True, "singleEvents": True, "maxResults": max_results}
+                    query: dict[str, Any] = {
+                        "syncToken": existing_sync,
+                        "showDeleted": True,
+                        "singleEvents": True,
+                        "maxResults": max_results,
+                    }
                     if page:
                         query["pageToken"] = page
                     data = await self._http_json(host, "GET", f"{base}/events", headers, params=query)
-                    for ev in (data.get("items") or []):
+                    for ev in data.get("items") or []:
                         if (ev.get("status") or "").lower() == "cancelled":
                             try:
                                 await host.kb.delete_ko(external_id=ev.get("id"))
@@ -224,9 +286,9 @@ class CalendarEventsPlugin:
             else:
                 # Initial windowed fetch
                 tmin, tmax = self._window(since_hours, time_min, time_max)
-                page: Optional[str] = None
+                page: str | None = None
                 while True:
-                    query: Dict[str, Any] = {
+                    query: dict[str, Any] = {
                         "timeMin": tmin,
                         "timeMax": tmax,
                         "singleEvents": True,
@@ -237,7 +299,7 @@ class CalendarEventsPlugin:
                     if page:
                         query["pageToken"] = page
                     data = await self._http_json(host, "GET", f"{base}/events", headers, params=query)
-                    for ev in (data.get("items") or []):
+                    for ev in data.get("items") or []:
                         if (ev.get("status") or "").lower() == "cancelled":
                             try:
                                 await host.kb.delete_ko(external_id=ev.get("id"))
@@ -257,7 +319,13 @@ class CalendarEventsPlugin:
             if "HTTP 410" in msg or "status_code': 410" in msg:
                 existing_sync = None
             else:
-                return _Result.err("Calendar API error during ingest", code="provider_error", details={"message": msg[:300]})
+                # Use semantic error_category from HttpRequestFailed if available
+                error_code = getattr(e, "error_category", None) or "provider_error"
+                return _Result.err(
+                    "Calendar API error during ingest",
+                    code=error_code,
+                    details={"message": msg[:300]},
+                )
 
         # Advance cursor if available
         try:
@@ -268,11 +336,10 @@ class CalendarEventsPlugin:
 
         return _Result.ok({"count": upserts, "deleted": deleted, "next_sync_token": new_sync})
 
-    async def execute(self, params: Dict[str, Any], context: Any, host: Any) -> _Result:
+    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> _Result:
         id_cap = getattr(host, "identity", None)
-        user_email = (
-            (getattr(id_cap, "user_email", None) if id_cap else None)
-            or (id_cap.get_primary_email("google") if id_cap and hasattr(id_cap, "get_primary_email") else None)
+        user_email = (getattr(id_cap, "user_email", None) if id_cap else None) or (
+            id_cap.get_primary_email("google") if id_cap and hasattr(id_cap, "get_primary_email") else None
         )
 
         op = (params.get("op") or "list").lower()
@@ -285,6 +352,15 @@ class CalendarEventsPlugin:
         if op == "list":
             return await self._list(host, params, user_email, calendar_id, since_hours, time_min, time_max, max_results)
         if op == "ingest":
-            return await self._ingest(host, params, user_email, params.get("kb_id"), calendar_id, since_hours, time_min, time_max, max_results)
+            return await self._ingest(
+                host,
+                params,
+                user_email,
+                params.get("kb_id"),
+                calendar_id,
+                since_hours,
+                time_min,
+                time_max,
+                max_results,
+            )
         return _Result.err(f"Unsupported op: {op}")
-

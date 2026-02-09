@@ -1,5 +1,4 @@
-"""
-Custom middleware for Shu RAG Backend.
+"""Custom middleware for Shu RAG Backend.
 
 This module provides middleware for request tracking, timing, and other
 cross-cutting concerns.
@@ -11,11 +10,12 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from typing import Optional, TYPE_CHECKING
+from datetime import UTC
+from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response, JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
@@ -28,56 +28,59 @@ logger = logging.getLogger(__name__)
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Middleware to add unique request IDs to all requests."""
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Generate or extract request ID
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-        
+
         # Store request ID in request state
         request.state.request_id = request_id
-        
+
         # Call the next middleware/route handler
         response = await call_next(request)
-        
+
         # Add request ID to response headers
         response.headers["X-Request-ID"] = request_id
-        
+
         return response
 
 
 class TimingMiddleware(BaseHTTPMiddleware):
     """Enhanced timing middleware with query performance tracking."""
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Record start time
         start_time = time.time()
-        
+
         # Track database operations for query endpoints
         db_operations = []
         if "/query/" in request.url.path:
             # We could track database operations here if needed
             pass
-        
+
         # Call the next middleware/route handler
         response = await call_next(request)
-        
+
         # Calculate duration
         duration = time.time() - start_time
-        
+
         # Add timing header
         response.headers["X-Response-Time"] = f"{duration:.3f}s"
-        
+
         # Enhanced logging for query endpoints
         if "/query/" in request.url.path:
-            logger.info("Query performance", extra={
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": round(duration * 1000, 2),
-                "request_id": getattr(request.state, "request_id", "unknown"),
-                "user_id": getattr(request.state, "user", {}).get("user_id", "anonymous"),
-                "db_operations": len(db_operations) if db_operations else 0
-            })
+            logger.info(
+                "Query performance",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": round(duration * 1000, 2),
+                    "request_id": getattr(request.state, "request_id", "unknown"),
+                    "user_id": getattr(request.state, "user", {}).get("user_id", "anonymous"),
+                    "db_operations": len(db_operations) if db_operations else 0,
+                },
+            )
         else:
             # Standard request logging
             logger.info(
@@ -89,9 +92,9 @@ class TimingMiddleware(BaseHTTPMiddleware):
                     "duration_ms": round(duration * 1000, 2),
                     "request_id": getattr(request.state, "request_id", "unknown"),
                     "user_id": getattr(request.state, "user", {}).get("user_id", "anonymous"),
-            }
-        )
-        
+                },
+            )
+
         return response
 
 
@@ -116,12 +119,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class AuthenticationMiddleware(BaseHTTPMiddleware):
     """Global authentication middleware to enforce auth on protected endpoints."""
 
-    def __init__(self, app):
+    def __init__(self, app) -> None:
         super().__init__(app)
         self.jwt_manager = JWTManager()
 
         # Public endpoints that don't require authentication
-        self.public_paths: Set[str] = {
+        self.public_paths: set[str] = {
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -157,11 +160,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/static/",  # Self-hosted static assets (e.g., ReDoc JS)
             "/api/v1/settings/branding/assets/",
         ]
-        for prefix in public_prefixes:
-            if path.startswith(prefix):
-                return True
-
-        return False
+        return any(path.startswith(prefix) for prefix in public_prefixes)
 
     async def _update_daily_login(self, db, user) -> None:
         """Update last_login if this is the user's first request of the day.
@@ -170,9 +169,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         as a "login" event, providing accurate activity tracking even when
         OAuth tokens are silently refreshed.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check if last_login is null or from a previous day
         if user.last_login is None or user.last_login.date() < now.date():
@@ -180,18 +179,19 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             await db.commit()
             logger.debug(f"Updated daily login for user {user.id}")
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:  # noqa: PLR0912, PLR0915
         # Skip authentication for public endpoints
-        """
-        Authenticate incoming requests, validate user status against the database, and attach the resolved user context to request.state for downstream authorization.
-        
+        """Authenticate incoming requests, validate user status against the database, and attach the resolved user context to request.state for downstream authorization.
+
         Supports "Bearer <jwt>" and "ApiKey <key>" authorization. For Bearer tokens, validates the JWT and marks the request for a token refresh if the token is near expiry. For ApiKey auth, validates the configured global API key, marks the request.state.api_key_authenticated flag, and maps the API key to a configured user email. In all authenticated flows, verifies the corresponding user exists and is active in the database, then stores up-to-date user information on request.state.user. If authentication succeeds, forwards the request to the next handler; if authentication fails, returns an appropriate JSON error response. When a token refresh is required, the response will include the "X-Token-Refresh-Needed": "true" header.
-        
+
         Returns:
             Response: The downstream handler's response on successful authentication, or a JSON error response with one of:
               - 401 Unauthorized for missing/invalid credentials or missing user mapping,
               - 400 Bad Request if the user account is inactive,
               - 500 Internal Server Error for database/validation errors.
+
         """
         if self._is_public_path(request.url.path):
             return await call_next(request)
@@ -203,7 +203,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
         # Accept either Bearer <jwt> or ApiKey <key>
-        is_api_key_auth = False
         token = None
         user_data = None
         if auth_header.startswith("Bearer "):
@@ -223,13 +222,16 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
             # Mark request as API key authenticated; RBAC will resolve user context
             request.state.api_key_authenticated = True
-            is_api_key_auth = True
         else:
             logger.warning(f"Unsupported Authorization scheme for {request.method} {request.url.path}")
             return JSONResponse(status_code=401, content={"detail": "Unsupported Authorization scheme"})
 
         # Check if token is near expiry for sliding expiration (Bearer only)
-        if (not getattr(request.state, "api_key_authenticated", False)) and token and self.jwt_manager.is_token_near_expiry(token, buffer_minutes=10):
+        if (
+            (not getattr(request.state, "api_key_authenticated", False))
+            and token
+            and self.jwt_manager.is_token_near_expiry(token, buffer_minutes=10)
+        ):
             # Add header to indicate client should refresh token
             request.state.token_needs_refresh = True
 
@@ -237,9 +239,10 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # JWT tokens contain user data from when they were created, but we need to verify
         # the user is still active in the database
         try:
-            from ..core.database import get_db
-            from ..auth.models import User
             from sqlalchemy import select
+
+            from ..auth.models import User
+            from ..core.database import get_db
 
             # Get database session
             async for db in get_db():
@@ -250,28 +253,31 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         logger.warning("API key user mapping not configured (SHU_API_KEY_USER_EMAIL missing)")
                         return JSONResponse(
                             status_code=401,
-                            content={"detail": "API key user mapping not configured"}
+                            content={"detail": "API key user mapping not configured"},
                         )
                     stmt = select(User).where(User.email == settings.api_key_user_email)
                 else:
-                    stmt = select(User).where(User.id == user_data['user_id'])
+                    stmt = select(User).where(User.id == user_data["user_id"])
 
                 result = await db.execute(stmt)
                 current_user = result.scalar_one_or_none()
 
                 if not current_user:
-                    missing = settings.api_key_user_email if getattr(request.state, "api_key_authenticated", False) else user_data.get('user_id')
-                    logger.warning(f"User not found in database for {request.method} {request.url.path}: {missing}")
-                    return JSONResponse(
-                        status_code=401,
-                        content={"detail": "User account not found"}
+                    missing = (
+                        settings.api_key_user_email
+                        if getattr(request.state, "api_key_authenticated", False)
+                        else user_data.get("user_id")
                     )
+                    logger.warning(f"User not found in database for {request.method} {request.url.path}: {missing}")
+                    return JSONResponse(status_code=401, content={"detail": "User account not found"})
 
                 if not current_user.is_active:
-                    logger.warning(f"Inactive user {current_user.email} attempted access to {request.method} {request.url.path}")
+                    logger.warning(
+                        f"Inactive user {current_user.email} attempted access to {request.method} {request.url.path}"
+                    )
                     return JSONResponse(
                         status_code=400,
-                        content={"detail": "User account is inactive. Please contact an administrator for activation."}
+                        content={"detail": "User account is inactive. Please contact an administrator for activation."},
                     )
 
                 # Update last_login on first request of the day
@@ -280,39 +286,40 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 # Build user context for RBAC
                 if getattr(request.state, "api_key_authenticated", False):
                     user_data = {
-                        'user_id': current_user.id,
-                        'email': current_user.email,
-                        'name': current_user.name,
-                        'role': current_user.role,
-                        'is_active': current_user.is_active
+                        "user_id": current_user.id,
+                        "email": current_user.email,
+                        "name": current_user.name,
+                        "role": current_user.role,
+                        "is_active": current_user.is_active,
                     }
                 else:
                     # Update user data with current database values to ensure consistency
-                    user_data.update({
-                        'email': current_user.email,
-                        'name': current_user.name,
-                        'role': current_user.role,
-                        'is_active': current_user.is_active
-                    })
+                    user_data.update(
+                        {
+                            "email": current_user.email,
+                            "name": current_user.name,
+                            "role": current_user.role,
+                            "is_active": current_user.is_active,
+                        }
+                    )
                 break
 
         except Exception as e:
             logger.error(f"Database error during user validation: {e}")
-            return JSONResponse(
-                status_code=500,
-                content={"detail": "Authentication validation failed"}
-            )
+            return JSONResponse(status_code=500, content={"detail": "Authentication validation failed"})
 
         # Store user data in request state for role-based authorization
         request.state.user = user_data
 
-        logger.debug(f"Authenticated user {user_data['email']} ({user_data['role']}) for {request.method} {request.url.path}")
+        logger.debug(
+            f"Authenticated user {user_data['email']} ({user_data['role']}) for {request.method} {request.url.path}"
+        )
 
         # Process the request
         response = await call_next(request)
 
         # Add refresh header if token needs refresh
-        if hasattr(request.state, 'token_needs_refresh') and request.state.token_needs_refresh:
+        if hasattr(request.state, "token_needs_refresh") and request.state.token_needs_refresh:
             response.headers["X-Token-Refresh-Needed"] = "true"
 
         return response
@@ -331,19 +338,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Retry-After: Seconds to wait (only on 429 responses)
     """
 
-    def __init__(self, app, excluded_paths: Optional[set[str]] = None) -> None:
-        """
-        Initialize the RateLimitMiddleware and configure paths excluded from rate limiting.
-        
+    def __init__(self, app, excluded_paths: set[str] | None = None) -> None:
+        """Initialize the RateLimitMiddleware and configure paths excluded from rate limiting.
+
         Sets up a lazy holder for the rate limit service, a default set of public endpoints that bypass rate limiting, and a list of path prefixes to exclude.
-        
-        Parameters:
+
+        Parameters
+        ----------
             excluded_paths (Optional[Set[str]]): Optional set of exact request paths to exclude from rate limiting.
                 If omitted, defaults to common public endpoints such as "/docs", "/redoc", "/openapi.json",
                 health check routes, and the public config endpoint.
+
         """
         super().__init__(app)
-        self._rate_limit_service: Optional["RateLimitService"] = None
+        self._rate_limit_service: RateLimitService | None = None
 
         # Default excluded paths (public endpoints that don't need rate limiting)
         self.excluded_paths: set[str] = excluded_paths or {
@@ -363,36 +371,36 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             "/api/v1/health/",
         ]
 
-    def _get_rate_limit_service(self) -> "RateLimitService":
-        """
-        Lazily initialize and return the rate limit service instance.
-        
+    def _get_rate_limit_service(self) -> RateLimitService:
+        """Lazily initialize and return the rate limit service instance.
+
         Returns:
             The rate limit service instance used to check and manage API limits.
+
         """
         if self._rate_limit_service is None:
             from .rate_limiting import get_rate_limit_service
+
             self._rate_limit_service = get_rate_limit_service()
         return self._rate_limit_service
 
     def _is_excluded(self, path: str) -> bool:
-        """
-        Determine whether a request path is excluded from rate limiting.
-        
-        Parameters:
+        """Determine whether a request path is excluded from rate limiting.
+
+        Parameters
+        ----------
             path (str): Request path to evaluate.
-        
-        Returns:
+
+        Returns
+        -------
             bool: `True` if the path is exactly in the excluded paths or begins with any excluded prefix, `False` otherwise.
+
         """
         if path in self.excluded_paths:
             return True
-        for prefix in self.excluded_prefixes:
-            if path.startswith(prefix):
-                return True
-        return False
+        return any(path.startswith(prefix) for prefix in self.excluded_prefixes)
 
-    def _get_user_id(self, request: Request) -> Optional[str]:
+    def _get_user_id(self, request: Request) -> str | None:
         """Extract user ID from request state."""
         user = getattr(request.state, "user", None)
         if user and isinstance(user, dict):
@@ -400,31 +408,36 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return None
 
     def _get_client_ip(self, request: Request) -> str:
-        """
-        Determine the client's IP address to use for anonymous rate limiting.
-        
-        Parameters:
+        """Determine the client's IP address to use for anonymous rate limiting.
+
+        Parameters
+        ----------
             request (Request): The incoming request from which headers and the client host are read.
-        
-        Returns:
+
+        Returns
+        -------
             client_ip (str): IP address string chosen for rate-limiting (may come from proxy headers or the request's client host).
+
         """
         from .rate_limiting import get_client_ip
+
         return get_client_ip(request.headers, request.client.host if request.client else None)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip rate limiting for excluded paths
-        """
-        Enforce per-user or IP-based rate limits for incoming requests.
-        
+        """Enforce per-user or IP-based rate limits for incoming requests.
+
         Skips enforcement for configured excluded paths or when the rate limit service is disabled. Determines an identifier from the authenticated user ID, falling back to the client IP. If the request exceeds the allowed rate, returns a 429 JSON response containing a retry_after value and rate-limit headers. Otherwise forwards the request to the next handler and attaches rate-limit headers from the rate limit service to the returned response.
-        
-        Parameters:
+
+        Parameters
+        ----------
             request (Request): The incoming HTTP request.
             call_next (Callable): The next request handler to invoke.
-        
-        Returns:
+
+        Returns
+        -------
             Response: A 429 JSON error response when the rate limit is exceeded, or the downstream response with rate-limit headers added.
+
         """
         if self._is_excluded(request.url.path):
             return await call_next(request)
@@ -451,7 +464,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "path": request.url.path,
                     "method": request.method,
                     "retry_after": result.retry_after_seconds,
-                }
+                },
             )
             return JSONResponse(
                 status_code=429,

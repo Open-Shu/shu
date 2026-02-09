@@ -6,23 +6,21 @@ SHU-342, SHU-355
 """
 
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 from shu.models.document import (
-    Document,
-    DocumentChunk,
-    DocumentQuery,
-    DocumentParticipant,
-    DocumentProject,
-    ParticipantEntityType,
-    ParticipantRole,
-    CapabilityManifest,
-    RelationalContext,
-    ENTITY_TYPE_PERSON,
     ENTITY_TYPE_ORGANIZATION,
+    ENTITY_TYPE_PERSON,
     ROLE_AUTHOR,
     ROLE_RECIPIENT,
+    CapabilityManifest,
+    Document,
+    DocumentChunk,
+    DocumentParticipant,
+    DocumentProject,
+    DocumentQuery,
+    ParticipantEntityType,
+    ParticipantRole,
+    RelationalContext,
 )
 
 
@@ -50,7 +48,7 @@ class TestDocument:
         doc = Document()
         doc.processing_status = "pending"
         assert doc.is_processed is False
-        
+
         doc.processing_status = "processed"
         assert doc.is_processed is True
 
@@ -59,9 +57,9 @@ class TestDocument:
         doc = Document()
         doc.processing_status = "pending"
         doc.processing_error = "Previous error"
-        
+
         doc.mark_processed()
-        
+
         assert doc.processing_status == "processed"
         assert doc.processing_error is None
         assert doc.processed_at is not None
@@ -70,7 +68,7 @@ class TestDocument:
         """Test mark_error method."""
         doc = Document()
         doc.mark_error("Processing failed")
-        
+
         assert doc.processing_status == "error"
         assert doc.processing_error == "Processing failed"
         assert doc.processed_at is not None
@@ -104,7 +102,7 @@ class TestDocument:
         """Test mark_profiling_failed method with error message."""
         doc = Document()
         doc.mark_profiling_failed("LLM timeout")
-        
+
         assert doc.profiling_status == "failed"
         assert doc.profiling_error == "LLM timeout"
         assert doc.profiling_failed is True
@@ -138,6 +136,7 @@ class TestDocument:
 
         # Invalid type should raise ValueError
         import pytest
+
         with pytest.raises(ValueError) as exc_info:
             doc.mark_profiling_complete(
                 synopsis="Test",
@@ -164,9 +163,9 @@ class TestDocument:
         doc.profiling_status = "complete"
         doc.profiling_error = None
         doc.relational_context = {"participant_count": 2}
-        
+
         result = doc.to_dict()
-        
+
         assert result["synopsis"] == "Test synopsis"
         assert result["document_type"] == "narrative"
         assert result["capability_manifest"] == {"test": "value"}
@@ -183,6 +182,47 @@ class TestDocument:
         assert doc.word_count == 100
         assert doc.character_count == 500
         assert doc.chunk_count == 5
+
+    def test_update_status_sets_processing_status(self):
+        """Test that update_status writes to processing_status correctly."""
+        from shu.models.document import DocumentStatus
+
+        doc = Document()
+
+        # PROCESSED status
+        doc.update_status(DocumentStatus.PROCESSED)
+        assert doc.processing_status == "processed"
+        assert doc.processed_at is not None
+        assert doc.processing_error is None
+
+        # ERROR status
+        doc.update_status(DocumentStatus.ERROR)
+        assert doc.processing_status == "error"
+        assert doc.processed_at is not None
+
+        # PENDING status
+        doc.update_status(DocumentStatus.PENDING)
+        assert doc.processing_status == "pending"
+
+        # Intermediate statuses
+        doc.update_status(DocumentStatus.EXTRACTING)
+        assert doc.processing_status == "extracting"
+
+        doc.update_status(DocumentStatus.EMBEDDING)
+        assert doc.processing_status == "embedding"
+
+        doc.update_status(DocumentStatus.PROFILING)
+        assert doc.processing_status == "profiling"
+
+    def test_mark_error_sets_processing_status_and_error(self):
+        """Test that mark_error sets processing_status and processing_error."""
+        doc = Document()
+
+        doc.mark_error("OCR extraction failed: invalid PDF format")
+
+        assert doc.processing_status == "error"
+        assert doc.processing_error == "OCR extraction failed: invalid PDF format"
+        assert doc.processed_at is not None
 
 
 class TestDocumentChunk:
@@ -458,10 +498,10 @@ class TestDocumentParticipant:
         assert participant.role == "author"
 
         # Also verify enum values match constants
-        assert ENTITY_TYPE_PERSON == ParticipantEntityType.PERSON.value
-        assert ENTITY_TYPE_ORGANIZATION == ParticipantEntityType.ORGANIZATION.value
-        assert ROLE_AUTHOR == ParticipantRole.AUTHOR.value
-        assert ROLE_RECIPIENT == ParticipantRole.RECIPIENT.value
+        assert ParticipantEntityType.PERSON.value == ENTITY_TYPE_PERSON
+        assert ParticipantEntityType.ORGANIZATION.value == ENTITY_TYPE_ORGANIZATION
+        assert ParticipantRole.AUTHOR.value == ROLE_AUTHOR
+        assert ParticipantRole.RECIPIENT.value == ROLE_RECIPIENT
 
     def test_to_dict(self):
         """Test to_dict method."""
@@ -597,4 +637,3 @@ class TestEnumsAndTypedDicts:
             "participant_count": 2,
         }
         assert partial_context["participant_count"] == 2
-

@@ -1,10 +1,10 @@
-from typing import Any, Dict
+from typing import Any
 
 from shu.core.logging import get_logger
 
 from ..adapter_base import ProviderCapabilities, ProviderInformation, register_adapter
-from .completions_adapter import CompletionsAdapter
 from ..parameter_definitions import IntegerParameter, NumberParameter
+from .completions_adapter import CompletionsAdapter
 
 logger = get_logger(__name__)
 
@@ -26,11 +26,11 @@ class OllamaAdapter(CompletionsAdapter):
     def get_api_base_url(self) -> str:
         return "http://localhost:11434/v1"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         # Local default: no auth header.
         return {"scheme": None, "headers": {}}
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             "temperature": NumberParameter(
                 min=0,

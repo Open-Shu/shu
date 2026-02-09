@@ -1,5 +1,4 @@
-"""
-SystemSetting model for storing configurable application values.
+"""SystemSetting model for storing configurable application values.
 
 Provides a flexible key/value store where values are persisted as JSON blobs,
 making it easy to add new application-wide settings without migrations.
@@ -21,4 +20,5 @@ class SystemSetting(TimestampMixin, Base):
     value = Column(MutableDict.as_mutable(JSON), nullable=False, default=dict)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<SystemSetting(key='{self.key}')>"

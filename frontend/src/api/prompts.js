@@ -1,6 +1,6 @@
 /**
  * API client for the generalized prompt system.
- * 
+ *
  * This module provides functions for interacting with the new unified
  * prompt management API that supports multiple entity types.
  */
@@ -11,11 +11,11 @@ import api from '../services/api';
  * Entity types supported by the prompt system
  */
 export const ENTITY_TYPES = {
-  KNOWLEDGE_BASE: 'knowledge_base',  // For KB context prompts (assigned via model configs)
+  KNOWLEDGE_BASE: 'knowledge_base', // For KB context prompts (assigned via model configs)
   LLM_MODEL: 'llm_model',
   AGENT: 'agent',
   WORKFLOW: 'workflow',
-  TOOL: 'tool'
+  TOOL: 'tool',
 };
 
 /**
@@ -130,7 +130,7 @@ export const promptAPI = {
   async getStats() {
     const response = await api.get('/prompts/stats');
     return response.data;
-  }
+  },
 };
 
 /**
@@ -151,7 +151,7 @@ export const knowledgeBasePromptAPI = {
   async create(promptData) {
     return promptAPI.create({
       ...promptData,
-      entity_type: ENTITY_TYPES.KNOWLEDGE_BASE
+      entity_type: ENTITY_TYPES.KNOWLEDGE_BASE,
     });
   },
 
@@ -163,7 +163,7 @@ export const knowledgeBasePromptAPI = {
   async list(params = {}) {
     return promptAPI.list({
       ...params,
-      entity_type: ENTITY_TYPES.KNOWLEDGE_BASE
+      entity_type: ENTITY_TYPES.KNOWLEDGE_BASE,
     });
   },
 
@@ -184,7 +184,7 @@ export const llmModelPromptAPI = {
   async create(promptData) {
     return promptAPI.create({
       ...promptData,
-      entity_type: ENTITY_TYPES.LLM_MODEL
+      entity_type: ENTITY_TYPES.LLM_MODEL,
     });
   },
 
@@ -196,7 +196,7 @@ export const llmModelPromptAPI = {
   async list(params = {}) {
     return promptAPI.list({
       ...params,
-      entity_type: ENTITY_TYPES.LLM_MODEL
+      entity_type: ENTITY_TYPES.LLM_MODEL,
     });
   },
 
@@ -220,7 +220,7 @@ export const llmModelPromptAPI = {
   async assignToModel(promptId, modelId, isActive = true) {
     return promptAPI.assign(promptId, {
       entity_id: modelId,
-      is_active: isActive
+      is_active: isActive,
     });
   },
 
@@ -232,7 +232,7 @@ export const llmModelPromptAPI = {
    */
   async unassignFromModel(promptId, modelId) {
     return promptAPI.unassign(promptId, modelId);
-  }
+  },
 };
 
 export default promptAPI;

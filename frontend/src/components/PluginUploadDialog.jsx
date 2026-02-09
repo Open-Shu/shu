@@ -39,7 +39,9 @@ export default function PluginUploadDialog({ open, onClose, onUploaded }) {
       const resp = await pluginsAPI.upload(file, force);
       const data = extractDataFromResponse(resp);
       setResult(data);
-      if (onUploaded) onUploaded(data);
+      if (onUploaded) {
+        onUploaded(data);
+      }
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -61,7 +63,8 @@ export default function PluginUploadDialog({ open, onClose, onUploaded }) {
       <DialogContent>
         <Stack spacing={2} mt={1}>
           <Typography variant="body2" color="text.secondary">
-            Select a plugin package (.zip or .tar.gz) containing a single top-level folder with manifest.py and plugin code.
+            Select a plugin package (.zip or .tar.gz) containing a single top-level folder with manifest.py and plugin
+            code.
           </Typography>
           <input type="file" accept=".zip,.tar,.tgz,.tar.gz" onChange={handleFileChange} />
           <FormControlLabel
@@ -69,27 +72,51 @@ export default function PluginUploadDialog({ open, onClose, onUploaded }) {
             label="Overwrite if plugin already exists"
           />
           {error && (
-            <Box sx={{ bgcolor: 'error.50', border: '1px solid', borderColor: 'error.200', borderRadius: 1, p: 1 }}>
-              <Typography variant="body2" color="error.main">{error}</Typography>
+            <Box
+              sx={{
+                bgcolor: 'error.50',
+                border: '1px solid',
+                borderColor: 'error.200',
+                borderRadius: 1,
+                p: 1,
+              }}
+            >
+              <Typography variant="body2" color="error.main">
+                {error}
+              </Typography>
             </Box>
           )}
           {result && (
-            <Box sx={{ bgcolor: 'success.50', border: '1px solid', borderColor: 'success.200', borderRadius: 1, p: 1 }}>
+            <Box
+              sx={{
+                bgcolor: 'success.50',
+                border: '1px solid',
+                borderColor: 'success.200',
+                borderRadius: 1,
+                p: 1,
+              }}
+            >
               <Typography variant="body2" color="success.main">
                 Installed {result.plugin_name} {result.version ? `(v${result.version})` : ''} at {result.installed_path}
               </Typography>
               {Array.isArray(result.warnings) && result.warnings.length > 0 && (
-                <Typography variant="body2" color="warning.main">Warnings: {result.warnings.join('; ')}</Typography>
+                <Typography variant="body2" color="warning.main">
+                  Warnings: {result.warnings.join('; ')}
+                </Typography>
               )}
               {result.restart_required && (
-                <Typography variant="body2" color="text.secondary">A server restart may be required to load the plugin.</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  A server restart may be required to load the plugin.
+                </Typography>
               )}
             </Box>
           )}
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} disabled={isUploading}>Close</Button>
+        <Button onClick={handleClose} disabled={isUploading}>
+          Close
+        </Button>
         <Button onClick={handleUpload} variant="contained" disabled={isUploading}>
           {isUploading ? 'Uploading…' : 'Upload'}
         </Button>
@@ -97,4 +124,3 @@ export default function PluginUploadDialog({ open, onClose, onUploaded }) {
     </Dialog>
   );
 }
-

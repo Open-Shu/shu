@@ -30,7 +30,6 @@ import {
   FormControlLabel,
   Switch,
   Grid,
-
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -48,10 +47,30 @@ import { log } from '../utils/log';
 import PageHelpHeader from './PageHelpHeader';
 
 const PERMISSION_LEVELS = [
-  { value: 'owner', label: 'Owner', description: 'Full control, can delete KB, manage permissions', color: 'error' },
-  { value: 'admin', label: 'Admin', description: 'Can modify KB, add/remove documents, manage members', color: 'warning' },
-  { value: 'member', label: 'Member', description: 'Can query KB, view documents, add documents', color: 'primary' },
-  { value: 'read_only', label: 'Read Only', description: 'Can only query KB, no modifications', color: 'default' }
+  {
+    value: 'owner',
+    label: 'Owner',
+    description: 'Full control, can delete KB, manage permissions',
+    color: 'error',
+  },
+  {
+    value: 'admin',
+    label: 'Admin',
+    description: 'Can modify KB, add/remove documents, manage members',
+    color: 'warning',
+  },
+  {
+    value: 'member',
+    label: 'Member',
+    description: 'Can query KB, view documents, add documents',
+    color: 'primary',
+  },
+  {
+    value: 'read_only',
+    label: 'Read Only',
+    description: 'Can only query KB, no modifications',
+    color: 'default',
+  },
 ];
 
 const KBPermissions = () => {
@@ -64,49 +83,37 @@ const KBPermissions = () => {
     target_id: '',
     permission_level: 'read_only',
     expires_at: null,
-    has_expiration: false
+    has_expiration: false,
   });
 
   const queryClient = useQueryClient();
 
   // Fetch knowledge bases
-  const { data: kbResponse, isLoading: kbLoading } = useQuery(
-    'knowledgeBases',
-    knowledgeBaseAPI.list,
-    {
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const { data: kbResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list, {
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   const knowledgeBases = extractItemsFromResponse(kbResponse) || [];
 
   // Fetch users for autocomplete
-  const { data: usersResponse } = useQuery(
-    'users',
-    authAPI.getUsers,
-    {
-      enabled: newPermission.target_type === 'user',
-      onError: (err) => {
-        log.error('Error fetching users:', err);
-      }
-    }
-  );
+  const { data: usersResponse } = useQuery('users', authAPI.getUsers, {
+    enabled: newPermission.target_type === 'user',
+    onError: (err) => {
+      log.error('Error fetching users:', err);
+    },
+  });
 
   const users = extractItemsFromResponse(usersResponse) || [];
 
   // Fetch groups for autocomplete
-  const { data: groupsResponse } = useQuery(
-    'userGroups',
-    groupsAPI.list,
-    {
-      enabled: newPermission.target_type === 'group',
-      onError: (err) => {
-        log.error('Error fetching groups:', err);
-      }
-    }
-  );
+  const { data: groupsResponse } = useQuery('userGroups', groupsAPI.list, {
+    enabled: newPermission.target_type === 'group',
+    onError: (err) => {
+      log.error('Error fetching groups:', err);
+    },
+  });
 
   const groups = extractItemsFromResponse(groupsResponse) || [];
 
@@ -118,7 +125,7 @@ const KBPermissions = () => {
       enabled: !!selectedKB,
       onError: (err) => {
         setError(formatError(err).message);
-      }
+      },
     }
   );
 
@@ -136,13 +143,13 @@ const KBPermissions = () => {
           target_id: '',
           permission_level: 'read_only',
           expires_at: null,
-          has_expiration: false
+          has_expiration: false,
         });
         setError(null);
       },
       onError: (err) => {
         setError(formatError(err).message);
-      }
+      },
     }
   );
 
@@ -156,18 +163,21 @@ const KBPermissions = () => {
       },
       onError: (err) => {
         setError(formatError(err).message);
-      }
+      },
     }
   );
 
   const handleGrantPermission = () => {
-    if (!newPermission.target_id || !selectedKB) return;
+    if (!newPermission.target_id || !selectedKB) {
+      return;
+    }
 
     const permissionData = {
       permission_level: newPermission.permission_level,
-      expires_at: newPermission.has_expiration && newPermission.expires_at
-        ? new Date(newPermission.expires_at).toISOString()
-        : null
+      expires_at:
+        newPermission.has_expiration && newPermission.expires_at
+          ? new Date(newPermission.expires_at).toISOString()
+          : null,
     };
 
     if (newPermission.target_type === 'user') {
@@ -188,26 +198,28 @@ const KBPermissions = () => {
   };
 
   const getPermissionLevelInfo = (level) => {
-    return PERMISSION_LEVELS.find(p => p.value === level) || PERMISSION_LEVELS[3];
+    return PERMISSION_LEVELS.find((p) => p.value === level) || PERMISSION_LEVELS[3];
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'Never';
+    if (!dateString) {
+      return 'Never';
+    }
     return new Date(dateString).toLocaleDateString();
   };
 
   const getTargetOptions = () => {
     if (newPermission.target_type === 'user') {
-      return users.map(user => ({
+      return users.map((user) => ({
         id: user.user_id,
         label: `${user.name} (${user.email})`,
-        value: user.user_id
+        value: user.user_id,
       }));
     } else {
-      return groups.map(group => ({
+      return groups.map((group) => ({
         id: group.id,
         label: group.name,
-        value: group.id
+        value: group.id,
       }));
     }
   };
@@ -269,11 +281,7 @@ const KBPermissions = () => {
         <CardContent>
           <FormControl fullWidth>
             <InputLabel>Select Knowledge Base</InputLabel>
-            <Select
-              value={selectedKB}
-              onChange={(e) => setSelectedKB(e.target.value)}
-              label="Select Knowledge Base"
-            >
+            <Select value={selectedKB} onChange={(e) => setSelectedKB(e.target.value)} label="Select Knowledge Base">
               {knowledgeBases.map((kb) => (
                 <MenuItem key={kb.id} value={kb.id}>
                   <Box display="flex" alignItems="center">
@@ -292,7 +300,7 @@ const KBPermissions = () => {
         <Card>
           <CardContent>
             <Typography variant="h6" gutterBottom>
-              Permissions for {knowledgeBases.find(kb => kb.id === selectedKB)?.name}
+              Permissions for {knowledgeBases.find((kb) => kb.id === selectedKB)?.name}
             </Typography>
 
             {permissionsLoading ? (
@@ -379,7 +387,13 @@ const KBPermissions = () => {
                             <TableCell>
                               {permission.expires_at ? (
                                 <Box display="flex" alignItems="center">
-                                  <ScheduleIcon sx={{ mr: 0.5, fontSize: 16, color: isExpired ? 'error.main' : 'warning.main' }} />
+                                  <ScheduleIcon
+                                    sx={{
+                                      mr: 0.5,
+                                      fontSize: 16,
+                                      color: isExpired ? 'error.main' : 'warning.main',
+                                    }}
+                                  />
                                   <Typography variant="body2" color={isExpired ? 'error.main' : 'text.secondary'}>
                                     {formatDate(permission.expires_at)}
                                   </Typography>
@@ -392,8 +406,8 @@ const KBPermissions = () => {
                             </TableCell>
                             <TableCell>
                               <Chip
-                                label={isExpired ? 'Expired' : (permission.is_active ? 'Active' : 'Inactive')}
-                                color={isExpired ? 'error' : (permission.is_active ? 'success' : 'default')}
+                                label={isExpired ? 'Expired' : permission.is_active ? 'Active' : 'Inactive'}
+                                color={isExpired ? 'error' : permission.is_active ? 'success' : 'default'}
                                 size="small"
                               />
                             </TableCell>
@@ -428,7 +442,13 @@ const KBPermissions = () => {
                 <InputLabel>Target Type</InputLabel>
                 <Select
                   value={newPermission.target_type}
-                  onChange={(e) => setNewPermission({ ...newPermission, target_type: e.target.value, target_id: '' })}
+                  onChange={(e) =>
+                    setNewPermission({
+                      ...newPermission,
+                      target_type: e.target.value,
+                      target_id: '',
+                    })
+                  }
                   label="Target Type"
                 >
                   <MenuItem value="user">
@@ -449,15 +469,16 @@ const KBPermissions = () => {
 
             <Grid item xs={12}>
               <Autocomplete
-                options={
-                  getTargetOptions()
-                    // Ensure that only options that aren't already added are shown
-                    .filter(option => !permissions.some(p => [p.user_id, p.group_id].includes(option.value)))
-                }
+                options={getTargetOptions()
+                  // Ensure that only options that aren't already added are shown
+                  .filter((option) => !permissions.some((p) => [p.user_id, p.group_id].includes(option.value)))}
                 getOptionLabel={(option) => option.label}
-                value={getTargetOptions().find(option => option.value === newPermission.target_id) || null}
+                value={getTargetOptions().find((option) => option.value === newPermission.target_id) || null}
                 onChange={(event, newValue) => {
-                  setNewPermission({ ...newPermission, target_id: newValue?.value || '' });
+                  setNewPermission({
+                    ...newPermission,
+                    target_id: newValue?.value || '',
+                  });
                 }}
                 renderInput={(params) => (
                   <TextField
@@ -474,7 +495,12 @@ const KBPermissions = () => {
                 <InputLabel>Permission Level</InputLabel>
                 <Select
                   value={newPermission.permission_level}
-                  onChange={(e) => setNewPermission({ ...newPermission, permission_level: e.target.value })}
+                  onChange={(e) =>
+                    setNewPermission({
+                      ...newPermission,
+                      permission_level: e.target.value,
+                    })
+                  }
                   label="Permission Level"
                 >
                   {PERMISSION_LEVELS.map((level) => (
@@ -498,7 +524,12 @@ const KBPermissions = () => {
                 control={
                   <Switch
                     checked={newPermission.has_expiration}
-                    onChange={(e) => setNewPermission({ ...newPermission, has_expiration: e.target.checked })}
+                    onChange={(e) =>
+                      setNewPermission({
+                        ...newPermission,
+                        has_expiration: e.target.checked,
+                      })
+                    }
                   />
                 }
                 label="Set Expiration Date"
@@ -511,13 +542,18 @@ const KBPermissions = () => {
                   label="Expires At"
                   type="datetime-local"
                   value={newPermission.expires_at || ''}
-                  onChange={(e) => setNewPermission({ ...newPermission, expires_at: e.target.value })}
+                  onChange={(e) =>
+                    setNewPermission({
+                      ...newPermission,
+                      expires_at: e.target.value,
+                    })
+                  }
                   fullWidth
                   InputLabelProps={{
                     shrink: true,
                   }}
                   inputProps={{
-                    min: new Date().toISOString().slice(0, 16)
+                    min: new Date().toISOString().slice(0, 16),
                   }}
                 />
               </Grid>
@@ -549,7 +585,6 @@ const KBPermissions = () => {
           <Box sx={{ mt: 1 }}>
             <NotImplemented label="Bulk operations not implemented yet" />
           </Box>
-
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setBulkDialogOpen(false)}>Close</Button>

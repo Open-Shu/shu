@@ -203,7 +203,7 @@ export const lightThemeBase = {
               color: '#6B7280',
               fontWeight: 500,
               transform: 'translate(14px, -9px) scale(1)',
-            }
+            },
           },
           '& .MuiInputBase-input::placeholder': {
             color: '#9CA3AF',
@@ -243,7 +243,7 @@ export const lightThemeBase = {
               fontWeight: 500,
               backgroundColor: '#FFFFFF',
               transform: 'translate(14px, -9px) scale(1)',
-            }
+            },
           },
           '& .MuiOutlinedInput-root': {
             borderRadius: 8,
@@ -277,7 +277,7 @@ export const lightThemeBase = {
             fontWeight: 500,
             backgroundColor: '#FFFFFF',
             transform: 'translate(14px, -9px) scale(1)',
-          }
+          },
         },
       },
     },

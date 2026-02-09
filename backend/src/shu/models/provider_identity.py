@@ -1,14 +1,12 @@
-"""
-ProviderIdentity model: provider-agnostic storage of connected account identity.
+"""ProviderIdentity model: provider-agnostic storage of connected account identity.
 
 Links a user to an identity at a given provider (e.g., Google, Microsoft),
 optionally associated to a stored credential record via credential_id.
 """
-from __future__ import annotations
-from typing import Optional, Any, Dict
 
-from sqlalchemy import Column, String, JSON, ForeignKey, Index
-from sqlalchemy.orm import relationship
+from __future__ import annotations
+
+from sqlalchemy import JSON, Column, ForeignKey, Index, String
 
 from .base import BaseModel
 
@@ -50,9 +48,3 @@ class ProviderIdentity(BaseModel):
             unique=True,
         ),
     )
-
-    def to_public_dict(self) -> Dict[str, Any]:
-        d = self.to_dict()
-        # Nothing secret here, return as-is
-        return d
-

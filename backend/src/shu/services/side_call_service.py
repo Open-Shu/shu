@@ -1,27 +1,27 @@
-"""
-Side-Call Service for Shu RAG Backend.
+"""Side-Call Service for Shu RAG Backend.
 
 This service provides optimized LLM calls for small, fast side-calls
 like prompt assist, title generation, and UI summaries.
 """
 
-import logging
-import time
-import re
 import json
-from typing import List, Optional, Dict, Any, Tuple
+import logging
+import re
+import time
+from datetime import UTC, datetime
 from decimal import Decimal
-from datetime import datetime
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.model_configuration import ModelConfiguration
-from ..models.llm_provider import Message
-from ..services.system_settings_service import SystemSettingsService
-from ..services.model_configuration_service import ModelConfigurationService
-from ..llm.service import LLMService
 from ..core.config import ConfigurationManager
 from ..core.exceptions import LLMProviderError
+from ..llm.service import LLMService
+from ..models.llm_provider import Message
+from ..models.model_configuration import ModelConfiguration
 from ..services.chat_types import ChatContext
+from ..services.model_configuration_service import ModelConfigurationService
+from ..services.system_settings_service import SystemSettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,12 @@ class SideCallResult:
         self,
         content: str,
         success: bool = True,
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
         tokens_used: int = 0,
-        cost: Optional[Decimal] = None,
-        response_time_ms: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ):
+        cost: Decimal | None = None,
+        response_time_ms: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         self.content = content
         self.success = success
         self.error_message = error_message
@@ -54,7 +54,7 @@ class SideCallResult:
 class SideCallService:
     """Service for managing optimized LLM side-calls."""
 
-    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager):
+    def __init__(self, db: AsyncSession, config_manager: ConfigurationManager) -> None:
         self.db = db
         self.config_manager = config_manager
         self.llm_service = LLMService(db)
@@ -63,14 +63,13 @@ class SideCallService:
 
     async def call(
         self,
-        message_sequence: List[Dict[str, str]],
-        system_prompt: Optional[str] = None,
-        user_id: Optional[str] = None,
-        config_overrides: Optional[Dict] = None,
-        timeout_ms: Optional[int] = None,
+        message_sequence: list[dict[str, str]],
+        system_prompt: str | None = None,
+        user_id: str | None = None,
+        config_overrides: dict | None = None,
+        timeout_ms: int | None = None,
     ) -> SideCallResult:
-        """
-        Make an optimized side-call to the designated LLM.
+        """Make an optimized side-call to the designated LLM.
 
         Args:
             message_sequence: Chat-style sequence of messages ({"role", "content"})
@@ -81,6 +80,7 @@ class SideCallService:
 
         Returns:
             SideCallResult with the response or error
+
         """
         start_time = time.time()
 
@@ -109,7 +109,6 @@ class SideCallService:
 
             # Find the model
             model = await self._find_model_for_config(model_config)
-
 
             chat_ctx = ChatContext.from_dicts(messages, system_prompt)
 
@@ -201,12 +200,11 @@ class SideCallService:
     async def propose_rag_query(
         self,
         current_user_query: str,
-        prior_messages: Optional[List[Message]] = None,
-        user_id: Optional[str] = None,
+        prior_messages: list[Message] | None = None,
+        user_id: str | None = None,
         timeout_ms: int = 1200,
     ) -> SideCallResult:
-        """
-        Propose a retrieval-friendly RAG query using a minimal side-call.
+        """Propose a retrieval-friendly RAG query using a minimal side-call.
 
         Sends only the current user query plus a few short prior snippets to
         preserve topic continuity without leaking full conversation context.
@@ -214,7 +212,7 @@ class SideCallService:
         Returns SideCallResult where content is the rewritten query string.
         """
         try:
-            raw_sequence: List[Dict[str, str]] = []
+            raw_sequence: list[dict[str, str]] = []
             if prior_messages:
                 for msg in prior_messages[-7:-1]:
                     if not msg or not getattr(msg, "content", None):
@@ -243,19 +241,16 @@ class SideCallService:
                 {
                     "role": "user",
                     "content": [
+                        {"type": "input_text", "text": f"USER_MESSAGE:\n\n{current_user_query}"},
                         {
                             "type": "input_text",
-                            "text": f"USER_MESSAGE:\n\n{current_user_query}"
+                            "text": f"MESSAGE_HISTORY (JSON):\n\n{json.dumps(raw_sequence)}",
                         },
                         {
                             "type": "input_text",
-                            "text": f"MESSAGE_HISTORY (JSON):\n\n{json.dumps(raw_sequence)}"
+                            "text": "TASK: Produce the ENHANCED_SEARCH_QUERY as plain text only.",
                         },
-                        {
-                            "type": "input_text",
-                            "text": "TASK: Produce the ENHANCED_SEARCH_QUERY as plain text only."
-                        }
-                    ]
+                    ],
                 }
             ]
 
@@ -272,11 +267,10 @@ class SideCallService:
     async def distill_rag_query(
         self,
         current_user_query: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         timeout_ms: int = 1200,
     ) -> SideCallResult:
-        """
-        Distill a user's message down to retrieval-critical terms only.
+        """Distill a user's message down to retrieval-critical terms only.
 
         Removes instructions about output formatting and preserves just the entities,
         identifiers, and key subject phrases needed for document lookup.
@@ -323,18 +317,16 @@ class SideCallService:
             logger.error("distill_rag_query failed: %s", e)
             return SideCallResult(content=current_user_query, success=False, error_message=str(e))
 
-    async def get_side_call_model(self) -> Optional[ModelConfiguration]:
-        """
-        Get the currently designated side-call model configuration.
+    async def get_side_call_model(self) -> ModelConfiguration | None:
+        """Get the currently designated side-call model configuration.
 
         Returns:
             ModelConfiguration designated for side-calls, or None if not set
+
         """
         try:
             # Get the system setting for side-call model ID
-            setting = await self.system_settings_service.get_setting(
-                SIDE_CALL_MODEL_SETTING_KEY
-            )
+            setting = await self.system_settings_service.get_setting(SIDE_CALL_MODEL_SETTING_KEY)
             if not setting or not setting.value.get("model_config_id"):
                 logger.warning("No side-call model configured in system settings")
                 return None
@@ -347,9 +339,7 @@ class SideCallService:
             )
 
             if not model_config or not model_config.is_active:
-                logger.warning(
-                    f"Side-call model {model_config_id} not found or inactive"
-                )
+                logger.warning(f"Side-call model {model_config_id} not found or inactive")
                 return None
 
             return model_config
@@ -359,8 +349,7 @@ class SideCallService:
             return None
 
     async def set_side_call_model(self, model_config_id: str, user_id: str) -> bool:
-        """
-        Set the designated side-call model configuration.
+        """Set the designated side-call model configuration.
 
         Args:
             model_config_id: ID of the model configuration to designate
@@ -368,6 +357,7 @@ class SideCallService:
 
         Returns:
             True if successful, False otherwise
+
         """
         try:
             # Verify the model configuration exists and is suitable
@@ -376,9 +366,7 @@ class SideCallService:
             )
 
             if not model_config or not model_config.is_active:
-                logger.error(
-                    f"Model configuration {model_config_id} not found or inactive"
-                )
+                logger.error(f"Model configuration {model_config_id} not found or inactive")
                 return False
 
             # Update the system setting
@@ -387,7 +375,7 @@ class SideCallService:
                 {
                     "model_config_id": model_config_id,
                     "updated_by": user_id,
-                    "updated_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 },
             )
 
@@ -406,6 +394,7 @@ class SideCallService:
 
         Returns:
             True if successful, False otherwise
+
         """
         try:
             await self.system_settings_service.delete(SIDE_CALL_MODEL_SETTING_KEY)
@@ -416,16 +405,15 @@ class SideCallService:
             logger.error(f"Failed to clear side-call model by user {user_id}: {e}")
             return False
 
-
     async def redact_sensitive_content(self, content: str) -> str:
-        """
-        Redact sensitive content from prompts before sending to LLM.
+        """Redact sensitive content from prompts before sending to LLM.
 
         Args:
             content: Original content that may contain sensitive information
 
         Returns:
             Content with sensitive information redacted
+
         """
         try:
             # Define patterns for sensitive information
@@ -455,9 +443,7 @@ class SideCallService:
 
             redacted_content = content
             for pattern, replacement in patterns:
-                redacted_content = re.sub(
-                    pattern, replacement, redacted_content, flags=re.IGNORECASE
-                )
+                redacted_content = re.sub(pattern, replacement, redacted_content, flags=re.IGNORECASE)
 
             return redacted_content
 
@@ -467,8 +453,7 @@ class SideCallService:
             return content
 
     async def _find_model_for_config(self, model_config: ModelConfiguration):
-        """
-        Find the LLM model for a model configuration.
+        """Find the LLM model for a model configuration.
 
         Args:
             model_config: Model configuration
@@ -478,6 +463,7 @@ class SideCallService:
 
         Raises:
             LLMProviderError: If model not found
+
         """
         if not model_config.model_name:
             raise LLMProviderError("Model configuration does not specify a model name")
@@ -493,23 +479,21 @@ class SideCallService:
                 return model
 
         raise LLMProviderError(
-            f"Model '{model_config.model_name}' not found or inactive "
-            f"for provider '{provider.name}'"
+            f"Model '{model_config.model_name}' not found or inactive for provider '{provider.name}'"
         )
 
     async def _build_sequence_messages(
         self,
-        sequence: List[Dict[str, str]],
-        system_prompt: Optional[str] = None,
-        model_config: Optional[ModelConfiguration] = None,
-    ) -> Tuple[str, List[Dict[str, str]]]:
+        sequence: list[dict[str, str]],
+        system_prompt: str | None = None,
+        model_config: ModelConfiguration | None = None,
+    ) -> tuple[str, list[dict[str, str]]]:
         """Normalize and redact message sequences provided directly by callers.
 
         Includes a system prompt if provided; otherwise falls back to the
         model configuration's default prompt when available.
         """
-
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
 
         # Add system message: explicit prompt first, else model default prompt
         if system_prompt and system_prompt.strip():
@@ -531,14 +515,13 @@ class SideCallService:
         self,
         model_config: ModelConfiguration,
         model,
-        user_id: Optional[str],
+        user_id: str | None,
         tokens_used: int,
         response_time_ms: int,
         success: bool,
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> None:
-        """
-        Record usage metrics for the side-call.
+        """Record usage metrics for the side-call.
 
         Args:
             model_config: The model configuration used
@@ -548,6 +531,7 @@ class SideCallService:
             response_time_ms: Response time in milliseconds
             success: Whether the call was successful
             error_message: Error message if the call failed
+
         """
         try:
             # Calculate cost (simplified - in production this would use actual pricing)

@@ -4,12 +4,13 @@ OCR Quality Integration Tests
 Tests OCR extraction quality by comparing our OCR output against Adobe's OCR output.
 """
 
-import os
-import sys
-import shutil
 import logging
+import os
+import shutil
+import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, Any, List, Callable
+from typing import Any
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from shu.processors.text_extractor import TextExtractor
@@ -26,6 +27,7 @@ def _dependency_available() -> bool:
     """Check whether we have at least one OCR engine available."""
     try:
         import easyocr  # noqa: F401
+
         return True
     except Exception:
         return shutil.which("tesseract") is not None
@@ -38,7 +40,7 @@ def _clean_text(text: str) -> str:
     return cleaned
 
 
-def _analyze_similarity(text_a: str, text_b: str) -> Dict[str, Any]:
+def _analyze_similarity(text_a: str, text_b: str) -> dict[str, Any]:
     """Analyze similarity between two text strings."""
     import difflib
 
@@ -54,7 +56,7 @@ def _analyze_similarity(text_a: str, text_b: str) -> Dict[str, Any]:
     }
 
 
-async def _extract_text_with_ocr(path: Path) -> Dict[str, Any]:
+async def _extract_text_with_ocr(path: Path) -> dict[str, Any]:
     """Extract text from a PDF file using OCR."""
     extractor = TextExtractor()
     with open(path, "rb") as f:
@@ -126,7 +128,7 @@ async def test_ocr_similarity_against_reference(client, db, auth_headers):
     # Analyze similarity
     analysis = _analyze_similarity(text_ours, text_adobe)
 
-    logger.info(f"OCR Quality Analysis:")
+    logger.info("OCR Quality Analysis:")
     logger.info(f"  Similarity: {analysis['similarity_pct']:.2f}%")
     logger.info(f"  Coverage: {analysis['coverage_pct']:.2f}%")
     logger.info(f"  Our text length: {analysis['len_a']} chars")
@@ -141,7 +143,7 @@ async def test_ocr_similarity_against_reference(client, db, auth_headers):
 class OCRQualityTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for OCR quality validation."""
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         """Return all OCR quality test functions."""
         return [
             test_ocr_similarity_against_reference,

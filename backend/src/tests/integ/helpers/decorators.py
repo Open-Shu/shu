@@ -2,8 +2,8 @@ import functools
 
 from sqlalchemy import text
 
-from shu.auth.models import User
 from shu.auth.jwt_manager import JWTManager
+from shu.auth.models import User
 
 
 def replace_auth_headers_for_user(user_data):
@@ -28,11 +28,7 @@ def replace_auth_headers_for_user(user_data):
             await db.refresh(user)
 
             jwt_manager = JWTManager()
-            token_data = {
-                "user_id": user.id,
-                "email": user.email,
-                "role": user.role
-            }
+            token_data = {"user_id": user.id, "email": user.email, "role": user.role}
             admin_token = jwt_manager.create_access_token(token_data)
 
             # we are replacing the auth_headers parameter with the new access token
@@ -40,9 +36,11 @@ def replace_auth_headers_for_user(user_data):
                 *(
                     args[0],
                     args[1],
-                    {"Authorization": f"Bearer {admin_token}", "_user_id": user.id}
+                    {"Authorization": f"Bearer {admin_token}", "_user_id": user.id},
                 ),
-                **kwargs
+                **kwargs,
             )
+
         return wrapper
+
     return decorator

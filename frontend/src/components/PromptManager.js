@@ -28,7 +28,7 @@ import {
   Switch,
   FormControlLabel,
   Tooltip,
-  Alert
+  Alert,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -40,7 +40,7 @@ import {
   Search as SearchIcon,
   Refresh as RefreshIcon,
   Preview as PreviewIcon,
-  ContentCopy as CopyIcon
+  ContentCopy as CopyIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 
@@ -53,18 +53,18 @@ const ENTITY_TYPE_LABELS = {
   [ENTITY_TYPES.LLM_MODEL]: 'LLM Model',
   [ENTITY_TYPES.AGENT]: 'Agent',
   [ENTITY_TYPES.WORKFLOW]: 'Workflow',
-  [ENTITY_TYPES.TOOL]: 'Tool'
+  [ENTITY_TYPES.TOOL]: 'Tool',
 };
 
 function PromptManager({
   knowledgeBaseId = null, // Legacy prop for backward compatibility
   entityType = null,
   entityId = null,
-  title = "Prompt Management",
+  title = 'Prompt Management',
   showEntityFilter = true,
   onPromptSelect = null,
   open = true,
-  onClose = null
+  onClose: _onClose = null,
 }) {
   // Handle legacy knowledgeBaseId prop
   const actualEntityType = entityType || (knowledgeBaseId ? ENTITY_TYPES.KNOWLEDGE_BASE : null);
@@ -90,19 +90,32 @@ function PromptManager({
   const queryClient = useQueryClient();
 
   // Fetch prompts with filtering
-  const { data: promptsResponse, isLoading: promptsLoading, error: promptsError } = useQuery(
-    ['prompts', { entityType: filterEntityType, entityId: actualEntityId, search: searchTerm, is_active: filterActive }],
-    () => promptAPI.list({
-      entity_type: filterEntityType || undefined,
-      entity_id: actualEntityId || undefined,
-      search: searchTerm || undefined,
-      is_active: filterActive !== null ? filterActive : undefined,
-      limit: 100
-    }),
+  const {
+    data: promptsResponse,
+    isLoading: promptsLoading,
+    error: promptsError,
+  } = useQuery(
+    [
+      'prompts',
+      {
+        entityType: filterEntityType,
+        entityId: actualEntityId,
+        search: searchTerm,
+        is_active: filterActive,
+      },
+    ],
+    () =>
+      promptAPI.list({
+        entity_type: filterEntityType || undefined,
+        entity_id: actualEntityId || undefined,
+        search: searchTerm || undefined,
+        is_active: filterActive !== null ? filterActive : undefined,
+        limit: 100,
+      }),
     {
       refetchOnWindowFocus: false,
       staleTime: 5000, // 5 seconds - shorter for better UX
-      enabled: open
+      enabled: open,
     }
   );
 
@@ -114,50 +127,41 @@ function PromptManager({
   }
 
   // Create prompt mutation
-  const createMutation = useMutation(
-    (data) => promptAPI.create(data),
-    {
-      onSuccess: () => {
-        // Invalidate all prompt queries regardless of filters
-        queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        setIsCreateDialogOpen(false);
-        resetForm();
-      },
-      onError: (error) => {
-        log.error('Error creating prompt:', error);
-      }
-    }
-  );
+  const createMutation = useMutation((data) => promptAPI.create(data), {
+    onSuccess: () => {
+      // Invalidate all prompt queries regardless of filters
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      setIsCreateDialogOpen(false);
+      resetForm();
+    },
+    onError: (error) => {
+      log.error('Error creating prompt:', error);
+    },
+  });
 
   // Update prompt mutation
-  const updateMutation = useMutation(
-    ({ promptId, data }) => promptAPI.update(promptId, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        setIsEditDialogOpen(false);
-        setSelectedPrompt(null);
-        resetForm();
-      },
-      onError: (error) => {
-        log.error('Error updating prompt:', error);
-      }
-    }
-  );
+  const updateMutation = useMutation(({ promptId, data }) => promptAPI.update(promptId, data), {
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      setIsEditDialogOpen(false);
+      setSelectedPrompt(null);
+      resetForm();
+    },
+    onError: (error) => {
+      log.error('Error updating prompt:', error);
+    },
+  });
 
   // Delete prompt mutation
-  const deleteMutation = useMutation(
-    (promptId) => promptAPI.delete(promptId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        setSelectedPrompt(null);
-      },
-      onError: (error) => {
-        log.error('Error deleting prompt:', error);
-      }
-    }
-  );
+  const deleteMutation = useMutation((promptId) => promptAPI.delete(promptId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      setSelectedPrompt(null);
+    },
+    onError: (error) => {
+      log.error('Error deleting prompt:', error);
+    },
+  });
 
   const resetForm = () => {
     setFormData({
@@ -177,7 +181,7 @@ function PromptManager({
     if (selectedPrompt) {
       updateMutation.mutate({
         promptId: selectedPrompt.id,
-        data: formData
+        data: formData,
       });
     }
   };
@@ -227,11 +231,7 @@ function PromptManager({
   }
 
   if (promptsError) {
-    return (
-      <Alert severity="error">
-        Error loading prompts: {promptsError.message}
-      </Alert>
-    );
+    return <Alert severity="error">Error loading prompts: {promptsError.message}</Alert>;
   }
 
   return (
@@ -247,11 +247,7 @@ function PromptManager({
           >
             Refresh
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setIsCreateDialogOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setIsCreateDialogOpen(true)}>
             Create Prompt
           </Button>
         </Box>
@@ -267,7 +263,7 @@ function PromptManager({
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               InputProps={{
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
               }}
             />
           </Grid>
@@ -282,7 +278,9 @@ function PromptManager({
                 >
                   <MenuItem value="">All Types</MenuItem>
                   {Object.entries(ENTITY_TYPE_LABELS || {}).map(([value, label]) => (
-                    <MenuItem key={value} value={value}>{label}</MenuItem>
+                    <MenuItem key={value} value={value}>
+                      {label}
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -316,167 +314,152 @@ function PromptManager({
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {searchTerm || filterEntityType || filterActive !== null
               ? 'Try adjusting your filters or search terms'
-              : 'Create your first prompt to get started'
-            }
+              : 'Create your first prompt to get started'}
           </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setIsCreateDialogOpen(true)}
-          >
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setIsCreateDialogOpen(true)}>
             Create Prompt
           </Button>
         </Paper>
       ) : (
         <Grid container spacing={2}>
-          {prompts && prompts.filter(prompt => prompt && prompt.id).map((prompt) => (
-            <Grid item xs={12} md={6} lg={4} key={prompt.id}>
-              <Card
-                sx={{
-                  cursor: onPromptSelect ? 'pointer' : 'default',
-                  '&:hover': onPromptSelect ? { boxShadow: 3 } : {}
-                }}
-                onClick={() => handlePromptClick(prompt)}
-              >
-                <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
-                    <Box flex={1}>
-                      <Typography variant="h6" gutterBottom>
-                        {prompt.name || 'Untitled Prompt'}
-                      </Typography>
-                      <Box display="flex" gap={1} mb={1}>
-                        <Chip
-                          label={ENTITY_TYPE_LABELS[prompt.entity_type] || prompt.entity_type || 'Unknown'}
-                          size="small"
-                          variant="outlined"
-                        />
-                        {prompt.is_active ? (
-                          <Chip
-                            label="Active"
-                            size="small"
-                            color="success"
-                            icon={<ActiveIcon />}
-                          />
-                        ) : (
-                          <Chip
-                            label="Inactive"
-                            size="small"
-                            color="default"
-                            icon={<InactiveIcon />}
-                          />
-                        )}
-                        {prompt.is_system_default && (
-                          <Tooltip title="System Default (Protected - Cannot be edited or deleted)">
+          {prompts &&
+            prompts
+              .filter((prompt) => prompt && prompt.id)
+              .map((prompt) => (
+                <Grid item xs={12} md={6} lg={4} key={prompt.id}>
+                  <Card
+                    sx={{
+                      cursor: onPromptSelect ? 'pointer' : 'default',
+                      '&:hover': onPromptSelect ? { boxShadow: 3 } : {},
+                    }}
+                    onClick={() => handlePromptClick(prompt)}
+                  >
+                    <CardContent>
+                      <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
+                        <Box flex={1}>
+                          <Typography variant="h6" gutterBottom>
+                            {prompt.name || 'Untitled Prompt'}
+                          </Typography>
+                          <Box display="flex" gap={1} mb={1}>
                             <Chip
-                              label="🔒 System"
+                              label={ENTITY_TYPE_LABELS[prompt.entity_type] || prompt.entity_type || 'Unknown'}
                               size="small"
-                              color="warning"
-                              variant="filled"
-                              sx={{
-                                backgroundColor: '#ff9800',
-                                color: 'white',
-                                fontWeight: 'bold'
-                              }}
+                              variant="outlined"
                             />
-                          </Tooltip>
+                            {prompt.is_active ? (
+                              <Chip label="Active" size="small" color="success" icon={<ActiveIcon />} />
+                            ) : (
+                              <Chip label="Inactive" size="small" color="default" icon={<InactiveIcon />} />
+                            )}
+                            {prompt.is_system_default && (
+                              <Tooltip title="System Default (Protected - Cannot be edited or deleted)">
+                                <Chip
+                                  label="🔒 System"
+                                  size="small"
+                                  color="warning"
+                                  variant="filled"
+                                  sx={{
+                                    backgroundColor: '#ff9800',
+                                    color: 'white',
+                                    fontWeight: 'bold',
+                                  }}
+                                />
+                              </Tooltip>
+                            )}
+                          </Box>
+                        </Box>
+                        {!onPromptSelect && (
+                          <Box>
+                            {!prompt.is_system_default && (
+                              <>
+                                <Tooltip title="Edit">
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEditPrompt(prompt);
+                                    }}
+                                  >
+                                    <EditIcon />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Delete">
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeletePrompt(prompt.id);
+                                    }}
+                                  >
+                                    <DeleteIcon />
+                                  </IconButton>
+                                </Tooltip>
+                              </>
+                            )}
+                          </Box>
                         )}
                       </Box>
-                    </Box>
-                    {!onPromptSelect && (
-                      <Box>
-                        {!prompt.is_system_default && (
-                          <>
-                            <Tooltip title="Edit">
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEditPrompt(prompt);
-                                }}
-                              >
-                                <EditIcon />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Delete">
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeletePrompt(prompt.id);
-                                }}
-                              >
-                                <DeleteIcon />
-                              </IconButton>
-                            </Tooltip>
-                          </>
-                        )}
-                      </Box>
-                    )}
-                  </Box>
 
-                  {prompt.description && (
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                      {prompt.description}
-                    </Typography>
-                  )}
-
-                  <Typography variant="body2" sx={{
-                    mt: 1,
-                    fontFamily: 'monospace',
-                    backgroundColor: 'grey.100',
-                    p: 1,
-                    borderRadius: 1,
-                    maxHeight: 100,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}>
-                    {prompt.content && prompt.content.length > 150
-                      ? `${prompt.content.substring(0, 150)}...`
-                      : (prompt.content || 'No content')
-                    }
-                  </Typography>
-
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
-                    <Typography variant="caption" color="text.secondary">
-                      Version {prompt.version || 1}
-                    </Typography>
-                    <Box display="flex" alignItems="center" gap={1}>
-                      {prompt.assigned_entity_ids && prompt.assigned_entity_ids.length > 0 && (
-                        <Chip
-                          label={`${prompt.assigned_entity_ids.length} assignments`}
-                          size="small"
-                          icon={<AssignmentIcon />}
-                          variant="outlined"
-                        />
+                      {prompt.description && (
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                          {prompt.description}
+                        </Typography>
                       )}
-                      <Tooltip title="Preview Full Content">
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handlePreviewPrompt(prompt);
-                          }}
-                        >
-                          <PreviewIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
+
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          mt: 1,
+                          fontFamily: 'monospace',
+                          backgroundColor: 'grey.100',
+                          p: 1,
+                          borderRadius: 1,
+                          maxHeight: 100,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {prompt.content && prompt.content.length > 150
+                          ? `${prompt.content.substring(0, 150)}...`
+                          : prompt.content || 'No content'}
+                      </Typography>
+
+                      <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
+                        <Typography variant="caption" color="text.secondary">
+                          Version {prompt.version || 1}
+                        </Typography>
+                        <Box display="flex" alignItems="center" gap={1}>
+                          {prompt.assigned_entity_ids && prompt.assigned_entity_ids.length > 0 && (
+                            <Chip
+                              label={`${prompt.assigned_entity_ids.length} assignments`}
+                              size="small"
+                              icon={<AssignmentIcon />}
+                              variant="outlined"
+                            />
+                          )}
+                          <Tooltip title="Preview Full Content">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePreviewPrompt(prompt);
+                              }}
+                            >
+                              <PreviewIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
         </Grid>
       )}
 
       {/* Create Dialog */}
-      <Dialog
-        open={isCreateDialogOpen}
-        onClose={() => setIsCreateDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
+      <Dialog open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Create New Prompt</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -499,7 +482,9 @@ function PromptManager({
                   disabled={!!actualEntityType} // Disable if entityType is fixed
                 >
                   {Object.entries(ENTITY_TYPE_LABELS || {}).map(([value, label]) => (
-                    <MenuItem key={value} value={value}>{label}</MenuItem>
+                    <MenuItem key={value} value={value}>
+                      {label}
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -552,12 +537,7 @@ function PromptManager({
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog
-        open={isEditDialogOpen}
-        onClose={() => setIsEditDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
+      <Dialog open={isEditDialogOpen} onClose={() => setIsEditDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Edit Prompt</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -580,7 +560,9 @@ function PromptManager({
                   disabled // Entity type cannot be changed after creation
                 >
                   {Object.entries(ENTITY_TYPE_LABELS || {}).map(([value, label]) => (
-                    <MenuItem key={value} value={value}>{label}</MenuItem>
+                    <MenuItem key={value} value={value}>
+                      {label}
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -633,17 +615,10 @@ function PromptManager({
       </Dialog>
 
       {/* Preview Dialog */}
-      <Dialog
-        open={isPreviewDialogOpen}
-        onClose={() => setIsPreviewDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
+      <Dialog open={isPreviewDialogOpen} onClose={() => setIsPreviewDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
           <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="h6">
-              {previewPrompt?.name || 'Prompt Preview'}
-            </Typography>
+            <Typography variant="h6">{previewPrompt?.name || 'Prompt Preview'}</Typography>
             <Box display="flex" gap={1}>
               <Chip
                 label={ENTITY_TYPE_LABELS[previewPrompt?.entity_type] || previewPrompt?.entity_type || 'Unknown'}
@@ -651,27 +626,12 @@ function PromptManager({
                 variant="outlined"
               />
               {previewPrompt?.is_active ? (
-                <Chip
-                  label="Active"
-                  size="small"
-                  color="success"
-                  icon={<ActiveIcon />}
-                />
+                <Chip label="Active" size="small" color="success" icon={<ActiveIcon />} />
               ) : (
-                <Chip
-                  label="Inactive"
-                  size="small"
-                  color="default"
-                  icon={<InactiveIcon />}
-                />
+                <Chip label="Inactive" size="small" color="default" icon={<InactiveIcon />} />
               )}
               {previewPrompt?.is_system_default && (
-                <Chip
-                  label="🔒 System"
-                  size="small"
-                  color="warning"
-                  variant="filled"
-                />
+                <Chip label="🔒 System" size="small" color="warning" variant="filled" />
               )}
             </Box>
           </Box>
@@ -687,18 +647,18 @@ function PromptManager({
 
           {/* Citation Handling Notice */}
           {previewPrompt?.entity_type === 'knowledge_base' &&
-           previewPrompt?.content &&
-           (previewPrompt.content.toLowerCase().includes('citation') ||
-            previewPrompt.content.toLowerCase().includes('reference') ||
-            previewPrompt.content.toLowerCase().includes('source')) && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                <strong>Citation Handling:</strong> This prompt includes citation instructions.
-                When used, system-level references will be automatically disabled to prevent
-                duplication. The prompt will handle citations directly in the response.
-              </Typography>
-            </Alert>
-          )}
+            previewPrompt?.content &&
+            (previewPrompt.content.toLowerCase().includes('citation') ||
+              previewPrompt.content.toLowerCase().includes('reference') ||
+              previewPrompt.content.toLowerCase().includes('source')) && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="body2">
+                  <strong>Citation Handling:</strong> This prompt includes citation instructions. When used,
+                  system-level references will be automatically disabled to prevent duplication. The prompt will handle
+                  citations directly in the response.
+                </Typography>
+              </Alert>
+            )}
 
           <Typography variant="subtitle2" gutterBottom>
             Prompt Content:
@@ -711,7 +671,7 @@ function PromptManager({
               borderColor: 'grey.200',
               borderRadius: 1,
               maxHeight: 400,
-              overflow: 'auto'
+              overflow: 'auto',
             }}
           >
             <Typography
@@ -721,7 +681,7 @@ function PromptManager({
                 fontFamily: 'monospace',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
-                margin: 0
+                margin: 0,
               }}
             >
               {previewPrompt?.content || 'No content available'}
@@ -729,15 +689,10 @@ function PromptManager({
           </Paper>
         </DialogContent>
         <DialogActions>
-          <Button
-            startIcon={<CopyIcon />}
-            onClick={() => handleCopyPrompt(previewPrompt?.content || '')}
-          >
+          <Button startIcon={<CopyIcon />} onClick={() => handleCopyPrompt(previewPrompt?.content || '')}>
             Copy Content
           </Button>
-          <Button onClick={() => setIsPreviewDialogOpen(false)}>
-            Close
-          </Button>
+          <Button onClick={() => setIsPreviewDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>

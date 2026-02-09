@@ -29,13 +29,11 @@ const TestWrapper = ({ children }) => {
     },
   });
   const theme = createTheme();
-  
+
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider theme={theme}>
-          {children}
-        </ThemeProvider>
+        <ThemeProvider theme={theme}>{children}</ThemeProvider>
       </QueryClientProvider>
     </BrowserRouter>
   );
@@ -43,10 +41,10 @@ const TestWrapper = ({ children }) => {
 
 /**
  * Unit Tests for Property 5: LLM Tester Pre-population
- * 
+ *
  * Feature: open-source-fixes, Property 5: LLM Tester Pre-population
  * Validates: Requirements 3.1, 3.2
- * 
+ *
  * Property: For any model configuration passed to the LLM Tester,
  * all configuration fields (provider, model, prompts, knowledge bases)
  * should be pre-populated in the tester.
@@ -54,11 +52,11 @@ const TestWrapper = ({ children }) => {
 describe('LLMTester - Property 5: Pre-population', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     // Mock extractDataFromResponse and extractItemsFromResponse
     api.extractDataFromResponse = jest.fn().mockImplementation((response) => response?.data);
     api.extractItemsFromResponse = jest.fn().mockImplementation((response) => response?.data || []);
-    
+
     // Mock getRAGConfig to prevent errors in QueryConfiguration component
     api.knowledgeBaseAPI = {
       list: jest.fn().mockResolvedValue({ data: [] }),
@@ -86,11 +84,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
@@ -153,11 +151,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
@@ -219,11 +217,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB1, testKB2] });
 
     // Render component with pre-populated config
@@ -248,7 +246,7 @@ describe('LLMTester - Property 5: Pre-population', () => {
     await waitFor(() => {
       const kb1Chip = screen.getByText(testKB1.name);
       expect(kb1Chip).toBeInTheDocument();
-      
+
       const kb2Chip = screen.getByText(testKB2.name);
       expect(kb2Chip).toBeInTheDocument();
     });
@@ -298,11 +296,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB] });
 
     // Render component with pre-populated config
@@ -350,11 +348,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
@@ -432,11 +430,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB] });
 
     // Render component with pre-populated config
@@ -509,11 +507,11 @@ describe('LLMTester - Property 5: Pre-population', () => {
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component WITHOUT pre-populated config
@@ -539,13 +537,13 @@ describe('LLMTester - Property 5: Pre-population', () => {
 
 /**
  * Unit Tests for Property 14: LLM Tester Resource Cleanup
- * 
+ *
  * Feature: open-source-fixes, Property 14: LLM Tester Resource Cleanup
  * Validates: Requirements 8.1, 8.2
- * 
+ *
  * Property: For any LLM Tester test execution, the test endpoint is called
  * and resources are managed by the backend (no client-side cleanup needed).
- * 
+ *
  * Note: The LLM Tester now uses the dedicated test endpoint (modelConfigAPI.test)
  * which handles resource management server-side. These tests verify the test
  * endpoint is called correctly and results are displayed properly.
@@ -556,16 +554,16 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     // Mock extractDataFromResponse and extractItemsFromResponse
     api.extractDataFromResponse = jest.fn().mockImplementation((response) => response?.data);
     api.extractItemsFromResponse = jest.fn().mockImplementation((response) => response?.data || []);
-    
+
     // Mock formatError
     api.formatError = jest.fn().mockImplementation((error) => error?.message || 'Unknown error');
   });
 
-  test('test endpoint is called with correct parameters on successful test', async () => {
+  test('endpoint is called with correct parameters on successful test', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-cleanup-1',
@@ -595,11 +593,11 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -629,15 +627,15 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     await userEvent.click(testButton);
 
     // Wait for test to complete
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Test endpoint was called with correct parameters (FormData)
-    expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledWith(
-      testConfig.id,
-      expect.any(FormData)
-    );
+    expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledWith(testConfig.id, expect.any(FormData));
 
     // Verify: Results are displayed
     await waitFor(() => {
@@ -645,7 +643,7 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     });
   });
 
-  test('test endpoint handles failure gracefully', async () => {
+  test('endpoint handles failure gracefully', async () => {
     // Setup: Create test data
     const testProvider = {
       id: 'provider-cleanup-2',
@@ -671,11 +669,11 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -705,9 +703,12 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     await userEvent.click(testButton);
 
     // Wait for test to complete
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Error is displayed
     await waitFor(() => {
@@ -739,11 +740,11 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockRejectedValue(new Error('Network error')),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -773,9 +774,12 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     await userEvent.click(testButton);
 
     // Wait for test to complete
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Error is displayed
     await waitFor(() => {
@@ -789,23 +793,23 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
 
 /**
  * Unit Tests for Property 15: LLM Tester Error Resilience
- * 
+ *
  * Feature: open-source-fixes, Property 15: LLM Tester Error Resilience
  * Validates: Requirements 8.3
- * 
+ *
  * Property: For any error that occurs during LLM Tester execution,
  * the component should display the error without crashing.
  */
 
 /**
  * Unit Tests for Property 15: LLM Tester Error Resilience
- * 
+ *
  * Feature: open-source-fixes, Property 15: LLM Tester Error Resilience
  * Validates: Requirements 8.3
- * 
+ *
  * Property: For any error that occurs during LLM Tester execution,
  * the component should display the error without crashing.
- * 
+ *
  * Note: The LLM Tester now uses the dedicated test endpoint (modelConfigAPI.test)
  * which returns structured error responses. These tests verify error handling.
  */
@@ -815,11 +819,11 @@ describe('LLMTester - Property 15: Error Resilience', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     // Mock extractDataFromResponse and extractItemsFromResponse
     api.extractDataFromResponse = jest.fn().mockImplementation((response) => response?.data);
     api.extractItemsFromResponse = jest.fn().mockImplementation((response) => response?.data || []);
-    
+
     // Mock formatError
     api.formatError = jest.fn().mockImplementation((error) => error?.message || 'Unknown error');
   });
@@ -850,11 +854,11 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -884,9 +888,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     await userEvent.click(testButton);
 
     // Wait for error to be displayed
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Error message is displayed
     await waitFor(() => {
@@ -920,11 +927,11 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockRejectedValue(new Error('Server error: 500')),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -954,9 +961,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     await userEvent.click(testButton);
 
     // Wait for error to be displayed
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Error message is displayed
     await waitFor(() => {
@@ -995,11 +1005,11 @@ describe('LLMTester - Property 15: Error Resilience', () => {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -1029,9 +1039,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     await userEvent.click(testButton);
 
     // Wait for error to be displayed
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Timeout error is displayed with special formatting
     await waitFor(() => {
@@ -1064,16 +1077,16 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Mock API responses - test endpoint throws timeout error
     const timeoutError = new Error('timeout of 30000ms exceeded');
     timeoutError.code = 'ECONNABORTED';
-    
+
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
       testWithFile: jest.fn().mockRejectedValue(timeoutError),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -1103,9 +1116,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     await userEvent.click(testButton);
 
     // Wait for error to be displayed
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Timeout error is displayed
     await waitFor(() => {
@@ -1152,15 +1168,16 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     // Mock API responses - first call fails, second succeeds
     api.modelConfigAPI = {
       list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn()
+      testWithFile: jest
+        .fn()
         .mockResolvedValueOnce({ data: failResult })
         .mockResolvedValueOnce({ data: successResult }),
     };
-    
+
     api.llmAPI = {
       getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
     };
-    
+
     api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
 
     // Render component
@@ -1190,9 +1207,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     await userEvent.click(testButton);
 
     // Wait for error to be displayed
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledTimes(1);
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: First call failed
     await waitFor(() => {
@@ -1207,14 +1227,20 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     await userEvent.click(testButton);
 
     // Wait for success
-    await waitFor(() => {
-      expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledTimes(2);
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(api.modelConfigAPI.testWithFile).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 3000 }
+    );
 
     // Verify: Component recovered - check that success response is displayed
-    await waitFor(() => {
-      expect(screen.getByText('Test response after recovery')).toBeInTheDocument();
-    }, { timeout: 2000 });
+    await waitFor(
+      () => {
+        expect(screen.getByText('Test response after recovery')).toBeInTheDocument();
+      },
+      { timeout: 2000 }
+    );
 
     // Verify: Component is still functional
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();

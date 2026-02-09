@@ -25,7 +25,7 @@ function QueryConfiguration({
   onKBChange,
   queryText,
   onQueryTextChange,
-  
+
   // Optional props with defaults
   searchType = 'hybrid',
   onSearchTypeChange,
@@ -37,7 +37,7 @@ function QueryConfiguration({
   onTitleWeightingEnabledChange,
   titleWeightMultiplier = 3.0,
   onTitleWeightMultiplierChange,
-  
+
   // UI customization
   showKBSelector = true,
   showSearchType = true,
@@ -45,57 +45,51 @@ function QueryConfiguration({
   showLimit = true,
   showThreshold = true,
   showTitleWeighting = true,
-  queryTextLabel = "Query Text",
-  queryTextPlaceholder = "Enter your search query...",
+  queryTextLabel = 'Query Text',
+  queryTextPlaceholder = 'Enter your search query...',
   queryTextRows = 4,
-  
+
   // Loading states
   kbLoading = false,
   knowledgeBases = [],
 }) {
   // Fetch KB config when selectedKB changes to get default threshold and title weighting
-  useQuery(
-    ['kb-config', selectedKB],
-    () => selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null,
-    {
-      enabled: !!selectedKB,
-      onSuccess: (data) => {
-        if (data && threshold === null) {
-          const config = extractDataFromResponse(data);
-          if (onThresholdChange) {
-            onThresholdChange(config.search_threshold || 0.7);
-          }
-          if (onTitleWeightingEnabledChange) {
-            onTitleWeightingEnabledChange(config.title_weighting_enabled ?? true);
-          }
-          if (onTitleWeightMultiplierChange) {
-            onTitleWeightMultiplierChange(config.title_weight_multiplier || 3.0);
-          }
+  useQuery(['kb-config', selectedKB], () => (selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null), {
+    enabled: !!selectedKB,
+    onSuccess: (data) => {
+      if (data) {
+        const config = extractDataFromResponse(data);
+        // Only set threshold if not yet initialized
+        if (onThresholdChange && threshold === null) {
+          onThresholdChange(config.search_threshold ?? 0.7);
+        }
+        // Always update title weighting settings from KB config
+        if (onTitleWeightingEnabledChange) {
+          onTitleWeightingEnabledChange(config.title_weighting_enabled ?? true);
+        }
+        if (onTitleWeightMultiplierChange) {
+          onTitleWeightMultiplierChange(config.title_weight_multiplier ?? 3.0);
         }
       }
-    }
-  );
+    },
+  });
 
   return (
     <Box>
       {showKBSelector && (
         <FormControl fullWidth sx={{ mb: 2 }}>
-          <InputLabel 
-            sx={{ 
+          <InputLabel
+            sx={{
               backgroundColor: 'background.paper',
               px: 0.5,
               '&.Mui-focused': {
                 backgroundColor: 'background.paper',
-              }
+              },
             }}
           >
             Knowledge Base
           </InputLabel>
-          <Select
-            value={selectedKB}
-            onChange={(e) => onKBChange && onKBChange(e.target.value)}
-            disabled={kbLoading}
-          >
+          <Select value={selectedKB} onChange={(e) => onKBChange && onKBChange(e.target.value)} disabled={kbLoading}>
             {knowledgeBases?.map((kb) => (
               <MenuItem key={kb.id} value={kb.id}>
                 {kb.name}
@@ -107,21 +101,18 @@ function QueryConfiguration({
 
       {showSearchType && (
         <FormControl fullWidth sx={{ mb: 2 }}>
-          <InputLabel 
-            sx={{ 
+          <InputLabel
+            sx={{
               backgroundColor: 'background.paper',
               px: 0.5,
               '&.Mui-focused': {
                 backgroundColor: 'background.paper',
-              }
+              },
             }}
           >
             Search Type
           </InputLabel>
-          <Select
-            value={searchType}
-            onChange={(e) => onSearchTypeChange && onSearchTypeChange(e.target.value)}
-          >
+          <Select value={searchType} onChange={(e) => onSearchTypeChange && onSearchTypeChange(e.target.value)}>
             <MenuItem value="similarity">Similarity Search</MenuItem>
             <MenuItem value="keyword">Keyword Search</MenuItem>
             <MenuItem value="hybrid">Hybrid Search</MenuItem>
@@ -143,8 +134,8 @@ function QueryConfiguration({
             '& .MuiInputBase-input::placeholder': {
               color: '#9ca3af',
               opacity: 0.7,
-              fontStyle: 'italic'
-            }
+              fontStyle: 'italic',
+            },
           }}
         />
       )}
@@ -168,15 +159,20 @@ function QueryConfiguration({
           fullWidth
           label="Threshold"
           type="number"
-          value={threshold || ''}
-          onChange={(e) => onThresholdChange && onThresholdChange(e.target.value)}
+          value={threshold ?? ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            onThresholdChange && onThresholdChange(v === '' ? null : parseFloat(v));
+          }}
           placeholder="Threshold (e.g., 0.7)"
           sx={{ mb: 2 }}
           inputProps={{ min: 0, max: 1, step: 0.1 }}
           helperText={
-            searchType === 'similarity' ? "Similarity threshold (0.0 - 1.0)" :
-            searchType === 'keyword' ? "Score threshold (0.0 - 1.0)" :
-            "Score threshold (0.0 - 1.0)"
+            searchType === 'similarity'
+              ? 'Similarity threshold (0.0 - 1.0)'
+              : searchType === 'keyword'
+                ? 'Score threshold (0.0 - 1.0)'
+                : 'Score threshold (0.0 - 1.0)'
           }
         />
       )}
@@ -217,7 +213,7 @@ function QueryConfiguration({
                   { value: 1.0, label: '1x' },
                   { value: 3.0, label: '3x' },
                   { value: 5.0, label: '5x' },
-                  { value: 10.0, label: '10x' }
+                  { value: 10.0, label: '10x' },
                 ]}
                 valueLabelDisplay="auto"
                 sx={{ mb: 1 }}

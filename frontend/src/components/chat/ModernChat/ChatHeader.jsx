@@ -1,14 +1,5 @@
 import React from 'react';
-import {
-  Box,
-  Chip,
-  CircularProgress,
-  IconButton,
-  Menu,
-  Paper,
-  Tooltip,
-  Typography,
-} from '@mui/material';
+import { Box, Chip, CircularProgress, IconButton, Menu, Paper, Tooltip, Typography } from '@mui/material';
 import ModelConfigSelector from './ModelConfigSelector';
 import {
   Description as DescriptionIcon,
@@ -39,15 +30,29 @@ const ChatHeader = React.memo(function ChatHeader({
 }) {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === 'dark';
-  
+
   if (!conversation) {
     return null;
   }
 
   return (
     <>
-      <Paper sx={{ p: { xs: 1, sm: 2 }, borderRadius: 0, borderBottom: 1, borderColor: 'divider' }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: { xs: 1, sm: 2 } }}>
+      <Paper
+        sx={{
+          p: { xs: 1, sm: 2 },
+          borderRadius: 0,
+          borderBottom: 1,
+          borderColor: 'divider',
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: { xs: 1, sm: 2 },
+          }}
+        >
           <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
             <Box sx={{ minWidth: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -61,9 +66,7 @@ const ChatHeader = React.memo(function ChatHeader({
                 >
                   {conversation.title}
                 </Typography>
-                {isAutoRenaming && (
-                  <CircularProgress size={14} sx={{ ml: 0.5 }} />
-                )}
+                {isAutoRenaming && <CircularProgress size={14} sx={{ ml: 0.5 }} />}
                 {!isMobile && (
                   <>
                     <Tooltip title="View summary" arrow>
@@ -79,22 +82,23 @@ const ChatHeader = React.memo(function ChatHeader({
                   </>
                 )}
                 {sideCallWarning && (
-                  <Tooltip
-                    title={sideCallWarning}
-                    arrow
-                  >
-                    <IconButton
-                      size="small"
-                      color="warning"
-                      aria-label="Side-caller configuration warning"
-                    >
+                  <Tooltip title={sideCallWarning} arrow>
+                    <IconButton size="small" color="warning" aria-label="Side-caller configuration warning">
                       <WarningIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
                 )}
               </Box>
               {!isMobile && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    flexWrap: 'wrap',
+                    mt: 0.5,
+                  }}
+                >
                   {conversation.model_configuration?.knowledge_bases?.length > 0 && (
                     <Chip
                       size="small"
@@ -105,13 +109,25 @@ const ChatHeader = React.memo(function ChatHeader({
                     />
                   )}
                   {Boolean(conversation?.meta?.title_locked) && (
-                    <Chip size="small" color="default" variant="outlined" icon={<LockIcon sx={{ fontSize: 14 }} />} label="Auto-rename locked" />
+                    <Chip
+                      size="small"
+                      color="default"
+                      variant="outlined"
+                      icon={<LockIcon sx={{ fontSize: 14 }} />}
+                      label="Auto-rename locked"
+                    />
                   )}
                 </Box>
               )}
             </Box>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: { xs: 0.5, sm: 1.5 },
+            }}
+          >
             {/* Mobile: show summary, settings, and menu buttons */}
             {isMobile ? (
               <>
@@ -140,12 +156,7 @@ const ChatHeader = React.memo(function ChatHeader({
                   disabled={disableModelSelect}
                 />
                 <Tooltip title="Chat settings" arrow>
-                  <IconButton
-                    onClick={onOpenSettings}
-                    color="default"
-                    size="small"
-                    aria-label="Chat settings"
-                  >
+                  <IconButton onClick={onOpenSettings} color="default" size="small" aria-label="Chat settings">
                     <SettingsIcon />
                   </IconButton>
                 </Tooltip>
@@ -165,12 +176,11 @@ const ChatHeader = React.memo(function ChatHeader({
       >
         <Box sx={{ maxWidth: 500, p: 1 }}>
           {conversation?.summary_text ? (
-            <MarkdownRenderer 
-              content={conversation.summary_text} 
-              isDarkMode={isDarkMode}
-            />
+            <MarkdownRenderer content={conversation.summary_text} isDarkMode={isDarkMode} />
           ) : (
-            <Typography variant="body2" color="text.secondary">No summary yet</Typography>
+            <Typography variant="body2" color="text.secondary">
+              No summary yet
+            </Typography>
           )}
         </Box>
       </Menu>

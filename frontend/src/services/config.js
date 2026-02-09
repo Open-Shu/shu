@@ -24,7 +24,7 @@ class ConfigService {
     if (this.loading) {
       // Wait for existing request to complete
       while (this.loading) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return this.config;
     }
@@ -43,7 +43,7 @@ class ConfigService {
       }
 
       const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/api/v1/config/public`, {
-        headers
+        headers,
       });
 
       if (!response.ok) {
@@ -103,10 +103,12 @@ class ConfigService {
    * @returns {{ allowed_types: string[], max_size_bytes: number }}
    */
   getUploadRestrictions() {
-    return this.config?.upload_restrictions || {
-      allowed_types: ['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
-      max_size_bytes: 20 * 1024 * 1024, // 20MB default
-    };
+    return (
+      this.config?.upload_restrictions || {
+        allowed_types: ['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
+        max_size_bytes: 20 * 1024 * 1024, // 20MB default
+      }
+    );
   }
 
   /**
@@ -114,10 +116,12 @@ class ConfigService {
    * @returns {{ allowed_types: string[], max_size_bytes: number }}
    */
   getKbUploadRestrictions() {
-    return this.config?.kb_upload_restrictions || {
-      allowed_types: ['pdf', 'docx', 'doc', 'txt', 'md', 'rtf', 'html', 'htm', 'csv', 'py', 'js', 'xlsx', 'pptx'],
-      max_size_bytes: 50 * 1024 * 1024, // 50MB default
-    };
+    return (
+      this.config?.kb_upload_restrictions || {
+        allowed_types: ['pdf', 'docx', 'doc', 'txt', 'md', 'rtf', 'html', 'htm', 'csv', 'py', 'js', 'xlsx', 'pptx'],
+        max_size_bytes: 50 * 1024 * 1024, // 50MB default
+      }
+    );
   }
 
   isLoaded() {

@@ -18,10 +18,7 @@ export default function useSummarySearch({
     [minTokenLength]
   );
 
-  const effectiveMaxTokens = useMemo(
-    () => Math.max(maxTokens ?? DEFAULT_MAX_TOKENS, 1),
-    [maxTokens]
-  );
+  const effectiveMaxTokens = useMemo(() => Math.max(maxTokens ?? DEFAULT_MAX_TOKENS, 1), [maxTokens]);
 
   const normalizeTokens = useCallback(
     (rawValue) => {
@@ -53,7 +50,9 @@ export default function useSummarySearch({
 
       const notices = [];
       if (ignoredShort > 0) {
-        notices.push(`${ignoredShort} short word${ignoredShort > 1 ? 's' : ''} ignored (minimum ${effectiveMinTokenLength} characters)`);
+        notices.push(
+          `${ignoredShort} short word${ignoredShort > 1 ? 's' : ''} ignored (minimum ${effectiveMinTokenLength} characters)`
+        );
       }
       if (ignoredOverflow > 0) {
         notices.push(`Only the first ${effectiveMaxTokens} keywords are applied`);
@@ -83,10 +82,7 @@ export default function useSummarySearch({
     return () => clearTimeout(handle);
   }, [searchInput, normalizeTokens, debounceMs]);
 
-  const summaryQuery = useMemo(
-    () => (tokens.length ? tokens.join(' ') : null),
-    [tokens]
-  );
+  const summaryQuery = useMemo(() => (tokens.length ? tokens.join(' ') : null), [tokens]);
 
   return {
     searchInput,

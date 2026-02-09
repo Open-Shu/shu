@@ -11,12 +11,17 @@ export default function NotImplemented({
   color = 'warning',
   variant = 'outlined',
   size = 'small',
-  sx = {}
+  sx = {},
 }) {
   return (
     <Tooltip title={tooltip} arrow>
-      <Chip label={label} color={color} variant={variant} size={size} sx={{ fontSize: '0.7rem', height: '20px', ...sx }} />
+      <Chip
+        label={label}
+        color={color}
+        variant={variant}
+        size={size}
+        sx={{ fontSize: '0.7rem', height: '20px', ...sx }}
+      />
     </Tooltip>
   );
 }
-

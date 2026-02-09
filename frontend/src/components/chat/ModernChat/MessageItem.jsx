@@ -1,14 +1,5 @@
 import React, { useMemo } from 'react';
-import {
-  Avatar,
-  Box,
-  IconButton,
-  Paper,
-  Typography,
-  Tooltip,
-  CircularProgress,
-  Button,
-} from '@mui/material';
+import { Avatar, Box, IconButton, Paper, Typography, Tooltip, CircularProgress, Button } from '@mui/material';
 import {
   Person as UserIcon,
   SmartToy as BotIcon,
@@ -47,7 +38,9 @@ const MessageItem = React.memo(function MessageItem({
   const parentId = message.parent_message_id || message.id;
   const group = useMemo(() => variantGroups[parentId] || [message], [parentId, message, variantGroups]);
   const currentIndex = useMemo(() => {
-    if (!group.length) return 0;
+    if (!group.length) {
+      return 0;
+    }
     const explicit = variantSelection[parentId];
     if (typeof explicit === 'number' && explicit >= 0 && explicit < group.length) {
       return explicit;
@@ -57,12 +50,16 @@ const MessageItem = React.memo(function MessageItem({
   }, [group, message.id, parentId, variantSelection]);
 
   const handlePrev = () => {
-    if (currentIndex <= 0) return;
+    if (currentIndex <= 0) {
+      return;
+    }
     onVariantChange(parentId, currentIndex - 1);
   };
 
   const handleNext = () => {
-    if (currentIndex >= group.length - 1) return;
+    if (currentIndex >= group.length - 1) {
+      return;
+    }
     onVariantChange(parentId, currentIndex + 1);
   };
 
@@ -79,8 +76,7 @@ const MessageItem = React.memo(function MessageItem({
     return pending;
   }, [regenerationRequests, parentId]);
 
-  const disableRegenerate =
-    message.isStreaming || isVariantGroupStreaming(parentId) || pendingRegenerationForGroup;
+  const disableRegenerate = message.isStreaming || isVariantGroupStreaming(parentId) || pendingRegenerationForGroup;
 
   const isUser = message.role === 'user';
 
@@ -115,8 +111,7 @@ const MessageItem = React.memo(function MessageItem({
 
   const extractModelInfo = (msg) => {
     const rawContent = typeof msg?.content === 'string' ? msg.content : '';
-    const hasRenderableContent =
-      rawContent.trim().length > 0 && rawContent.trim() !== PLACEHOLDER_THINKING.trim();
+    const hasRenderableContent = rawContent.trim().length > 0 && rawContent.trim() !== PLACEHOLDER_THINKING.trim();
     if (msg?.role === 'assistant' && !hasRenderableContent) {
       return { name: null, tooltip: '' };
     }
@@ -125,12 +120,7 @@ const MessageItem = React.memo(function MessageItem({
       (msg?.message_metadata && msg.message_metadata.model_configuration) ||
       (msg?.role === 'assistant' ? fallbackModelConfig : null);
 
-    const name =
-      snapshot?.name ||
-      snapshot?.display_name ||
-      snapshot?.model_name ||
-      snapshot?.id ||
-      null;
+    const name = snapshot?.name || snapshot?.display_name || snapshot?.model_name || snapshot?.id || null;
 
     let tooltip = '';
     if (snapshot) {
@@ -146,9 +136,7 @@ const MessageItem = React.memo(function MessageItem({
       }
       if (snapshot.provider?.name) {
         const providerType = snapshot.provider?.provider_type;
-        tooltipParts.push(
-          `Provider: ${snapshot.provider.name}${providerType ? ` (${providerType})` : ''}`
-        );
+        tooltipParts.push(`Provider: ${snapshot.provider.name}${providerType ? ` (${providerType})` : ''}`);
       }
       if (tooltipParts.length === 0) {
         tooltipParts.push('Unknown configuration');
@@ -345,20 +333,12 @@ const MessageItem = React.memo(function MessageItem({
                         <Typography variant="caption" sx={{ fontWeight: 600, opacity: 0.8 }}>
                           Reasoning
                         </Typography>
-                        <Button
-                          size="small"
-                          onClick={() =>
-                            onToggleReasoning?.(variant.id, !reasoningCollapsed)
-                          }
-                        >
+                        <Button size="small" onClick={() => onToggleReasoning?.(variant.id, !reasoningCollapsed)}>
                           {reasoningCollapsed ? 'Show' : 'Hide'}
                         </Button>
                       </Box>
                       {!reasoningCollapsed && (
-                        <Typography
-                          variant="body2"
-                          sx={{ whiteSpace: 'pre-wrap', opacity: 0.85 }}
-                        >
+                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', opacity: 0.85 }}>
                           {reasoningText}
                         </Typography>
                       )}
@@ -375,11 +355,14 @@ const MessageItem = React.memo(function MessageItem({
                     attachmentChipStyles={attachmentChipStyles}
                   />
                   {variant.isStreaming && (
-                    <Box sx={{ display: 'inline-flex', alignItems: 'center', ml: 1 }}>
-                      <CircularProgress
-                        size={12}
-                        sx={{ color: theme.palette.secondary.main }}
-                      />
+                    <Box
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        ml: 1,
+                      }}
+                    >
+                      <CircularProgress size={12} sx={{ color: theme.palette.secondary.main }} />
                     </Box>
                   )}
                   <Typography
@@ -485,11 +468,7 @@ const MessageItem = React.memo(function MessageItem({
             </span>
           </Tooltip>
           <Tooltip title="Copy">
-            <IconButton
-              size="small"
-              onClick={() => onCopy(message.content || '')}
-              aria-label="Copy"
-            >
+            <IconButton size="small" onClick={() => onCopy(message.content || '')} aria-label="Copy">
               <ContentCopyIcon fontSize="small" />
             </IconButton>
           </Tooltip>

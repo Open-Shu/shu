@@ -36,13 +36,10 @@ export default function usePreferredModelConfig(availableModelConfigs, selectedC
     [availableModelConfigs]
   );
 
-  const selectPreferredModelConfig = useCallback(
-    (nextId) => {
-      setPreferredModelConfig(nextId || '');
-      persistPreference(nextId || '');
-    },
-    []
-  );
+  const selectPreferredModelConfig = useCallback((nextId) => {
+    setPreferredModelConfig(nextId || '');
+    persistPreference(nextId || '');
+  }, []);
 
   const resolveInitialModelConfig = useCallback(() => {
     const selectedId = selectedConversation?.model_configuration_id || '';

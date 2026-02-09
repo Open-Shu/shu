@@ -4,7 +4,7 @@
 
 /**
  * Check if a secret scope allows user configuration.
- * 
+ *
  * @param {string|undefined} allowedScope - The allowed_scope from op_auth.secrets spec
  * @returns {boolean} True if users can configure this secret (user or system_or_user scope)
  */
@@ -15,7 +15,7 @@ export function isUserConfigurableScope(allowedScope) {
 
 /**
  * Extract user-configurable secret keys from a plugin's op_auth configuration.
- * 
+ *
  * @param {Object} opAuth - The plugin's op_auth object
  * @returns {Set<string>} Set of secret keys that users can configure
  */
@@ -24,7 +24,7 @@ export function extractUserConfigurableSecretKeys(opAuth) {
   if (!opAuth || typeof opAuth !== 'object') {
     return secretKeys;
   }
-  
+
   for (const op of Object.keys(opAuth)) {
     const spec = opAuth[op];
     const secrets = spec?.secrets;
@@ -32,12 +32,13 @@ export function extractUserConfigurableSecretKeys(opAuth) {
       for (const key of Object.keys(secrets)) {
         const secretSpec = secrets[key];
         if (isUserConfigurableScope(secretSpec?.allowed_scope)) {
-          if (key) secretKeys.add(key);
+          if (key) {
+            secretKeys.add(key);
+          }
         }
       }
     }
   }
-  
+
   return secretKeys;
 }
-

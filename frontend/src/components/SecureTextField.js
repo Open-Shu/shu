@@ -1,14 +1,6 @@
 import React, { useState } from 'react';
-import {
-  TextField,
-  InputAdornment,
-  IconButton,
-  Tooltip
-} from '@mui/material';
-import {
-  Visibility,
-  VisibilityOff
-} from '@mui/icons-material';
+import { TextField, InputAdornment, IconButton, Tooltip } from '@mui/material';
+import { Visibility, VisibilityOff } from '@mui/icons-material';
 
 /**
  * SecureTextField - A text field component for handling sensitive data like API keys
@@ -24,10 +16,10 @@ const SecureTextField = ({
   value,
   onChange,
   hasExistingValue = false,
-  placeholder = "Leave empty to keep existing value",
-  editPlaceholder = "Enter new value",
+  placeholder = 'Leave empty to keep existing value',
+  editPlaceholder = 'Enter new value',
   fullWidth = true,
-  margin = "normal",
+  margin = 'normal',
   disabled = false,
   ...textFieldProps
 }) => {
@@ -43,7 +35,7 @@ const SecureTextField = ({
 
   // Determine what value to show and field behavior
   const shouldShowMasked = hasExistingValue && !value && !showValue;
-  const fieldValue = shouldShowMasked ? "••••••••••••••••••••••••••••••••" : (value || '');
+  const fieldValue = shouldShowMasked ? '••••••••••••••••••••••••••••••••' : value || '';
 
   // Always show a single field with show/hide toggle
   return (
@@ -51,7 +43,7 @@ const SecureTextField = ({
       fullWidth={fullWidth}
       margin={margin}
       label={label}
-      type={showValue ? "text" : "password"}
+      type={showValue ? 'text' : 'password'}
       value={fieldValue}
       onChange={handleChange}
       disabled={disabled}
@@ -60,23 +52,15 @@ const SecureTextField = ({
         readOnly: shouldShowMasked,
         endAdornment: (
           <InputAdornment position="end">
-            <Tooltip title={showValue ? "Hide" : "Show"}>
-              <IconButton
-                onClick={handleToggleVisibility}
-                edge="end"
-                disabled={disabled}
-              >
+            <Tooltip title={showValue ? 'Hide' : 'Show'}>
+              <IconButton onClick={handleToggleVisibility} edge="end" disabled={disabled}>
                 {showValue ? <VisibilityOff /> : <Visibility />}
               </IconButton>
             </Tooltip>
           </InputAdornment>
         ),
       }}
-      helperText={
-        hasExistingValue && !value
-          ? "Leave empty to keep existing API key"
-          : "Enter your API key"
-      }
+      helperText={hasExistingValue && !value ? 'Leave empty to keep existing API key' : 'Enter your API key'}
       {...textFieldProps}
     />
   );

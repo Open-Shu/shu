@@ -1,6 +1,6 @@
 import copy
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jmespath
 
@@ -9,6 +9,8 @@ from shu.models.plugin_execution import CallableTool
 
 from ..adapter_base import (
     BaseProviderAdapter,
+    ChatContext,
+    ChatMessage,
     ProviderAdapterContext,
     ProviderCapabilities,
     ProviderContentDeltaEventResult,
@@ -17,8 +19,6 @@ from ..adapter_base import (
     ProviderInformation,
     ProviderToolCallEventResult,
     ToolCallInstructions,
-    ChatContext,
-    ChatMessage,
 )
 
 logger = get_logger(__name__)
@@ -27,11 +27,11 @@ logger = get_logger(__name__)
 class CompletionsAdapter(BaseProviderAdapter):
     """Base adapter for providers implementing OpenAI-style /v1/chat/completions."""
 
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         super().__init__(context)
         self.latest_usage_event = None
-        self._stream_content: List[str] = []
-        self._function_call_messages: Dict[int, Dict[str, Any]] = {}
+        self._stream_content: list[str] = []
+        self._function_call_messages: dict[int, dict[str, Any]] = {}
         self._stream_finished = None
 
     # General provider information
@@ -55,18 +55,13 @@ class CompletionsAdapter(BaseProviderAdapter):
     def get_models_endpoint(self) -> str:
         return "/models"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
-        return {
-            "scheme": "bearer",
-            "headers": {
-                "Authorization": f"Bearer {self.api_key}"
-            }
-        }
+    def get_authorization_header(self) -> dict[str, Any]:
+        return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
 
     def get_model_information_path(self) -> str:
         return "data[*].{id: id, name: id}"
 
-    def _tool_call_to_instructions(self, call: Dict[str, Any]) -> ToolCallInstructions:
+    def _tool_call_to_instructions(self, call: dict[str, Any]) -> ToolCallInstructions:
         fn = call.get("function") or {}
         name = fn.get("name") or call.get("name") or ""
         args_raw = fn.get("arguments") or call.get("arguments") or "{}"
@@ -83,8 +78,7 @@ class CompletionsAdapter(BaseProviderAdapter):
 
         return ToolCallInstructions(plugin_name=plugin_name, operation=op, args_dict=args_dict)
 
-    def _merge_tool_call_deltas(self, function_call: Dict[str, Any]):
-
+    def _merge_tool_call_deltas(self, function_call: dict[str, Any]) -> None:
         index = function_call.get("index")
         function = function_call.get("function", {})
 
@@ -101,7 +95,7 @@ class CompletionsAdapter(BaseProviderAdapter):
                     existing_function[key] = value
                 else:
                     existing_function[key] += value
-    
+
     def _transform_function_messages(self, messages) -> ChatMessage:
         return ChatMessage.build(
             role="assistant",
@@ -109,7 +103,7 @@ class CompletionsAdapter(BaseProviderAdapter):
             metadata={"tool_calls": messages},
         )
 
-    def _extract_usage(self, path: str, chunk):
+    def _extract_usage(self, path: str, chunk) -> None:
         usage = jmespath.search(path, chunk) or {}
         if not usage:
             return
@@ -121,33 +115,32 @@ class CompletionsAdapter(BaseProviderAdapter):
             usage.get("total_tokens", 0),
         )
 
-    def _format_completions_attachments(self, attachments: List[Any]) -> List[Dict[str, Any]]:
+    def _format_completions_attachments(self, attachments: list[Any]) -> list[dict[str, Any]]:
         """Format attachments for OpenAI Completions API.
-        
+
         Uses type: text, type: image_url, and type: file formats.
         """
-        parts: List[Dict[str, Any]] = []
-        
+        parts: list[dict[str, Any]] = []
+
         for att in attachments:
             if self._is_image_attachment(att):
                 data_uri = self._attachment_to_data_uri(att)
                 if data_uri:
                     # https://platform.openai.com/docs/guides/images-vision?api-mode=chat
-                    parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": data_uri}
-                    })
+                    parts.append({"type": "image_url", "image_url": {"url": data_uri}})
             elif self.supports_native_documents():
                 data_uri = self._attachment_to_data_uri(att)
                 if data_uri:
                     # https://platform.openai.com/docs/guides/pdf-files?api-mode=chat#uploading-files
-                    parts.append({
-                        "type": "file",
-                        "file": {
-                            "filename": att.original_filename,
-                            "file_data": data_uri,
+                    parts.append(
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": att.original_filename,
+                                "file_data": data_uri,
+                            },
                         }
-                    })
+                    )
                 else:
                     fallback = self._attachment_to_text_fallback(att)
                     if fallback:
@@ -159,12 +152,11 @@ class CompletionsAdapter(BaseProviderAdapter):
 
         return parts
 
-    def get_finish_reason_path(self):
+    def get_finish_reason_path(self) -> str:
         return "(object == 'chat.completion' || object == 'chat.completion.chunk') && choices[*].finish_reason | [0]"
 
-    async def handle_provider_event(self, chunk: Dict[str, Any]) -> Optional[ProviderEventResult]:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         """Handle streaming chat completion deltas."""
-
         content_delta = jmespath.search("object == 'chat.completion.chunk' && choices[*].delta.content | [0]", chunk)
         if content_delta:
             self._stream_content.append(content_delta)
@@ -173,18 +165,18 @@ class CompletionsAdapter(BaseProviderAdapter):
         # Some providers return incremental usage statistics, we only consider the last one.
         if "usage" in chunk:
             self.latest_usage_event = chunk
-        
+
         finish_reason = jmespath.search(self.get_finish_reason_path(), chunk)
-        if finish_reason in set(["stop", "length"]):
+        if finish_reason in {"stop", "length"}:
             self._stream_finished = finish_reason
-        
+
         function_calls = jmespath.search("object == 'chat.completion.chunk' && choices[*].delta.tool_calls | []", chunk)
         if function_calls:
             for function_call in function_calls:
                 self._merge_tool_call_deltas(function_call)
+        return None
 
-    async def finalize_provider_events(self) -> List[ProviderEventResult]:
-
+    async def finalize_provider_events(self) -> list[ProviderEventResult]:
         final_text = "".join(self._stream_content)
         self._stream_content = []
 
@@ -201,7 +193,7 @@ class CompletionsAdapter(BaseProviderAdapter):
 
         if not self._function_call_messages:
             return [final_event]
-        
+
         function_call_messages = list(self._function_call_messages.values())
 
         tool_calls = list(map(self._tool_call_to_instructions, self._function_call_messages.values()))
@@ -211,7 +203,7 @@ class CompletionsAdapter(BaseProviderAdapter):
                 metadata={"tool_call_id": call.get("id", "")},
                 content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
             )
-            for call, tool_call in zip(self._function_call_messages.values(), tool_calls)
+            for call, tool_call in zip(self._function_call_messages.values(), tool_calls, strict=False)
         ]
 
         self._function_call_messages = {}
@@ -219,14 +211,13 @@ class CompletionsAdapter(BaseProviderAdapter):
         return [
             ProviderToolCallEventResult(
                 tool_calls=tool_calls,
-                additional_messages=[self._transform_function_messages(function_call_messages)] + result_messages,
+                additional_messages=[self._transform_function_messages(function_call_messages), *result_messages],
                 content="",
             ),
-            final_event
+            final_event,
         ]
 
-    async def handle_provider_completion(self, data: Dict[str, Any]) -> List[ProviderEventResult]:
- 
+    async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
         finish_reason = jmespath.search(self.get_finish_reason_path(), data)
         final_message = jmespath.search("object == 'chat.completion' && choices[0].message.content", data)
 
@@ -237,14 +228,14 @@ class CompletionsAdapter(BaseProviderAdapter):
         # Extract usage for this cycle and add to previous cycles
         self._extract_usage("usage", data)
 
-        final_messages = [
-            ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})
-        ]
+        final_messages = [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})]
 
-        function_call_messages = jmespath.search("object == 'chat.completion' && choices[0].message.tool_calls", data) or []
+        function_call_messages = (
+            jmespath.search("object == 'chat.completion' && choices[0].message.tool_calls", data) or []
+        )
         if not function_call_messages:
             return final_messages
-        
+
         tool_calls = list(map(self._tool_call_to_instructions, function_call_messages))
         result_messages = [
             ChatMessage.build(
@@ -252,30 +243,31 @@ class CompletionsAdapter(BaseProviderAdapter):
                 metadata={"tool_call_id": call.get("id", "")},
                 content=await self._call_plugin(tool_call.plugin_name, tool_call.operation, tool_call.args_dict),
             )
-            for call, tool_call in zip(function_call_messages, tool_calls)
+            for call, tool_call in zip(function_call_messages, tool_calls, strict=False)
         ]
 
-        additional_messages = [self._transform_function_messages(function_call_messages)] + result_messages
+        additional_messages = [self._transform_function_messages(function_call_messages), *result_messages]
         return [
-            ProviderToolCallEventResult(
-                tool_calls=tool_calls,
-                additional_messages=additional_messages,
-                content="",
-            )
-        ] + final_messages
+            ProviderToolCallEventResult(tool_calls=tool_calls, additional_messages=additional_messages, content=""),
+            *final_messages,
+        ]
 
-    async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:
-        res: List[Dict[str, Any]] = []
+    async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
+        res: list[dict[str, Any]] = []
         for tool in tools:
             title = None
             if isinstance(tool.enum_labels, dict):
                 title = tool.enum_labels.get(str(tool.op))
             fname = f"{tool.name}__{tool.op}"
-            op_schema = copy.deepcopy(tool.schema) if tool.schema else {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            }
+            op_schema = (
+                copy.deepcopy(tool.schema)
+                if tool.schema
+                else {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True,
+                }
+            )
             props = op_schema.setdefault("properties", {})
             props["op"] = {
                 "type": "string",
@@ -310,11 +302,11 @@ class CompletionsAdapter(BaseProviderAdapter):
         content = getattr(message, "content", "")
         metadata = getattr(message, "metadata", {}) or {}
         attachments = getattr(message, "attachments", []) or []
-        
-        res: Dict[str, Any] = {
+
+        res: dict[str, Any] = {
             "role": role,
         }
-        
+
         # Handle assistant messages with tool_calls
         tool_calls = metadata.get("tool_calls")
         if role == "assistant" and tool_calls:
@@ -324,7 +316,7 @@ class CompletionsAdapter(BaseProviderAdapter):
                 res["content"] = content
         # Handle user messages with attachments (multimodal)
         elif role == "user" and attachments:
-            content_parts: List[Dict[str, Any]] = []
+            content_parts: list[dict[str, Any]] = []
             # Add text content first
             if isinstance(content, str) and content:
                 content_parts.append({"type": "text", "text": content})
@@ -332,32 +324,32 @@ class CompletionsAdapter(BaseProviderAdapter):
                 content_parts.extend(content)
 
             content_parts.extend(self._format_completions_attachments(attachments))
-            
+
             res["content"] = content_parts if content_parts else content
         else:
             res["content"] = content
-        
+
         # Add tool_call_id for tool result messages
         tool_call_id = metadata.get("tool_call_id")
         if tool_call_id:
             res["tool_call_id"] = tool_call_id
-        
+
         return res
 
-    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:
         payload["messages"] = self._flatten_chat_context(messages, self.process_message_records)
         return payload
 
-    async def inject_model_parameter(self, model_value: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_model_parameter(self, model_value: str, payload: dict[str, Any]) -> dict[str, Any]:
         payload["model"] = model_value
         return payload
 
-    async def inject_streaming_parameter(self, should_stream: bool, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_streaming_parameter(self, should_stream: bool, payload: dict[str, Any]) -> dict[str, Any]:
         payload["stream"] = should_stream
         # Inject usage request parameter
         if should_stream:
-            payload["stream_options"] = { "include_usage": True }
+            payload["stream_options"] = {"include_usage": True}
         return payload
 
-    async def post_process_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def post_process_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload

@@ -1,5 +1,4 @@
-"""
-Document and Chunk Profiling Service (SHU-343).
+"""Document and Chunk Profiling Service (SHU-343).
 
 This service generates document and chunk profiles using LLM inference.
 It is a pure LLM-facing service with no database access. The profiling
@@ -14,7 +13,6 @@ Key responsibilities:
 """
 
 import json
-from typing import List, Optional, Tuple
 
 import structlog
 
@@ -26,7 +24,7 @@ from ..schemas.profiling import (
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
-from .side_call_service import SideCallService, SideCallResult
+from .side_call_service import SideCallResult, SideCallService
 
 logger = structlog.get_logger(__name__)
 
@@ -87,16 +85,16 @@ class ProfilingService:
         self,
         side_call_service: SideCallService,
         settings: Settings,
-    ):
+    ) -> None:
         self.side_call = side_call_service
         self.settings = settings
         self.parser = ProfileParser()
 
-    def _resolve_timeout_ms(self, timeout_ms: Optional[int]) -> int:
+    def _resolve_timeout_ms(self, timeout_ms: int | None) -> int:
         """Resolve timeout, using settings default if not provided."""
         return timeout_ms or (self.settings.profiling_timeout_seconds * 1000)
 
-    def _validate_input_tokens(self, content: str, context: str) -> Optional[SideCallResult]:
+    def _validate_input_tokens(self, content: str, context: str) -> SideCallResult | None:
         """Validate that content does not exceed profiling_max_input_tokens.
 
         Args:
@@ -105,14 +103,12 @@ class ProfilingService:
 
         Returns:
             SideCallResult with error if limit exceeded, None if OK
+
         """
         max_tokens = self.settings.profiling_max_input_tokens
         token_count = estimate_tokens(content)
         if token_count > max_tokens:
-            error_msg = (
-                f"Input exceeds profiling_max_input_tokens: "
-                f"{token_count} > {max_tokens}"
-            )
+            error_msg = f"Input exceeds profiling_max_input_tokens: {token_count} > {max_tokens}"
             logger.warning(
                 "profiling_input_too_large",
                 context=context,
@@ -131,11 +127,10 @@ class ProfilingService:
     async def profile_document(
         self,
         document_text: str,
-        document_metadata: Optional[dict] = None,
-        timeout_ms: Optional[int] = None,
-    ) -> Tuple[Optional[DocumentProfile], SideCallResult]:
-        """
-        Generate a document profile from full document text.
+        document_metadata: dict | None = None,
+        timeout_ms: int | None = None,
+    ) -> tuple[DocumentProfile | None, SideCallResult]:
+        """Generate a document profile from full document text.
 
         Used for small documents that fit within PROFILING_FULL_DOC_MAX_TOKENS.
 
@@ -146,6 +141,7 @@ class ProfilingService:
 
         Returns:
             Tuple of (DocumentProfile or None if failed, SideCallResult with details)
+
         """
         timeout = self._resolve_timeout_ms(timeout_ms)
 
@@ -182,11 +178,10 @@ class ProfilingService:
 
     async def profile_chunks(
         self,
-        chunks: List[ChunkData],
-        timeout_ms: Optional[int] = None,
-    ) -> Tuple[List[ChunkProfileResult], int]:
-        """
-        Generate profiles for multiple chunks.
+        chunks: list[ChunkData],
+        timeout_ms: int | None = None,
+    ) -> tuple[list[ChunkProfileResult], int]:
+        """Generate profiles for multiple chunks.
 
         Processes chunks in batches for efficiency.
 
@@ -196,13 +191,14 @@ class ProfilingService:
 
         Returns:
             Tuple of (List of ChunkProfileResult, total tokens used)
+
         """
         if not chunks:
             return [], 0
 
         timeout = self._resolve_timeout_ms(timeout_ms)
         batch_size = self.settings.chunk_profiling_batch_size
-        results: List[ChunkProfileResult] = []
+        results: list[ChunkProfileResult] = []
         total_tokens = 0
 
         # Process in batches
@@ -216,14 +212,14 @@ class ProfilingService:
 
     async def _profile_chunk_batch(
         self,
-        chunks: List[ChunkData],
+        chunks: list[ChunkData],
         timeout_ms: int,
-    ) -> Tuple[List[ChunkProfileResult], int]:
-        """
-        Profile a batch of chunks in a single LLM call.
+    ) -> tuple[list[ChunkProfileResult], int]:
+        """Profile a batch of chunks in a single LLM call.
 
         Returns:
             Tuple of (chunk results, tokens used)
+
         """
         # Build user message with all chunks
         chunks_text = []
@@ -237,15 +233,11 @@ class ProfilingService:
         )
 
         # Validate input doesn't exceed max tokens
-        error_result = self._validate_input_tokens(
-            user_content, f"chunk batch ({len(chunks)} chunks)"
-        )
+        error_result = self._validate_input_tokens(user_content, f"chunk batch ({len(chunks)} chunks)")
         if error_result:
             # Return failed results for all chunks
             failed_results = [
-                self.parser.create_failed_chunk_result(
-                    c, error_result.error_message or "Input too large"
-                )
+                self.parser.create_failed_chunk_result(c, error_result.error_message or "Input too large")
                 for c in chunks
             ]
             return failed_results, 0
@@ -260,11 +252,10 @@ class ProfilingService:
         )
 
         if not result.success:
-            logger.warning("chunk_batch_profiling_failed", error=result.error_message)
+            logger.warning(f"chunk_batch_profiling_failed: {result.error_message}")
             # Return failed results for all chunks
             failed_results = [
-                self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed")
-                for c in chunks
+                self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks
             ]
             return failed_results, 0
 
@@ -274,12 +265,11 @@ class ProfilingService:
 
     async def aggregate_chunk_profiles(
         self,
-        chunk_profiles: List[ChunkProfileResult],
-        document_metadata: Optional[dict] = None,
-        timeout_ms: Optional[int] = None,
-    ) -> Tuple[Optional[DocumentProfile], SideCallResult]:
-        """
-        Generate a document profile by aggregating chunk profiles.
+        chunk_profiles: list[ChunkProfileResult],
+        document_metadata: dict | None = None,
+        timeout_ms: int | None = None,
+    ) -> tuple[DocumentProfile | None, SideCallResult]:
+        """Generate a document profile by aggregating chunk profiles.
 
         Used for large documents that exceed PROFILING_FULL_DOC_MAX_TOKENS.
 
@@ -290,6 +280,7 @@ class ProfilingService:
 
         Returns:
             Tuple of (DocumentProfile or None if failed, SideCallResult)
+
         """
         timeout = self._resolve_timeout_ms(timeout_ms)
 
@@ -300,9 +291,7 @@ class ProfilingService:
 
         for cp in chunk_profiles:
             if cp.success and cp.profile:
-                chunk_summaries.append(
-                    f"Chunk {cp.chunk_index}: {cp.profile.summary}"
-                )
+                chunk_summaries.append(f"Chunk {cp.chunk_index}: {cp.profile.summary}")
                 all_keywords.update(cp.profile.keywords)
                 all_topics.update(cp.profile.topics)
 
@@ -318,9 +307,7 @@ class ProfilingService:
             user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
 
         # Validate input doesn't exceed max tokens
-        error_result = self._validate_input_tokens(
-            user_content, f"aggregate profiling ({len(chunk_profiles)} chunks)"
-        )
+        error_result = self._validate_input_tokens(user_content, f"aggregate profiling ({len(chunk_profiles)} chunks)")
         if error_result:
             return None, error_result
 
@@ -342,4 +329,3 @@ class ProfilingService:
 
         profile = self.parser.parse_document_profile(result.content)
         return profile, result
-
