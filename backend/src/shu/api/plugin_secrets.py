@@ -7,29 +7,28 @@ manage the current user's secrets only.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from ..auth.rbac import require_power_user, get_current_user
 from ..auth.models import User
+from ..auth.rbac import get_current_user, require_power_user
 from ..core.response import ShuResponse
-from ..schemas.envelope import SuccessResponse
 from ..plugins.host._storage_ops import normalize_scope
+from ..schemas.envelope import SuccessResponse
 from ..services.plugin_secrets import (
+    delete_secret,
     list_secret_keys,
     list_secrets_meta,
-    set_secret,
-    delete_secret,
     purge_old_secrets,
+    set_secret,
 )
 
 router = APIRouter()
 
 
-def _validate_scope_and_user(scope: Optional[str], user_id: Optional[str]) -> Tuple[str, Optional[str]]:
+def _validate_scope_and_user(scope: str | None, user_id: str | None) -> tuple[str, str | None]:
     """Normalize scope and validate user_id requirement.
 
     Returns:
@@ -37,6 +36,7 @@ def _validate_scope_and_user(scope: Optional[str], user_id: Optional[str]) -> Tu
 
     Raises:
         HTTPException: If scope='user' but user_id is not provided.
+
     """
     normalized_scope = normalize_scope(scope)
     if normalized_scope == "user" and not user_id:
@@ -48,9 +48,9 @@ def _validate_scope_and_user(scope: Optional[str], user_id: Optional[str]) -> Tu
 
 
 class PluginSecretSetRequest(BaseModel):
-    user_id: Optional[str] = None
+    user_id: str | None = None
     value: str
-    scope: Optional[str] = "user"  # "user" or "system"
+    scope: str | None = "user"  # "user" or "system"
 
 
 class PluginSelfSecretSetRequest(BaseModel):
@@ -64,16 +64,16 @@ class PluginSecretMeta(BaseModel):
 
 class PluginSecretsListResponse(BaseModel):
     name: str
-    user_id: Optional[str] = None
+    user_id: str | None = None
     scope: str = "user"
-    keys: List[str] = []
-    items: List[PluginSecretMeta] = []
+    keys: list[str] = []
+    items: list[PluginSecretMeta] = []
 
 
 @router.get("/admin/{name}/secrets", response_model=SuccessResponse[PluginSecretsListResponse])
 async def admin_list_plugin_secrets(
     name: str,
-    user_id: Optional[str] = Query(None, description="User id (required for scope='user')"),
+    user_id: str | None = Query(None, description="User id (required for scope='user')"),
     scope: str = Query("user", description="Secret scope: 'user' or 'system'"),
     include_meta: bool = Query(False),
     _admin: User = Depends(require_power_user),  # Auth side-effect only
@@ -87,9 +87,8 @@ async def admin_list_plugin_secrets(
         return ShuResponse.success(
             PluginSecretsListResponse(name=name, user_id=user_id, scope=normalized_scope, keys=keys, items=items)
         )
-    else:
-        keys = await list_secret_keys(name, user_id=user_id, scope=normalized_scope)
-        return ShuResponse.success(PluginSecretsListResponse(name=name, user_id=user_id, scope=normalized_scope, keys=keys))
+    keys = await list_secret_keys(name, user_id=user_id, scope=normalized_scope)
+    return ShuResponse.success(PluginSecretsListResponse(name=name, user_id=user_id, scope=normalized_scope, keys=keys))
 
 
 @router.put("/admin/{name}/secrets/{key}")
@@ -100,7 +99,7 @@ async def admin_set_plugin_secret(
     admin: User = Depends(require_power_user),
 ):
     scope_norm, _ = _validate_scope_and_user(body.scope, body.user_id)
-    target_user_id: Optional[str] = body.user_id
+    target_user_id: str | None = body.user_id
     if scope_norm == "system" and not target_user_id:
         # For system scope, user_id is set to the admin's user ID to serve as an audit trail
         # of who created or updated the secret.
@@ -114,7 +113,7 @@ async def admin_set_plugin_secret(
 async def admin_delete_plugin_secret(
     name: str,
     key: str,
-    user_id: Optional[str] = Query(None, description="User id (required for scope='user')"),
+    user_id: str | None = Query(None, description="User id (required for scope='user')"),
     scope: str = Query("user", description="Secret scope: 'user' or 'system'"),
     _admin: User = Depends(require_power_user),  # Auth side-effect only
 ):
@@ -126,20 +125,22 @@ async def admin_delete_plugin_secret(
 @router.delete("/admin/{name}/secrets/_purge")
 async def admin_purge_plugin_secrets(
     name: str,
-    user_id: Optional[str] = Query(None, description="User id (required for scope='user')"),
+    user_id: str | None = Query(None, description="User id (required for scope='user')"),
     older_than_days: int = 90,
     scope: str = Query("user", description="Secret scope: 'user' or 'system'"),
     _admin: User = Depends(require_power_user),  # Auth side-effect only
 ):
     normalized_scope, _ = _validate_scope_and_user(scope, user_id)
     deleted = await purge_old_secrets(name, user_id=user_id, older_than_days=older_than_days, scope=normalized_scope)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(older_than_days)))
-    return ShuResponse.success({
-        "status": "purged",
-        "deleted": int(deleted),
-        "cutoff": cutoff.isoformat(),
-        "scope": normalized_scope,
-    })
+    cutoff = datetime.now(UTC) - timedelta(days=max(1, int(older_than_days)))
+    return ShuResponse.success(
+        {
+            "status": "purged",
+            "deleted": int(deleted),
+            "cutoff": cutoff.isoformat(),
+            "scope": normalized_scope,
+        }
+    )
 
 
 @router.get("/self/{name}/secrets", response_model=SuccessResponse[PluginSecretsListResponse])
@@ -157,9 +158,8 @@ async def self_list_plugin_secrets(
         return ShuResponse.success(
             PluginSecretsListResponse(name=name, user_id=uid, scope="user", keys=keys, items=items)
         )
-    else:
-        keys = await list_secret_keys(name, user_id=uid, scope="user")
-        return ShuResponse.success(PluginSecretsListResponse(name=name, user_id=uid, scope="user", keys=keys))
+    keys = await list_secret_keys(name, user_id=uid, scope="user")
+    return ShuResponse.success(PluginSecretsListResponse(name=name, user_id=uid, scope="user", keys=keys))
 
 
 @router.put("/self/{name}/secrets/{key}")

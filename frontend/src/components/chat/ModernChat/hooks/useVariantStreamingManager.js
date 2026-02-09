@@ -1,9 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 
-import {
-  buildMessageVariants,
-  buildStreamingParentIds,
-} from '../utils/messageVariants';
+import { buildMessageVariants, buildStreamingParentIds } from '../utils/messageVariants';
 
 const useVariantStreamingManager = ({ messages, selectedConversationId }) => {
   const [variantSelection, setVariantSelection] = useState({});
@@ -46,10 +43,7 @@ const useVariantStreamingManager = ({ messages, selectedConversationId }) => {
     [messages, variantSelection]
   );
 
-  const streamingVariantParentIds = useMemo(
-    () => buildStreamingParentIds(messages),
-    [messages]
-  );
+  const streamingVariantParentIds = useMemo(() => buildStreamingParentIds(messages), [messages]);
 
   const isVariantGroupStreaming = useCallback(
     (parentId) => streamingVariantParentIds.has(parentId),

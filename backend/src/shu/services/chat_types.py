@@ -1,23 +1,23 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-from shu.models.llm_provider import Message
 from shu.models.attachment import Attachment
+from shu.models.llm_provider import Message
 
 
 @dataclass
 class ChatMessage:
     """Lightweight chat message DTO used for context building and provider conversion."""
 
-    id: Optional[str]
+    id: str | None
     role: str
-    content: Union[str, List[Dict[str, Any]], None]
-    created_at: Optional[Any]
-    attachments: List[Attachment]
-    metadata: Optional[Dict[str, Any]] = None
+    content: str | list[dict[str, Any]] | None
+    created_at: Any | None
+    attachments: list[Attachment]
+    metadata: dict[str, Any] | None = None
 
     @classmethod
-    def from_message(cls, message: Message, attachments: Optional[List[Attachment]] = None) -> "ChatMessage":
+    def from_message(cls, message: Message, attachments: list[Attachment] | None = None) -> "ChatMessage":
         return cls(
             id=getattr(message, "id", None),
             role=getattr(message, "role", ""),
@@ -31,14 +31,14 @@ class ChatMessage:
     def build(
         cls,
         role: str,
-        content: Union[str, List[Dict[str, Any]], None],
+        content: str | list[dict[str, Any]] | None,
         *,
-        id: Optional[str] = None,
-        created_at: Optional[Any] = None,
-        attachments: Optional[List[Attachment]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        id: str | None = None,
+        created_at: Any | None = None,
+        attachments: list[Attachment] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "ChatMessage":
-        """Convenience constructor with sensible defaults."""
+        """Create a ChatMessage object with sensible defaults."""
         return cls(
             id=id,
             role=role,
@@ -53,11 +53,11 @@ class ChatMessage:
 class ChatContext:
     """Container for system prompt(s) and chat messages destined for providers."""
 
-    system_prompt: Optional[str]
-    messages: List[ChatMessage]
+    system_prompt: str | None
+    messages: list[ChatMessage]
 
     @classmethod
-    def from_dicts(cls, messages: List[Dict[str, Any]], system_prompt: Optional[str] = None) -> "ChatContext":
+    def from_dicts(cls, messages: list[dict[str, Any]], system_prompt: str | None = None) -> "ChatContext":
         """Build ChatContext from a list of simple role/content dicts."""
         chat_messages = []
         for m in messages:

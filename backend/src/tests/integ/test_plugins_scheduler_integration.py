@@ -1,7 +1,8 @@
-import os
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+import os
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
 
 # Ensure scheduler is enabled and ticks quickly for the test, and disable rate limiting to avoid 429 noise
@@ -12,8 +13,11 @@ os.environ.setdefault("SHU_ENABLE_API_RATE_LIMITING", "false")
 # Make stale RUNNING cleanup aggressive for tests
 os.environ.setdefault("SHU_PLUGINS_SCHEDULER_RUNNING_TIMEOUT_SECONDS", "1")
 
-from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script  # noqa: E402
-from shu.models.plugin_execution import PluginExecution, PluginExecutionStatus  # noqa: E402
+from integ.base_integration_test import (
+    BaseIntegrationTestSuite,
+    create_test_runner_script,
+)
+from shu.models.plugin_execution import PluginExecution, PluginExecutionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +123,7 @@ async def test_stale_running_cleanup_marks_failed(client, db, auth_headers):
     sched_id = resp.json()["data"]["id"]
 
     # Insert a stale RUNNING execution directly
-    old_started = datetime.now(timezone.utc) - timedelta(seconds=50000)
+    old_started = datetime.now(UTC) - timedelta(seconds=50000)
     exec_rec = PluginExecution(
         schedule_id=sched_id,
         plugin_name="test_schema",
@@ -135,8 +139,9 @@ async def test_stale_running_cleanup_marks_failed(client, db, auth_headers):
 
     # Proactively invoke the scheduler service to ensure cleanup path runs in this test context
     from shu.services.plugins_scheduler_service import PluginsSchedulerService
+
     svc = PluginsSchedulerService(db)
-    await svc.run_pending(limit=1)
+    await svc.cleanup_stale_executions()
 
     # Reload and verify it was marked failed due to stale timeout
     res = await db.execute(select(PluginExecution).where(PluginExecution.id == exec_rec.id))
@@ -144,7 +149,6 @@ async def test_stale_running_cleanup_marks_failed(client, db, auth_headers):
     assert row is not None
     assert row.status == PluginExecutionStatus.FAILED, f"Unexpected status: {row.status}"
     assert (row.error or "").startswith("stale_timeout"), f"Unexpected error: {row.error}"
-
 
 
 async def test_admin_scheduler_metrics_endpoint(client, db, auth_headers):
@@ -203,15 +207,17 @@ async def test_enqueue_skips_no_owner(client, db, auth_headers):
 
     # Force owner None via ORM to avoid API schema ignoring nulls; set due now and enable
     from shu.models.plugin_feed import PluginFeed
+
     res = await db.execute(select(PluginFeed).where(PluginFeed.id == sched_id))
     sched_row = res.scalars().first()
     assert sched_row is not None
     sched_row.owner_user_id = None
     sched_row.enabled = True
-    sched_row.next_run_at = datetime.now(timezone.utc)
+    sched_row.next_run_at = datetime.now(UTC)
     await db.commit()
 
     from shu.services.plugins_scheduler_service import PluginsSchedulerService
+
     svc = PluginsSchedulerService(db)
     # Trigger enqueue path (without fallback) and verify no executions are created
     _ = await svc.enqueue_due_schedules(limit=1)
@@ -244,10 +250,18 @@ async def test_admin_run_due_uses_fallback_owner(client, db, auth_headers):
     admin_id = created["owner_user_id"]
 
     # Remove owner and make due at the moment we run-due to avoid race
-    future_iso = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    await client.patch(f"/api/v1/plugins/admin/feeds/{sched_id}", json={"owner_user_id": None, "next_run_at": future_iso}, headers=auth_headers)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    await client.patch(f"/api/v1/plugins/admin/feeds/{sched_id}", json={"next_run_at": now_iso}, headers=auth_headers)
+    future_iso = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    await client.patch(
+        f"/api/v1/plugins/admin/feeds/{sched_id}",
+        json={"owner_user_id": None, "next_run_at": future_iso},
+        headers=auth_headers,
+    )
+    now_iso = datetime.now(UTC).isoformat()
+    await client.patch(
+        f"/api/v1/plugins/admin/feeds/{sched_id}",
+        json={"next_run_at": now_iso},
+        headers=auth_headers,
+    )
 
     # Run-due should pass fallback_user_id=admin.id internally
     r = await client.post("/api/v1/plugins/admin/feeds/run-due", headers=auth_headers)
@@ -291,7 +305,7 @@ async def test_bounded_batch_respected(client, db, auth_headers):
         )
         assert resp.status_code == 200, resp.text
         ids.append(resp.json()["data"]["id"])
-    future_iso = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    future_iso = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     for sid in ids:
         await client.patch(
             f"/api/v1/plugins/admin/feeds/{sid}",
@@ -300,7 +314,7 @@ async def test_bounded_batch_respected(client, db, auth_headers):
         )
 
     # Enable and make exactly two due now; keep the third disabled to avoid races
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     for sid in ids[:2]:
         await client.patch(
             f"/api/v1/plugins/admin/feeds/{sid}",
@@ -310,6 +324,7 @@ async def test_bounded_batch_respected(client, db, auth_headers):
 
     # Enqueue and run with limit=2
     from shu.services.plugins_scheduler_service import PluginsSchedulerService
+
     svc = PluginsSchedulerService(db)
     enq = await svc.enqueue_due_schedules(limit=2)
     # Background auto-tick may have claimed some; only assert we did not exceed the limit
@@ -357,7 +372,7 @@ async def test_429_defer_respects_retry_backoff(client, db, auth_headers):
     sched_id = resp.json()["data"]["id"]
 
     # Push next_run_at into the future while disabled
-    future_iso = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    future_iso = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     await client.patch(
         f"/api/v1/plugins/admin/feeds/{sched_id}",
         json={"next_run_at": future_iso},
@@ -365,7 +380,7 @@ async def test_429_defer_respects_retry_backoff(client, db, auth_headers):
     )
 
     # Enable and mark due only within the controlled window for this test
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     await client.patch(
         f"/api/v1/plugins/admin/feeds/{sched_id}",
         json={"enabled": True, "next_run_at": now_iso},
@@ -374,6 +389,7 @@ async def test_429_defer_respects_retry_backoff(client, db, auth_headers):
 
     # Service instance on the same db session
     from shu.services.plugins_scheduler_service import PluginsSchedulerService
+
     svc = PluginsSchedulerService(db)
 
     # Enqueue once to create a PENDING execution
@@ -381,6 +397,7 @@ async def test_429_defer_respects_retry_backoff(client, db, auth_headers):
 
     # Patch executor to raise 429 with Retry-After
     from fastapi import HTTPException
+
     from shu.plugins.executor import EXECUTOR
 
     async def _raise_429(*args, **kwargs):
@@ -389,13 +406,14 @@ async def test_429_defer_respects_retry_backoff(client, db, auth_headers):
     orig_execute = EXECUTOR.execute
     EXECUTOR.execute = _raise_429
     try:
-        now_ts = datetime.now(timezone.utc)
+        now_ts = datetime.now(UTC)
         await svc.run_pending(limit=1, schedule_id=sched_id)
     finally:
         EXECUTOR.execute = orig_execute
 
     # Fetch execution by schedule and verify it was deferred
     from sqlalchemy import select
+
     from shu.models.plugin_execution import PluginExecution, PluginExecutionStatus
 
     res = await db.execute(select(PluginExecution).where(PluginExecution.schedule_id == sched_id))
@@ -458,6 +476,7 @@ async def test_multi_replica_contention_no_duplicates(client, db, auth_headers):
     rows = resp.json()["data"]
     assert len(rows) == 1, f"Expected 1 execution for schedule {sched_id}, found {len(rows)}: {rows}"
 
+
 class PluginsSchedulerIntegrationSuite(BaseIntegrationTestSuite):
     def get_test_functions(self):
         return [
@@ -470,9 +489,7 @@ class PluginsSchedulerIntegrationSuite(BaseIntegrationTestSuite):
             test_bounded_batch_respected,
             test_429_defer_respects_retry_backoff,
             test_multi_replica_contention_no_duplicates,
-
         ]
-
 
     def get_suite_name(self) -> str:
         return "Plugins Scheduler Auto-Tick"

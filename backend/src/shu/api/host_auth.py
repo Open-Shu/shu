@@ -1,33 +1,67 @@
-"""
-Generic Host Auth endpoints for provider connection status and OAuth flows.
+"""Generic Host Auth endpoints for provider connection status and OAuth flows.
 
 Currently supports minimal status for Google (Gmail) user credentials.
 """
-from typing import Optional, Dict, Any, List
 
-from fastapi import APIRouter, Depends, Query
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import requests
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, delete
 
-from .dependencies import get_db
-from ..auth.rbac import get_current_user
 from ..auth.models import User
-from ..core.response import ShuResponse
+from ..auth.rbac import get_current_user
 from ..core.logging import get_logger
+from ..core.oauth_encryption import OAuthEncryptionError
+from ..core.response import ShuResponse
 from ..models.provider_credential import ProviderCredential
 from ..models.provider_identity import ProviderIdentity
+from ..plugins.host.auth_capability import AuthCapability
+from ..providers.registry import get_auth_adapter
+from .dependencies import get_db
 
 logger = get_logger(__name__)
 
-from fastapi import HTTPException, status
-from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
-from ..plugins.host.auth_capability import AuthCapability
-from ..providers.registry import get_auth_adapter
+# OIDC protocol scopes that should NOT be prefixed with Graph API URL
+_OIDC_SCOPES = frozenset({"openid", "profile", "email", "offline_access"})
 
 
-from ..core.oauth_encryption import OAuthEncryptionError
-import requests
+def normalize_microsoft_scopes(scopes: list | None) -> list[str]:
+    """Normalize Microsoft scopes by adding Graph API URL prefix where needed.
+
+    Microsoft returns short-form scopes like "Mail.Read" but manifests declare them
+    as "https://graph.microsoft.com/Mail.Read". OIDC protocol scopes (openid, profile,
+    email, offline_access) are left unchanged as they are protocol-level.
+
+    Args:
+        scopes: List of scope strings (may contain None/empty values)
+
+    Returns:
+        De-duplicated list of normalized scope strings
+
+    """
+    if not scopes:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for scope in scopes:
+        if not scope:
+            continue
+        s = str(scope)
+        # Prefix non-HTTPS, non-OIDC scopes with Graph API URL
+        if s and not s.startswith("https://") and s not in _OIDC_SCOPES:
+            s = f"https://graph.microsoft.com/{s}"
+        if s and s not in seen:
+            normalized.append(s)
+            seen.add(s)
+
+    return normalized
 
 
 router = APIRouter(prefix="/host/auth", tags=["host-auth"])
@@ -35,7 +69,7 @@ router = APIRouter(prefix="/host/auth", tags=["host-auth"])
 
 @router.get("/status")
 async def get_host_auth_status(
-    providers: Optional[str] = Query(
+    providers: str | None = Query(
         None,
         description="Comma-separated providers, e.g., 'google'",
     ),
@@ -49,8 +83,8 @@ async def get_host_auth_status(
       "google": { "user_connected": bool, "granted_scopes": ["..."] }
     }
     """
-    requested: List[str] = [p.strip().lower() for p in providers.split(",")] if providers else ["google"]
-    out: Dict[str, Any] = {}
+    requested: list[str] = [p.strip().lower() for p in providers.split(",")] if providers else ["google"]
+    out: dict[str, Any] = {}
 
     # Provider-agnostic status via adapter when available; fallback to ProviderIdentity
     for p in requested:
@@ -77,13 +111,19 @@ async def get_host_auth_status(
             )
             pis = res.scalars().all()
             user_connected = len(pis) > 0
-            scopes_union: List[str] = []
+            scopes_union: list[str] = []
             for pi in pis:
                 try:
-                    for s in (pi.scopes or []):
-                        s_str = str(s)
-                        if s_str not in scopes_union:
-                            scopes_union.append(s_str)
+                    if p == "microsoft":
+                        # Normalize Microsoft scopes using helper
+                        for s in normalize_microsoft_scopes(pi.scopes):
+                            if s not in scopes_union:
+                                scopes_union.append(s)
+                    else:
+                        for s in pi.scopes or []:
+                            s_str = str(s)
+                            if s_str and s_str not in scopes_union:
+                                scopes_union.append(s_str)
                 except Exception:
                     pass
             out[p] = {"user_connected": bool(user_connected), "granted_scopes": scopes_union}
@@ -91,8 +131,6 @@ async def get_host_auth_status(
             out[p] = {"user_connected": False, "granted_scopes": []}
 
     return ShuResponse.success(out)
-
-
 
 
 class AuthorizeResponse(BaseModel):
@@ -104,7 +142,7 @@ class AuthorizeResponse(BaseModel):
 @router.get("/authorize")
 async def host_auth_authorize(
     provider: str = Query(..., description="Identity provider, e.g., 'google'"),
-    scopes: Optional[str] = Query(None, description="Comma-separated scopes for OAuth consent"),
+    scopes: str | None = Query(None, description="Comma-separated scopes for OAuth consent"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -116,18 +154,22 @@ async def host_auth_authorize(
     provider = (provider or "").lower().strip()
 
     # Parse scopes; if omitted, compute from user's subscriptions (fallback to all enabled plugins)
-    scope_list: List[str] = []
+    scope_list: list[str] = []
     if scopes:
         scope_list = [s.strip() for s in scopes.split(",") if s.strip()]
     if not scope_list:
         try:
             from ..services.host_auth_service import HostAuthService
+
             scope_list = await HostAuthService.compute_consent_scopes(db, str(current_user.id), provider)
         except Exception as e:
             logger.error(f"compute_consent_scopes failed: {e}")
             scope_list = []
     if not scope_list:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No scopes available. Subscribe plugins or pass scopes explicitly.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No scopes available. Subscribe plugins or pass scopes explicitly.",
+        )
 
     # Build authorization URL via provider adapter
     try:
@@ -141,18 +183,25 @@ async def host_auth_authorize(
         authorization_url = res.get("url") or res.get("authorization_url")
         state = res.get("state")
         if not authorization_url:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authorization URL generation failed")
-        return ShuResponse.success({
-            "provider": provider,
-            "authorization_url": authorization_url,
-            "state": state,
-        })
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authorization URL generation failed",
+            )
+        return ShuResponse.success(
+            {
+                "provider": provider,
+                "authorization_url": authorization_url,
+                "state": state,
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Host auth authorize failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authorization URL generation failed")
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authorization URL generation failed",
+        )
 
 
 class ConsentScopesResponse(BaseModel):
@@ -176,12 +225,15 @@ async def host_auth_consent_scopes(
     prov = (provider or "").strip().lower()
     try:
         from ..services.host_auth_service import HostAuthService
+
         union_scopes = await HostAuthService.compute_consent_scopes(db, str(current_user.id), prov)
         return ShuResponse.success({"provider": prov, "scopes": union_scopes})
     except Exception as e:
         logger.error(f"consent-scopes compute failed for provider={prov}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Consent scopes computation failed")
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Consent scopes computation failed",
+        )
 
 
 class SubscriptionIn(BaseModel):
@@ -203,19 +255,22 @@ async def list_subscriptions(
 ):
     """List the caller's plugin subscriptions for a provider (optional: one account_id)."""
     from ..services.host_auth_service import HostAuthService
+
     prov = (provider or "").strip().lower()
     rows = await HostAuthService.list_subscriptions(db, str(current_user.id), prov, account_id)
-    return ShuResponse.success({
-        "items": [
-            {
-                "id": r.id,
-                "plugin_name": r.plugin_name,
-                "provider": r.provider_key,
-                "account_id": r.account_id,
-            }
-            for r in rows
-        ]
-    })
+    return ShuResponse.success(
+        {
+            "items": [
+                {
+                    "id": r.id,
+                    "plugin_name": r.plugin_name,
+                    "provider": r.provider_key,
+                    "account_id": r.account_id,
+                }
+                for r in rows
+            ]
+        }
+    )
 
 
 @router.post("/subscriptions")
@@ -226,6 +281,7 @@ async def create_subscription(
 ):
     """Create or idempotently upsert a plugin subscription for the current user."""
     from ..services.host_auth_service import HostAuthService
+
     try:
         rec = await HostAuthService.validate_and_create_subscription(
             db,
@@ -239,12 +295,14 @@ async def create_subscription(
     except LookupError as le:
         raise HTTPException(status_code=400, detail=str(le))
 
-    return ShuResponse.success({
-        "id": rec.id,
-        "plugin_name": rec.plugin_name,
-        "provider": rec.provider_key,
-        "account_id": rec.account_id,
-    })
+    return ShuResponse.success(
+        {
+            "id": rec.id,
+            "plugin_name": rec.plugin_name,
+            "provider": rec.provider_key,
+            "account_id": rec.account_id,
+        }
+    )
 
 
 @router.delete("/subscriptions")
@@ -254,6 +312,7 @@ async def delete_subscription(
     current_user: User = Depends(get_current_user),
 ):
     from ..services.host_auth_service import HostAuthService
+
     try:
         deleted = await HostAuthService.delete_subscription(
             db,
@@ -272,11 +331,12 @@ async def delete_subscription(
 class ExchangeRequest(BaseModel):
     provider: str
     code: str
-    scopes: Optional[List[str]] = None
+    scopes: list[str] | None = None
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
 @router.post("/exchange")
-async def host_auth_exchange(
+async def host_auth_exchange(  # noqa: PLR0912, PLR0915
     body: ExchangeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -305,32 +365,54 @@ async def host_auth_exchange(
         try:
             tok = await adapter.exchange_code(code=body.code, scopes=requested_scopes)
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Provider token exchange failed: {str(e)[:300]}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Provider token exchange failed: {str(e)[:300]}",
+            )
         access_token = tok.get("access_token")
         refresh_token = tok.get("refresh_token")
         expires_in = tok.get("expires_in")
         expiry = None
         if expires_in:
             try:
-                expiry = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                expiry = datetime.now(UTC) + timedelta(seconds=int(expires_in))
             except Exception:
                 expiry = None
         scope_str = tok.get("scope")
         token_scopes = [s for s in scope_str.split() if s] if isinstance(scope_str, str) else requested_scopes
 
         if not access_token or not refresh_token:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to obtain tokens from provider")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to obtain tokens from provider",
+            )
 
-        final_scopes = token_scopes or requested_scopes
+        # Normalize Microsoft scopes: add URL prefix if missing
+        # OIDC protocol scopes should NOT be prefixed - they are protocol-level
+        if provider == "microsoft":
+            final_scopes = normalize_microsoft_scopes(token_scopes or requested_scopes)
+        else:
+            final_scopes = token_scopes or requested_scopes
         # Log what we will persist for diagnosis of scope issues
         try:
-            logger.info("host_auth.exchange: provider=%s user=%s scopes=%s", provider, getattr(current_user, "email", None), list(set(final_scopes or [])))
-            logger.debug("host_auth.exchange: token_scopes(from_provider)=%s requested_scopes(body)=%s final_scopes(persisted)=%s", token_scopes, requested_scopes, final_scopes)
+            logger.info(
+                "host_auth.exchange: provider=%s user=%s scopes=%s",
+                provider,
+                getattr(current_user, "email", None),
+                list(set(final_scopes or [])),
+            )
+            logger.debug(
+                "host_auth.exchange: token_scopes(from_provider)=%s requested_scopes(body)=%s final_scopes(persisted)=%s",
+                token_scopes,
+                requested_scopes,
+                final_scopes,
+            )
         except Exception:
             pass
 
         # Create provider-agnostic credential
         from ..models.provider_credential import ProviderCredential
+
         pc = ProviderCredential(
             user_id=str(current_user.id),
             provider_key=provider,
@@ -346,7 +428,11 @@ async def host_auth_exchange(
         await db.commit()
         await db.refresh(pc)
         try:
-            logger.debug("host_auth.exchange: persisted credential id=%s scopes=%s", getattr(pc, "id", None), getattr(pc, "scopes", None))
+            logger.debug(
+                "host_auth.exchange: persisted credential id=%s scopes=%s",
+                getattr(pc, "id", None),
+                getattr(pc, "scopes", None),
+            )
         except Exception:
             pass
 
@@ -365,7 +451,7 @@ async def host_auth_exchange(
                     display_name = info.get("name")
                     avatar_url = info.get("picture")
                     try:
-                        setattr(pc, "account_id", (account_id or (primary_email or None)))
+                        pc.account_id = account_id or (primary_email or None)
                         await db.commit()
                         await db.refresh(pc)
                     except Exception:
@@ -393,7 +479,7 @@ async def host_auth_exchange(
                             existing_pi.avatar_url = avatar_url
                         existing_pi.scopes = pc.scopes
                         existing_pi.credential_id = pc.id
-                        setattr(existing_pi, "identity_meta", info)
+                        existing_pi.identity_meta = info
                     else:
                         pi = ProviderIdentity(
                             user_id=str(current_user.id),
@@ -422,7 +508,7 @@ async def host_auth_exchange(
                     display_name = info.get("displayName")
                     avatar_url = None
                     try:
-                        setattr(pc, "account_id", (account_id or (primary_email or None)))
+                        pc.account_id = account_id or (primary_email or None)
                         await db.commit()
                         await db.refresh(pc)
                     except Exception:
@@ -450,7 +536,7 @@ async def host_auth_exchange(
                             existing_pi.avatar_url = avatar_url
                         existing_pi.scopes = pc.scopes
                         existing_pi.credential_id = pc.id
-                        setattr(existing_pi, "identity_meta", info)
+                        existing_pi.identity_meta = info
                     else:
                         pi = ProviderIdentity(
                             user_id=str(current_user.id),
@@ -469,12 +555,14 @@ async def host_auth_exchange(
         except Exception as e:
             logger.warning(f"Failed to persist provider identity: {e}")
 
-        return ShuResponse.success({
-            "provider": provider,
-            "user_connected": True,
-            "granted_scopes": pc.scopes,
-            "expires_at": pc.expires_at.isoformat() if isinstance(pc.expires_at, datetime) else None,
-        })
+        return ShuResponse.success(
+            {
+                "provider": provider,
+                "user_connected": True,
+                "granted_scopes": pc.scopes,
+                "expires_at": pc.expires_at.isoformat() if isinstance(pc.expires_at, datetime) else None,
+            }
+        )
 
     except HTTPException:
         raise
@@ -486,7 +574,6 @@ async def host_auth_exchange(
         await db.rollback()
         logger.error(f"Host auth exchange failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Token exchange failed")
-
 
 
 class DisconnectRequest(BaseModel):
@@ -537,20 +624,21 @@ async def host_auth_disconnect(
         logger.error(f"Host auth disconnect failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Disconnect failed")
 
+
 class DelegationCheckRequest(BaseModel):
     subject: str
-    scopes: Optional[List[str]] = None
+    scopes: list[str] | None = None
 
 
 class GenericDelegationCheckRequest(BaseModel):
     provider: str
     subject: str
-    scopes: Optional[List[str]] = None
+    scopes: list[str] | None = None
 
 
 class ServiceAccountCheckRequest(BaseModel):
     provider: str
-    scopes: Optional[List[str]] = None
+    scopes: list[str] | None = None
 
 
 @router.post("/delegation-check")
@@ -568,7 +656,10 @@ async def host_auth_delegation_check(
         auth = AuthCapability(plugin_name="admin", user_id=str(current_user.id))
         scopes = body.scopes or []
         if not scopes:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Missing required scopes for delegation check")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Missing required scopes for delegation check",
+            )
         try:
             res = await auth.provider_delegation_check(provider, scopes=scopes, subject=body.subject)
         except NotImplementedError:
@@ -596,29 +687,30 @@ async def host_auth_service_account_check(
         auth = AuthCapability(plugin_name="admin", user_id=str(current_user.id))
         scopes = body.scopes or []
         if not scopes:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Missing required scopes for service account check")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Missing required scopes for service account check",
+            )
         # Attempt to obtain a token without impersonation
         try:
             token = await auth.provider_service_account_token(provider, scopes=scopes, subject=None)
         except NotImplementedError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported provider")
         except Exception as e:
-            return ShuResponse.success({
-                "ready": False,
-                "status": 0,
+            return ShuResponse.success({"ready": False, "status": 0, "scopes": scopes, "error": {"message": str(e)}})
+        return ShuResponse.success(
+            {
+                "ready": bool(token),
+                "status": 200 if token else 0,
                 "scopes": scopes,
-                "error": {"message": str(e)}
-            })
-        return ShuResponse.success({
-            "ready": bool(token),
-            "status": 200 if token else 0,
-            "scopes": scopes,
-        })
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Service account check failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Service account check failed")
+
 
 @router.post("/google/delegation-check")
 async def host_auth_google_delegation_check(
@@ -642,11 +734,8 @@ async def host_auth_google_delegation_check(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Delegation check failed")
 
 
-from fastapi.responses import HTMLResponse
-
-
 @router.get("/callback")
-async def host_auth_callback(provider: Optional[str] = None, code: str = "", state: Optional[str] = None):
+async def host_auth_callback(provider: str | None = None, code: str = "", state: str | None = None):
     """OAuth callback helper that posts the code back to opener and closes the window.
 
     Configure GOOGLE_REDIRECT_URI to this route: <base>/api/v1/host/auth/callback
@@ -678,11 +767,13 @@ Authentication complete. You can close this window.
 """
     return HTMLResponse(content=html, media_type="text/html")
 
+
 # Public alias router for non-versioned callback path (/auth/callback)
 public_router = APIRouter(prefix="/auth", tags=["host-auth-public"])
 
+
 @public_router.get("/callback")
-async def host_auth_callback_public(provider: Optional[str] = None, code: str = "", state: Optional[str] = None):
+async def host_auth_callback_public(provider: str | None = None, code: str = "", state: str | None = None):
     """Public alias for the OAuth callback so environments using /auth/callback work without ingress rewrites."""
     prov = (provider or "").lower().strip()
     if not prov and state:

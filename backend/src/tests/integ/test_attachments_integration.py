@@ -3,15 +3,14 @@ Integration tests for Chat Attachments (upload and usage in context).
 
 Follows custom integration test framework. Negative tests log expected error output explicitly.
 """
-import sys
-import os
+
 import logging
+import os
 import uuid
-from typing import List, Callable
+from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
-from integ.expected_error_context import expect_validation_errors, expect_authentication_errors
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ def _get_unique_provider_data() -> dict:
         "provider_type": "openai",
         "api_endpoint": "https://api.openai.com/v1",
         "api_key": "test-api-key-attachments",
-        "is_active": True
+        "is_active": True,
     }
 
 
@@ -36,7 +35,7 @@ def _get_unique_model_config_data() -> dict:
         "description": "Model configuration for attachments integration",
         "is_active": True,
         "created_by": "test-user",
-        "knowledge_base_ids": []
+        "knowledge_base_ids": [],
     }
 
 
@@ -94,7 +93,11 @@ async def test_upload_pdf_ocr_fields(client, db, auth_headers):
         file_bytes = f.read()
     files = {"file": (os.path.basename(asset_path), file_bytes, "application/pdf")}
 
-    upload = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
+    upload = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/attachments",
+        files=files,
+        headers=auth_headers,
+    )
     assert upload.status_code == 200, upload.text
     attachment = extract_data(upload)
 
@@ -106,7 +109,11 @@ async def test_upload_pdf_ocr_fields(client, db, auth_headers):
     # Link it to a user message and verify propagation in MessageResponse
     send_resp = await client.post(
         f"/api/v1/chat/conversations/{conversation_id}/messages",
-        json={"role": "user", "content": "Please use my attachment", "attachment_ids": [attachment["attachment_id"]]},
+        json={
+            "role": "user",
+            "content": "Please use my attachment",
+            "attachment_ids": [attachment["attachment_id"]],
+        },
         headers=auth_headers,
     )
     assert send_resp.status_code == 200, send_resp.text
@@ -133,7 +140,11 @@ async def test_upload_txt_success(client, db, auth_headers):
     conversation_id = await _create_conversation(client, auth_headers)
 
     files = {"file": ("sample.txt", b"This is a small attachment for testing.", "text/plain")}
-    resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/attachments",
+        files=files,
+        headers=auth_headers,
+    )
     assert resp.status_code == 200, resp.text
     data = extract_data(resp)
     assert "attachment_id" in data
@@ -142,11 +153,14 @@ async def test_upload_txt_success(client, db, auth_headers):
 
     # Clean up file created by this test (unlink and delete row)
     from sqlalchemy import select
+
     from shu.models.attachment import Attachment
+
     result = await db.execute(select(Attachment).where(Attachment.id == data["attachment_id"]))
     att = result.scalar_one_or_none()
     if att and att.storage_path:
         import os
+
         try:
             if os.path.exists(att.storage_path):
                 os.remove(att.storage_path)
@@ -162,7 +176,11 @@ async def test_upload_unsupported_type(client, db, auth_headers):
     logger.info("=== EXPECTED TEST OUTPUT: Unsupported type error is expected ===")
     # Use .exe which is not in the allowed list: pdf, docx, txt, md, png, jpg, jpeg, gif, webp
     files = {"file": ("program.exe", b"MZ\x00\x00", "application/x-msdownload")}
-    resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/attachments",
+        files=files,
+        headers=auth_headers,
+    )
     # Our API returns 400 for unsupported type
     assert resp.status_code == 400, resp.text
     body = resp.json()
@@ -178,7 +196,11 @@ async def test_upload_oversized_file(client, db, auth_headers):
     # Build a ~21MB payload to exceed default 20MB limit
     big_bytes = b"0" * (21 * 1024 * 1024)
     files = {"file": ("huge.txt", big_bytes, "text/plain")}
-    resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/attachments",
+        files=files,
+        headers=auth_headers,
+    )
     assert resp.status_code in (400, 413), resp.text  # 413 preferred, allow 400 fallback
 
     # Nothing created on disk in oversized case
@@ -189,7 +211,9 @@ async def test_upload_unauthorized(client, db, auth_headers):
 
     logger.info("=== EXPECTED TEST OUTPUT: Unauthorized upload error is expected ===")
     files = {"file": ("sample.txt", b"hello", "text/plain")}
-    resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files)  # no auth headers
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files
+    )  # no auth headers
     assert resp.status_code in (401, 403), resp.text
 
 
@@ -197,7 +221,11 @@ async def test_send_with_attachment_ids_acceptance(client, db, auth_headers):
     conversation_id = await _create_conversation(client, auth_headers)
     # Upload
     files = {"file": ("context.md", b"# Header\nSome content for context injection.", "text/markdown")}
-    up = await client.post(f"/api/v1/chat/conversations/{conversation_id}/attachments", files=files, headers=auth_headers)
+    up = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/attachments",
+        files=files,
+        headers=auth_headers,
+    )
     assert up.status_code == 200, up.text
     attachment_id = extract_data(up)["attachment_id"]
 
@@ -223,6 +251,7 @@ async def test_send_with_attachment_ids_acceptance(client, db, auth_headers):
     # Verify linkage exists in DB for the most recent user message
     # Note: assistant message is returned; we link attachments to the user message created in send flow
     from sqlalchemy import text
+
     result = await db.execute(
         text(
             """
@@ -244,6 +273,7 @@ async def test_send_with_attachment_ids_acceptance(client, db, auth_headers):
     storage_path = row[0]
     if storage_path:
         import os
+
         try:
             if os.path.exists(storage_path):
                 os.remove(storage_path)
@@ -251,7 +281,9 @@ async def test_send_with_attachment_ids_acceptance(client, db, auth_headers):
             pass
     # Delete the attachment row
     from sqlalchemy import delete
+
     from shu.models.attachment import Attachment
+
     await db.execute(delete(Attachment).where(Attachment.id == attachment_id))
     await db.commit()
 
@@ -263,7 +295,7 @@ class AttachmentsIntegrationTestSuite(BaseIntegrationTestSuite):
     def get_suite_description(self) -> str:
         return "Integration tests for chat attachments: upload and usage in send flow."
 
-    def get_test_functions(self) -> List[Callable]:
+    def get_test_functions(self) -> list[Callable]:
         return [
             test_upload_pdf_ocr_fields,
             test_upload_txt_success,
@@ -278,5 +310,6 @@ if __name__ == "__main__":
     # Allow running this suite directly
     suite = AttachmentsIntegrationTestSuite()
     import asyncio
+
     exit_code = asyncio.run(suite.run_suite())
     raise SystemExit(exit_code)

@@ -1,26 +1,40 @@
-from typing import Any, Dict
+from typing import Any, ClassVar
 
 import jmespath
 
 from shu.core.logging import get_logger
 
-from ..adapter_base import ProviderCapabilities, ProviderContentDeltaEventResult, ProviderInformation, register_adapter
+from ..adapter_base import (
+    ProviderCapabilities,
+    ProviderContentDeltaEventResult,
+    ProviderEventResult,
+    ProviderInformation,
+    register_adapter,
+)
+from ..parameter_definitions import (
+    ArrayParameter,
+    BooleanParameter,
+    EnumParameter,
+    IntegerParameter,
+    NumberParameter,
+    Option,
+    StringParameter,
+)
 from .completions_adapter import CompletionsAdapter
-from ..parameter_definitions import ArrayParameter, BooleanParameter, EnumParameter, IntegerParameter, NumberParameter, Option, StringParameter
 
 logger = get_logger(__name__)
 
 
 class PerplexityAdapter(CompletionsAdapter):
     """Adapter for Perplexity chat completions (OpenAI-compatible)."""
-    
-    citations = []
+
+    citations: ClassVar[list[str]] = []
 
     def _get_citations_markdown(self) -> str:
         citations = ""
         if not self.citations:
             return ""
-        
+
         for index, citation in enumerate(self.citations, start=1):
             citations += f"\n\n[{index}] {citation}"
 
@@ -40,47 +54,43 @@ class PerplexityAdapter(CompletionsAdapter):
     def get_api_base_url(self) -> str:
         return "https://api.perplexity.ai"
 
-    def get_authorization_header(self) -> Dict[str, Any]:
+    def get_authorization_header(self) -> dict[str, Any]:
         return {"scheme": "bearer", "headers": {"Authorization": f"Bearer {self.api_key}"}}
 
-    def get_finish_reason_path(self):
+    def get_finish_reason_path(self) -> str:
         return "object == 'chat.completion.done' && choices[*].finish_reason | [0]"
-    
-    async def handle_provider_event(self, chunk):
+
+    async def handle_provider_event(self, chunk) -> ProviderEventResult | None:
         self.citations = jmespath.search("object == 'chat.completion.done' && citations", chunk)
         return await super().handle_provider_event(chunk)
-    
-    async def finalize_provider_events(self):
 
+    async def finalize_provider_events(self):
         res = []
         citations = self._get_citations_markdown()
         self._stream_content.append(citations)
         if self.citations:
-            res.append(
-                ProviderContentDeltaEventResult(content=citations)
-            )
+            res.append(ProviderContentDeltaEventResult(content=citations))
 
         remaining_events = await super().finalize_provider_events()
 
         return res + remaining_events
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {
             # --- Sampling / generation controls ---
-
             "temperature": NumberParameter(
                 min=0,
                 max=2,
                 default=0.7,
                 label="Temperature",
-                description="Controls randomness in the model's output (0–2). Lower = more deterministic, higher = more creative.",
+                description="Controls randomness in the model's output (0-2). Lower = more deterministic, higher = more creative.",
             ),
             "top_p": NumberParameter(
                 min=0,
                 max=1,
                 default=1.0,
                 label="Top P",
-                description="Nucleus sampling (0–1). The model considers only the smallest set of tokens whose cumulative probability ≥ top_p.",
+                description="Nucleus sampling (0-1). The model considers only the smallest set of tokens whose cumulative probability ≥ top_p.",
             ),
             "top_k": IntegerParameter(
                 min=1,
@@ -92,9 +102,7 @@ class PerplexityAdapter(CompletionsAdapter):
                 label="Max Tokens",
                 description="Maximum number of tokens the model can generate in this response (output tokens only).",
             ),
-
             # --- Search / grounding controls (Perplexity-specific) ---
-
             "search_mode": EnumParameter(
                 label="Search Mode",
                 description="Controls which search backend to use. 'web' = general web search (default). 'academic' = academic / scholarly-leaning sources.",
@@ -134,7 +142,7 @@ class PerplexityAdapter(CompletionsAdapter):
             ),
             "disable_search": BooleanParameter(
                 label="Disable Search",
-                description="If true, disables Perplexity’s web search and forces pure LLM generation from the prompt and context only.",
+                description="If true, disables Perplexity's web search and forces pure LLM generation from the prompt and context only.",
                 default=False,
             ),
             "enable_search_classifier": BooleanParameter(

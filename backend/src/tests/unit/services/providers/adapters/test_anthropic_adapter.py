@@ -3,18 +3,6 @@ import types
 from unittest.mock import AsyncMock
 
 import pytest
-
-from shu.services.providers import adapter_base
-from shu.services.providers.adapter_base import (
-    ProviderAdapterContext,
-    ProviderContentDeltaEventResult,
-    ProviderFinalEventResult,
-    ProviderToolCallEventResult,
-    ToolCallInstructions,
-)
-from shu.services.chat_types import ChatContext
-from shu.services.providers.adapters.anthropic_adapter import AnthropicAdapter
-
 from shared import (
     ANTHROPIC_ACTIONABLE_FUNCTION_CALL1,
     ANTHROPIC_ACTIONABLE_FUNCTION_CALL2,
@@ -25,12 +13,24 @@ from shared import (
     ANTHROPIC_ACTIONABLE_OUTPUT_DELTA1,
     ANTHROPIC_ACTIONABLE_OUTPUT_DELTA2,
     ANTHROPIC_ACTIONABLE_OUTPUT_STOP,
-    ANTHROPIC_IGNORED_START,
-    ANTRHOPIC_ACTIONABLE_FUNCTION_CALL_STOP,
     ANTHROPIC_COMPLETE_FUNCTION_CALL_PAYLOAD,
     ANTHROPIC_COMPLETE_OUTPUT_PAYLOAD,
+    ANTHROPIC_IGNORED_START,
+    ANTRHOPIC_ACTIONABLE_FUNCTION_CALL_STOP,
     TOOLS,
 )
+
+from shu.services.chat_types import ChatContext
+from shu.services.providers import adapter_base
+from shu.services.providers.adapter_base import (
+    ProviderAdapterContext,
+    ProviderContentDeltaEventResult,
+    ProviderFinalEventResult,
+    ProviderToolCallEventResult,
+    ToolCallInstructions,
+)
+from shu.services.providers.adapters.anthropic_adapter import AnthropicAdapter
+
 FAKE_PLUGIN_RESULT = {"ok": True}
 
 
@@ -86,19 +86,27 @@ def _evaluate_tool_call_events(tool_event):
     assert len(tool_event.additional_messages) == 2
     assert tool_event.additional_messages[0].role == "assistant"
     assert tool_event.additional_messages[0].content == [
-            {"type": "text", "text": "This is the first part.\nThis is the second part."},
-            {"type": "tool_use", "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA", "name": "gmail_digest__list", "input": {"op": "digest"}}
-        ]
+        {"type": "text", "text": "This is the first part.\nThis is the second part."},
+        {
+            "type": "tool_use",
+            "id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA",
+            "name": "gmail_digest__list",
+            "input": {"op": "digest"},
+        },
+    ]
 
     result_msg = tool_event.additional_messages[1]
     assert result_msg.role == "user"
     assert result_msg.content == [
-            {"type": "tool_result", "tool_use_id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA", "content": json.dumps(FAKE_PLUGIN_RESULT)}
-        ]
+        {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01P8Dmpo2vu2vZpdyKyhmQPA",
+            "content": json.dumps(FAKE_PLUGIN_RESULT),
+        }
+    ]
 
 
 def test_provider_settings(anthropic_adapter):
-
     info = anthropic_adapter.get_provider_information()
     assert info.key == "anthropic"
     assert info.display_name == "Anthropic"
@@ -122,7 +130,6 @@ def test_provider_settings(anthropic_adapter):
 
 @pytest.mark.asyncio
 async def test_event_handling(anthropic_adapter, patch_plugin_calls):
-
     await anthropic_adapter.handle_provider_event(ANTHROPIC_IGNORED_START)
     await anthropic_adapter.handle_provider_event(ANTHROPIC_ACTIONABLE_FUNCTION_CALL1)
     await anthropic_adapter.handle_provider_event(ANTHROPIC_ACTIONABLE_FUNCTION_CALL2)
@@ -156,9 +163,9 @@ async def test_event_handling(anthropic_adapter, patch_plugin_calls):
         total_tokens=(10578 + 2913) + (371 + 55) + 12,
     )
 
+
 @pytest.mark.asyncio
 async def test_completion_flow(anthropic_adapter, patch_plugin_calls):
-
     events = await anthropic_adapter.handle_provider_completion(ANTHROPIC_COMPLETE_FUNCTION_CALL_PAYLOAD)
     assert len(events) == 1
     _evaluate_tool_call_events(events[0])
@@ -182,10 +189,7 @@ async def test_completion_flow(anthropic_adapter, patch_plugin_calls):
 @pytest.mark.asyncio
 async def test_inject_functions(anthropic_adapter):
     payload = {"field": "value"}
-    messages = ChatContext.from_dicts(
-        [{"role": "user", "content": "content"}],
-        system_prompt="system prompt"
-    )
+    messages = ChatContext.from_dicts([{"role": "user", "content": "content"}], system_prompt="system prompt")
 
     payload = await anthropic_adapter.inject_streaming_parameter(True, payload)
     payload = await anthropic_adapter.set_messages_in_payload(messages, payload)
@@ -224,9 +228,7 @@ async def test_inject_functions(anthropic_adapter):
                             "minimum": 1,
                             "maximum": 500,
                             "default": 50,
-                            "x-ui": {
-                                "help": "Max messages to inspect (capped at 500)."
-                            },
+                            "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                         },
                         "op": {
                             "type": "string",
@@ -237,23 +239,17 @@ async def test_inject_functions(anthropic_adapter):
                         "message_ids": {
                             "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "x-ui": {
-                                "help": "For actions, provide Gmail message ids to modify."
-                            },
+                            "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                         },
                         "preview": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "When true with approve=false, returns a plan without side effects."
-                            },
+                            "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                         },
                         "approve": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "Set to true (with or without preview) to perform the action."
-                            },
+                            "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                         },
                         "kb_id": {
                             "type": ["string", "null"],
@@ -291,9 +287,7 @@ async def test_inject_functions(anthropic_adapter):
                             "minimum": 1,
                             "maximum": 336,
                             "default": 48,
-                            "x-ui": {
-                                "help": "Look-back window in hours when no syncToken is present."
-                            },
+                            "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                         },
                         "time_min": {
                             "type": ["string", "null"],
@@ -317,3 +311,37 @@ async def test_inject_functions(anthropic_adapter):
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_post_process_payload_injects_max_tokens_default(anthropic_adapter):
+    """Test that post_process_payload injects default max_tokens when not provided."""
+    # Test case 1: No max_tokens provided - should inject default
+    payload_without_max_tokens = {
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    result = await anthropic_adapter.post_process_payload(payload_without_max_tokens)
+
+    assert "max_tokens" in result
+    assert result["max_tokens"] == 4096
+    assert result["model"] == "claude-3-5-sonnet-20241022"
+    assert result["messages"] == [{"role": "user", "content": "Hello"}]
+
+
+@pytest.mark.asyncio
+async def test_post_process_payload_preserves_user_max_tokens(anthropic_adapter):
+    """Test that post_process_payload preserves user-provided max_tokens."""
+    # Test case 2: max_tokens already provided - should NOT override
+    payload_with_max_tokens = {
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 2000,
+    }
+
+    result = await anthropic_adapter.post_process_payload(payload_with_max_tokens)
+
+    assert "max_tokens" in result
+    assert result["max_tokens"] == 2000  # Should preserve user value
+    assert result["model"] == "claude-3-5-sonnet-20241022"

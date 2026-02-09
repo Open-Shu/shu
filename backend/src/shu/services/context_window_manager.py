@@ -1,7 +1,9 @@
 import logging
-from typing import Callable, List, Optional, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 
 from shu.models.llm_provider import Conversation
+
 from .chat_types import ChatMessage
 
 if TYPE_CHECKING:
@@ -9,10 +11,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class ContextWindowManager:
-    """
-    Helper that encapsulates the context-window logic previously inside ChatService.
-    """
+    """Helper that encapsulates the context-window logic previously inside ChatService."""
 
     def __init__(
         self,
@@ -27,8 +28,8 @@ class ContextWindowManager:
             "decisions, and important information that would be useful for continuing the conversation:\n\n"
             "{conversation_text}\n\nSummary:"
         ),
-        token_estimator: Optional[Callable[[str], int]] = None,
-    ):
+        token_estimator: Callable[[str], int] | None = None,
+    ) -> None:
         self.llm_service = llm_service
         self.db_session = db_session
         self.config_manager = config_manager
@@ -39,15 +40,13 @@ class ContextWindowManager:
 
     async def manage_context_window(
         self,
-        messages: List[ChatMessage],
+        messages: list[ChatMessage],
         *,
         conversation: Conversation,
         max_tokens: int,
-        recent_message_limit_override: Optional[int] = None,
-    ) -> List[ChatMessage]:
-        """
-        Apply pruning/summarization to the message list.
-        """
+        recent_message_limit_override: int | None = None,
+    ) -> list[ChatMessage]:
+        """Apply pruning/summarization to the message list."""
 
         def get_content_text(msg) -> str:
             """Extract text from message content, handling multimodal formats."""
@@ -58,11 +57,8 @@ class ContextWindowManager:
                 # Multimodal content - extract text from text parts
                 text_parts = []
                 for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text":
-                            text_parts.append(part.get("text", ""))
-                        elif "text" in part:
-                            text_parts.append(part.get("text", ""))
+                    if isinstance(part, dict) and (part.get("type") == "text" or "text" in part):
+                        text_parts.append(part.get("text", ""))
                 return " ".join(text_parts)
             return ""
 
@@ -86,7 +82,7 @@ class ContextWindowManager:
         recent_messages = messages[-limit:]
         older_messages = messages[:-limit]
 
-        managed_messages: List[ChatMessage] = []
+        managed_messages: list[ChatMessage] = []
 
         if older_messages:
             summary = await self._summarize_conversation_history(older_messages)
@@ -95,7 +91,14 @@ class ContextWindowManager:
                 # Adapters like Anthropic/Gemini expect system content via ChatContext.system_prompt,
                 # not as messages in the array. Prefixing clearly marks this as context.
                 managed_messages.append(
-                    ChatMessage(id=None, role="user", content=f"[Previous conversation summary]: {summary}", created_at=None, attachments=[], metadata={"is_context_summary": True})
+                    ChatMessage(
+                        id=None,
+                        role="user",
+                        content=f"[Previous conversation summary]: {summary}",
+                        created_at=None,
+                        attachments=[],
+                        metadata={"is_context_summary": True},
+                    )
                 )
 
         managed_messages.extend(recent_messages)
@@ -111,23 +114,18 @@ class ContextWindowManager:
 
     async def _summarize_conversation_history(
         self,
-        messages: List[ChatMessage],
-    ) -> Optional[str]:
+        messages: list[ChatMessage],
+    ) -> str | None:
         if not messages:
             return None
 
         try:
             conversation_text = "\n".join(
-                [
-                    f"{getattr(msg, 'role', '').title()}: {getattr(msg, 'content', '')}"
-                    for msg in messages
-                ]
+                [f"{getattr(msg, 'role', '').title()}: {getattr(msg, 'content', '')}" for msg in messages]
             )
 
             if "{conversation_text}" in self.summary_prompt:
-                summary_prompt = self.summary_prompt.replace(
-                    "{conversation_text}", conversation_text
-                )
+                summary_prompt = self.summary_prompt.replace("{conversation_text}", conversation_text)
             else:
                 summary_prompt = f"{self.summary_prompt}\n\n{conversation_text}\n\nSummary:"
 
@@ -141,12 +139,8 @@ class ContextWindowManager:
                 if result.success:
                     logger.info("Generated conversation summary via side-call service")
                     return (result.content or "").strip()
-                else:
-                    logger.warning(
-                        "Side-call service summarization failed: %s",
-                        result.error_message
-                    )
-                    return None
+                logger.warning("Side-call service summarization failed: %s", result.error_message)
+                return None
 
             # Fallback: no side-call service configured
             logger.warning(

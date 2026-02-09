@@ -1,25 +1,26 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shu.models.plugin_execution import CallableTool
-from shu.plugins.base import Plugin
-from shu.plugins.loader import PluginRecord
 from shu.auth.models import User
-from shu.models.provider_identity import ProviderIdentity
-from shu.plugins.executor import EXECUTOR
-from shu.services.plugin_identity import PluginIdentityError, ensure_user_identity_for_plugin
 from shu.core.logging import get_logger
+from shu.models.plugin_execution import CallableTool
 from shu.models.plugin_registry import PluginDefinition
+from shu.models.provider_identity import ProviderIdentity
+from shu.plugins.base import Plugin
+from shu.plugins.executor import EXECUTOR
+from shu.plugins.loader import PluginRecord
 from shu.plugins.registry import REGISTRY
+from shu.services.plugin_identity import PluginIdentityError, ensure_user_identity_for_plugin
 
 logger = get_logger(__name__)
 
 
-async def build_agent_tools(db_session: AsyncSession) -> List[CallableTool]:
-    tools: List[CallableTool] = []
-    
-    manifest: Dict[str, PluginRecord] = {}
+async def build_agent_tools(db_session: AsyncSession) -> list[CallableTool]:
+    tools: list[CallableTool] = []
+
+    manifest: dict[str, PluginRecord] = {}
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:
@@ -34,11 +35,10 @@ async def build_agent_tools(db_session: AsyncSession) -> List[CallableTool]:
     enabled = {r.name for r in res.scalars().all()}
 
     for name, rec in (manifest or {}).items():
-
         if name not in enabled:
             continue
 
-        chat_ops: List[str] = []
+        chat_ops: list[str] = []
         try:
             chat_ops = list(getattr(rec, "chat_callable_ops", []) or [])
         except Exception:
@@ -46,7 +46,7 @@ async def build_agent_tools(db_session: AsyncSession) -> List[CallableTool]:
         if not chat_ops:
             continue
 
-        plugin: Optional[Plugin] = None
+        plugin: Plugin | None = None
         try:
             plugin = await REGISTRY.resolve(name, db_session)
         except Exception:
@@ -54,17 +54,17 @@ async def build_agent_tools(db_session: AsyncSession) -> List[CallableTool]:
         if not plugin:
             continue
 
-        schema: Optional[Dict[str, Any]] = None
+        schema: dict[str, Any] | None = None
         try:
             schema = plugin.get_schema()
         except Exception:
             pass
 
-        enum_labels: Optional[Dict[str, Any]] = None
+        enum_labels: dict[str, Any] | None = None
         try:
-            enum_labels = (
-                (((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})
-            ).get("enum_labels")
+            enum_labels = ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get(
+                "enum_labels"
+            )
         except Exception:
             pass
 
@@ -82,7 +82,7 @@ async def build_agent_tools(db_session: AsyncSession) -> List[CallableTool]:
     return tools
 
 
-def _coerce_params(plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
+def _coerce_params(plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
     """Coerce parameter types based on plugin schema."""
     try:
         schema = plugin.get_schema()
@@ -91,16 +91,16 @@ def _coerce_params(plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
 
         # Assume standard JSON schema structure with "properties"
         props = schema.get("properties", {})
-        
+
         coerced = params.copy()
         for key, value in params.items():
             if key in props and isinstance(value, str):
                 prop_def = props[key]
                 prop_type = prop_def.get("type")
-                
+
                 if prop_type == "integer":
                     # Handle pure digits
-                    if value.lstrip('-').isdigit():
+                    if value.lstrip("-").isdigit():
                         coerced[key] = int(value)
                 elif prop_type == "number":
                     # Handle float format
@@ -121,10 +121,51 @@ def _coerce_params(plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
         return params
 
 
-async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: str, args_dict: Dict[str, Any], conversation_owner_id: str) -> Dict[str, Any]:
-    """
-        Execute a chat-callable plugin op using the internal executor and return a serializable dict.
-    """
+def _handle_plugin_execution_result_types(plugin_name: str, result: Any):
+    # Handle different result types
+    # Case 1: Already a dict (some plugins return dicts directly)
+    if isinstance(result, dict):
+        return result
+
+    # Case 2: PluginResult/ToolResult object with model_dump method
+    if hasattr(result, "model_dump"):
+        try:
+            return result.model_dump()
+        except Exception as e:
+            logger.warning(
+                "chat.tools.execution.model_dump_failed plugin=%s error=%s, trying mode=python", plugin_name, str(e)
+            )
+            try:
+                return result.model_dump(mode="python")
+            except Exception as e2:
+                logger.warning(
+                    "chat.tools.execution.model_dump_python_failed plugin=%s error=%s, using manual fallback",
+                    plugin_name,
+                    str(e2),
+                )
+
+    # Case 3: Object without model_dump - manually extract attributes
+    logger.warning(
+        "chat.tools.execution.manual_extraction plugin=%s result_type=%s", plugin_name, type(result).__name__
+    )
+    return {
+        "status": result.status if hasattr(result, "status") else None,
+        "data": result.data if hasattr(result, "data") else None,
+        "error": result.error if hasattr(result, "error") else None,
+        "warnings": result.warnings if hasattr(result, "warnings") else None,
+        "citations": result.citations if hasattr(result, "citations") else None,
+        "diagnostics": result.diagnostics if hasattr(result, "diagnostics") else None,
+    }
+
+
+async def execute_plugin(
+    db_session: AsyncSession,
+    plugin_name: str,
+    operation: str,
+    args_dict: dict[str, Any],
+    conversation_owner_id: str,
+) -> dict[str, Any]:
+    """Execute a chat-callable plugin op using the internal executor and return a serializable dict."""
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:
@@ -137,9 +178,7 @@ async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: 
         logger.warning("chat.tools.execution.plugin_missing plugin=%s", plugin_name)
         return {"status": "error", "error": {"message": f"plugin '{plugin_name}' not found"}}
 
-    r = await db_session.execute(
-        select(PluginDefinition).where(PluginDefinition.name == plugin_name)
-    )
+    r = await db_session.execute(select(PluginDefinition).where(PluginDefinition.name == plugin_name))
     row = r.scalars().first()
     if not row or not row.enabled:
         logger.warning("chat.tools.execution.plugin_disabled plugin=%s", plugin_name)
@@ -157,7 +196,7 @@ async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: 
 
     limits = getattr(row, "limits", {}) or {}
 
-    providers_map: Dict[str, List[Dict[str, Any]]] = {}
+    providers_map: dict[str, list[dict[str, Any]]] = {}
     try:
         q_pi = select(ProviderIdentity).where(ProviderIdentity.user_id == str(conversation_owner_id))
         pi_res = await db_session.execute(q_pi)
@@ -213,42 +252,5 @@ async def execute_plugin(db_session: AsyncSession, plugin_name: str, operation: 
         limits=limits,
         provider_identities=providers_map,
     )
-    
-    # Handle different result types
-    # Case 1: Already a dict (some plugins return dicts directly)
-    if isinstance(result, dict):
-        return result
-    
-    # Case 2: PluginResult/ToolResult object with model_dump method
-    if hasattr(result, 'model_dump'):
-        try:
-            return result.model_dump()
-        except Exception as e:
-            logger.warning(
-                "chat.tools.execution.model_dump_failed plugin=%s error=%s, trying mode=python",
-                plugin_name,
-                str(e)
-            )
-            try:
-                return result.model_dump(mode='python')
-            except Exception as e2:
-                logger.warning(
-                    "chat.tools.execution.model_dump_python_failed plugin=%s error=%s, using manual fallback",
-                    plugin_name,
-                    str(e2)
-                )
-    
-    # Case 3: Object without model_dump - manually extract attributes
-    logger.warning(
-        "chat.tools.execution.manual_extraction plugin=%s result_type=%s",
-        plugin_name,
-        type(result).__name__
-    )
-    return {
-        "status": result.status if hasattr(result, "status") else None,
-        "data": result.data if hasattr(result, "data") else None,
-        "error": result.error if hasattr(result, "error") else None,
-        "warnings": result.warnings if hasattr(result, "warnings") else None,
-        "citations": result.citations if hasattr(result, "citations") else None,
-        "diagnostics": result.diagnostics if hasattr(result, "diagnostics") else None,
-    }
+
+    return _handle_plugin_execution_result_types(plugin_name, result)

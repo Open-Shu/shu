@@ -1,22 +1,12 @@
 import React from 'react';
-import {
-  Box,
-  Button,
-  Grid,
-  Paper,
-  Typography,
-  CircularProgress,
-} from '@mui/material';
+import { Box, Button, Grid, Paper, Typography, CircularProgress } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
-const formatNumber = (value) =>
-  typeof value === 'number' ? value.toLocaleString() : 'N/A';
+const formatNumber = (value) => (typeof value === 'number' ? value.toLocaleString() : 'N/A');
 
-const formatConfidence = (value) =>
-  typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : 'N/A';
+const formatConfidence = (value) => (typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : 'N/A');
 
-const formatDuration = (value) =>
-  typeof value === 'number' ? `${value.toFixed(2)}s` : 'N/A';
+const formatDuration = (value) => (typeof value === 'number' ? `${value.toFixed(2)}s` : 'N/A');
 
 const DocumentPreviewContent = ({
   document,
@@ -48,8 +38,7 @@ const DocumentPreviewContent = ({
   const shouldShowFullContentButton =
     fullContentLength > maxChars && !showFullContent && typeof onShowFullContent === 'function';
 
-  const isInternalPreview =
-    sourceUrl && knowledgeBaseId && id && sourceUrl === `/documents/${knowledgeBaseId}/${id}`;
+  const isInternalPreview = sourceUrl && knowledgeBaseId && id && sourceUrl === `/documents/${knowledgeBaseId}/${id}`;
 
   return (
     <Box>
@@ -62,65 +51,49 @@ const DocumentPreviewContent = ({
             <Typography variant="body2" color="text.secondary">
               Knowledge Base
             </Typography>
-            <Typography variant="body1">
-              {knowledgeBaseId || 'Unknown'}
-            </Typography>
+            <Typography variant="body1">{knowledgeBaseId || 'Unknown'}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Document ID
             </Typography>
-            <Typography variant="body1">
-              {id || 'Unknown'}
-            </Typography>
+            <Typography variant="body1">{id || 'Unknown'}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               File Type
             </Typography>
-            <Typography variant="body1">
-              {fileType ? fileType.toUpperCase() : 'Unknown'}
-            </Typography>
+            <Typography variant="body1">{fileType ? fileType.toUpperCase() : 'Unknown'}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Source ID
             </Typography>
-            <Typography variant="body1">
-              {sourceId || 'N/A'}
-            </Typography>
+            <Typography variant="body1">{sourceId || 'N/A'}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Characters
             </Typography>
-            <Typography variant="body1">
-              {formatNumber(processingInfo.character_count)}
-            </Typography>
+            <Typography variant="body1">{formatNumber(processingInfo.character_count)}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Words
             </Typography>
-            <Typography variant="body1">
-              {formatNumber(processingInfo.word_count)}
-            </Typography>
+            <Typography variant="body1">{formatNumber(processingInfo.word_count)}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Chunks
             </Typography>
-            <Typography variant="body1">
-              {formatNumber(processingInfo.chunk_count)}
-            </Typography>
+            <Typography variant="body1">{formatNumber(processingInfo.chunk_count)}</Typography>
           </Grid>
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
               Processed At
             </Typography>
-            <Typography variant="body1">
-              {processingInfo.processed_at || 'N/A'}
-            </Typography>
+            <Typography variant="body1">{processingInfo.processed_at || 'N/A'}</Typography>
           </Grid>
         </Grid>
 
@@ -150,33 +123,25 @@ const DocumentPreviewContent = ({
               <Typography variant="body2" color="text.secondary">
                 Method
               </Typography>
-              <Typography variant="body1">
-                {extraction.method || 'Unknown'}
-              </Typography>
+              <Typography variant="body1">{extraction.method || 'Unknown'}</Typography>
             </Grid>
             <Grid item xs={6}>
               <Typography variant="body2" color="text.secondary">
                 Engine
               </Typography>
-              <Typography variant="body1">
-                {extraction.engine || 'Unknown'}
-              </Typography>
+              <Typography variant="body1">{extraction.engine || 'Unknown'}</Typography>
             </Grid>
             <Grid item xs={6}>
               <Typography variant="body2" color="text.secondary">
                 Confidence
               </Typography>
-              <Typography variant="body1">
-                {formatConfidence(extraction.confidence)}
-              </Typography>
+              <Typography variant="body1">{formatConfidence(extraction.confidence)}</Typography>
             </Grid>
             <Grid item xs={6}>
               <Typography variant="body2" color="text.secondary">
                 Duration
               </Typography>
-              <Typography variant="body1">
-                {formatDuration(extraction.duration)}
-              </Typography>
+              <Typography variant="body1">{formatDuration(extraction.duration)}</Typography>
             </Grid>
           </Grid>
 
@@ -235,17 +200,14 @@ const DocumentPreviewContent = ({
         {shouldShowFullContentButton && (
           <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
             <Typography variant="caption" color="text.secondary">
-              Showing first {maxChars.toLocaleString()} characters of{' '}
-              {fullContentLength.toLocaleString()} total
+              Showing first {maxChars.toLocaleString()} characters of {fullContentLength.toLocaleString()} total
             </Typography>
             <Button
               variant="outlined"
               size="small"
               onClick={onShowFullContent}
               disabled={loadingFullContent}
-              startIcon={
-                loadingFullContent ? <CircularProgress size={16} /> : null
-              }
+              startIcon={loadingFullContent ? <CircularProgress size={16} /> : null}
             >
               {loadingFullContent ? 'Loading...' : 'Show All Content'}
             </Button>
@@ -253,11 +215,7 @@ const DocumentPreviewContent = ({
         )}
 
         {showFullContent && (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ mt: 1, display: 'block' }}
-          >
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
             Showing full content ({fullContentLength.toLocaleString()} characters)
           </Typography>
         )}

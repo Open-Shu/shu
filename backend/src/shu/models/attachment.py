@@ -1,13 +1,11 @@
-"""
-Attachment models for chat message file uploads.
+"""Attachment models for chat message file uploads.
 
 Stores uploaded blob metadata, storage path, and extracted text for context injection.
 """
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Float, JSON, UniqueConstraint
+
+from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 from .base import BaseModel
 
@@ -54,6 +52,4 @@ class MessageAttachment(BaseModel):
     message_id = Column(String, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, index=True)
     attachment_id = Column(String, ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    __table_args__ = (
-        UniqueConstraint('message_id', 'attachment_id', name='uq_message_attachment'),
-    )
+    __table_args__ = (UniqueConstraint("message_id", "attachment_id", name="uq_message_attachment"),)

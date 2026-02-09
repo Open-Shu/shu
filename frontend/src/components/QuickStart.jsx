@@ -110,7 +110,14 @@ const SectionCard = ({ title, description, icon, priority, completed, onClick })
           <Typography variant="body2" color="text.secondary" sx={{ flex: 1, lineHeight: 1.5 }}>
             {description}
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', mt: 1.5, color: 'primary.main' }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              mt: 1.5,
+              color: 'primary.main',
+            }}
+          >
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
               Open
             </Typography>
@@ -150,14 +157,17 @@ const QuickStart = () => {
 
   // Map setup status to section keys
   const getCompletionStatus = (statusKey) => {
-    if (!setupStatus) return false;
+    if (!setupStatus) {
+      return false;
+    }
     return setupStatus[statusKey] === true;
   };
 
   const gettingStartedSections = [
     {
       title: 'LLM Providers',
-      description: 'Configure API connections to LLM providers (OpenAI, Anthropic, Ollama, etc.). Set up API keys and endpoints first.',
+      description:
+        'Configure API connections to LLM providers (OpenAI, Anthropic, Ollama, etc.). Set up API keys and endpoints first.',
       icon: <LLMProvidersIcon />,
       path: '/admin/llm-providers',
       priority: 'Start Here',
@@ -165,7 +175,8 @@ const QuickStart = () => {
     },
     {
       title: 'Model Configurations',
-      description: 'Create model configurations that define which AI models power your assistant. Requires an LLM Provider.',
+      description:
+        'Create model configurations that define which AI models power your assistant. Requires an LLM Provider.',
       icon: <ModelConfigIcon />,
       path: '/admin/model-configurations',
       priority: 'Step 2',
@@ -173,7 +184,8 @@ const QuickStart = () => {
     },
     {
       title: 'Knowledge Bases',
-      description: 'Create knowledge bases to store and organize your documents. Enable RAG (Retrieval-Augmented Generation) for context-aware responses.',
+      description:
+        'Create knowledge bases to store and organize your documents. Enable RAG (Retrieval-Augmented Generation) for context-aware responses.',
       icon: <KnowledgeBasesIcon />,
       path: '/admin/knowledge-bases',
       priority: 'Step 3',
@@ -189,7 +201,8 @@ const QuickStart = () => {
     },
     {
       title: 'Plugins',
-      description: 'Extend functionality with plugins. Connect external services like Gmail, Google Drive, and Calendar.',
+      description:
+        'Extend functionality with plugins. Connect external services like Gmail, Google Drive, and Calendar.',
       icon: <PluginIcon />,
       path: '/admin/plugins',
       priority: 'Step 5',
@@ -197,7 +210,8 @@ const QuickStart = () => {
     },
     {
       title: 'Plugin Feeds',
-      description: 'Configure automated data synchronization. Feeds pull data from connected services on a schedule into your knowledge bases.',
+      description:
+        'Configure automated data synchronization. Feeds pull data from connected services on a schedule into your knowledge bases.',
       icon: <FeedsIcon />,
       path: '/admin/feeds',
       priority: 'Step 6',
@@ -205,7 +219,8 @@ const QuickStart = () => {
     },
     {
       title: 'Experiences',
-      description: 'Create automated workflows that combine plugins, knowledge bases, and AI synthesis. Build signature experiences like Morning Briefing.',
+      description:
+        'Create automated workflows that combine plugins, knowledge bases, and AI synthesis. Build signature experiences like Morning Briefing.',
       icon: <ExperiencesIcon />,
       path: '/admin/experiences',
       priority: 'Step 7',
@@ -216,7 +231,7 @@ const QuickStart = () => {
   const advancedSections = [
     {
       title: 'Prompts',
-      description: 'Manage system prompts that define your assistant\'s behavior, personality, and response style.',
+      description: "Manage system prompts that define your assistant's behavior, personality, and response style.",
       icon: <PromptsIcon />,
       path: '/admin/prompts',
     },
@@ -252,7 +267,8 @@ const QuickStart = () => {
   const toolsSections = [
     {
       title: 'Morning Briefing',
-      description: 'Run an AI-powered daily briefing that summarizes your calendar, email, and chat. Experimental demo feature.',
+      description:
+        'Run an AI-powered daily briefing that summarizes your calendar, email, and chat. Experimental demo feature.',
       icon: <BriefingIcon />,
       path: '/admin/briefing',
     },
@@ -277,9 +293,7 @@ const QuickStart = () => {
   ];
 
   // Calculate progress for Getting Started section
-  const completedSteps = gettingStartedSections.filter(
-    s => s.statusKey && getCompletionStatus(s.statusKey)
-  ).length;
+  const completedSteps = gettingStartedSections.filter((s) => s.statusKey && getCompletionStatus(s.statusKey)).length;
   const totalSteps = gettingStartedSections.length;
 
   const renderSection = (title, sections, columns = 4, showProgress = false) => (
@@ -296,9 +310,7 @@ const QuickStart = () => {
             sx={{ ml: 2, fontSize: '0.75rem' }}
           />
         )}
-        {showProgress && statusLoading && (
-          <CircularProgress size={16} sx={{ ml: 2 }} />
-        )}
+        {showProgress && statusLoading && <CircularProgress size={16} sx={{ ml: 2 }} />}
       </Box>
       <Grid container spacing={2}>
         {sections.map((section, index) => (
@@ -341,19 +353,25 @@ const QuickStart = () => {
         </Typography>
         <Grid container spacing={2} sx={{ mt: 1 }}>
           <Grid item xs={12} md={4}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>Knowledge Base (KB)</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              Knowledge Base (KB)
+            </Typography>
             <Typography variant="body2" color="text.secondary">
               A searchable collection of documents. Used for RAG to give your AI context about your data.
             </Typography>
           </Grid>
           <Grid item xs={12} md={4}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>Plugin</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              Plugin
+            </Typography>
             <Typography variant="body2" color="text.secondary">
               An extension that adds capabilities like email reading, calendar access, or web search.
             </Typography>
           </Grid>
           <Grid item xs={12} md={4}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>Feed</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              Feed
+            </Typography>
             <Typography variant="body2" color="text.secondary">
               An automated job that runs a plugin operation on a schedule to sync data into a KB.
             </Typography>
@@ -365,4 +383,3 @@ const QuickStart = () => {
 };
 
 export default QuickStart;
-

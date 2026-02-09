@@ -28,6 +28,13 @@ MANIFEST
 !.github/
 !.env.example
 !.dockerignore
+!.pre-commit-config.yaml
+!.editorconfig
+!.secrets.baseline
+!.markdownlint.json
+!.sqlfluff
+!.eslintrc.json
+!.prettierrc.json
 
 # Virtual environments
 venv/
@@ -43,13 +50,17 @@ venv.bak/
 .DS_Store
 
 # Testing
-# Test framework cache (removed - using custom framework)
-# .pytest_cache/
+.pytest_cache/
+.hypothesis/
 htmlcov/
 nosetests.xml
 tests/testing.log
 coverage.xml
+.coverage
+.coverage.*
 *.cover
+.tox/
+.nox/
 
 # Project specific
 data/
@@ -83,7 +94,7 @@ celerybeat.pid
 
 # mypy
 .dmypy.json
-dmypy.json 
+dmypy.json
 
 # ===== REACT/FRONTEND PATTERNS =====
 

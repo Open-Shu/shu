@@ -2,10 +2,10 @@ import types
 from unittest.mock import AsyncMock
 
 import pytest
+from tests.unit.services.providers.adapters.shared import TOOLS
 
 from shu.services.providers.adapter_base import ProviderAdapterContext
 from shu.services.providers.adapters.xai_adapter import XAIAdapter
-from tests.unit.services.providers.adapters.shared import TOOLS
 
 
 @pytest.fixture(scope="function")
@@ -92,9 +92,7 @@ async def test_inject_functions(xai_adapter):
                             "minimum": 1,
                             "maximum": 500,
                             "default": 50,
-                            "x-ui": {
-                                "help": "Max messages to inspect (capped at 500)."
-                            },
+                            "x-ui": {"help": "Max messages to inspect (capped at 500)."},
                         },
                         "op": {
                             "type": "string",
@@ -105,23 +103,17 @@ async def test_inject_functions(xai_adapter):
                         "message_ids": {
                             "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "x-ui": {
-                                "help": "For actions, provide Gmail message ids to modify."
-                            },
+                            "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
                         },
                         "preview": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "When true with approve=false, returns a plan without side effects."
-                            },
+                            "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
                         },
                         "approve": {
                             "type": ["boolean", "null"],
                             "default": None,
-                            "x-ui": {
-                                "help": "Set to true (with or without preview) to perform the action."
-                            },
+                            "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
                         },
                         "kb_id": {
                             "type": ["string", "null"],
@@ -160,9 +152,7 @@ async def test_inject_functions(xai_adapter):
                             "minimum": 1,
                             "maximum": 336,
                             "default": 48,
-                            "x-ui": {
-                                "help": "Look-back window in hours when no syncToken is present."
-                            },
+                            "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                         },
                         "time_min": {
                             "type": ["string", "null"],

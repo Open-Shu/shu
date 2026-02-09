@@ -167,10 +167,7 @@ const AuthenticatedApp = () => {
         />
 
         {/* User Preferences - Available to ALL users */}
-        <Route
-          path="/settings/preferences"
-          element={<Navigate to="/settings/preferences/general" replace />}
-        />
+        <Route path="/settings/preferences" element={<Navigate to="/settings/preferences/general" replace />} />
         <Route
           path="/settings/preferences/:section"
           element={
@@ -215,7 +212,6 @@ const AuthenticatedApp = () => {
             </RoleBasedRoute>
           }
         />
-
 
         <Route
           path="/admin/query-tester"
@@ -347,7 +343,6 @@ const AuthenticatedApp = () => {
             </RoleBasedRoute>
           }
         />
-
 
         {/* Catch all - redirect to main chat interface */}
         <Route path="*" element={<MainAppRedirect />} />

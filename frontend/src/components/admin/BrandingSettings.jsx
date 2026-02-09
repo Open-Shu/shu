@@ -1,15 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  CircularProgress,
-  Grid,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Alert, Box, Button, CircularProgress, Grid, Paper, Stack, TextField, Typography } from '@mui/material';
 
 import PaletteIcon from '@mui/icons-material/Palette';
 import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
@@ -83,13 +73,17 @@ const BrandingSettings = () => {
       faviconUrl: branding.faviconUrl || '',
       light: {
         primaryMain: branding.lightThemeOverrides?.palette?.primary?.main || resolvedLightTheme.palette.primary.main,
-        secondaryMain: branding.lightThemeOverrides?.palette?.secondary?.main || resolvedLightTheme.palette.secondary.main,
-        backgroundDefault: branding.lightThemeOverrides?.palette?.background?.default || resolvedLightTheme.palette.background.default,
+        secondaryMain:
+          branding.lightThemeOverrides?.palette?.secondary?.main || resolvedLightTheme.palette.secondary.main,
+        backgroundDefault:
+          branding.lightThemeOverrides?.palette?.background?.default || resolvedLightTheme.palette.background.default,
       },
       dark: {
         primaryMain: branding.darkThemeOverrides?.palette?.primary?.main || resolvedDarkTheme.palette.primary.main,
-        secondaryMain: branding.darkThemeOverrides?.palette?.secondary?.main || resolvedDarkTheme.palette.secondary.main,
-        backgroundDefault: branding.darkThemeOverrides?.palette?.background?.default || resolvedDarkTheme.palette.background.default,
+        secondaryMain:
+          branding.darkThemeOverrides?.palette?.secondary?.main || resolvedDarkTheme.palette.secondary.main,
+        backgroundDefault:
+          branding.darkThemeOverrides?.palette?.background?.default || resolvedDarkTheme.palette.background.default,
       },
     });
   }, [branding, brandingLoaded, resolvedDarkTheme, resolvedLightTheme]);
@@ -176,13 +170,13 @@ const BrandingSettings = () => {
     }
 
     try {
-      const response =
-        type === 'logo'
-          ? await brandingAPI.uploadLogo(file)
-          : await brandingAPI.uploadFavicon(file);
+      const response = type === 'logo' ? await brandingAPI.uploadLogo(file) : await brandingAPI.uploadFavicon(file);
       const data = extractDataFromResponse(response);
       setBranding(data);
-      setStatus({ type: 'success', message: `${type === 'logo' ? 'Logo' : 'Favicon'} updated.` });
+      setStatus({
+        type: 'success',
+        message: `${type === 'logo' ? 'Logo' : 'Favicon'} updated.`,
+      });
     } catch (error) {
       const message = formatError(error);
       log.error('Asset upload failed', error);
@@ -287,11 +281,7 @@ const BrandingSettings = () => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Favicon
                 </Typography>
-                <img
-                  src={branding.faviconUrl}
-                  alt="Favicon preview"
-                  style={{ height: 80, objectFit: 'contain' }}
-                />
+                <img src={branding.faviconUrl} alt="Favicon preview" style={{ height: 80, objectFit: 'contain' }} />
                 <Stack spacing={1}>
                   <Button
                     variant="outlined"

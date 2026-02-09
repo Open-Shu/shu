@@ -8,9 +8,17 @@ const PluginRunPanel = React.memo(function PluginRunPanel({ pluginRun, onClear }
 
   return (
     <Paper variant="outlined" sx={{ m: 1, p: 1 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
         <Typography variant="subtitle2">Plugin execution: {pluginRun.plugin?.name}</Typography>
-        <Button size="small" onClick={onClear}>Clear</Button>
+        <Button size="small" onClick={onClear}>
+          Clear
+        </Button>
       </Box>
       {pluginRun.status === 'running' ? (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
@@ -20,7 +28,13 @@ const PluginRunPanel = React.memo(function PluginRunPanel({ pluginRun, onClear }
       ) : (
         <Box sx={{ mt: 1 }}>
           <Typography variant="caption">Result</Typography>
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
+          <pre
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              margin: 0,
+            }}
+          >
             {(() => {
               try {
                 return JSON.stringify(pluginRun.data, null, 2);

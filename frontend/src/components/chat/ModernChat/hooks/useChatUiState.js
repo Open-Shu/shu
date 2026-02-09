@@ -59,15 +59,18 @@ const useChatUiState = () => {
     setRenameError('');
   }, []);
 
-  const updateRenameValue = useCallback((value) => {
-    setRenameDialog((prev) => ({
-      ...prev,
-      value,
-    }));
-    if (renameError) {
-      setRenameError('');
-    }
-  }, [renameError]);
+  const updateRenameValue = useCallback(
+    (value) => {
+      setRenameDialog((prev) => ({
+        ...prev,
+        value,
+      }));
+      if (renameError) {
+        setRenameError('');
+      }
+    },
+    [renameError]
+  );
 
   const openSettingsDialog = useCallback(() => {
     setSettingsDialogOpen(true);

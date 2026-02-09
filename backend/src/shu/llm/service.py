@@ -1,30 +1,32 @@
-"""
-LLM service layer for Shu RAG Backend.
+"""LLM service layer for Shu RAG Backend.
 
 This module provides the service layer for managing LLM providers,
 models, and handling LLM operations with database integration.
 """
 
 import logging
-from typing import List, Optional, Dict, Any, Union
 from decimal import Decimal
-from datetime import datetime
+from typing import Any
+
 from cryptography.fernet import Fernet
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 
-from shu.services.providers.adapter_base import ProviderAdapterContext, ProviderCapabilities, get_adapter
 from shu.schemas.llm_provider_type import ProviderTypeDefinitionSchema
+from shu.services.providers.adapter_base import (
+    ProviderAdapterContext,
+    get_adapter,
+)
 
-from ..models.llm_provider import LLMProvider, LLMModel, LLMUsage
-from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
 from ..core.config import get_settings_instance
 from ..core.exceptions import (
-    LLMProviderError, LLMConfigurationError, LLMModelNotFoundError,
-    LLMAuthenticationError
+    LLMConfigurationError,
+    LLMProviderError,
 )
-from .client import UnifiedLLMClient, LLMResponse
+from ..models.llm_provider import LLMModel, LLMProvider, LLMUsage
+from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
+from .client import UnifiedLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ logger = logging.getLogger(__name__)
 class LLMService:
     """Service for managing LLM providers and operations."""
 
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession) -> None:
         self.db = db_session
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
@@ -41,32 +43,32 @@ class LLMService:
         if not self.encryption_key:
             raise LLMConfigurationError("LLM encryption key not configured")
 
-    async def get_active_providers(self) -> List[LLMProvider]:
+    async def get_active_providers(self) -> list[LLMProvider]:
         """Get all active LLM providers."""
         stmt = (
             select(LLMProvider)
-                .where(LLMProvider.is_active == True)
-                .options(selectinload(LLMProvider.models), selectinload(LLMProvider.provider_definition))
-                .order_by(LLMProvider.name)
+            .where(LLMProvider.is_active)
+            .options(selectinload(LLMProvider.models), selectinload(LLMProvider.provider_definition))
+            .order_by(LLMProvider.name)
         )
 
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
-    async def get_provider_by_id(self, provider_id: str) -> Optional[LLMProvider]:
+    async def get_provider_by_id(self, provider_id: str) -> LLMProvider | None:
         """Get LLM provider by ID."""
-        stmt = select(LLMProvider).where(
-            LLMProvider.id == provider_id
-        ).options(selectinload(LLMProvider.models), selectinload(LLMProvider.provider_definition))
+        stmt = (
+            select(LLMProvider)
+            .where(LLMProvider.id == provider_id)
+            .options(selectinload(LLMProvider.models), selectinload(LLMProvider.provider_definition))
+        )
 
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_provider_by_name(self, name: str) -> Optional[LLMProvider]:
+    async def get_provider_by_name(self, name: str) -> LLMProvider | None:
         """Get LLM provider by name."""
-        stmt = select(LLMProvider).where(
-            LLMProvider.name == name
-        ).options(selectinload(LLMProvider.models))
+        stmt = select(LLMProvider).where(LLMProvider.name == name).options(selectinload(LLMProvider.models))
 
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -76,12 +78,11 @@ class LLMService:
         name: str,
         provider_type: str,
         api_endpoint: str,
-        api_key: Optional[str] = None,
-        organization_id: Optional[str] = None,
-        **kwargs
+        api_key: str | None = None,
+        organization_id: str | None = None,
+        **kwargs: Any,
     ) -> LLMProvider:
         """Create a new LLM provider."""
-
         provider_type_definition = await self.provider_type.get(provider_type)
         if not provider_type_definition:
             raise LLMProviderError(f"Provider type '{provider_type}' is invalid")
@@ -123,11 +124,7 @@ class LLMService:
         logger.info(f"Created LLM provider: {name} ({provider_type})")
         return provider
 
-    async def update_provider(
-        self,
-        provider_id: str,
-        **updates
-    ) -> LLMProvider:
+    async def update_provider(self, provider_id: str, **updates: Any) -> LLMProvider:
         """Update an existing LLM provider."""
         provider = await self.get_provider_by_id(provider_id)
         if not provider:
@@ -182,9 +179,9 @@ class LLMService:
         logger.info(f"Deleted LLM provider: {provider.name}")
         return True
 
-    async def get_available_models(self, provider_id: Optional[str] = None) -> List[LLMModel]:
+    async def get_available_models(self, provider_id: str | None = None) -> list[LLMModel]:
         """Get available LLM models, optionally filtered by provider."""
-        stmt = select(LLMModel).where(LLMModel.is_active == True)
+        stmt = select(LLMModel).where(LLMModel.is_active)
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -194,14 +191,9 @@ class LLMService:
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
-    async def get_model_by_name(self, model_name: str, provider_id: Optional[str] = None) -> Optional[LLMModel]:
+    async def get_model_by_name(self, model_name: str, provider_id: str | None = None) -> LLMModel | None:
         """Get LLM model by name, optionally filtered by provider."""
-        stmt = select(LLMModel).where(
-            and_(
-                LLMModel.model_name == model_name,
-                LLMModel.is_active == True
-            )
-        )
+        stmt = select(LLMModel).where(and_(LLMModel.model_name == model_name, LLMModel.is_active))
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -212,11 +204,7 @@ class LLMService:
         return result.scalar_one_or_none()
 
     async def create_model(
-        self,
-        provider_id: str,
-        model_name: str,
-        display_name: Optional[str] = None,
-        **kwargs
+        self, provider_id: str, model_name: str, display_name: str | None = None, **kwargs: Any
     ) -> LLMModel:
         """Create a new LLM model configuration."""
         provider = await self.get_provider_by_id(provider_id)
@@ -227,7 +215,7 @@ class LLMService:
             provider_id=provider_id,
             model_name=model_name,
             display_name=display_name or model_name,
-            **kwargs
+            **kwargs,
         )
 
         self.db.add(model)
@@ -237,16 +225,14 @@ class LLMService:
         logger.info(f"Created LLM model: {model_name} for provider {provider.name}")
         return model
 
-    async def get_model_by_id(self, model_id: str) -> Optional[LLMModel]:
+    async def get_model_by_id(self, model_id: str) -> LLMModel | None:
         """Get LLM model by ID."""
-        stmt = select(LLMModel).where(
-            LLMModel.id == model_id
-        ).options(selectinload(LLMModel.provider))
+        stmt = select(LLMModel).where(LLMModel.id == model_id).options(selectinload(LLMModel.provider))
 
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_client(self, provider_id: str, conversation_owner_id: Optional[str] = None) -> UnifiedLLMClient:
+    async def get_client(self, provider_id: str, conversation_owner_id: str | None = None) -> UnifiedLLMClient:
         """Get LLM client for a specific provider."""
         provider = await self.get_provider_by_id(provider_id)
         if not provider:
@@ -268,15 +254,15 @@ class LLMService:
             logger.error(f"Provider connection test failed: {e}")
             return False
 
-    async def discover_provider_models(self, provider_id: str) -> List[Dict[str, Any]]:
-        """
-        Discover available models from a provider's API.
+    async def discover_provider_models(self, provider_id: str) -> list[dict[str, Any]]:
+        """Discover available models from a provider's API.
 
         Args:
             provider_id: ID of the provider to query
 
         Returns:
             List of model dictionaries with model information
+
         """
         try:
             client = await self.get_client(provider_id)
@@ -288,11 +274,10 @@ class LLMService:
             raise
         except Exception as e:
             logger.error(f"Model discovery failed for provider {provider_id}: {e}")
-            raise LLMProviderError(f"Failed to discover models: {str(e)}")
+            raise LLMProviderError(f"Failed to discover models: {e!s}")
 
-    async def sync_provider_models(self, provider_id: str, selected_models: List[str] = None) -> List[LLMModel]:
-        """
-        Sync discovered models with database, enabling only selected models.
+    async def sync_provider_models(self, provider_id: str, selected_models: list[str] | None = None) -> list[LLMModel]:
+        """Sync discovered models with database, enabling only selected models.
 
         Args:
             provider_id: ID of the provider
@@ -300,6 +285,7 @@ class LLMService:
 
         Returns:
             List of created/updated LLMModel objects
+
         """
         try:
             # Get provider
@@ -336,7 +322,7 @@ class LLMService:
                         supports_streaming=True,  # Most modern models support streaming
                         supports_functions=self._supports_functions(model_name),
                         supports_vision=self._supports_vision(model_name),
-                        is_active=True
+                        is_active=True,
                     )
 
                     self.db.add(model)
@@ -354,7 +340,7 @@ class LLMService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to sync models for provider {provider_id}: {e}")
-            raise LLMProviderError(f"Model sync failed: {str(e)}")
+            raise LLMProviderError(f"Model sync failed: {e!s}")
 
     def _generate_display_name(self, model_name: str) -> str:
         """Generate a user-friendly display name for a model."""
@@ -390,18 +376,17 @@ class LLMService:
         input_tokens: int,
         output_tokens: int,
         total_cost: Decimal,
-        user_id: Optional[str] = None,
-        response_time_ms: Optional[int] = None,
+        user_id: str | None = None,
+        response_time_ms: int | None = None,
         success: bool = True,
-        error_message: Optional[str] = None,
-        request_metadata: Optional[Dict[str, Any]] = None
+        error_message: str | None = None,
+        request_metadata: dict[str, Any] | None = None,
     ) -> LLMUsage:
         """Record LLM usage for analytics and cost tracking."""
-
         # Calculate individual costs if model has pricing info
         model = await self.db.get(LLMModel, model_id)
-        input_cost = Decimal('0')
-        output_cost = Decimal('0')
+        input_cost = Decimal("0")
+        output_cost = Decimal("0")
 
         if model and model.cost_per_input_token and model.cost_per_output_token:
             input_cost = Decimal(str(input_tokens)) * model.cost_per_input_token
@@ -421,7 +406,7 @@ class LLMService:
             response_time_ms=response_time_ms,
             success=success,
             error_message=error_message,
-            request_metadata=request_metadata
+            request_metadata=request_metadata,
         )
 
         self.db.add(usage)

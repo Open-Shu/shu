@@ -28,9 +28,7 @@ export const createChatStyles = (theme) => {
     isDarkMode ? theme.palette.primary.light : theme.palette.primary.main,
     isDarkMode ? 0.4 : 0.15
   );
-  const assistantBubbleBg = isDarkMode
-    ? alpha(theme.palette.primary.main, 0.14)
-    : theme.palette.background.paper;
+  const assistantBubbleBg = isDarkMode ? alpha(theme.palette.primary.main, 0.14) : theme.palette.background.paper;
   const assistantBubbleBorder = isDarkMode
     ? `1px solid ${alpha(theme.palette.primary.main, 0.35)}`
     : `1px solid ${alpha(theme.palette.primary.main, 0.1)}`;

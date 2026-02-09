@@ -21,7 +21,9 @@ export const AuthProvider = ({ children }) => {
   const queryClient = useQueryClient();
 
   const normalizeUser = (raw) => {
-    if (!raw || typeof raw !== 'object') return raw;
+    if (!raw || typeof raw !== 'object') {
+      return raw;
+    }
     const pick = raw.picture_url || raw.picture || raw.avatar_url || null;
     const avatar = typeof pick === 'string' ? pick.trim() : pick;
     return { ...raw, picture_url: avatar };
@@ -35,7 +37,7 @@ export const AuthProvider = ({ children }) => {
         try {
           // Verify token and get user info
           const response = await api.get('/auth/me', {
-            headers: { Authorization: `Bearer ${storedToken}` }
+            headers: { Authorization: `Bearer ${storedToken}` },
           });
           const userData = extractDataFromResponse(response);
           setUser(normalizeUser(userData));
@@ -64,13 +66,13 @@ export const AuthProvider = ({ children }) => {
   const login = async (googleToken) => {
     try {
       const response = await api.post('/auth/login', {
-        google_token: googleToken
+        google_token: googleToken,
       });
 
       if (response.status === 201) {
         return {
           status: 'pending_activation',
-          message: response.data?.detail
+          message: response.data?.detail,
         };
       }
 
@@ -91,20 +93,17 @@ export const AuthProvider = ({ children }) => {
 
         return {
           status: 'authenticated',
-          user: userData
+          user: userData,
         };
       }
 
       log.warn('Unexpected status from Google login attempt', response.status);
       return {
         status: 'unknown',
-        data: response.data
+        data: response.data,
       };
     } catch (error) {
-      const message =
-        error.response?.data?.detail ||
-        error.response?.data?.error?.message ||
-        'Login failed';
+      const message = error.response?.data?.detail || error.response?.data?.error?.message || 'Login failed';
       throw new Error(message);
     }
   };
@@ -113,7 +112,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await api.post('/auth/login/password', {
         email,
-        password
+        password,
       });
 
       const responseData = extractDataFromResponse(response);
@@ -142,7 +141,7 @@ export const AuthProvider = ({ children }) => {
         email,
         password,
         name,
-        role
+        role,
       });
 
       // Backend returns a success message and pending activation status; no tokens
@@ -179,7 +178,7 @@ export const AuthProvider = ({ children }) => {
 
     try {
       const response = await api.post('/auth/refresh', {
-        refresh_token: storedRefreshToken
+        refresh_token: storedRefreshToken,
       });
 
       const responseData = extractDataFromResponse(response);
@@ -216,12 +215,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   const hasRole = (requiredRole) => {
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
 
     const roleHierarchy = {
-      'regular_user': 1,
-      'power_user': 2,
-      'admin': 3
+      regular_user: 1,
+      power_user: 2,
+      admin: 3,
     };
 
     const userLevel = roleHierarchy[user.role] || 0;
@@ -242,7 +243,6 @@ export const AuthProvider = ({ children }) => {
     return hasRole('admin');
   };
 
-
   const value = {
     user,
     token,
@@ -257,12 +257,8 @@ export const AuthProvider = ({ children }) => {
     canAccessAdminPanel,
     canManagePromptsAndModels,
     canManageUsers,
-    isAuthenticated: !!user
+    isAuthenticated: !!user,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

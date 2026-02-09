@@ -41,9 +41,7 @@ export const buildMessageVariants = (messages, variantSelection) => {
 
     const variants = variantGroupsMap.get(parentId) || [message];
     const selectedIndex =
-      variantSelection && variantSelection[parentId] !== undefined
-        ? variantSelection[parentId]
-        : variants.length - 1;
+      variantSelection && variantSelection[parentId] !== undefined ? variantSelection[parentId] : variants.length - 1;
     const clampedIndex = Math.max(0, Math.min(variants.length - 1, selectedIndex));
     visibleMessages.push(variants[clampedIndex]);
   }
@@ -75,7 +73,9 @@ export const buildStreamingParentIds = (messages) => {
             suppressed,
           });
         }
-      } catch (_) {}
+      } catch (_) {
+        // Ignore error
+      }
     }
   }
   return ids;

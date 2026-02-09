@@ -19,7 +19,20 @@ PROJECT_SRC = Path(__file__).resolve().parents[2]
 if str(PROJECT_SRC) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC))
 
+# Add backend/ to sys.path so migrations.* imports work for migration tests.
+# The migration files use `from migrations.helpers import ...` which requires backend/ on path.
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+# Add backend/migrations to sys.path so versions.* imports work for migration tests.
+# The test files import `versions.r006_0004...` directly.
+MIGRATIONS_ROOT = BACKEND_ROOT / "migrations"
+if str(MIGRATIONS_ROOT) not in sys.path:
+    sys.path.insert(0, str(MIGRATIONS_ROOT))
+
 import pytest
+
 
 @pytest.fixture
 def mock_settings():
@@ -41,29 +54,50 @@ def mock_settings():
     mock.oauth_encryption_key = "Ngyzgo3L2B3D_b6MXEffwnS68hPMGS_4YwWRrtNSwQs="
     return mock
 
+
 # Register all SQLAlchemy models to ensure relationship resolution works.
 # This is needed because SQLAlchemy resolves all relationships when any model is instantiated.
 # Import all models directly rather than using registry which may be incomplete.
 try:
     # Core models
+    # User model (required for relationships)
+    from shu.auth.models import User  # noqa: F401
     from shu.models import (  # noqa: F401
-        Base, KnowledgeBase, Prompt, PromptAssignment,
-        Document, DocumentChunk, DocumentQuery, DocumentParticipant, DocumentProject,
-        LLMProvider, LLMModel, LLMUsage, Conversation, Message,
-        ModelConfiguration, ModelConfigurationKBPrompt, UserPreferences,
-        ProviderIdentity, ProviderCredential,
-        UserGroup, UserGroupMembership, KnowledgeBasePermission,
-        PluginDefinition, AgentMemory, PluginStorage,
+        AgentMemory,
+        Base,
+        Conversation,
+        Document,
+        DocumentChunk,
+        DocumentParticipant,
+        DocumentProject,
+        DocumentQuery,
+        KnowledgeBase,
+        KnowledgeBasePermission,
+        LLMModel,
+        LLMProvider,
+        LLMUsage,
+        Message,
+        ModelConfiguration,
+        ModelConfigurationKBPrompt,
+        PluginDefinition,
+        PluginStorage,
+        Prompt,
+        PromptAssignment,
+        ProviderCredential,
+        ProviderIdentity,
         SystemSetting,
+        UserGroup,
+        UserGroupMembership,
+        UserPreferences,
     )
-    # Additional models not in __all__
-    from shu.models.provider_type_definition import ProviderTypeDefinition  # noqa: F401
+    from shu.models.attachment import Attachment, MessageAttachment  # noqa: F401
     from shu.models.plugin_execution import PluginExecution  # noqa: F401
     from shu.models.plugin_feed import PluginFeed  # noqa: F401
     from shu.models.plugin_subscription import PluginSubscription  # noqa: F401
-    from shu.models.attachment import Attachment, MessageAttachment  # noqa: F401
-    # User model (required for relationships)
-    from shu.auth.models import User  # noqa: F401
+
+    # Additional models not in __all__
+    from shu.models.provider_type_definition import ProviderTypeDefinition  # noqa: F401
 except ImportError as e:
     import warnings
+
     warnings.warn(f"Could not import all models for SQLAlchemy registry: {e}")

@@ -24,9 +24,7 @@ const TestWrapper = ({ children }) => {
   const theme = createTheme();
   return (
     <BrowserRouter>
-      <ThemeProvider theme={theme}>
-        {children}
-      </ThemeProvider>
+      <ThemeProvider theme={theme}>{children}</ThemeProvider>
     </BrowserRouter>
   );
 };
@@ -64,7 +62,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     defaultProps = {
       conversations: [],
       loadingConversations: false,
@@ -104,9 +102,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
     });
 
     test('renders StarBorderIcon for non-favorited conversations', () => {
-      const conversations = [
-        createMockConversation('1', 'Non-Favorite Conversation', false),
-      ];
+      const conversations = [createMockConversation('1', 'Non-Favorite Conversation', false)];
 
       render(
         <TestWrapper>
@@ -116,16 +112,14 @@ describe('ConversationSidebar - Favorite Functionality', () => {
 
       const favoriteButton = screen.getByLabelText('Add to favorites');
       expect(favoriteButton).toBeInTheDocument();
-      
+
       // Check that StarBorderIcon is rendered (unfilled star)
       const starBorderIcon = favoriteButton.querySelector('svg[data-testid="StarBorderIcon"]');
       expect(starBorderIcon).toBeInTheDocument();
     });
 
     test('renders StarIcon for favorited conversations', () => {
-      const conversations = [
-        createMockConversation('1', 'Favorite Conversation', true),
-      ];
+      const conversations = [createMockConversation('1', 'Favorite Conversation', true)];
 
       render(
         <TestWrapper>
@@ -135,16 +129,14 @@ describe('ConversationSidebar - Favorite Functionality', () => {
 
       const favoriteButton = screen.getByLabelText('Remove from favorites');
       expect(favoriteButton).toBeInTheDocument();
-      
+
       // Check that StarIcon is rendered (filled star)
       const starIcon = favoriteButton.querySelector('svg[data-testid="StarIcon"]');
       expect(starIcon).toBeInTheDocument();
     });
 
     test('displays star indicator in conversation title for favorited conversations', () => {
-      const conversations = [
-        createMockConversation('1', 'Favorite Conversation', true),
-      ];
+      const conversations = [createMockConversation('1', 'Favorite Conversation', true)];
 
       render(
         <TestWrapper>
@@ -154,16 +146,14 @@ describe('ConversationSidebar - Favorite Functionality', () => {
 
       // Find the conversation list item
       const conversationItem = screen.getByText('Favorite Conversation').closest('.MuiListItemButton-root');
-      
+
       // Check that there's a star icon in the title area
       const titleStarIcon = within(conversationItem).getAllByTestId('StarIcon');
       expect(titleStarIcon.length).toBeGreaterThan(0);
     });
 
     test('does not display star indicator in title for non-favorited conversations', () => {
-      const conversations = [
-        createMockConversation('1', 'Non-Favorite Conversation', false),
-      ];
+      const conversations = [createMockConversation('1', 'Non-Favorite Conversation', false)];
 
       render(
         <TestWrapper>
@@ -173,7 +163,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
 
       // Find the conversation list item
       const conversationItem = screen.getByText('Non-Favorite Conversation').closest('.MuiListItemButton-root');
-      
+
       // Check that there's no star icon in the title area (only in the button)
       const titleArea = within(conversationItem).getByText('Non-Favorite Conversation').parentElement;
       const starIconsInTitle = within(titleArea).queryAllByTestId('StarIcon');
@@ -181,9 +171,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
     });
 
     test('favorite button is hidden by default and shown on hover', () => {
-      const conversations = [
-        createMockConversation('1', 'Conversation 1', false),
-      ];
+      const conversations = [createMockConversation('1', 'Conversation 1', false)];
 
       render(
         <TestWrapper>
@@ -192,18 +180,16 @@ describe('ConversationSidebar - Favorite Functionality', () => {
       );
 
       const favoriteButton = screen.getByLabelText('Add to favorites');
-      
+
       // Check that button has opacity: 0 initially (hidden)
       expect(favoriteButton).toHaveStyle({ opacity: '0' });
-      
+
       // Button should have the conversation-action-button class
       expect(favoriteButton).toHaveClass('conversation-action-button');
     });
 
     test('favorite button is visible on mobile', () => {
-      const conversations = [
-        createMockConversation('1', 'Conversation 1', false),
-      ];
+      const conversations = [createMockConversation('1', 'Conversation 1', false)];
 
       render(
         <TestWrapper>
@@ -212,7 +198,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
       );
 
       const favoriteButton = screen.getByLabelText('Add to favorites');
-      
+
       // On mobile, button should have opacity: 0.7
       expect(favoriteButton).toHaveStyle({ opacity: '0.7' });
     });
@@ -254,9 +240,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
     });
 
     test('does not call onSelectConversation when favorite button is clicked', () => {
-      const conversations = [
-        createMockConversation('1', 'Test Conversation', false),
-      ];
+      const conversations = [createMockConversation('1', 'Test Conversation', false)];
 
       render(
         <TestWrapper>
@@ -273,9 +257,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
     });
 
     test('handles onToggleFavorite being undefined gracefully', () => {
-      const conversations = [
-        createMockConversation('1', 'Test Conversation', false),
-      ];
+      const conversations = [createMockConversation('1', 'Test Conversation', false)];
 
       const propsWithoutToggle = {
         ...defaultProps,
@@ -289,15 +271,13 @@ describe('ConversationSidebar - Favorite Functionality', () => {
       );
 
       const favoriteButton = screen.getByLabelText('Add to favorites');
-      
+
       // Should not throw error when clicking
       expect(() => fireEvent.click(favoriteButton)).not.toThrow();
     });
 
     test('clicking favorite button stops event propagation', () => {
-      const conversations = [
-        createMockConversation('1', 'Test Conversation', false),
-      ];
+      const conversations = [createMockConversation('1', 'Test Conversation', false)];
 
       render(
         <TestWrapper>
@@ -332,9 +312,9 @@ describe('ConversationSidebar - Favorite Functionality', () => {
       );
 
       // Get all conversation list items in order
-      const listItems = screen.getAllByRole('button').filter(button => 
-        button.classList.contains('MuiListItemButton-root')
-      );
+      const listItems = screen
+        .getAllByRole('button')
+        .filter((button) => button.classList.contains('MuiListItemButton-root'));
 
       // Should display in the order provided
       expect(listItems[0].textContent).toContain('Favorite 1');
@@ -404,9 +384,9 @@ describe('ConversationSidebar - Favorite Functionality', () => {
         </TestWrapper>
       );
 
-      const listItems = screen.getAllByRole('button').filter(button => 
-        button.classList.contains('MuiListItemButton-root')
-      );
+      const listItems = screen
+        .getAllByRole('button')
+        .filter((button) => button.classList.contains('MuiListItemButton-root'));
 
       // Should maintain the exact order provided
       expect(listItems[0].textContent).toContain('Third');
@@ -422,14 +402,14 @@ describe('ConversationSidebar - Favorite Functionality', () => {
       );
 
       // Should not throw error and should render without conversations
-      const conversationButtons = screen.queryAllByRole('button', { name: /Conversation/i });
+      const conversationButtons = screen.queryAllByRole('button', {
+        name: /Conversation/i,
+      });
       expect(conversationButtons).toHaveLength(0);
     });
 
     test('handles single conversation', () => {
-      const conversations = [
-        createMockConversation('1', 'Single Conversation', true),
-      ];
+      const conversations = [createMockConversation('1', 'Single Conversation', true)];
 
       render(
         <TestWrapper>
@@ -448,11 +428,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
 
       render(
         <TestWrapper>
-          <ConversationSidebar 
-            {...defaultProps} 
-            conversations={conversations}
-            selectedConversationId="1"
-          />
+          <ConversationSidebar {...defaultProps} conversations={conversations} selectedConversationId="1" />
         </TestWrapper>
       );
 
@@ -485,7 +461,7 @@ describe('ConversationSidebar - Favorite Functionality', () => {
       // Check that favorite buttons are rendered correctly
       const addToFavoritesButtons = screen.getAllByLabelText('Add to favorites');
       const removeFromFavoritesButtons = screen.getAllByLabelText('Remove from favorites');
-      
+
       expect(addToFavoritesButtons).toHaveLength(2);
       expect(removeFromFavoritesButtons).toHaveLength(2);
     });

@@ -1,0 +1,249 @@
+name: Lint and Format Check
+
+on:
+  pull_request:
+    # Run on all PRs, regardless of target branch
+  push:
+    branches: [main, develop]
+
+jobs:
+  python-lint:
+    name: Python Linting (Ruff + mypy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff mypy
+          pip install -r requirements.txt
+
+      - name: Detect base branch
+        id: base-branch
+        run: |
+          # In PR context, use the PR base branch
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_BRANCH="${{ github.base_ref }}"
+            echo "Using PR base branch: $BASE_BRANCH"
+          # In push context, use main or master
+          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            BASE_BRANCH="main"
+            echo "Using main branch"
+          else
+            BASE_BRANCH="master"
+            echo "Using master branch"
+          fi
+          echo "base=$BASE_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Get changed Python files
+        id: changed-py-files
+        uses: tj-actions/changed-files@v44
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+          files: |
+            **/*.py
+          files_ignore: |
+            backend/src/tests/**
+            backend/migrations/**
+            backend/scripts/**
+            plugins/**
+
+      - name: Run Ruff linter on changed files
+        if: steps.changed-py-files.outputs.any_changed == 'true'
+        run: |
+          echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
+          echo "Running Ruff on changed files..."
+          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff check --output-format=github
+
+      - name: Run Ruff formatter check on changed files
+        if: steps.changed-py-files.outputs.any_changed == 'true'
+        run: |
+          echo "Checking Ruff formatting on changed files..."
+          echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs ruff format --check
+
+      - name: Skip if no Python files changed
+        if: steps.changed-py-files.outputs.any_changed == 'false'
+        run: |
+          echo "✅ No Python files changed, skipping linting"
+
+      # Too many mypy errors for now
+      # - name: Run mypy type checker on changed files
+      #   if: steps.changed-py-files.outputs.any_changed == 'true'
+      #   run: |
+      #     echo "Running mypy on changed files..."
+      #     echo "${{ steps.changed-py-files.outputs.all_changed_files }}" | xargs mypy --follow-imports=silent --show-error-codes --no-error-summary
+
+  frontend-lint:
+    name: Frontend Linting (ESLint + Prettier)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git diff
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Detect base branch
+        id: base-branch
+        run: |
+          # In PR context, use the PR base branch
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_BRANCH="${{ github.base_ref }}"
+            echo "Using PR base branch: $BASE_BRANCH"
+          # In push context, use main or master
+          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            BASE_BRANCH="main"
+            echo "Using main branch"
+          else
+            BASE_BRANCH="master"
+            echo "Using master branch"
+          fi
+          echo "base=$BASE_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Get changed frontend files
+        id: changed-frontend-files
+        uses: tj-actions/changed-files@v44
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+          files: |
+            frontend/**/*.{js,jsx,ts,tsx,json,css,md}
+
+      - name: Get changed JS/JSX files for ESLint
+        id: changed-js-files
+        uses: tj-actions/changed-files@v44
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+          files: |
+            frontend/**/*.{js,jsx}
+
+      - name: Run ESLint on changed files (includes Prettier)
+        if: steps.changed-js-files.outputs.any_changed == 'true'
+        working-directory: frontend
+        run: |
+          echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
+          echo "Running ESLint on changed JS/JSX files (with Prettier integration)..."
+          FILES="${{ steps.changed-js-files.outputs.all_changed_files }}"
+          # Remove 'frontend/' prefix from paths since we're in frontend directory
+          FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
+          echo "$FILES_RELATIVE" | xargs npx eslint
+
+      - name: Run Prettier check on changed files
+        if: steps.changed-frontend-files.outputs.any_changed == 'true'
+        working-directory: frontend
+        run: |
+          echo "Checking Prettier formatting on changed files..."
+          echo "Note: Prettier is also enforced via ESLint (prettier/prettier rule)"
+          FILES="${{ steps.changed-frontend-files.outputs.all_changed_files }}"
+          # Remove 'frontend/' prefix from paths since we're in frontend directory
+          FILES_RELATIVE=$(echo "$FILES" | sed 's|frontend/||g')
+          echo "$FILES_RELATIVE" | xargs npx prettier --check
+
+      - name: Skip if no frontend files changed
+        if: steps.changed-frontend-files.outputs.any_changed == 'false'
+        run: |
+          echo "✅ No frontend files changed, skipping linting"
+
+  pre-commit:
+    name: Pre-commit Hooks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Detect base branch
+        id: base-branch
+        run: |
+          # In PR context, use the PR base branch
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_BRANCH="${{ github.base_ref }}"
+            echo "Using PR base branch: $BASE_BRANCH"
+          # In push context, use main or master
+          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            BASE_BRANCH="main"
+            echo "Using main branch"
+          else
+            BASE_BRANCH="master"
+            echo "Using master branch"
+          fi
+          echo "base=$BASE_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Get all changed files
+        id: changed-files-all
+        uses: tj-actions/changed-files@v44
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+
+      - name: Run pre-commit on changed files
+        if: steps.changed-files-all.outputs.any_changed == 'true'
+        run: |
+          echo "Comparing against base branch: ${{ steps.base-branch.outputs.base }}"
+          echo "Running pre-commit on changed files..."
+          pre-commit run --files ${{ steps.changed-files-all.outputs.all_changed_files }} --show-diff-on-failure
+
+      - name: Skip if no files changed
+        if: steps.changed-files-all.outputs.any_changed == 'false'
+        run: |
+          echo "✅ No files changed, skipping pre-commit hooks"
+
+  lint-summary:
+    name: Lint Summary
+    runs-on: ubuntu-latest
+    needs: [python-lint, frontend-lint, pre-commit]
+    if: always()
+
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.python-lint.result }}" != "success" ] || \
+             [ "${{ needs.frontend-lint.result }}" != "success" ] || \
+             [ "${{ needs.pre-commit.result }}" != "success" ]; then
+            echo "❌ Linting failed. Please run 'make lint-fix' locally and commit the changes."
+            exit 1
+          else
+            echo "✅ All linting checks passed!"
+          fi

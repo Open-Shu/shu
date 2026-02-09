@@ -4,7 +4,11 @@ import log from '../../../../utils/log';
 import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
 import { iterateSSE, tryParseJSON } from '../utils/sseParser';
 import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
-import { createStreamingErrorFromResponse, formatStreamingError, ServerStreamingError } from '../../../../utils/streamingErrors';
+import {
+  createStreamingErrorFromResponse,
+  formatStreamingError,
+  ServerStreamingError,
+} from '../../../../utils/streamingErrors';
 import useReasoningStream from './useReasoningStream';
 import useStreamingPlaceholders from './useStreamingPlaceholders';
 import useMessageRegeneration from './useMessageRegeneration';
@@ -76,12 +80,7 @@ const useChatStreaming = ({
         scheduleScrollToBottom?.('auto');
       }
     },
-    [
-      queryClient,
-      scheduleScrollToBottom,
-      setStreamingStarted,
-      shouldAutoFollowRef,
-    ]
+    [queryClient, scheduleScrollToBottom, setStreamingStarted, shouldAutoFollowRef]
   );
 
   const { appendReasoningDelta, collapseReasoningForPlaceholder } = useReasoningStream({
@@ -111,7 +110,6 @@ const useChatStreaming = ({
     setError,
   });
 
-
   const handleStreamingResponse = useCallback(
     async (conversationId, payload, options = {}) => {
       let abortController;
@@ -134,19 +132,18 @@ const useChatStreaming = ({
         }
 
         const reader = response.body.getReader();
-        const placeholderMapOption = options?.placeholderMap && typeof options.placeholderMap === 'object'
-          ? { ...options.placeholderMap }
-          : null;
+        const placeholderMapOption =
+          options?.placeholderMap && typeof options.placeholderMap === 'object' ? { ...options.placeholderMap } : null;
         const placeholderRootOption = options?.placeholderRootId || null;
-        const placeholderMetaOption = options?.placeholderMeta && typeof options.placeholderMeta === 'object'
-          ? { ...options.placeholderMeta }
-          : {};
+        const placeholderMetaOption =
+          options?.placeholderMeta && typeof options.placeholderMeta === 'object' ? { ...options.placeholderMeta } : {};
         const onComplete = typeof options?.onComplete === 'function' ? options.onComplete : null;
-        const placeholderLookup = placeholderMapOption && Object.keys(placeholderMapOption).length > 0
-          ? placeholderMapOption
-          : options?.tempMessageId
-            ? { 0: options.tempMessageId }
-            : {};
+        const placeholderLookup =
+          placeholderMapOption && Object.keys(placeholderMapOption).length > 0
+            ? placeholderMapOption
+            : options?.tempMessageId
+              ? { 0: options.tempMessageId }
+              : {};
         const placeholderIdSet = new Set(Object.values(placeholderLookup || {}).filter(Boolean));
         const streamedContentRefs = {};
 
@@ -199,9 +196,8 @@ const useChatStreaming = ({
             variantIndex,
             placeholderId,
             snapshot,
-            placeholderMetaOption,
+            placeholderMetaOption
           );
-
 
         Object.values(placeholderLookup).forEach((placeholderId) => {
           if (placeholderId && !streamedContentRefs[placeholderId]) {
@@ -226,7 +222,9 @@ const useChatStreaming = ({
                 });
                 return rebuildCache(oldData, updated);
               });
-            } catch (_) {}
+            } catch (_) {
+              // Ignore error
+            }
 
             if (!isMountedRef.current) {
               return;
@@ -260,7 +258,9 @@ const useChatStreaming = ({
             const tempId = parsed.client_temp_id || null;
             queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
               const existing = getMessagesFromCache(oldData);
-              if (!Array.isArray(existing)) return oldData;
+              if (!Array.isArray(existing)) {
+                return oldData;
+              }
 
               let targetIndex = -1;
               if (tempId) {
@@ -312,8 +312,7 @@ const useChatStreaming = ({
                 ? {
                     reasoning_stream: placeholderMsg.reasoning_stream,
                     reasoning_collapsed:
-                      placeholderMsg.reasoning_collapsed ??
-                      (placeholderMsg.reasoning_stream ? true : undefined),
+                      placeholderMsg.reasoning_collapsed ?? (placeholderMsg.reasoning_stream ? true : undefined),
                   }
                 : {};
               const updated = existing.map((m) => {
@@ -379,12 +378,10 @@ const useChatStreaming = ({
               assignModelInfoToPlaceholder(variantIndex, placeholderId, chunkSnapshot);
             }
             const chunkText =
-              typeof parsed.text === 'string'
-                ? parsed.text
-                : typeof parsed.content === 'string'
-                ? parsed.content
-                : '';
-            if (!chunkText) continue;
+              typeof parsed.text === 'string' ? parsed.text : typeof parsed.content === 'string' ? parsed.content : '';
+            if (!chunkText) {
+              continue;
+            }
 
             processChunk(streamedContentRefs[placeholderId], conversationId, placeholderId, chunkText);
             collapseReasoningForPlaceholder(conversationId, placeholderId);
@@ -417,11 +414,7 @@ const useChatStreaming = ({
               assignModelInfoToPlaceholder(variantIndex, placeholderId, chunkSnapshot);
             }
             const delta =
-              typeof parsed.text === 'string'
-                ? parsed.text
-                : typeof parsed.content === 'string'
-                ? parsed.content
-                : '';
+              typeof parsed.text === 'string' ? parsed.text : typeof parsed.content === 'string' ? parsed.content : '';
             if (delta) {
               appendReasoningDelta(conversationId, placeholderId, delta);
             }
@@ -429,12 +422,10 @@ const useChatStreaming = ({
           }
 
           const legacyContent =
-            typeof parsed === 'string'
-              ? parsed
-              : typeof parsed?.content === 'string'
-              ? parsed.content
-              : '';
-          if (!legacyContent) continue;
+            typeof parsed === 'string' ? parsed : typeof parsed?.content === 'string' ? parsed.content : '';
+          if (!legacyContent) {
+            continue;
+          }
           const placeholderId = ensurePlaceholderForVariant(0);
           processChunk(streamedContentRefs[placeholderId], conversationId, placeholderId, legacyContent);
         }
@@ -451,9 +442,7 @@ const useChatStreaming = ({
           try {
             queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
               const existing = getMessagesFromCache(oldData);
-              const updated = existing.map((m) =>
-                m?.isStreaming ? { ...m, isStreaming: false } : m
-              );
+              const updated = existing.map((m) => (m?.isStreaming ? { ...m, isStreaming: false } : m));
               return rebuildCache(oldData, updated);
             });
           } catch (_) {
@@ -476,7 +465,8 @@ const useChatStreaming = ({
         // Create a friendly error message for the chat bubble based on error type
         let chatErrorMessage;
         if (errorInfo.isNetworkError) {
-          chatErrorMessage = "I'm sorry, I encountered a network error when communicating with the server. Please check your connection and try again.";
+          chatErrorMessage =
+            "I'm sorry, I encountered a network error when communicating with the server. Please check your connection and try again.";
         } else if (errorInfo.isServerError) {
           // Server-sent error - already has user-friendly message from backend
           chatErrorMessage = `I apologize, but I encountered an error: ${displayMessage}`;
@@ -553,7 +543,6 @@ const useChatStreaming = ({
       syncPlaceholderParentIdsImpl,
     ]
   );
-
 
   return {
     handleStreamingResponse,

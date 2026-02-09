@@ -1,5 +1,4 @@
-"""
-Document Profiling Orchestrator (SHU-343).
+"""Document Profiling Orchestrator (SHU-343).
 
 DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Loads document and chunk records from the database
@@ -13,7 +12,6 @@ re-implementing status or persistence logic.
 """
 
 import time
-from typing import Optional
 
 import structlog
 from sqlalchemy import select
@@ -42,14 +40,13 @@ class ProfilingOrchestrator:
         db: AsyncSession,
         settings: Settings,
         side_call_service: SideCallService,
-    ):
+    ) -> None:
         self.db = db
         self.settings = settings
         self.profiling_service = ProfilingService(side_call_service, settings)
 
     async def run_for_document(self, document_id: str) -> ProfilingResult:
-        """
-        Run profiling for a document and its chunks.
+        """Run profiling for a document and its chunks.
 
         This is the main entry point called by ingestion integration (SHU-344).
 
@@ -58,6 +55,7 @@ class ProfilingOrchestrator:
 
         Returns:
             ProfilingResult with document and chunk profiles
+
         """
         start_time = time.time()
         total_tokens = 0
@@ -163,14 +161,14 @@ class ProfilingOrchestrator:
             )
 
     def _choose_profiling_mode(self, doc_tokens: int) -> ProfilingMode:
-        """
-        Determine whether to use full-doc or chunk-aggregation profiling.
+        """Determine whether to use full-doc or chunk-aggregation profiling.
 
         Args:
             doc_tokens: Estimated token count of the full document
 
         Returns:
             ProfilingMode indicating which approach to use
+
         """
         if doc_tokens <= self.settings.profiling_full_doc_max_tokens:
             return ProfilingMode.FULL_DOCUMENT
@@ -187,8 +185,7 @@ class ProfilingOrchestrator:
         doc_profile,
         chunk_results: list[ChunkProfileResult],
     ) -> None:
-        """
-        Persist profiling results to the database.
+        """Persist profiling results to the database.
 
         Updates Document with profile data and marks complete/failed.
         Updates DocumentChunks with their profiles.
@@ -228,8 +225,7 @@ class ProfilingOrchestrator:
         """Check if document profiling is enabled."""
         return self.settings.enable_document_profiling
 
-    async def get_profiling_status(self, document_id: str) -> Optional[str]:
+    async def get_profiling_status(self, document_id: str) -> str | None:
         """Get the current profiling status of a document."""
         document = await self.db.get(Document, document_id)
         return document.profiling_status if document else None
-

@@ -1,23 +1,26 @@
-"""
-RBAC (Role-Based Access Control) Models
+"""RBAC (Role-Based Access Control) Models.
 
 This module contains the database models for granular knowledge base
 access control, including user groups and permissions.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import List, Optional
-from uuid import uuid4
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, String, Text,
-    UniqueConstraint, CheckConstraint
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel, UUIDMixin
 from ..core.database import Base
+from .base import BaseModel, UUIDMixin
 
 
 class RBACBaseModel(Base, UUIDMixin):
@@ -27,10 +30,7 @@ class RBACBaseModel(Base, UUIDMixin):
 
     def to_dict(self) -> dict:
         """Convert model to dictionary."""
-        return {
-            column.name: getattr(self, column.name)
-            for column in self.__table__.columns
-        }
+        return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
     def __repr__(self) -> str:
         """Return string representation of the model."""
@@ -39,25 +39,27 @@ class RBACBaseModel(Base, UUIDMixin):
 
 class PermissionLevel(str, Enum):
     """Permission levels for knowledge base access."""
-    OWNER = "owner"          # Full control, can delete KB, manage permissions
-    ADMIN = "admin"          # Can modify KB, add/remove documents, manage members
-    MEMBER = "member"        # Can query KB, view documents, add documents
+
+    OWNER = "owner"  # Full control, can delete KB, manage permissions
+    ADMIN = "admin"  # Can modify KB, add/remove documents, manage members
+    MEMBER = "member"  # Can query KB, view documents, add documents
     READ_ONLY = "read_only"  # Can only query KB, no modifications
 
 
 class GroupRole(str, Enum):
     """Roles within a user group."""
+
     MEMBER = "member"  # Regular group member
-    ADMIN = "admin"    # Group administrator
+    ADMIN = "admin"  # Group administrator
 
 
 class UserGroup(BaseModel):
-    """
-    User groups for team-based access control.
-    
+    """User groups for team-based access control.
+
     Groups allow organizing users into teams (e.g., HR, Engineering, Marketing)
     and granting permissions to entire groups rather than individual users.
     """
+
     __tablename__ = "user_groups"
 
     name = Column(String(255), nullable=False, unique=True, index=True)
@@ -72,17 +74,18 @@ class UserGroup(BaseModel):
     memberships = relationship("UserGroupMembership", back_populates="group", cascade="all, delete-orphan")
     permissions = relationship("KnowledgeBasePermission", back_populates="group", cascade="all, delete-orphan")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UserGroup(id='{self.id}', name='{self.name}', active={self.is_active})>"
 
 
 class UserGroupMembership(RBACBaseModel):
-    """
-    User membership in groups with roles.
-    
+    """User membership in groups with roles.
+
     This table tracks which users belong to which groups and their role
     within that group (member or admin).
     """
+
     __tablename__ = "user_group_memberships"
 
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -92,7 +95,7 @@ class UserGroupMembership(RBACBaseModel):
 
     # Audit fields
     granted_by = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
     # Relationships
     user = relationship("User", foreign_keys=[user_id], back_populates="group_memberships")
@@ -100,25 +103,26 @@ class UserGroupMembership(RBACBaseModel):
     granter = relationship("User", foreign_keys=[granted_by])
 
     # Constraints
-    __table_args__ = (
-        UniqueConstraint('user_id', 'group_id', name='uq_user_group_membership'),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "group_id", name="uq_user_group_membership"),)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Represent as string."""
         return f"<UserGroupMembership(user_id='{self.user_id}', group_id='{self.group_id}', role='{self.role}')>"
 
 
 class KnowledgeBasePermission(RBACBaseModel):
-    """
-    Granular permissions for knowledge base access.
-    
+    """Granular permissions for knowledge base access.
+
     This table defines who (users or groups) can access which knowledge bases
     and at what permission level. Each permission can be granted to either
     a specific user OR a group, but not both.
     """
+
     __tablename__ = "knowledge_base_permissions"
 
-    knowledge_base_id = Column(String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(
+        String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Either user_id OR group_id must be set, but not both
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -132,7 +136,7 @@ class KnowledgeBasePermission(RBACBaseModel):
 
     # Audit fields
     granted_by = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
     # Relationships
     knowledge_base = relationship("KnowledgeBase", back_populates="permissions")
@@ -144,11 +148,11 @@ class KnowledgeBasePermission(RBACBaseModel):
     __table_args__ = (
         # Ensure either user_id OR group_id is set, but not both
         CheckConstraint(
-            '(user_id IS NOT NULL AND group_id IS NULL) OR (user_id IS NULL AND group_id IS NOT NULL)',
-            name='chk_permission_target'
+            "(user_id IS NOT NULL AND group_id IS NULL) OR (user_id IS NULL AND group_id IS NOT NULL)",
+            name="chk_permission_target",
         ),
         # Prevent duplicate permissions
-        UniqueConstraint('knowledge_base_id', 'user_id', 'group_id', name='uq_kb_permission'),
+        UniqueConstraint("knowledge_base_id", "user_id", "group_id", name="uq_kb_permission"),
     )
 
     @property
@@ -165,8 +169,9 @@ class KnowledgeBasePermission(RBACBaseModel):
         """Check if this permission has expired."""
         if not self.expires_at:
             return False
-        return datetime.now(timezone.utc) > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Represent as string."""
         target = f"user:{self.user_id}" if self.user_id else f"group:{self.group_id}"
         return f"<KnowledgeBasePermission(kb='{self.knowledge_base_id}', target='{target}', level='{self.permission_level}')>"

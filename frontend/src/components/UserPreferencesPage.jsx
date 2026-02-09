@@ -27,15 +27,12 @@ import NotImplemented from './NotImplemented';
 import { useTheme } from '../contexts/ThemeContext';
 import { buildUserPreferencesPayload } from '../utils/userPreferences';
 
-
 export default function UserPreferencesPage() {
   const { themeMode, changeTheme } = useTheme();
   const navigate = useNavigate();
   const { section } = useParams();
 
-  const menuItems = [
-    { text: 'General', icon: <SettingsIcon />, path: 'general' },
-  ];
+  const menuItems = [{ text: 'General', icon: <SettingsIcon />, path: 'general' }];
 
   const queryClient = useQueryClient();
   const [error, setError] = useState(null);
@@ -67,7 +64,7 @@ export default function UserPreferencesPage() {
       },
       onError: (err) => {
         setError(formatError(err).message);
-      }
+      },
     }
   );
 
@@ -79,30 +76,28 @@ export default function UserPreferencesPage() {
     }
   };
 
-  useQuery(
-    'user-preferences',
-    userPreferencesAPI.getPreferences,
-    {
-      onSuccess: (response) => {
-        const preferences = extractDataFromResponse(response);
-        if (preferences && typeof preferences === 'object') {
-          setUserPreferences((prev) => ({
-            ...prev,
-            ...preferences,
-            advanced_settings: preferences.advanced_settings ?? prev.advanced_settings ?? {},
-          }));
-        }
-      },
-      onError: (err) => {
-        log.warn('Failed to load user preferences:', formatError(err).message);
-        // Don't show error to user for preferences - use defaults
+  useQuery('user-preferences', userPreferencesAPI.getPreferences, {
+    onSuccess: (response) => {
+      const preferences = extractDataFromResponse(response);
+      if (preferences && typeof preferences === 'object') {
+        setUserPreferences((prev) => ({
+          ...prev,
+          ...preferences,
+          advanced_settings: preferences.advanced_settings ?? prev.advanced_settings ?? {},
+        }));
       }
-    }
-  );
+    },
+    onError: (err) => {
+      log.warn('Failed to load user preferences:', formatError(err).message);
+      // Don't show error to user for preferences - use defaults
+    },
+  });
 
   const generalContent = () => (
     <>
-      <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>UI Preferences</Typography>
+      <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
+        UI Preferences
+      </Typography>
 
       <Grid container spacing={3}>
         <Grid item xs={12} sm={4}>
@@ -114,7 +109,7 @@ export default function UserPreferencesPage() {
               onChange={(e) => {
                 const newTheme = e.target.value;
                 changeTheme(newTheme);
-                setUserPreferences(prev => ({ ...prev, theme: newTheme }));
+                setUserPreferences((prev) => ({ ...prev, theme: newTheme }));
               }}
             >
               <MenuItem value="light">Light</MenuItem>
@@ -128,7 +123,12 @@ export default function UserPreferencesPage() {
             fullWidth
             label="Language"
             value={userPreferences.language}
-            onChange={(e) => setUserPreferences(prev => ({ ...prev, language: e.target.value }))}
+            onChange={(e) =>
+              setUserPreferences((prev) => ({
+                ...prev,
+                language: e.target.value,
+              }))
+            }
           />
           <Box sx={{ mt: 0.5 }}>
             <NotImplemented label="Language not applied globally yet" />
@@ -139,7 +139,12 @@ export default function UserPreferencesPage() {
             fullWidth
             label="Timezone"
             value={userPreferences.timezone}
-            onChange={(e) => setUserPreferences(prev => ({ ...prev, timezone: e.target.value }))}
+            onChange={(e) =>
+              setUserPreferences((prev) => ({
+                ...prev,
+                timezone: e.target.value,
+              }))
+            }
           />
           <Box sx={{ mt: 0.5 }}>
             <NotImplemented label="Timezeone not applied globally yet" />
@@ -168,7 +173,6 @@ export default function UserPreferencesPage() {
 
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-
       {/* Sidebar - Conversations */}
       <Paper
         sx={{
@@ -180,16 +184,12 @@ export default function UserPreferencesPage() {
           flexDirection: 'column',
           borderRadius: 0,
           borderRight: 1,
-          borderColor: 'divider'
+          borderColor: 'divider',
         }}
       >
         <List>
           {menuItems.map((item) => (
-            <ListItemButton
-              key={item.path}
-              selected={isActive(item.path)}
-              onClick={() => handleNavigation(item.path)}
-            >
+            <ListItemButton key={item.path} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
@@ -205,7 +205,6 @@ export default function UserPreferencesPage() {
           p: 3,
         }}
       >
-        
         <Typography variant="h4" component="h1" gutterBottom>
           {activeItem?.text || 'Preferences'}
         </Typography>
@@ -218,13 +217,9 @@ export default function UserPreferencesPage() {
 
         {/* UI Preferences */}
         <Card>
-          <CardContent>
-            {getContent()}
-          </CardContent>
+          <CardContent>{getContent()}</CardContent>
         </Card>
-
       </Box>
-
     </Box>
   );
 }

@@ -25,13 +25,14 @@ Parameter Ordering Convention:
     When adding new functions, prefer the scoped pattern with scope as a
     keyword argument.
 """
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
 
-from sqlalchemy import select, delete as sa_delete
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db_session
@@ -97,7 +98,7 @@ async def storage_get_scoped(
     *,
     scope: str = "user",
     user_id: str | None = None,
-) -> Optional[dict]:
+) -> dict | None:
     """Retrieve a storage entry's value dict.
 
     Args:
@@ -109,6 +110,7 @@ async def storage_get_scoped(
 
     Returns:
         The stored value dict, or None if not found.
+
     """
     normalized_scope = normalize_scope(scope)
     db = await get_db_session()
@@ -139,11 +141,18 @@ async def storage_set_scoped(
         value: Value dict to store.
         scope: "user" or "system".
         user_id: Owner for user scope; audit trail for system scope.
+
     """
     normalized_scope = normalize_scope(scope)
     db = await get_db_session()
     try:
-        conditions = _build_where_clause(normalized_scope, plugin_name, namespace, key, user_id if normalized_scope == "user" else None)
+        conditions = _build_where_clause(
+            normalized_scope,
+            plugin_name,
+            namespace,
+            key,
+            user_id if normalized_scope == "user" else None,
+        )
         res = await db.execute(select(PluginStorage).where(*conditions))
         existing = res.scalars().first()
 
@@ -182,6 +191,7 @@ async def storage_delete_scoped(
         key: Entry key.
         scope: "user" or "system".
         user_id: Required for user scope; ignored for system scope.
+
     """
     normalized_scope = normalize_scope(scope)
     db = await get_db_session()
@@ -199,7 +209,7 @@ async def storage_list_keys(
     *,
     scope: str = "user",
     user_id: str | None = None,
-) -> List[str]:
+) -> list[str]:
     """List all keys for a plugin/namespace/scope.
 
     Args:
@@ -210,6 +220,7 @@ async def storage_list_keys(
 
     Returns:
         List of key names.
+
     """
     normalized_scope = normalize_scope(scope)
     if normalized_scope == "user" and not user_id:
@@ -229,7 +240,7 @@ async def storage_list_meta(
     *,
     scope: str = "user",
     user_id: str | None = None,
-) -> List[Tuple[str, datetime]]:
+) -> list[tuple[str, datetime]]:
     """List (key, updated_at) tuples for a plugin/namespace/scope.
 
     Args:
@@ -240,6 +251,7 @@ async def storage_list_meta(
 
     Returns:
         List of (key, updated_at) tuples.
+
     """
     normalized_scope = normalize_scope(scope)
     if normalized_scope == "user" and not user_id:
@@ -247,9 +259,7 @@ async def storage_list_meta(
     db = await get_db_session()
     try:
         conditions = _build_where_clause(normalized_scope, plugin_name, namespace, key=None, user_id=user_id)
-        res = await db.execute(
-            select(PluginStorage.key, PluginStorage.updated_at).where(*conditions)
-        )
+        res = await db.execute(select(PluginStorage.key, PluginStorage.updated_at).where(*conditions))
         return [(r[0], r[1]) for r in res.all()]
     finally:
         await _close_session(db, "storage_list_meta")
@@ -274,6 +284,7 @@ async def storage_purge_old(
 
     Returns:
         Number of deleted rows.
+
     """
     normalized_scope = normalize_scope(scope)
     if normalized_scope == "user" and not user_id:
@@ -299,7 +310,7 @@ async def storage_get(
     plugin_name: str,
     namespace: str,
     key: str,
-) -> Optional[dict]:
+) -> dict | None:
     """Get a user-scoped storage entry."""
     return await storage_get_scoped(plugin_name, namespace, key, scope="user", user_id=user_id)
 
@@ -329,7 +340,6 @@ async def storage_get_system(
     plugin_name: str,
     namespace: str,
     key: str,
-) -> Optional[dict]:
+) -> dict | None:
     """Get a system-scoped storage entry."""
     return await storage_get_scoped(plugin_name, namespace, key, scope="system")
-

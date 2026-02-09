@@ -1,5 +1,17 @@
 import React from 'react';
-import { Box, Button, Card, CardContent, FormControl, InputLabel, MenuItem, Select, Stack, TextField, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { useQuery } from 'react-query';
 import { pluginsAPI } from '../services/pluginsApi';
 import { extractDataFromResponse, formatError } from '../services/api';
@@ -36,17 +48,30 @@ export default function LimitsStatsPanel() {
               onChange={(e) => setLimit(Number(e.target.value))}
               sx={{ width: 100 }}
             />
-            <Button variant="outlined" onClick={() => refetch()} disabled={isFetching}>Refresh</Button>
+            <Button variant="outlined" onClick={() => refetch()} disabled={isFetching}>
+              Refresh
+            </Button>
           </Stack>
         </Stack>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          Snapshot of raw Redis keys. Values and TTLs update live as requests flow. Use this for quick diagnostics; it is not an aggregated report.
+          Snapshot of raw Redis keys. Values and TTLs update live as requests flow. Use this for quick diagnostics; it
+          is not an aggregated report.
         </Typography>
 
         {isLoading && <Typography variant="body2">Loading…</Typography>}
         {error && <Typography color="error">{formatError(error)}</Typography>}
         {data && Array.isArray(data.entries) && (
-          <Box component="pre" sx={{ bgcolor: '#f8fafc', p: 1, borderRadius: 1, border: '1px solid #e2e8f0', maxHeight: 300, overflow: 'auto' }}>
+          <Box
+            component="pre"
+            sx={{
+              bgcolor: '#f8fafc',
+              p: 1,
+              borderRadius: 1,
+              border: '1px solid #e2e8f0',
+              maxHeight: 300,
+              overflow: 'auto',
+            }}
+          >
             {JSON.stringify(data.entries, null, 2)}
           </Box>
         )}
@@ -54,4 +79,3 @@ export default function LimitsStatsPanel() {
     </Card>
   );
 }
-

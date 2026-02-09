@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from datetime import UTC
+from typing import TYPE_CHECKING, Any
 
-from ..base_auth_adapter import BaseAuthAdapter
+import certifi
+import httpx
+
 from ...core.logging import get_logger
+from ..base_auth_adapter import BaseAuthAdapter
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 
 logger = get_logger(__name__)
 
@@ -15,46 +23,63 @@ class GoogleAuthAdapter(BaseAuthAdapter):
     step we can migrate logic into the adapter itself if needed.
     """
 
-    async def user_token(self, *, required_scopes: Optional[List[str]] = None) -> Optional[str]:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def user_token(self, *, required_scopes: list[str] | None = None) -> str | None:  # noqa: PLR0912, PLR0915
         """Fetch a Google user access token from ProviderCredential, refreshing via OAuth if needed.
         Returns None if no credential or required scopes are not granted.
         """
-        from sqlalchemy import select, and_  # type: ignore
-        from ...models.provider_credential import ProviderCredential  # type: ignore
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import and_, select  # type: ignore
+
         from ...core.database import get_db_session  # type: ignore
-        from datetime import datetime, timezone, timedelta
+        from ...models.provider_credential import ProviderCredential  # type: ignore
+
         settings = self._auth._settings
         db = await get_db_session()
         try:
             res = await db.execute(
-                select(ProviderCredential).where(
+                select(ProviderCredential)
+                .where(
                     and_(
                         ProviderCredential.user_id == self._auth._user_id,
                         ProviderCredential.provider_key == "google",
                         ProviderCredential.is_active == True,  # noqa: E712
                     )
-                ).order_by(ProviderCredential.updated_at.desc())
+                )
+                .order_by(ProviderCredential.updated_at.desc())
             )
             row = res.scalars().first()
             if not row:
                 try:
-                    logger.info("google.user_token: no credential row for user; provider=google user_id=%s", self._auth._user_id)
+                    logger.info(
+                        "google.user_token: no credential row for user; provider=google user_id=%s",
+                        self._auth._user_id,
+                    )
                 except Exception:
                     pass
                 return None
 
             # Validate required scopes if provided
             try:
-                req = set([str(s) for s in (required_scopes or []) if s])
+                req = {str(s) for s in (required_scopes or []) if s}
                 granted_list = [str(s) for s in (getattr(row, "scopes", None) or []) if s]
                 granted = set(granted_list)
                 try:
-                    logger.debug("google.user_token: required_scopes=%s granted_scopes(row)=%s", list(req), granted_list)
+                    logger.debug(
+                        "google.user_token: required_scopes=%s granted_scopes(row)=%s",
+                        list(req),
+                        granted_list,
+                    )
                 except Exception:
                     pass
                 if req and not req.issubset(granted):
                     try:
-                        logger.warning("google.user_token: insufficient scopes; required=%s granted=%s", list(req), list(granted))
+                        logger.warning(
+                            "google.user_token: insufficient scopes; required=%s granted=%s",
+                            list(req),
+                            list(granted),
+                        )
                     except Exception:
                         pass
                     return None
@@ -70,8 +95,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             # If no refresh token, return current access token best-effort
             if not refresh_token:
                 try:
-                    token = row.get_access_token()
-                    return token
+                    return row.get_access_token()
                 except Exception:
                     return None
 
@@ -108,7 +132,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                     )
                     body_ti = ti.get("body") if isinstance(ti, dict) else None
                     scope_str = body_ti.get("scope") if isinstance(body_ti, dict) else None
-                    token_scopes = set([s for s in str(scope_str or "").split() if s])
+                    token_scopes = {s for s in str(scope_str or "").split() if s}
                     if token_scopes and not set(req_scopes_list).issubset(token_scopes):
                         return None
             except Exception:
@@ -118,7 +142,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             try:
                 row.set_access_token(access_token)
                 exp_in = int((body.get("expires_in") if isinstance(body, dict) else 3600) or 3600)
-                setattr(row, "expires_at", datetime.now(timezone.utc) + timedelta(seconds=max(1, exp_in)))
+                row.expires_at = datetime.now(UTC) + timedelta(seconds=max(1, exp_in))
                 await db.commit()
             except Exception:
                 try:
@@ -132,25 +156,27 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             except Exception:
                 pass
 
-    async def service_account_token(self, *, scopes: List[str], subject: Optional[str] = None) -> str:
+    async def service_account_token(self, *, scopes: list[str], subject: str | None = None) -> str:
         return await self._auth.google_service_account_token(scopes=scopes, subject=subject)
 
-    async def delegation_check(self, *, scopes: List[str], subject: str) -> Dict[str, Any]:
+    async def delegation_check(self, *, scopes: list[str], subject: str) -> dict[str, Any]:
         return await self._auth.google_domain_delegation_check(scopes=scopes, subject=subject)
 
     # Step 2 usage by API endpoints
-    async def build_authorization_url(self, *, scopes: List[str]) -> Dict[str, Any]:
+    async def build_authorization_url(self, *, scopes: list[str]) -> dict[str, Any]:
         from urllib.parse import urlparse
+
         from google_auth_oauthlib.flow import Flow  # type: ignore
 
         settings = self._auth._settings
-        if not (settings.google_client_id and settings.google_client_secret and settings.google_redirect_uri):
+        redirect_uri = settings.get_oauth_redirect_uri("google")
+        if not (settings.google_client_id and settings.google_client_secret and redirect_uri):
             raise RuntimeError("Google OAuth is not configured")
 
         # Validate redirect URI is absolute (Google requires full origin + path)
-        parsed = urlparse(settings.google_redirect_uri)
+        parsed = urlparse(redirect_uri)
         if not parsed.scheme or not parsed.netloc:
-            raise RuntimeError("GOOGLE_REDIRECT_URI must be an absolute URL, e.g., http://localhost:8000/auth/callback")
+            raise RuntimeError("OAUTH_REDIRECT_URI must be an absolute URL, e.g., http://localhost:8000/auth/callback")
 
         flow = Flow.from_client_config(
             {
@@ -159,12 +185,12 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                     "client_secret": settings.google_client_secret,
                     "auth_uri": "https://accounts.google.com/o/oauth2/v2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [settings.google_redirect_uri],
+                    "redirect_uris": [redirect_uri],
                 }
             },
             scopes=scopes,
         )
-        flow.redirect_uri = settings.google_redirect_uri
+        flow.redirect_uri = redirect_uri
         authorization_url, state = flow.authorization_url(
             access_type="offline",
             include_granted_scopes=False,  # Do not implicitly request previously granted scopes; honor requested scopes only
@@ -173,10 +199,12 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         )
         return {"url": authorization_url, "state": state}
 
-    async def exchange_code(self, *, code: str, scopes: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def exchange_code(self, *, code: str, scopes: list[str] | None = None) -> dict[str, Any]:
         import requests
+
         settings = self._auth._settings
-        if not (settings.google_client_id and settings.google_client_secret and settings.google_redirect_uri):
+        redirect_uri = settings.get_oauth_redirect_uri("google")
+        if not (settings.google_client_id and settings.google_client_secret and redirect_uri):
             raise RuntimeError("Google OAuth is not configured")
         resp = requests.post(
             "https://oauth2.googleapis.com/token",
@@ -184,7 +212,7 @@ class GoogleAuthAdapter(BaseAuthAdapter):
                 "code": code,
                 "client_id": settings.google_client_id,
                 "client_secret": settings.google_client_secret,
-                "redirect_uri": settings.google_redirect_uri,
+                "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -192,13 +220,13 @@ class GoogleAuthAdapter(BaseAuthAdapter):
         )
         if not resp.ok:
             raise RuntimeError(f"Provider token exchange failed: {resp.text[:300]}")
-        tok = resp.json() or {}
-        return tok
+        return resp.json() or {}
 
+    async def status(self, *, user_id: str, db) -> dict[str, Any]:
+        from sqlalchemy import and_, select  # type: ignore
 
-    async def status(self, *, user_id: str, db) -> Dict[str, Any]:
-        from sqlalchemy import select, and_  # type: ignore
         from ...models.provider_credential import ProviderCredential  # type: ignore
+
         settings = self._auth._settings
         result = await db.execute(
             select(ProviderCredential).where(
@@ -210,24 +238,26 @@ class GoogleAuthAdapter(BaseAuthAdapter):
             )
         )
         creds = result.scalars().all()
-        scopes_union: List[str] = []
+        scopes_union: list[str] = []
         for c in creds:
             try:
-                for s in (c.scopes or []):
+                for s in c.scopes or []:
                     if s not in scopes_union:
                         scopes_union.append(s)
             except Exception:
                 pass
-        meta: Dict[str, Any] = {}
+        meta: dict[str, Any] = {}
         try:
+            redirect_uri = settings.get_oauth_redirect_uri("google")
             meta = {
                 "user_oauth_configured": bool(
                     getattr(settings, "google_client_id", None)
                     and getattr(settings, "google_client_secret", None)
-                    and getattr(settings, "google_redirect_uri", None)
+                    and redirect_uri
                 ),
                 "service_account_configured": bool(
-                    getattr(settings, "google_service_account_json", None) or getattr(settings, "google_service_account_file", None)
+                    getattr(settings, "google_service_account_json", None)
+                    or getattr(settings, "google_service_account_file", None)
                 ),
                 "google_domain": getattr(settings, "google_domain", None) or None,
             }
@@ -241,10 +271,78 @@ class GoogleAuthAdapter(BaseAuthAdapter):
 
     async def disconnect(self, *, user_id: str, db) -> None:
         from sqlalchemy import delete  # type: ignore
+
         from ...models.provider_credential import ProviderCredential  # type: ignore
+
         await db.execute(
             delete(ProviderCredential).where(
                 ProviderCredential.user_id == user_id,
                 ProviderCredential.provider_key == "google",
             )
         )
+
+    async def get_user_info(
+        self,
+        *,
+        access_token: str | None = None,  # Unused - Google uses id_token
+        id_token: str | None = None,
+        db: AsyncSession | None = None,  # Unused, kept for interface compatibility
+    ) -> dict[str, Any]:
+        """Verify Google ID token and return normalized user info.
+
+        Args:
+            _access_token: Not used for Google (Google uses id_token)
+            id_token: The Google ID token to verify
+            db: Unused, kept for interface compatibility
+
+        Returns:
+            Normalized user info dict with keys:
+            - provider_id: Google's unique user identifier (sub claim)
+            - provider_key: "google"
+            - email: User's email address
+            - name: User's display name
+            - picture: Avatar URL (optional)
+
+        Raises:
+            ValueError: If id_token is missing, invalid, or verification fails
+
+        """
+        if not id_token:
+            raise ValueError("Missing Google ID token")
+
+        url = "https://oauth2.googleapis.com/tokeninfo"
+        settings = self._auth._settings
+
+        try:
+            async with httpx.AsyncClient(verify=certifi.where(), timeout=httpx.Timeout(15.0)) as client:
+                resp = await client.get(url, params={"id_token": id_token}, headers={"Accept": "application/json"})
+
+            if resp.status_code != 200:
+                text = resp.text[:300]
+                raise ValueError(f"Google token verification failed: HTTP {resp.status_code}: {text}")
+
+            data = resp.json()
+        except httpx.HTTPError as e:
+            logger.error("Google token verification network error", extra={"error": str(e)}, exc_info=True)
+            raise ValueError(f"Network error during Google token verification: {e}") from e
+
+        # Verify audience claim matches our client ID
+        aud = data.get("aud")
+        expected_client_id = settings.google_client_id
+        if not aud or aud != expected_client_id:
+            logger.error("Google ID token audience mismatch", extra={"aud": aud, "expected": expected_client_id})
+            raise ValueError("Invalid Google ID token: audience mismatch")
+
+        sub = data.get("sub")
+        email = data.get("email")
+
+        if not sub or not email:
+            raise ValueError("Invalid Google ID token payload: missing sub or email")
+
+        return {
+            "provider_id": sub,
+            "provider_key": "google",
+            "email": email,
+            "name": data.get("name") or email.split("@")[0],
+            "picture": data.get("picture"),
+        }

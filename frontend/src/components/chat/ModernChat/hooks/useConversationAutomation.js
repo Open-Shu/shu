@@ -20,22 +20,26 @@ const useConversationAutomation = ({
   // after second and then every N thereafter -> summary then rename (if enabled)
   useEffect(() => {
     const convoId = selectedConversation?.id;
-    if (!convoId) return;
-    if (!assistantReplyCount) return;
+    if (!convoId) {
+      return;
+    }
+    if (!assistantReplyCount) {
+      return;
+    }
 
     const prev = lastProcessedAssistantCountRef.current.get(convoId) || 0;
-    if (assistantReplyCount <= prev) return;
-    if (!messagesMatchSelectedConversation) return;
+    if (assistantReplyCount <= prev) {
+      return;
+    }
+    if (!messagesMatchSelectedConversation) {
+      return;
+    }
 
     const isFreshConversation = isConversationFresh(convoId);
     const isTitleLocked = Boolean(selectedConversation?.meta?.title_locked);
-    const shouldRunSummaryOnly =
-      automationSettings.firstAssistantSummary && assistantReplyCount === 1;
+    const shouldRunSummaryOnly = automationSettings.firstAssistantSummary && assistantReplyCount === 1;
     const interval = Number(automationSettings.cadenceInterval) || 0;
-    const hitsInterval =
-      interval > 0 &&
-      assistantReplyCount >= interval &&
-      assistantReplyCount % interval === 0;
+    const hitsInterval = interval > 0 && assistantReplyCount >= interval && assistantReplyCount % interval === 0;
     const shouldRunBoth = hitsInterval;
 
     const run = async () => {
@@ -51,17 +55,11 @@ const useConversationAutomation = ({
           }
         }
 
-        const shouldRenameAfterSummary =
-          summaryRan && !isTitleLocked && lastAssistantMessageId;
-        const shouldRenameCadence =
-          shouldRunBoth && !isTitleLocked && lastAssistantMessageId;
+        const shouldRenameAfterSummary = summaryRan && !isTitleLocked && lastAssistantMessageId;
+        const shouldRenameCadence = shouldRunBoth && !isTitleLocked && lastAssistantMessageId;
         const allowRename = !isFreshConversation || summaryRan;
 
-        if (
-          (shouldRenameAfterSummary || shouldRenameCadence) &&
-          allowRename &&
-          !autoRenameIsLoading
-        ) {
+        if ((shouldRenameAfterSummary || shouldRenameCadence) && allowRename && !autoRenameIsLoading) {
           await runAutoRenameAsync({
             conversationId: convoId,
             payload: {
@@ -97,4 +95,3 @@ const useConversationAutomation = ({
 };
 
 export default useConversationAutomation;
-

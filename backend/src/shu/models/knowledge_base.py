@@ -1,22 +1,21 @@
-"""
-Knowledge Base model for Shu RAG Backend.
+"""Knowledge Base model for Shu RAG Backend.
 
 This module defines the KnowledgeBase model which stores configuration
 and metadata for each knowledge base in the system.
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, Text, JSON, DateTime, ForeignKey
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
 from .base import BaseModel
 
 
 class KnowledgeBase(BaseModel):
-    """
-    Knowledge Base configuration and metadata.
+    """Knowledge Base configuration and metadata.
 
     Each knowledge base represents a separate collection of documents
     with its own configuration, sync settings, and processing parameters.
@@ -40,17 +39,19 @@ class KnowledgeBase(BaseModel):
     # RAG Configuration - New persistent storage for RAG settings
     rag_include_references = Column(Boolean, default=True, nullable=False)
     rag_reference_format = Column(String(20), default="markdown", nullable=False)  # 'markdown' or 'text'
-    rag_context_format = Column(String(20), default="detailed", nullable=False)    # 'detailed' or 'simple'
-    rag_prompt_template = Column(String(20), default="custom", nullable=False)     # 'academic', 'business', 'technical', 'custom'
-    rag_search_threshold = Column(JSON, default=0.7, nullable=False)               # Float stored as JSON for precision
+    rag_context_format = Column(String(20), default="detailed", nullable=False)  # 'detailed' or 'simple'
+    rag_prompt_template = Column(
+        String(20), default="custom", nullable=False
+    )  # 'academic', 'business', 'technical', 'custom'
+    rag_search_threshold = Column(JSON, default=0.7, nullable=False)  # Float stored as JSON for precision
     rag_max_results = Column(Integer, default=10, nullable=False)
-    rag_chunk_overlap_ratio = Column(JSON, default=0.2, nullable=False)            # Float stored as JSON for precision
-    rag_search_type = Column(String(20), default="hybrid", nullable=False)         # 'similarity', 'keyword', 'hybrid'
+    rag_chunk_overlap_ratio = Column(JSON, default=0.2, nullable=False)  # Float stored as JSON for precision
+    rag_search_type = Column(String(20), default="hybrid", nullable=False)  # 'similarity', 'keyword', 'hybrid'
     rag_config_version = Column(String(10), default="1.0", nullable=False)
 
     # Title Search Configuration
     rag_title_weighting_enabled = Column(Boolean, default=True, nullable=False)
-    rag_title_weight_multiplier = Column(JSON, default=3.0, nullable=False)        # Float stored as JSON for precision
+    rag_title_weight_multiplier = Column(JSON, default=3.0, nullable=False)  # Float stored as JSON for precision
     rag_title_chunk_enabled = Column(Boolean, default=True, nullable=False)
 
     # Document Chunk Configuration
@@ -71,7 +72,9 @@ class KnowledgeBase(BaseModel):
     total_chunks = Column(Integer, default=0, nullable=False)
 
     # RBAC - Knowledge Base ownership
-    owner_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)  # NULL for system/shared KBs
+    owner_id = Column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )  # NULL for system/shared KBs
 
     # Relationships
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
@@ -79,7 +82,7 @@ class KnowledgeBase(BaseModel):
     model_configurations = relationship(
         "ModelConfiguration",
         secondary="model_configuration_knowledge_bases",
-        back_populates="knowledge_bases"
+        back_populates="knowledge_bases",
     )
 
     # RBAC relationships
@@ -87,24 +90,25 @@ class KnowledgeBase(BaseModel):
     permissions = relationship("KnowledgeBasePermission", back_populates="knowledge_base", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<KnowledgeBase(id={self.id}, name='{self.name}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary with computed fields."""
         base_dict = super().to_dict()
-        base_dict.update({
-            "document_count": self.document_count,
-            "total_chunks": self.total_chunks,
-            "last_sync_at": self.last_sync_at.isoformat() if self.last_sync_at else None,
-        })
+        base_dict.update(
+            {
+                "document_count": self.document_count,
+                "total_chunks": self.total_chunks,
+                "last_sync_at": self.last_sync_at.isoformat() if self.last_sync_at else None,
+            }
+        )
         return base_dict
 
     @property
     def is_active(self) -> bool:
         """Check if knowledge base is active."""
         return self.status == "active"
-
-
 
     def update_document_stats(self, document_count: int, total_chunks: int) -> None:
         """Update document statistics."""
@@ -113,13 +117,13 @@ class KnowledgeBase(BaseModel):
 
     def mark_sync_completed(self) -> None:
         """Mark the last sync time as now."""
-        self.last_sync_at = datetime.now(timezone.utc)
+        self.last_sync_at = datetime.now(UTC)
 
     def get_source_types(self) -> set:
         """Get all source types used by documents in this knowledge base."""
         return {doc.source_type for doc in self.documents}
 
-    def get_document_count_by_source_type(self) -> Dict[str, int]:
+    def get_document_count_by_source_type(self) -> dict[str, int]:
         """Get document counts grouped by source type."""
         source_counts = {}
         for doc in self.documents:
@@ -130,14 +134,14 @@ class KnowledgeBase(BaseModel):
     # Use ModelConfigurationService.assign_kb_prompt() for KB-specific prompts
     # This allows the same KB to have different prompts for different model configurations
 
-    def get_rag_config(self) -> Dict[str, Any]:
-        """
-        Get RAG configuration as dictionary with proper defaults.
+    def get_rag_config(self) -> dict[str, Any]:
+        """Get RAG configuration as dictionary with proper defaults.
 
         Uses ConfigurationManager to provide consistent defaults when
         database values are NULL or missing.
         """
         from ..core.config import get_config_manager
+
         config_manager = get_config_manager()
 
         # Build KB config dict from database values (may contain None values)
@@ -146,12 +150,18 @@ class KnowledgeBase(BaseModel):
             "reference_format": self.rag_reference_format,
             "context_format": self.rag_context_format,
             "prompt_template": self.rag_prompt_template,
-            "search_threshold": float(self.rag_search_threshold) if isinstance(self.rag_search_threshold, (int, float, str)) else self.rag_search_threshold,
+            "search_threshold": float(self.rag_search_threshold)
+            if isinstance(self.rag_search_threshold, (int, float, str))
+            else self.rag_search_threshold,
             "max_results": self.rag_max_results,
-            "chunk_overlap_ratio": float(self.rag_chunk_overlap_ratio) if isinstance(self.rag_chunk_overlap_ratio, (int, float, str)) else self.rag_chunk_overlap_ratio,
+            "chunk_overlap_ratio": float(self.rag_chunk_overlap_ratio)
+            if isinstance(self.rag_chunk_overlap_ratio, (int, float, str))
+            else self.rag_chunk_overlap_ratio,
             "search_type": self.rag_search_type,
             "title_weighting_enabled": self.rag_title_weighting_enabled,
-            "title_weight_multiplier": float(self.rag_title_weight_multiplier) if isinstance(self.rag_title_weight_multiplier, (int, float, str)) else self.rag_title_weight_multiplier,
+            "title_weight_multiplier": float(self.rag_title_weight_multiplier)
+            if isinstance(self.rag_title_weight_multiplier, (int, float, str))
+            else self.rag_title_weight_multiplier,
             "title_chunk_enabled": self.rag_title_chunk_enabled,
             "max_chunks_per_document": self.rag_max_chunks_per_document,
             "minimum_query_words": self.rag_minimum_query_words,
@@ -179,10 +189,10 @@ class KnowledgeBase(BaseModel):
             "fetch_full_documents": config_manager.get_full_document_enabled(kb_config=kb_config),
             "full_doc_max_docs": config_manager.get_full_document_max_docs(kb_config=kb_config),
             "full_doc_token_cap": config_manager.get_full_document_token_cap(kb_config=kb_config),
-            "version": self.rag_config_version or "1.0"
+            "version": self.rag_config_version or "1.0",
         }
 
-    def update_rag_config(self, config: Dict[str, Any]) -> None:
+    def update_rag_config(self, config: dict[str, Any]) -> None:  # noqa: PLR0912
         """Update RAG configuration from dictionary."""
         if "include_references" in config:
             self.rag_include_references = config["include_references"]

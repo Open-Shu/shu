@@ -10,13 +10,14 @@ Replaces:
 - 004_kb_full_document_escalation
 - 005_nullable_full_doc_fields
 """
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
-from datetime import datetime, timezone
 import uuid
+from datetime import UTC, datetime
+
+import sqlalchemy as sa
+from alembic import op
 from sqlalchemy import text
+from sqlalchemy.dialects import postgresql
 
 # Optional pgvector
 try:
@@ -36,7 +37,7 @@ def upgrade() -> None:
     # Ensure pgvector is available before creating vector columns
     """
     Create the initial database schema for the application, including core tables, indexes, and seeded system prompts.
-    
+
     This migration ensures the PostgreSQL `vector` extension is attempted (failure is tolerated), creates all core tables and constraints for knowledge bases, sources, documents, chunks, sync jobs, prompts, users, LLM providers/models/usage, conversations/messages, model configurations, RBAC, attachments, and related junction tables, and adds performance indexes. It also seeds a small set of system default prompts if they do not already exist; prompt seeding failures are non-blocking.
     """
     try:
@@ -54,20 +55,55 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, nullable=True),
         sa.Column("sync_enabled", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.Column("last_sync_at", sa.DateTime, nullable=True),
-        sa.Column("embedding_model", sa.String(100), nullable=False, server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'")),
+        sa.Column(
+            "embedding_model",
+            sa.String(100),
+            nullable=False,
+            server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'"),
+        ),
         sa.Column("chunk_size", sa.Integer, nullable=False, server_default=sa.text("1000")),
         sa.Column("chunk_overlap", sa.Integer, nullable=False, server_default=sa.text("200")),
         sa.Column("rag_include_references", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("rag_reference_format", sa.String(20), nullable=False, server_default=sa.text("'markdown'")),
-        sa.Column("rag_context_format", sa.String(20), nullable=False, server_default=sa.text("'detailed'")),
+        sa.Column(
+            "rag_reference_format",
+            sa.String(20),
+            nullable=False,
+            server_default=sa.text("'markdown'"),
+        ),
+        sa.Column(
+            "rag_context_format",
+            sa.String(20),
+            nullable=False,
+            server_default=sa.text("'detailed'"),
+        ),
         sa.Column("rag_prompt_template", sa.String(20), nullable=False, server_default=sa.text("'custom'")),
-        sa.Column("rag_search_threshold", postgresql.JSON(astext_type=sa.Text()), nullable=False, server_default=sa.text("'0.7'")),
+        sa.Column(
+            "rag_search_threshold",
+            postgresql.JSON(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'0.7'"),
+        ),
         sa.Column("rag_max_results", sa.Integer, nullable=False, server_default=sa.text("10")),
-        sa.Column("rag_chunk_overlap_ratio", postgresql.JSON(astext_type=sa.Text()), nullable=False, server_default=sa.text("'0.2'")),
+        sa.Column(
+            "rag_chunk_overlap_ratio",
+            postgresql.JSON(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'0.2'"),
+        ),
         sa.Column("rag_search_type", sa.String(20), nullable=False, server_default=sa.text("'hybrid'")),
         sa.Column("rag_config_version", sa.String(10), nullable=False, server_default=sa.text("'1.0'")),
-        sa.Column("rag_title_weighting_enabled", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("rag_title_weight_multiplier", postgresql.JSON(astext_type=sa.Text()), nullable=False, server_default=sa.text("'3.0'")),
+        sa.Column(
+            "rag_title_weighting_enabled",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
+        sa.Column(
+            "rag_title_weight_multiplier",
+            postgresql.JSON(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'3.0'"),
+        ),
         sa.Column("rag_title_chunk_enabled", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.Column("rag_max_chunks_per_document", sa.Integer, nullable=False, server_default=sa.text("2")),
         sa.Column("rag_minimum_query_words", sa.Integer, nullable=False, server_default=sa.text("3")),
@@ -100,8 +136,18 @@ def upgrade() -> None:
         sa.Column("supported_file_types", postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column("max_file_size", sa.String(20), nullable=True),
         sa.Column("supports_incremental_sync", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("supports_deletion_detection", sa.Boolean, nullable=False, server_default=sa.text("true")),
-        sa.Column("supports_metadata_extraction", sa.Boolean, nullable=False, server_default=sa.text("true")),
+        sa.Column(
+            "supports_deletion_detection",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
+        sa.Column(
+            "supports_metadata_extraction",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
         sa.Column("created_at", sa.DateTime, nullable=False),
         sa.Column("updated_at", sa.DateTime, nullable=False),
     )
@@ -169,15 +215,26 @@ def upgrade() -> None:
                 "created_at": "2025-09-06 01:16:22.882",
                 "updated_at": "2025-09-06 01:16:22.882",
             },
-        ]
+        ],
     )
 
     # documents
     op.create_table(
         "documents",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("knowledge_base_id", sa.String(36), sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("source_type", sa.String(50), sa.ForeignKey("source_types.name"), nullable=False, index=True),
+        sa.Column(
+            "knowledge_base_id",
+            sa.String(36),
+            sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "source_type",
+            sa.String(50),
+            sa.ForeignKey("source_types.name"),
+            nullable=False,
+            index=True,
+        ),
         sa.Column("source_id", sa.String(500), nullable=False, index=True),
         sa.Column("title", sa.String(500), nullable=False),
         sa.Column("file_type", sa.String(50), nullable=False),
@@ -203,14 +260,28 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime, nullable=False),
         sa.Column("updated_at", sa.DateTime, nullable=False),
     )
-    op.create_unique_constraint("uq_documents_kb_source_sourceid", "documents", ["knowledge_base_id", "source_type", "source_id"])
+    op.create_unique_constraint(
+        "uq_documents_kb_source_sourceid",
+        "documents",
+        ["knowledge_base_id", "source_type", "source_id"],
+    )
 
     # document_chunks
     op.create_table(
         "document_chunks",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("document_id", sa.String(36), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("knowledge_base_id", sa.String(36), sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "document_id",
+            sa.String(36),
+            sa.ForeignKey("documents.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "knowledge_base_id",
+            sa.String(36),
+            sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("chunk_index", sa.Integer, nullable=False),
         sa.Column("content", sa.Text, nullable=False),
         sa.Column("embedding", Vector(384), nullable=True),
@@ -230,9 +301,20 @@ def upgrade() -> None:
     op.create_table(
         "sync_jobs",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("knowledge_base_id", sa.String(36), sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "knowledge_base_id",
+            sa.String(36),
+            sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("job_type", sa.String(50), nullable=False, server_default=sa.text("'sync'")),
-        sa.Column("source_type", sa.String(50), sa.ForeignKey("source_types.name"), nullable=True, index=True),
+        sa.Column(
+            "source_type",
+            sa.String(50),
+            sa.ForeignKey("source_types.name"),
+            nullable=True,
+            index=True,
+        ),
         sa.Column("status", sa.String(50), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("started_at", sa.DateTime, nullable=True),
         sa.Column("completed_at", sa.DateTime, nullable=True),
@@ -264,7 +346,12 @@ def upgrade() -> None:
     op.create_table(
         "knowledge_base_sources",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("knowledge_base_id", sa.String(36), sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "knowledge_base_id",
+            sa.String(36),
+            sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("source_type", sa.String(50), sa.ForeignKey("source_types.name"), nullable=False),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("description", sa.Text, nullable=True),
@@ -299,7 +386,12 @@ def upgrade() -> None:
     op.create_table(
         "prompt_assignments",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("prompt_id", sa.String(36), sa.ForeignKey("prompts.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "prompt_id",
+            sa.String(36),
+            sa.ForeignKey("prompts.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("entity_id", sa.String(36), nullable=False),
         sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.Column("assigned_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
@@ -322,7 +414,7 @@ def upgrade() -> None:
             )
             return res.first() is not None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         defaults = [
             # LLM model personas
             {
@@ -408,11 +500,28 @@ def upgrade() -> None:
     op.create_table(
         "user_preferences",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True),
-        sa.Column("enable_cross_session_memory_by_default", sa.Boolean, nullable=False, server_default=sa.text("false")),
+        sa.Column(
+            "user_id",
+            sa.String(36),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+            unique=True,
+            index=True,
+        ),
+        sa.Column(
+            "enable_cross_session_memory_by_default",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
         sa.Column("memory_depth", sa.Integer, nullable=False, server_default=sa.text("5")),
         sa.Column("memory_similarity_threshold", sa.Float, nullable=False, server_default=sa.text("0.6")),
-        sa.Column("enable_streaming_by_default", sa.Boolean, nullable=False, server_default=sa.text("true")),
+        sa.Column(
+            "enable_streaming_by_default",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
         sa.Column("theme", sa.String(20), nullable=False, server_default=sa.text("'light'")),
         sa.Column("language", sa.String(10), nullable=False, server_default=sa.text("'en'")),
         sa.Column("timezone", sa.String(50), nullable=False, server_default=sa.text("'UTC'")),
@@ -427,7 +536,12 @@ def upgrade() -> None:
         sa.Column("user_id", sa.String(36), nullable=False, index=True),
         sa.Column("access_token", sa.Text, nullable=False),
         sa.Column("refresh_token", sa.Text, nullable=False),
-        sa.Column("token_uri", sa.String(255), nullable=False, server_default=sa.text("'https://oauth2.googleapis.com/token'")),
+        sa.Column(
+            "token_uri",
+            sa.String(255),
+            nullable=False,
+            server_default=sa.text("'https://oauth2.googleapis.com/token'"),
+        ),
         sa.Column("client_id", sa.String(255), nullable=False),
         sa.Column("client_secret", sa.Text, nullable=False),
         sa.Column("scopes", sa.JSON, nullable=False),
@@ -570,7 +684,6 @@ def upgrade() -> None:
         ondelete="SET NULL",
     )
 
-
     op.create_table(
         "model_configuration_knowledge_bases",
         sa.Column("model_configuration_id", sa.String(), nullable=False),
@@ -631,7 +744,12 @@ def upgrade() -> None:
     op.create_table(
         "attachments",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("conversation_id", sa.String(36), sa.ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "conversation_id",
+            sa.String(36),
+            sa.ForeignKey("conversations.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("original_filename", sa.String(500), nullable=False),
         sa.Column("storage_path", sa.String(1000), nullable=False),
@@ -653,8 +771,18 @@ def upgrade() -> None:
     op.create_table(
         "message_attachments",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("message_id", sa.String(36), sa.ForeignKey("messages.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("attachment_id", sa.String(36), sa.ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "message_id",
+            sa.String(36),
+            sa.ForeignKey("messages.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "attachment_id",
+            sa.String(36),
+            sa.ForeignKey("attachments.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("created_at", sa.DateTime, nullable=False),
         sa.Column("updated_at", sa.DateTime, nullable=False),
         sa.UniqueConstraint("message_id", "attachment_id", name="uq_message_attachment"),
@@ -665,7 +793,12 @@ def upgrade() -> None:
     op.create_index("idx_documents_kb_id", "documents", ["knowledge_base_id"])
     op.create_index("idx_document_chunks_doc_id", "document_chunks", ["document_id"])
     try:
-        op.create_index("idx_document_chunks_embedding", "document_chunks", ["embedding"], postgresql_using="ivfflat")
+        op.create_index(
+            "idx_document_chunks_embedding",
+            "document_chunks",
+            ["embedding"],
+            postgresql_using="ivfflat",
+        )
     except Exception:
         pass
     op.create_index("ix_messages_parent_message_id", "messages", ["parent_message_id"])

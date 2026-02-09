@@ -30,10 +30,13 @@ export const ThemeProvider = ({ children }) => {
   const [branding, setBrandingState] = useState(() => resolveBranding(defaultBranding));
   const [brandingLoaded, setBrandingLoaded] = useState(false);
 
-  const setBranding = useCallback((nextBranding) => {
-    setBrandingState(resolveBranding(nextBranding));
-    setBrandingLoaded(true);
-  }, [setBrandingLoaded]);
+  const setBranding = useCallback(
+    (nextBranding) => {
+      setBrandingState(resolveBranding(nextBranding));
+      setBrandingLoaded(true);
+    },
+    [setBrandingLoaded]
+  );
 
   const refreshBranding = useCallback(async () => {
     setBrandingLoaded(false);
@@ -53,8 +56,9 @@ export const ThemeProvider = ({ children }) => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      userPreferencesAPI.getPreferences()
-        .then(response => {
+      userPreferencesAPI
+        .getPreferences()
+        .then((response) => {
           const prefs = extractDataFromResponse(response);
           setThemeMode(prefs.theme || 'light');
         })
@@ -74,11 +78,11 @@ export const ThemeProvider = ({ children }) => {
     if (themeMode === 'auto') {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       setResolvedMode(mediaQuery.matches ? 'dark' : 'light');
-      
+
       const handleChange = (e) => {
         setResolvedMode(e.matches ? 'dark' : 'light');
       };
-      
+
       mediaQuery.addEventListener('change', handleChange);
       return () => mediaQuery.removeEventListener('change', handleChange);
     } else {
@@ -131,22 +135,25 @@ export const ThemeProvider = ({ children }) => {
     }
   }, [branding, resolvedMode]);
 
-  const changeTheme = useCallback(async (newTheme) => {
-    setThemeMode(newTheme);
-    
-    // Save to localStorage for non-authenticated users
-    localStorage.setItem('shu-theme', newTheme);
-    
-    // Save to backend if authenticated
-    if (isAuthenticated) {
-      try {
-        await userPreferencesAPI.patchPreferences({ theme: newTheme });
-        log.info('Theme preference saved:', newTheme);
-      } catch (error) {
-        log.warn('Failed to save theme preference:', error);
+  const changeTheme = useCallback(
+    async (newTheme) => {
+      setThemeMode(newTheme);
+
+      // Save to localStorage for non-authenticated users
+      localStorage.setItem('shu-theme', newTheme);
+
+      // Save to backend if authenticated
+      if (isAuthenticated) {
+        try {
+          await userPreferencesAPI.patchPreferences({ theme: newTheme });
+          log.info('Theme preference saved:', newTheme);
+        } catch (error) {
+          log.warn('Failed to save theme preference:', error);
+        }
       }
-    }
-  }, [isAuthenticated]);
+    },
+    [isAuthenticated]
+  );
 
   const value = {
     theme,
@@ -160,9 +167,5 @@ export const ThemeProvider = ({ children }) => {
     setBranding,
   };
 
-  return (
-    <ThemeContext.Provider value={value}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 };

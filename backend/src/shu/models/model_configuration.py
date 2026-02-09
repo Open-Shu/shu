@@ -1,5 +1,4 @@
-"""
-Model Configuration models for Shu.
+"""Model Configuration models for Shu.
 
 This module defines the ModelConfiguration entity - the foundational abstraction
 that combines base models + prompts + optional knowledge bases into user-facing
@@ -11,25 +10,34 @@ Design Decision:
 - This is the atomic unit that chat conversations and other features use
 """
 
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, Table, Index, JSON
+from typing import Optional
+
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, Index, String, Table, Text
 from sqlalchemy.orm import relationship
-from typing import List, Optional
 
 from .base import BaseModel
 
-
 # Many-to-many association table for ModelConfiguration <-> KnowledgeBase
 model_configuration_knowledge_bases = Table(
-    'model_configuration_knowledge_bases',
+    "model_configuration_knowledge_bases",
     BaseModel.metadata,
-    Column('model_configuration_id', String, ForeignKey('model_configurations.id', ondelete='CASCADE'), primary_key=True),
-    Column('knowledge_base_id', String, ForeignKey('knowledge_bases.id', ondelete='CASCADE'), primary_key=True)
+    Column(
+        "model_configuration_id",
+        String,
+        ForeignKey("model_configurations.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "knowledge_base_id",
+        String,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
 class ModelConfiguration(BaseModel):
-    """
-    Model Configuration entity - the user-facing abstraction for AI interactions.
+    """Model Configuration entity - the user-facing abstraction for AI interactions.
 
     This combines:
     - Base Model (LLMProvider + specific model name)
@@ -40,6 +48,7 @@ class ModelConfiguration(BaseModel):
     - "Research Assistant": GPT-4 + Research Prompt + [Biology KB, Chemistry KB]
     - "Customer Support": Claude-3 + Support Prompt + [FAQ KB, Product KB]
     - "General Chat": GPT-4 + Friendly Prompt + [] (no KBs)
+
     """
 
     __tablename__ = "model_configurations"
@@ -68,18 +77,19 @@ class ModelConfiguration(BaseModel):
     knowledge_bases = relationship(
         "KnowledgeBase",
         secondary=model_configuration_knowledge_bases,
-        back_populates="model_configurations"
+        back_populates="model_configurations",
     )
     conversations = relationship("Conversation", back_populates="model_configuration")
     kb_prompt_assignments = relationship(
         "ModelConfigurationKBPrompt",
         back_populates="model_configuration",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
     functionalities = Column(JSON, nullable=True)
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return f"<ModelConfiguration(id={self.id}, name='{self.name}', provider='{self.llm_provider_id}')>"
 
     @property
@@ -92,15 +102,15 @@ class ModelConfiguration(BaseModel):
         """Check if this configuration has any KB-specific prompts assigned."""
         return len([assignment for assignment in self.kb_prompt_assignments if assignment.is_active]) > 0
 
-    def get_kb_prompt(self, knowledge_base_id: str) -> Optional['Prompt']:
-        """
-        Get the prompt assigned to a specific knowledge base for this model configuration.
+    def get_kb_prompt(self, knowledge_base_id: str) -> Optional["Prompt"]:  # noqa: F821 # indirect typing is fine
+        """Get the prompt assigned to a specific knowledge base for this model configuration.
 
         Args:
             knowledge_base_id: ID of the knowledge base
 
         Returns:
             Prompt object if assigned, None otherwise
+
         """
         for assignment in self.kb_prompt_assignments:
             if assignment.knowledge_base_id == knowledge_base_id and assignment.is_active:
@@ -108,11 +118,11 @@ class ModelConfiguration(BaseModel):
         return None
 
     def get_all_kb_prompts(self) -> dict:
-        """
-        Get all KB-specific prompts for this model configuration.
+        """Get all KB-specific prompts for this model configuration.
 
         Returns:
             Dictionary mapping knowledge_base_id to Prompt object
+
         """
         kb_prompts = {}
         for assignment in self.kb_prompt_assignments:
@@ -121,21 +131,21 @@ class ModelConfiguration(BaseModel):
         return kb_prompts
 
     @property
-    def knowledge_base_ids(self) -> List[str]:
+    def knowledge_base_ids(self) -> list[str]:
         """Get list of knowledge base IDs attached to this configuration."""
         return [kb.id for kb in self.knowledge_bases]
 
-    def activate(self):
+    def activate(self) -> None:
         """Activate this model configuration."""
         self.is_active = True
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """Deactivate this model configuration."""
         self.is_active = False
 
 
 # Database indexes for performance
-Index('idx_model_configurations_active', ModelConfiguration.is_active)
-Index('idx_model_configurations_provider', ModelConfiguration.llm_provider_id)
-Index('idx_model_configurations_created_by', ModelConfiguration.created_by)
-Index('idx_model_configurations_name_active', ModelConfiguration.name, ModelConfiguration.is_active)
+Index("idx_model_configurations_active", ModelConfiguration.is_active)
+Index("idx_model_configurations_provider", ModelConfiguration.llm_provider_id)
+Index("idx_model_configurations_created_by", ModelConfiguration.created_by)
+Index("idx_model_configurations_name_active", ModelConfiguration.name, ModelConfiguration.is_active)

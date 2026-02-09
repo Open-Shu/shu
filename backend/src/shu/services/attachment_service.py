@@ -1,31 +1,33 @@
-"""
-AttachmentService handles chat attachments: saving files, extracting text, and persistence.
-"""
-import os
-import uuid
-import mimetypes
+"""AttachmentService handles chat attachments: saving files, extracting text, and persistence."""
+
 import datetime as dt
-
+import mimetypes
+import uuid
 from pathlib import Path
-from typing import Any, Tuple, Dict
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
 from ..models.attachment import Attachment, MessageAttachment
 from ..processors.text_extractor import TextExtractor
 
+if TYPE_CHECKING:
+    from fastapi import UploadFile
+
+# Constants for streaming file reads
+UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024  # 1MB chunks for streaming reads
+
 
 class AttachmentService:
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession) -> None:
         self.db = db_session
         self.settings = get_settings_instance()
         # Ensure storage directory exists
         Path(self.settings.chat_attachment_storage_dir).mkdir(parents=True, exist_ok=True)
 
-    async def _fast_extract_text(self, storage_path: Path, retry: bool = True) -> Tuple[str, Dict[str, Any]]:
+    async def _fast_extract_text(self, storage_path: Path, retry: bool = True) -> tuple[str, dict[str, Any]]:
         extractor = TextExtractor()
         try:
             extraction = await extractor.extract_text(
@@ -46,34 +48,32 @@ class AttachmentService:
                 "duration": None,
                 "details": {"error": str(ex)},
             }
-        
+
     def _sanitize_filename(self, filename: str, fallback_ext: str = "") -> str:
         """Sanitize a filename to prevent header injection, path traversal, etc.
-        
+
         Keeps only alphanumeric characters, dots, underscores, hyphens, and spaces.
         Ensures the result is a valid, non-empty filename with preserved extension.
-        
+
         Args:
             filename: The original filename to sanitize
             fallback_ext: Extension to use if filename becomes invalid (without leading dot)
-        
+
         Returns:
             A sanitized filename safe for storage and HTTP headers
+
         """
         raw_name = Path(filename).name
-        sanitized = "".join(
-            c for c in raw_name
-            if c.isalnum() or c in "._- "
-        ).strip()
-        
+        sanitized = "".join(c for c in raw_name if c.isalnum() or c in "._- ").strip()
+
         # Ensure we have a valid filename
         if not sanitized or sanitized.startswith("."):
             sanitized = f"attachment.{fallback_ext}" if fallback_ext else "attachment"
-        
+
         # Ensure extension is preserved
         if fallback_ext and not sanitized.lower().endswith(f".{fallback_ext}"):
             sanitized = f"{sanitized}.{fallback_ext}"
-        
+
         return sanitized
 
     async def save_upload(
@@ -81,29 +81,76 @@ class AttachmentService:
         *,
         conversation_id: str,
         user_id: str,
-        filename: str,
-        file_bytes: bytes,
-    ) -> Tuple[Attachment, str]:
+        upload_file: "UploadFile",
+    ) -> tuple[Attachment, str]:
         """Save an uploaded file to disk, extract text, and create Attachment.
 
-        Returns (attachment, temp_path).
-        Caller may optionally remove temp_path later if using external storage.
+        Handles streaming file reads with validation for MIME type, file extension,
+        and size limits. All validation uses settings from ConfigurationManager.
+
+        Args:
+            conversation_id: ID of the conversation this attachment belongs to
+            user_id: ID of the user uploading the file
+            upload_file: FastAPI UploadFile object (streaming)
+
+        Returns:
+            Tuple of (attachment, storage_path)
+
+        Raises:
+            ValueError: If file type is unsupported, size exceeds limit, or validation fails
+
         """
+        filename = upload_file.filename or "attachment"
+
         # Validate extension
         ext = Path(filename).suffix.lower().lstrip(".")
         allowed = [t.lower() for t in self.settings.chat_attachment_allowed_types]
         if ext not in allowed:
-            raise ValueError(f"Unsupported file type: {ext}")
+            raise ValueError(f"Unsupported file type: {ext}. Allowed types: {', '.join(sorted(allowed))}")
+
+        # Validate MIME type (if provided by client)
+        if upload_file.content_type:
+            # Build allowed MIME types from extensions
+            allowed_mime_types = set()
+            for allowed_ext in allowed:
+                mime_type, _ = mimetypes.guess_type(f"file.{allowed_ext}")
+                if mime_type:
+                    allowed_mime_types.add(mime_type)
+
+            if upload_file.content_type not in allowed_mime_types:
+                raise ValueError(
+                    f"Invalid MIME type: {upload_file.content_type}. "
+                    f"Allowed types: {', '.join(sorted(allowed_mime_types))}"
+                )
 
         # Sanitize filename
         sanitized_name = self._sanitize_filename(filename, fallback_ext=ext)
 
-        # Enforce size limit
+        # Stream file with size validation
         max_size = self.settings.chat_attachment_max_size
-        if len(file_bytes) > max_size:
-            raise ValueError(f"File too large: {len(file_bytes)} > {max_size}")
+        file_content = bytearray()
 
-        # Determine MIME (use original filename for accurate detection)
+        # Stage 1: Pre-read size validation using metadata (if available)
+        if upload_file.size is not None and upload_file.size > max_size:
+            raise ValueError(
+                f"File too large: {upload_file.size} bytes. "
+                f"Maximum size is {max_size} bytes ({max_size // (1024 * 1024)}MB)"
+            )
+
+        # Stage 2: Stream file in chunks with size validation during read
+        while True:
+            chunk = await upload_file.read(UPLOAD_CHUNK_SIZE_BYTES)
+            if not chunk:
+                break
+            file_content.extend(chunk)
+
+            # Validate accumulated size doesn't exceed limit
+            if len(file_content) > max_size:
+                raise ValueError(f"File too large: exceeds {max_size} bytes ({max_size // (1024 * 1024)}MB)")
+
+        file_bytes = bytes(file_content)
+
+        # Determine MIME type (use original filename for accurate detection)
         mime_type, _ = mimetypes.guess_type(filename)
         mime_type = mime_type or "application/octet-stream"
 
@@ -120,7 +167,8 @@ class AttachmentService:
 
         # Create DB record
         import datetime as _dt
-        expires_at = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=self.settings.chat_attachment_ttl_days)
+
+        expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(days=self.settings.chat_attachment_ttl_days)
 
         attachment = Attachment(
             id=att_id,
@@ -152,20 +200,17 @@ class AttachmentService:
             return []
         stmt = select(Attachment).where(Attachment.id.in_(ids))
         result = await self.db.execute(stmt)
-        attachments = [a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id]
-        return attachments
+        return [a for a in result.scalars().all() if a.conversation_id == conversation_id and a.user_id == user_id]
 
     async def get_conversation_attachments_with_links(
-        self,
-        conversation_id: str,
-        user_id: str
+        self, conversation_id: str, user_id: str
     ) -> list[tuple[str, Attachment]]:
         """Fetch (message_id, attachment) pairs for a conversation owned by the user.
-        
+
         Excludes expired attachments (expires_at in the past).
         """
-        now = dt.datetime.now(dt.timezone.utc)
-        
+        now = dt.datetime.now(dt.UTC)
+
         stmt = (
             select(MessageAttachment.message_id, Attachment)
             .join(Attachment, Attachment.id == MessageAttachment.attachment_id)

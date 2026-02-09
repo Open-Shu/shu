@@ -2,7 +2,6 @@ import axios from 'axios';
 import { getApiV1Base } from './baseUrl';
 import { log } from '../utils/log';
 
-
 const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.REACT_APP_API_TIMEOUT_MS || '90000', 10);
 
 const api = axios.create({
@@ -36,7 +35,7 @@ let isRefreshing = false;
 let failedQueue = [];
 
 const processQueue = (error, token = null) => {
-  failedQueue.forEach(prom => {
+  failedQueue.forEach((prom) => {
     if (error) {
       prom.reject(error);
     } else {
@@ -59,7 +58,7 @@ const attemptTokenRefresh = async () => {
   }
 
   const response = await api.post('/auth/refresh', {
-    refresh_token: refreshToken
+    refresh_token: refreshToken,
   });
 
   const { access_token, refresh_token: newRefreshToken } = response.data.data;
@@ -105,14 +104,16 @@ api.interceptors.response.use(
         // If we're already refreshing, queue this request
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
-        }).then(token => {
-          if (token) {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
-          }
-          return api(originalRequest);
-        }).catch(err => {
-          return Promise.reject(err);
-        });
+        })
+          .then((token) => {
+            if (token) {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            return api(originalRequest);
+          })
+          .catch((err) => {
+            return Promise.reject(err);
+          });
       }
 
       originalRequest._retry = true;
@@ -161,15 +162,19 @@ api.interceptors.response.use(
 
 // Background token refresh function
 const refreshTokenInBackground = async () => {
-  if (isRefreshing) return;
+  if (isRefreshing) {
+    return;
+  }
 
   const refreshToken = localStorage.getItem('shu_refresh_token');
-  if (!refreshToken) return;
+  if (!refreshToken) {
+    return;
+  }
 
   try {
     isRefreshing = true;
     const response = await api.post('/auth/refresh', {
-      refresh_token: refreshToken
+      refresh_token: refreshToken,
     });
 
     const { access_token, refresh_token: newRefreshToken } = response.data.data;
@@ -188,7 +193,7 @@ const refreshTokenInBackground = async () => {
 
 /**
  * Shared helper for SSE streaming POST requests with auto token refresh.
- * 
+ *
  * @param {string} url - Full URL for the request
  * @param {Object} data - Request body data
  * @param {Object} options - Optional config ({ signal, headers })
@@ -198,8 +203,13 @@ const sseStreamRequest = async (url, data = {}, options = {}) => {
   const { signal, headers: extraHeaders } = options || {};
 
   const makeRequest = (authToken) => {
-    const headers = { 'Accept': 'text/event-stream', 'Content-Type': 'application/json' };
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const headers = {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+    };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
     return fetch(url, {
       method: 'POST',
       headers: { ...headers, ...(extraHeaders || {}) },
@@ -244,6 +254,7 @@ export const authAPI = {
   deactivateUser: (userId) => api.patch(`/auth/users/${userId}/deactivate`),
 
   exchangeGoogleLogin: (code) => api.post('/auth/google/exchange-login', { code }),
+  exchangeMicrosoftLogin: (code) => api.post('/auth/microsoft/exchange-login', { code }),
 };
 
 // Health endpoints
@@ -258,7 +269,6 @@ export const healthAPI = {
 export const systemAPI = {
   getVersion: () => api.get('/system/version'),
 };
-
 
 // Branding endpoints
 export const brandingAPI = {
@@ -307,18 +317,17 @@ export const knowledgeBaseAPI = {
   getPermissions: (id) => api.get(`/knowledge-bases/${id}/permissions`),
   grantPermission: (id, data) => api.post(`/knowledge-bases/${id}/permissions`, data),
   revokePermission: (id, permissionId) => api.delete(`/knowledge-bases/${id}/permissions/${permissionId}`),
-  getEffectivePermissions: (id, userId = null) => api.get(`/knowledge-bases/${id}/effective-permissions`, { params: userId ? { user_id: userId } : {} }),
+  getEffectivePermissions: (id, userId = null) =>
+    api.get(`/knowledge-bases/${id}/effective-permissions`, {
+      params: userId ? { user_id: userId } : {},
+    }),
 };
-
-
 
 // Query endpoints
 export const queryAPI = {
   search: (kbId, query) => api.post(`/query/${kbId}/search`, query),
   getStats: (kbId) => api.get(`/query/${kbId}/stats`),
 };
-
-
 
 // LLM endpoints
 export const llmAPI = {
@@ -335,12 +344,16 @@ export const llmAPI = {
   getProviderType: (key) => api.get(`/llm/provider-types/${encodeURIComponent(key)}`),
 
   // Model management
-  getModels: (providerId = null) => api.get('/llm/models', { params: providerId ? { provider_id: providerId } : {} }),
+  getModels: (providerId = null) =>
+    api.get('/llm/models', {
+      params: providerId ? { provider_id: providerId } : {},
+    }),
   createModel: (providerId, data) => api.post(`/llm/providers/${providerId}/models`, data),
 
   // Model discovery
   discoverModels: (providerId) => api.get(`/llm/providers/${providerId}/discover-models`),
-  syncModels: (providerId, selectedModels = null) => api.post(`/llm/providers/${providerId}/sync-models`, selectedModels),
+  syncModels: (providerId, selectedModels = null) =>
+    api.post(`/llm/providers/${providerId}/sync-models`, selectedModels),
   disableModel: (providerId, modelId) => api.delete(`/llm/providers/${providerId}/models/${modelId}`),
 
   // Health and monitoring
@@ -352,7 +365,8 @@ export const chatAPI = {
   // Conversation management
   createConversation: (data) => api.post('/chat/conversations', data),
   createConversationWithModelConfig: (data) => api.post('/chat/conversations', data),
-  createConversationFromExperience: (runId, data = {}) => api.post(`/chat/conversations/from-experience/${runId}`, data),
+  createConversationFromExperience: (runId, data = {}) =>
+    api.post(`/chat/conversations/from-experience/${runId}`, data),
   listConversations: (params = {}) => api.get('/chat/conversations', { params }),
   getConversation: (id) => api.get(`/chat/conversations/${id}`),
   updateConversation: (id, data) => api.put(`/chat/conversations/${id}`, data),
@@ -363,10 +377,12 @@ export const chatAPI = {
   addMessage: (conversationId, data) => api.post(`/chat/conversations/${conversationId}/messages`, data),
 
   // Core chat functionality
-  sendMessage: (conversationId, data, config = {}) => api.post(`/chat/conversations/${conversationId}/send`, data, config),
+  sendMessage: (conversationId, data, config = {}) =>
+    api.post(`/chat/conversations/${conversationId}/send`, data, config),
   streamMessage: (conversationId, data, options = {}) =>
     sseStreamRequest(`${api.defaults.baseURL}/chat/conversations/${conversationId}/send`, data, options),
-  switchConversationModel: (conversationId, data) => api.post(`/chat/conversations/${conversationId}/switch-model`, data),
+  switchConversationModel: (conversationId, data) =>
+    api.post(`/chat/conversations/${conversationId}/switch-model`, data),
 
   // Attachments
   uploadAttachment: (conversationId, file) => {
@@ -376,9 +392,10 @@ export const chatAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  viewAttachment: (attachmentId) => api.get(`/chat/attachments/${attachmentId}/view`, {
-    responseType: 'blob',
-  }),
+  viewAttachment: (attachmentId) =>
+    api.get(`/chat/attachments/${attachmentId}/view`, {
+      responseType: 'blob',
+    }),
 };
 
 // Model Configuration API endpoints
@@ -386,12 +403,16 @@ export const modelConfigAPI = {
   // Model configuration management
   list: (params = {}) => api.get('/model-configurations', { params }),
   get: (id) => api.get(`/model-configurations/${id}`),
-  create: (data) => api.post('/model-configurations', data),
-  update: (id, data) => api.put(`/model-configurations/${id}`, data),
+  create: (data, options = {}) => api.post('/model-configurations', data, { signal: options.signal }),
+  update: (id, data, options = {}) => api.put(`/model-configurations/${id}`, data, { signal: options.signal }),
   delete: (id) => api.delete(`/model-configurations/${id}`),
 
   // Testing
   test: (id, data) => api.post(`/model-configurations/${id}/test`, data),
+  testWithFile: (id, formData) =>
+    api.post(`/model-configurations/${id}/test`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
 
   // KB Prompt Management
   getKBPrompts: (id) => api.get(`/model-configurations/${id}/kb-prompts`),
@@ -403,7 +424,7 @@ export const modelConfigAPI = {
 export const userPreferencesAPI = {
   getPreferences: () => api.get('/user/preferences'),
   updatePreferences: (data) => api.put('/user/preferences', data),
-  patchPreferences: (data) => api.patch('/user/preferences', data)
+  patchPreferences: (data) => api.patch('/user/preferences', data),
 };
 
 // Groups API endpoints
@@ -435,26 +456,44 @@ export const sideCallsAPI = {
   setConfig: (data) => api.post('/side-calls/config', data).then(extractDataFromResponse),
 };
 
-
-
-
 // Host Auth endpoints (generic)
 export const hostAuthAPI = {
-  status: (providersCsv) => api.get('/host/auth/status', { params: providersCsv ? { providers: providersCsv } : {} }),
-  authorize: (provider, scopesCsv) => api.get('/host/auth/authorize', { params: { provider, ...(scopesCsv ? { scopes: scopesCsv } : {}) } }),
+  status: (providersCsv) =>
+    api.get('/host/auth/status', {
+      params: providersCsv ? { providers: providersCsv } : {},
+    }),
+  authorize: (provider, scopesCsv) =>
+    api.get('/host/auth/authorize', {
+      params: { provider, ...(scopesCsv ? { scopes: scopesCsv } : {}) },
+    }),
   exchange: (payload) => api.post('/host/auth/exchange', payload),
   disconnect: (provider) => api.post('/host/auth/disconnect', { provider }),
-  delegationCheck: (provider, subject, scopes) => api.post('/host/auth/delegation-check', { provider, subject, scopes }),
+  delegationCheck: (provider, subject, scopes) =>
+    api.post('/host/auth/delegation-check', { provider, subject, scopes }),
   serviceAccountCheck: (provider, scopes) => api.post('/host/auth/service-account-check', { provider, scopes }),
   // TASK-163: Subscriptions CRUD and consent-scopes (server union)
   consentScopes: (provider) => api.get('/host/auth/consent-scopes', { params: { provider } }),
-  listSubscriptions: (provider, accountId) => api.get('/host/auth/subscriptions', { params: { provider, ...(accountId ? { account_id: accountId } : {}) } }),
-  subscribe: (provider, pluginName, accountId) => api.post('/host/auth/subscriptions', { provider, plugin_name: pluginName, ...(accountId ? { account_id: accountId } : {}) }),
-  unsubscribe: (provider, pluginName, accountId) => api.request({ method: 'DELETE', url: '/host/auth/subscriptions', data: { provider, plugin_name: pluginName, ...(accountId ? { account_id: accountId } : {}) } }),
+  listSubscriptions: (provider, accountId) =>
+    api.get('/host/auth/subscriptions', {
+      params: { provider, ...(accountId ? { account_id: accountId } : {}) },
+    }),
+  subscribe: (provider, pluginName, accountId) =>
+    api.post('/host/auth/subscriptions', {
+      provider,
+      plugin_name: pluginName,
+      ...(accountId ? { account_id: accountId } : {}),
+    }),
+  unsubscribe: (provider, pluginName, accountId) =>
+    api.request({
+      method: 'DELETE',
+      url: '/host/auth/subscriptions',
+      data: {
+        provider,
+        plugin_name: pluginName,
+        ...(accountId ? { account_id: accountId } : {}),
+      },
+    }),
 };
-
-
-
 
 // Utility functions
 export const formatError = (error) => {
@@ -463,17 +502,18 @@ export const formatError = (error) => {
     const errorObj = error.response.data.error;
     // Prefer provider_message from structured details when available
     const rawProviderMsg = errorObj?.details?.provider_message || errorObj?.details?.message;
-    const providerMsg = typeof rawProviderMsg === 'string' ? rawProviderMsg : (rawProviderMsg ? JSON.stringify(rawProviderMsg) : '');
+    const providerMsg =
+      typeof rawProviderMsg === 'string' ? rawProviderMsg : rawProviderMsg ? JSON.stringify(rawProviderMsg) : '';
 
     // message might be an object (e.g., { error: 'code', message: '...' })
     let baseMsg = '';
     const m = errorObj.message;
     if (typeof m === 'object' && m !== null) {
       const nestedCode = m.error || m.code || '';
-      const nestedMsg = typeof m.message === 'string' ? m.message : (m.message ? JSON.stringify(m.message) : '');
-      baseMsg = nestedCode ? `${nestedCode}${nestedMsg ? ': ' + nestedMsg : ''}` : (nestedMsg || JSON.stringify(m));
+      const nestedMsg = typeof m.message === 'string' ? m.message : m.message ? JSON.stringify(m.message) : '';
+      baseMsg = nestedCode ? `${nestedCode}${nestedMsg ? ': ' + nestedMsg : ''}` : nestedMsg || JSON.stringify(m);
     } else {
-      baseMsg = typeof m === 'string' ? m : (errorObj.code || 'Error');
+      baseMsg = typeof m === 'string' ? m : errorObj.code || 'Error';
     }
 
     const combined = providerMsg ? `${baseMsg ? baseMsg + ' — ' : ''}${providerMsg}` : baseMsg;
@@ -483,7 +523,7 @@ export const formatError = (error) => {
   // Handle Pydantic validation errors (422 status)
   if (error.response?.status === 422 && Array.isArray(error.response?.data?.detail)) {
     const validationErrors = error.response.data.detail;
-    const errorMessages = validationErrors.map(err => {
+    const errorMessages = validationErrors.map((err) => {
       const location = err.loc ? err.loc.join('.') : 'unknown';
       return `${location}: ${err.msg}`;
     });
@@ -562,7 +602,6 @@ export const extractPaginationFromResponse = (response) => {
   return null;
 };
 
-
 // Chat regenerate endpoints
 export const chatRegenerateAPI = {
   regenerate: (messageId, data = {}) => api.post(`/chat/messages/${messageId}/regenerate`, data),
@@ -572,7 +611,8 @@ export const chatRegenerateAPI = {
 
 // Agents endpoints (Morning Briefing)
 export const agentsAPI = {
-  runMorningBriefing: (params = {}, timeoutMs = 120000) => api.post('/agents/morning-briefing/run', params, { timeout: timeoutMs }),
+  runMorningBriefing: (params = {}, timeoutMs = 120000) =>
+    api.post('/agents/morning-briefing/run', params, { timeout: timeoutMs }),
 };
 
 // Experiences endpoints
@@ -600,4 +640,3 @@ export const setupAPI = {
 };
 
 export default api;
-

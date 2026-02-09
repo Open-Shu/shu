@@ -15,17 +15,13 @@ const UserLayoutContent = ({ children }) => {
       <TopBar
         appBarPosition="static"
         showAdminLink
-        hamburgerButton={isMobile ? (
-          <IconButton
-            color="inherit"
-            aria-label="open sidebar"
-            edge="start"
-            onClick={toggle}
-            sx={{ mr: 1 }}
-          >
-            <MenuIcon />
-          </IconButton>
-        ) : null}
+        hamburgerButton={
+          isMobile ? (
+            <IconButton color="inherit" aria-label="open sidebar" edge="start" onClick={toggle} sx={{ mr: 1 }}>
+              <MenuIcon />
+            </IconButton>
+          ) : null
+        }
       />
       <Box
         component="main"
@@ -34,7 +30,7 @@ const UserLayoutContent = ({ children }) => {
           bgcolor: 'background.default',
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden'
+          overflow: 'hidden',
         }}
       >
         {children}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from 'react-query';
 import {
   Dialog,
@@ -16,16 +16,18 @@ import {
   Paper,
   Typography,
   Box,
-  Tooltip,
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  FormControlLabel,
   Switch,
   Alert,
+  CircularProgress,
 } from '@mui/material';
-import { InfoOutlined, ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
-import NotImplemented from '../NotImplemented';
+import { ExpandMore as ExpandMoreIcon, PlayArrow as VerifyIcon } from '@mui/icons-material';
+import LLMTester from '../LLMTester';
+import HelpTooltip from '../HelpTooltip';
+import { modelConfigAPI, formatError, extractDataFromResponse } from '../../services/api';
+import log from '../../utils/log';
 
 const ModelConfigurationDialog = ({
   open,
@@ -46,22 +48,283 @@ const ModelConfigurationDialog = ({
   setAdvancedJson,
   advancedJsonError,
   setAdvancedJsonError,
-  onSubmit,
-  submitLabel,
   isSubmitting,
   submitError,
+  // New props for verification workflow
+  isEditMode = false,
+  existingConfigId = null,
+  // Original config data for rollback (passed from parent for edit mode)
+  originalConfigData = null,
 }) => {
   const queryClient = useQueryClient();
+
+  // Verification workflow state
+  const [showLLMTester, setShowLLMTester] = useState(false);
+  const [tempConfigId, setTempConfigId] = useState(null);
+  const [verifyError, setVerifyError] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [testSucceeded, setTestSucceeded] = useState(false);
+  // Track if config was saved during this session (for rollback logic)
+  const [configSavedDuringSession, setConfigSavedDuringSession] = useState(false);
+  // Confirmation dialog state
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // AbortController for canceling in-flight verification requests
+  const verifyAbortControllerRef = useRef(null);
+
+  // Reset state when dialog opens/closes
+  useEffect(() => {
+    if (open) {
+      setTempConfigId(null);
+      setVerifyError(null);
+      setShowLLMTester(false);
+      setTestSucceeded(false);
+      setConfigSavedDuringSession(false);
+      setShowCancelConfirm(false);
+      setIsVerifying(false);
+      verifyAbortControllerRef.current = null;
+    }
+  }, [open]);
+
+  /**
+   * Handle cancel button click - show confirmation if needed.
+   * Blocks closing if verification is in progress.
+   */
+  const handleCancelClick = () => {
+    // Block closing if verification is in progress
+    if (isVerifying) {
+      setVerifyError('Please wait for verification to complete, or it will be canceled.');
+      return;
+    }
+
+    // If test succeeded or no changes were saved, just close
+    if (testSucceeded || !configSavedDuringSession) {
+      onClose();
+      return;
+    }
+    // Show confirmation dialog
+    setShowCancelConfirm(true);
+  };
+
+  /**
+   * Handle confirmed cancel - perform rollback and close.
+   * Aborts any in-flight verification before proceeding.
+   */
+  const handleConfirmedCancel = async () => {
+    setShowCancelConfirm(false);
+
+    // Abort any in-flight verification request
+    if (isVerifying && verifyAbortControllerRef.current) {
+      verifyAbortControllerRef.current.abort();
+      verifyAbortControllerRef.current = null;
+      setIsVerifying(false);
+    }
+
+    await performRollbackAndClose();
+  };
+
+  /**
+   * Perform rollback and close dialog.
+   * - For new configs: delete the temp config if test didn't succeed
+   * - For edits: restore original config if test didn't succeed
+   *
+   * Guards against running while verification is in progress.
+   */
+  const performRollbackAndClose = async () => {
+    // Guard: Don't proceed if verification is still in progress
+    if (isVerifying) {
+      log.warn('Attempted to rollback while verification in progress - blocking');
+      return;
+    }
+
+    // If config was saved during this session but test didn't succeed, rollback
+    if (configSavedDuringSession && !testSucceeded) {
+      try {
+        if (isEditMode && existingConfigId && originalConfigData) {
+          // Restore original config for edits
+          await modelConfigAPI.update(existingConfigId, originalConfigData);
+        } else if (tempConfigId && !isEditMode) {
+          // Delete temp config for new configs
+          await modelConfigAPI.delete(tempConfigId);
+        }
+        // Invalidate queries to refresh the list
+        queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+      } catch (err) {
+        // Log error but don't block close - user can manually fix
+        log.error('Failed to rollback config:', err);
+      }
+    }
+
+    onClose();
+  };
+
+  /**
+   * Handle dialog close (backdrop click or escape key).
+   * Shows confirmation if needed. Blocks closing if verification is in progress.
+   */
+  const handleDialogClose = (_event, _reason) => {
+    // Block closing if verification is in progress
+    if (isVerifying) {
+      setVerifyError('Please wait for verification to complete before closing.');
+      return;
+    }
+
+    // If test succeeded or no changes were saved, just close
+    if (testSucceeded || !configSavedDuringSession) {
+      onClose();
+      return;
+    }
+    // Show confirmation dialog instead of closing directly
+    setShowCancelConfirm(true);
+  };
+
+  /**
+   * Handle verification workflow.
+   * Saves config with is_active=true, then opens LLM Tester.
+   * User must successfully test before the dialog can close.
+   * Uses AbortController to allow cancellation of in-flight requests.
+   */
+  const handleVerify = async () => {
+    // Create new AbortController for this verification request
+    const abortController = new AbortController();
+    verifyAbortControllerRef.current = abortController;
+
+    setIsVerifying(true);
+    setVerifyError(null);
+    setTestSucceeded(false);
+
+    try {
+      // Merge typed overrides with advanced JSON
+      let extra = {};
+      if (advancedJson && advancedJson.trim()) {
+        try {
+          extra = JSON.parse(advancedJson);
+        } catch (e) {
+          setVerifyError('Invalid JSON in advanced parameters');
+          setIsVerifying(false);
+          verifyAbortControllerRef.current = null;
+          return;
+        }
+      }
+      const merged = { ...extra, ...paramOverrides };
+      const pruned = Object.fromEntries(
+        Object.entries(merged).filter(
+          ([_, v]) =>
+            v !== undefined &&
+            v !== null &&
+            !(typeof v === 'string' && v.trim() === '') &&
+            !(typeof v === 'number' && Number.isNaN(v))
+        )
+      );
+
+      const payload = {
+        ...formData,
+        prompt_id: formData.prompt_id || null,
+        is_active: formData.is_active, // Respect user's toggle selection
+        ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
+      };
+
+      let savedConfig;
+      if (isEditMode && existingConfigId) {
+        // Update existing config
+        const response = await modelConfigAPI.update(existingConfigId, payload, { signal: abortController.signal });
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after update');
+          return;
+        }
+        savedConfig = extractDataFromResponse(response);
+        setTempConfigId(existingConfigId);
+      } else if (tempConfigId) {
+        // Update previously created temp config
+        const response = await modelConfigAPI.update(tempConfigId, payload, {
+          signal: abortController.signal,
+        });
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after update');
+          return;
+        }
+        savedConfig = extractDataFromResponse(response);
+      } else {
+        // Create new temp config
+        const response = await modelConfigAPI.create(payload, {
+          signal: abortController.signal,
+        });
+        // Check if aborted before processing response
+        if (abortController.signal.aborted) {
+          log.debug('Verification aborted after create');
+          return;
+        }
+        savedConfig = extractDataFromResponse(response);
+        setTempConfigId(savedConfig.id);
+      }
+
+      // Check if aborted before updating state
+      if (abortController.signal.aborted) {
+        log.debug('Verification aborted before state update');
+        return;
+      }
+
+      // Invalidate queries to refresh the list
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+
+      // Mark that config was saved during this session (for rollback logic)
+      setConfigSavedDuringSession(true);
+
+      // Open LLM Tester with the saved config
+      setShowLLMTester(true);
+    } catch (err) {
+      // Don't show error if request was aborted
+      if (abortController.signal.aborted) {
+        log.debug('Verification request was aborted');
+        return;
+      }
+      setVerifyError(formatError(err) || 'Failed to save configuration for verification');
+    } finally {
+      // Only clear state if not aborted (abort handler clears it)
+      if (!abortController.signal.aborted) {
+        setIsVerifying(false);
+        verifyAbortControllerRef.current = null;
+      }
+    }
+  };
+
+  /**
+   * Handle successful test from LLM Tester.
+   * Closes the dialog since config is already saved as active.
+   */
+  const handleTestSuccess = async () => {
+    setShowLLMTester(false);
+
+    // Invalidate queries to ensure UI is up to date
+    queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+
+    // Also invalidate side-call config if needed
+    if (formData.is_side_call_model) {
+      queryClient.invalidateQueries('side-call-config');
+    }
+
+    // Close the dialog - config is already saved as active
+    onClose();
+  };
+
+  // Check if form is valid for verification
+  const isFormValidForVerify = formData.name && formData.llm_provider_id && formData.model_name;
+
   const selectedKnowledgeBases = useMemo(() => {
-    if (!knowledgeBases || !Array.isArray(knowledgeBases) || !formData.knowledge_base_ids) return [];
+    if (!knowledgeBases || !Array.isArray(knowledgeBases) || !formData.knowledge_base_ids) {
+      return [];
+    }
     return knowledgeBases.filter((kb) => formData.knowledge_base_ids.includes(kb.id));
   }, [knowledgeBases, formData.knowledge_base_ids]);
 
   const parseTextFieldValue = (key, spec) => {
     const val = paramOverrides[key];
-    if (val === undefined || val === null) return "";
+    if (val === undefined || val === null) {
+      return '';
+    }
     // if user input is an object/array we stringify for display
-    if ((spec.type === "object" || spec.type === "array") && typeof val !== "string") {
+    if ((spec.type === 'object' || spec.type === 'array') && typeof val !== 'string') {
       try {
         return JSON.stringify(val);
       } catch {
@@ -70,11 +333,6 @@ const ModelConfigurationDialog = ({
     }
     // otherwise it’s already a string (user typed) or primitive
     return String(val);
-  };
-
-  // Invalidate side-call config query after successful save to refresh the chip
-  const handleSaveSuccess = () => {
-    queryClient.invalidateQueries('side-call-config');
   };
 
   // Keep typed parameters and Advanced JSON in sync
@@ -102,9 +360,10 @@ const ModelConfigurationDialog = ({
   );
 
   const providerCapabilities = useMemo(
-    () => (selectedProvider?.provider_capabilities && typeof selectedProvider.provider_capabilities === 'object'
-      ? selectedProvider.provider_capabilities
-      : {}),
+    () =>
+      selectedProvider?.provider_capabilities && typeof selectedProvider.provider_capabilities === 'object'
+        ? selectedProvider.provider_capabilities
+        : {},
     [selectedProvider]
   );
   const lastProviderIdRef = useRef(null);
@@ -124,7 +383,9 @@ const ModelConfigurationDialog = ({
   }, [providerCapabilities, formData.functionalities]);
 
   useEffect(() => {
-    if (!selectedProvider) return;
+    if (!selectedProvider) {
+      return;
+    }
     const providerId = selectedProvider.id;
     const providerChanged = providerId && providerId !== lastProviderIdRef.current;
     setFormData((prev) => {
@@ -139,16 +400,20 @@ const ModelConfigurationDialog = ({
         const funcKey = mapCapabilityKey(capKey);
         const existing = prevFuncs[funcKey];
         const defaultVal = !!capVal?.value;
-        nextFuncs[funcKey] = providerChanged ? defaultVal : (existing !== undefined ? existing : defaultVal);
+        nextFuncs[funcKey] = providerChanged ? defaultVal : existing !== undefined ? existing : defaultVal;
       });
-      if (deepEqual(prevFuncs, nextFuncs)) return prev;
+      if (deepEqual(prevFuncs, nextFuncs)) {
+        return prev;
+      }
       return { ...prev, functionalities: nextFuncs };
     });
     lastProviderIdRef.current = providerId || null;
   }, [selectedProvider, providerCapabilities, setFormData]);
 
   const matchOptionIndex = (arr, optVal) => {
-    if (!Array.isArray(arr)) return -1;
+    if (!Array.isArray(arr)) {
+      return -1;
+    }
     return arr.findIndex((v) => {
       if (v && optVal && typeof v === 'object' && typeof optVal === 'object' && v.type && optVal.type) {
         return v.type === optVal.type;
@@ -162,8 +427,11 @@ const ModelConfigurationDialog = ({
     const entries = Array.isArray(currentVal) ? currentVal : [];
     const addEntry = () => {
       let initial = {};
-      if (itemsSpec?.type === 'string') initial = '';
-      else if (itemsSpec?.type === 'number' || itemsSpec?.type === 'integer') initial = 0;
+      if (itemsSpec?.type === 'string') {
+        initial = '';
+      } else if (itemsSpec?.type === 'number' || itemsSpec?.type === 'integer') {
+        initial = 0;
+      }
       onChange([...(entries || []), initial]);
     };
     const updateEntry = (idx, val) => {
@@ -180,42 +448,61 @@ const ModelConfigurationDialog = ({
       <Box sx={{ pl: 1 }}>
         {entries.map((entry, idx) => (
           <Paper key={`${paramKey}-item-${idx}`} variant="outlined" sx={{ p: 1, mb: 1 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                mb: 1,
+              }}
+            >
               <Typography variant="body2">Entry {idx + 1}</Typography>
-              <Button size="small" onClick={() => removeEntry(idx)}>Remove</Button>
+              <Button size="small" onClick={() => removeEntry(idx)}>
+                Remove
+              </Button>
             </Box>
-            {itemsSpec && itemsSpec.properties
-              ? Object.entries(itemsSpec.properties).map(([propKey, propSpec]) =>
-                  renderSchemaField(
-                    propKey,
-                    propSpec,
-                    entry ? entry[propKey] : undefined,
-                    (val) => updateEntry(idx, setByPath(entry || {}, propKey, val))
-                  )
+            {itemsSpec && itemsSpec.properties ? (
+              Object.entries(itemsSpec.properties).map(([propKey, propSpec]) =>
+                renderSchemaField(propKey, propSpec, entry ? entry[propKey] : undefined, (val) =>
+                  updateEntry(idx, setByPath(entry || {}, propKey, val))
                 )
-              : (
-                <TextField
-                  fullWidth
-                  size="small"
-                  label={itemsSpec?.label || `${paramKey} item`}
-                  value={(() => {
-                    if (entry === undefined || entry === null) return '';
-                    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') return entry;
-                    try { return JSON.stringify(entry); } catch { return String(entry); }
-                  })()}
-                  onChange={(e) => {
-                    let val = e.target.value;
-                    if (itemsSpec?.type === 'object' || itemsSpec?.type === 'array') {
-                      try { val = JSON.parse(val); } catch { /* keep as raw */ }
-                    }
-                    updateEntry(idx, val);
-                  }}
-                />
               )
-            }
+            ) : (
+              <TextField
+                fullWidth
+                size="small"
+                label={itemsSpec?.label || `${paramKey} item`}
+                value={(() => {
+                  if (entry === undefined || entry === null) {
+                    return '';
+                  }
+                  if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+                    return entry;
+                  }
+                  try {
+                    return JSON.stringify(entry);
+                  } catch {
+                    return String(entry);
+                  }
+                })()}
+                onChange={(e) => {
+                  let val = e.target.value;
+                  if (itemsSpec?.type === 'object' || itemsSpec?.type === 'array') {
+                    try {
+                      val = JSON.parse(val);
+                    } catch {
+                      /* keep as raw */
+                    }
+                  }
+                  updateEntry(idx, val);
+                }}
+              />
+            )}
           </Paper>
         ))}
-        <Button size="small" onClick={addEntry}>Add {spec.label || itemsSpec?.label || 'entry'}</Button>
+        <Button size="small" onClick={addEntry}>
+          Add {spec.label || itemsSpec?.label || 'entry'}
+        </Button>
       </Box>
     );
   };
@@ -241,11 +528,17 @@ const ModelConfigurationDialog = ({
   };
 
   const optionLabelForValue = (options, value) => {
-    if (!Array.isArray(options)) return undefined;
+    if (!Array.isArray(options)) {
+      return undefined;
+    }
     const found = options.find((opt) => {
-      if (deepEqual(opt.value, value)) return true;
+      if (deepEqual(opt.value, value)) {
+        return true;
+      }
       if (opt.value && value && typeof opt.value === 'object' && typeof value === 'object') {
-        if (opt.value.type && value.type && opt.value.type === value.type) return true;
+        if (opt.value.type && value.type && opt.value.type === value.type) {
+          return true;
+        }
       }
       return false;
     });
@@ -253,28 +546,34 @@ const ModelConfigurationDialog = ({
   };
 
   const optionByValue = (options, value) => {
-    if (!Array.isArray(options)) return undefined;
+    if (!Array.isArray(options)) {
+      return undefined;
+    }
     return options.find((opt) => {
-      if (deepEqual(opt.value, value)) return true;
+      if (deepEqual(opt.value, value)) {
+        return true;
+      }
       if (opt.value && value && typeof opt.value === 'object' && typeof value === 'object') {
-        if (opt.value.type && value.type && opt.value.type === value.type) return true;
+        if (opt.value.type && value.type && opt.value.type === value.type) {
+          return true;
+        }
       }
       return false;
     });
   };
 
   const renderSchemaField = (fieldKey, fieldSpec, currentVal, onChange) => {
-    const commonProps = { fullWidth: true, size: 'small', label: fieldSpec.label || fieldKey };
+    const commonProps = {
+      fullWidth: true,
+      size: 'small',
+      label: fieldSpec.label || fieldKey,
+    };
     if (fieldSpec.type === 'enum' && Array.isArray(fieldSpec.options)) {
       return (
         <FormControl fullWidth size="small" sx={{ mb: 1 }} key={fieldKey}>
           <InputLabel>{fieldSpec.label || fieldKey}</InputLabel>
           <Select
-            value={
-              currentVal === undefined || currentVal === null
-                ? ''
-                : currentVal
-            }
+            value={currentVal === undefined || currentVal === null ? '' : currentVal}
             label={fieldSpec.label || fieldKey}
             renderValue={(selected) => optionLabelForValue(fieldSpec.options, selected) || selected}
             onChange={(e) => {
@@ -298,10 +597,7 @@ const ModelConfigurationDialog = ({
     if (fieldSpec.type === 'boolean') {
       return (
         <Box key={fieldKey} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Switch
-            checked={!!currentVal}
-            onChange={(e) => onChange(e.target.checked)}
-          />
+          <Switch checked={!!currentVal} onChange={(e) => onChange(e.target.checked)} />
           <Typography variant="body2">{fieldSpec.label || fieldKey}</Typography>
         </Box>
       );
@@ -311,7 +607,9 @@ const ModelConfigurationDialog = ({
         <Box key={fieldKey} sx={{ mb: 1 }}>
           <Typography variant="subtitle2">{fieldSpec.label || fieldKey}</Typography>
           {fieldSpec.description ? (
-            <Typography variant="body2" color="text.secondary">{fieldSpec.description}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              {fieldSpec.description}
+            </Typography>
           ) : null}
           {renderArrayWithItems(fieldKey, fieldSpec, currentVal, onChange)}
         </Box>
@@ -321,15 +619,10 @@ const ModelConfigurationDialog = ({
       return (
         <Box key={fieldKey} sx={{ pl: 1, mb: 1 }}>
           {Object.entries(fieldSpec.properties).map(([propKey, propSpec]) =>
-            renderSchemaField(
-              propKey,
-              propSpec,
-              (currentVal || {})[propKey],
-              (val) => {
-                const base = (currentVal && typeof currentVal === 'object') ? { ...currentVal } : {};
-                onChange(setByPath(base, propKey, val));
-              }
-            )
+            renderSchemaField(propKey, propSpec, (currentVal || {})[propKey], (val) => {
+              const base = currentVal && typeof currentVal === 'object' ? { ...currentVal } : {};
+              onChange(setByPath(base, propKey, val));
+            })
           )}
         </Box>
       );
@@ -390,7 +683,11 @@ const ModelConfigurationDialog = ({
     // Update typed overrides first
     setParamOverrides((prev) => {
       const next = { ...prev };
-      if (isDelete) delete next[key]; else next[key] = nextVal;
+      if (isDelete) {
+        delete next[key];
+      } else {
+        next[key] = nextVal;
+      }
       return next;
     });
 
@@ -398,7 +695,11 @@ const ModelConfigurationDialog = ({
     const parsed = safeParseJson(advancedJson);
     if (parsed.ok) {
       const obj = { ...parsed.obj };
-      if (isDelete) delete obj[key]; else obj[key] = nextVal;
+      if (isDelete) {
+        delete obj[key];
+      } else {
+        obj[key] = nextVal;
+      }
       setAdvancedJson(JSON.stringify(obj, null, 2));
       setAdvancedJsonError(null);
     }
@@ -424,7 +725,7 @@ const ModelConfigurationDialog = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={handleDialogClose} maxWidth="md" fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         {submitError && (
@@ -456,7 +757,13 @@ const ModelConfigurationDialog = ({
               <InputLabel>LLM Provider</InputLabel>
               <Select
                 value={formData.llm_provider_id}
-                onChange={(e) => setFormData({ ...formData, llm_provider_id: e.target.value, model_name: '' })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    llm_provider_id: e.target.value,
+                    model_name: '',
+                  })
+                }
                 label="LLM Provider"
               >
                 {providers.map((provider) => (
@@ -468,38 +775,68 @@ const ModelConfigurationDialog = ({
             </FormControl>
           </Grid>
           <Grid item xs={12} sm={6}>
-            <FormControl fullWidth disabled={!formData.llm_provider_id}>
-              <InputLabel>Model</InputLabel>
-              <Select
-                value={formData.model_name}
-                onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
-                label="Model"
-              >
-                {models.map((model) => (
-                  <MenuItem key={model.id} value={model.model_name}>
-                    {model.display_name || model.model_name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <FormControl fullWidth disabled={!formData.llm_provider_id}>
+                <InputLabel>Model</InputLabel>
+                <Select
+                  value={formData.model_name}
+                  onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
+                  label="Model"
+                >
+                  {models.map((model) => (
+                    <MenuItem key={model.id} value={model.model_name}>
+                      {model.display_name || model.model_name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <HelpTooltip
+                title={
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Select the specific model to use from your provider.
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                      Examples:
+                    </Typography>
+                    <Typography variant="body2" component="div">
+                      • OpenAI: gpt-4o, gpt-4o-mini, o1, o1-mini
+                      <br />
+                      • Anthropic: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
+                      <br />
+                      • Ollama: llama3.3, qwen2.5, deepseek-r1
+                      <br />• LM Studio: Any model loaded in LM Studio
+                    </Typography>
+                  </Box>
+                }
+                ariaLabel="Model selection help"
+              />
+            </Box>
           </Grid>
           <Grid item xs={12}>
             <FormControl fullWidth>
               <InputLabel>Prompt (Optional)</InputLabel>
               <Select
                 value={formData.prompt_id || ''}
-                onChange={(e) => setFormData({ ...formData, prompt_id: e.target.value || null })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    prompt_id: e.target.value || null,
+                  })
+                }
                 label="Prompt (Optional)"
                 disabled={promptsLoading}
               >
                 <MenuItem value="">
                   <em>{promptsLoading ? 'Loading prompts...' : 'No Prompt'}</em>
                 </MenuItem>
-                {prompts.filter((p) => p.entity_type === 'llm_model').map((prompt) => (
-                  <MenuItem key={prompt.id} value={prompt.id}>
-                    {prompt.name}
-                  </MenuItem>
-                ))}
+                {prompts
+                  .filter((p) => p.entity_type === 'llm_model')
+                  .map((prompt) => (
+                    <MenuItem key={prompt.id} value={prompt.id}>
+                      {prompt.name}
+                    </MenuItem>
+                  ))}
               </Select>
             </FormControl>
           </Grid>
@@ -511,7 +848,10 @@ const ModelConfigurationDialog = ({
               getOptionLabel={(option) => option.name}
               value={selectedKnowledgeBases}
               onChange={(_, newValue) => {
-                setFormData({ ...formData, knowledge_base_ids: newValue.map((kb) => kb.id) });
+                setFormData({
+                  ...formData,
+                  knowledge_base_ids: newValue.map((kb) => kb.id),
+                });
               }}
               disabled={knowledgeBasesLoading}
               renderInput={(params) => (
@@ -532,7 +872,8 @@ const ModelConfigurationDialog = ({
                   Knowledge Base Prompts (Optional)
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Assign specific KB context prompts to individual knowledge bases. If not specified, a default RAG prompt will be used.
+                  Assign specific KB context prompts to individual knowledge bases. If not specified, a default RAG
+                  prompt will be used.
                 </Typography>
 
                 {formData.knowledge_base_ids.map((kbId) => {
@@ -540,7 +881,16 @@ const ModelConfigurationDialog = ({
                   const currentAssignment = formData.kb_prompt_assignments.find((a) => a.knowledge_base_id === kbId);
 
                   return (
-                    <Box key={kbId} sx={{ mb: 2, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                    <Box
+                      key={kbId}
+                      sx={{
+                        mb: 2,
+                        p: 1,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                      }}
+                    >
                       <Typography variant="subtitle2" sx={{ mb: 1 }}>
                         {kb?.name || 'Unknown KB'}
                       </Typography>
@@ -549,14 +899,19 @@ const ModelConfigurationDialog = ({
                         <Select
                           value={currentAssignment?.prompt_id || ''}
                           onChange={(e) => {
-                            const newAssignments = formData.kb_prompt_assignments.filter((a) => a.knowledge_base_id !== kbId);
+                            const newAssignments = formData.kb_prompt_assignments.filter(
+                              (a) => a.knowledge_base_id !== kbId
+                            );
                             if (e.target.value) {
                               newAssignments.push({
                                 knowledge_base_id: kbId,
                                 prompt_id: e.target.value,
                               });
                             }
-                            setFormData({ ...formData, kb_prompt_assignments: newAssignments });
+                            setFormData({
+                              ...formData,
+                              kb_prompt_assignments: newAssignments,
+                            });
                           }}
                         >
                           {prompts
@@ -582,10 +937,9 @@ const ModelConfigurationDialog = ({
                 <Typography>Advanced options</Typography>
               </AccordionSummary>
               <AccordionDetails>
-
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  These fields change the way the model is called. Depending on provider and model, you may need to customize these fields.
-                  Incorrect values may cause errors or unexpected behavior.
+                  These fields change the way the model is called. Depending on provider and model, you may need to
+                  customize these fields. Incorrect values may cause errors or unexpected behavior.
                 </Typography>
 
                 <Box sx={{ mb: 2 }}>
@@ -595,7 +949,9 @@ const ModelConfigurationDialog = ({
                         <Box sx={{ mb: 1 }}>
                           <Typography variant="subtitle1">{spec.label || key}</Typography>
                           {spec.description ? (
-                            <Typography variant="body2" color="text.secondary">{spec.description}</Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {spec.description}
+                            </Typography>
                           ) : null}
                         </Box>
                         {spec.type === 'enum' ? (
@@ -604,15 +960,21 @@ const ModelConfigurationDialog = ({
                             <Select
                               value={
                                 paramOverrides[key] === undefined || paramOverrides[key] === null
-                                ? ''
-                                : paramOverrides[key]
+                                  ? ''
+                                  : paramOverrides[key]
                               }
                               label={spec.label || key}
                               renderValue={(selected) => {
                                 const label = optionLabelForValue(spec.options, selected);
-                                if (label) return label;
+                                if (label) {
+                                  return label;
+                                }
                                 if (selected && typeof selected === 'object') {
-                                  try { return JSON.stringify(selected); } catch { return '[object]'; }
+                                  try {
+                                    return JSON.stringify(selected);
+                                  } catch {
+                                    return '[object]';
+                                  }
                                 }
                                 return selected;
                               }}
@@ -634,13 +996,20 @@ const ModelConfigurationDialog = ({
                             </Select>
                             {(() => {
                               const chosen = optionByValue(spec.options, paramOverrides[key]);
-                              if (!chosen) return null;
-                              const baseVal = (paramOverrides[key] && typeof paramOverrides[key] === 'object')
-                                ? paramOverrides[key]
-                                : (typeof chosen.value === 'object' ? { ...chosen.value } : {});
+                              if (!chosen) {
+                                return null;
+                              }
+                              const baseVal =
+                                paramOverrides[key] && typeof paramOverrides[key] === 'object'
+                                  ? paramOverrides[key]
+                                  : typeof chosen.value === 'object'
+                                    ? { ...chosen.value }
+                                    : {};
                               const inputFields = chosen.input_fields || [];
                               const inputSchemaProps = (chosen.input_schema && chosen.input_schema.properties) || {};
-                              if (!inputFields.length && !Object.keys(inputSchemaProps).length) return null;
+                              if (!inputFields.length && !Object.keys(inputSchemaProps).length) {
+                                return null;
+                              }
                               return (
                                 <Box sx={{ pl: 1, pt: 1 }}>
                                   {inputFields.map((field) => (
@@ -650,43 +1019,54 @@ const ModelConfigurationDialog = ({
                                       label={field.label || field.path}
                                       fullWidth
                                       sx={{ mb: 1 }}
-                                      value={
-                                        (() => {
-                                          const parts = field.path.split('.');
-                                          let cur = baseVal;
-                                          for (const p of parts) {
-                                            if (cur == null) break;
-                                            cur = cur[p];
+                                      value={(() => {
+                                        const parts = field.path.split('.');
+                                        let cur = baseVal;
+                                        for (const p of parts) {
+                                          if (cur === null || cur === undefined) {
+                                            break;
                                           }
-                                          return cur ?? '';
-                                        })()
-                                      }
+                                          cur = cur[p];
+                                        }
+                                        return cur ?? '';
+                                      })()}
                                       onChange={(e) => {
                                         const nextVal = setByPath(baseVal, field.path, e.target.value);
-                                        handleParamChange(key, { ...(chosen.value || {}), ...nextVal });
+                                        handleParamChange(key, {
+                                          ...(chosen.value || {}),
+                                          ...nextVal,
+                                        });
                                       }}
                                     />
                                   ))}
                                   {Object.entries(inputSchemaProps).map(([propKey, propSpec]) =>
-                                    renderSchemaField(
-                                      propKey,
-                                      propSpec,
-                                      baseVal[propKey],
-                                      (val) => {
-                                        const nextVal = setByPath(baseVal, propKey, val);
-                                        handleParamChange(key, { ...(chosen.value || {}), ...nextVal });
-                                      }
-                                    )
+                                    renderSchemaField(propKey, propSpec, baseVal[propKey], (val) => {
+                                      const nextVal = setByPath(baseVal, propKey, val);
+                                      handleParamChange(key, {
+                                        ...(chosen.value || {}),
+                                        ...nextVal,
+                                      });
+                                    })
                                   )}
                                 </Box>
                               );
                             })()}
                           </FormControl>
-                          ) : spec.type === 'boolean' ? (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Switch
-                                checked={paramOverrides[key] === true || paramOverrides[key] === false ? !!paramOverrides[key] : false}
-                                onChange={(e) => {
+                        ) : spec.type === 'boolean' ? (
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1,
+                            }}
+                          >
+                            <Switch
+                              checked={
+                                paramOverrides[key] === true || paramOverrides[key] === false
+                                  ? !!paramOverrides[key]
+                                  : false
+                              }
+                              onChange={(e) => {
                                 const val = e.target.checked;
                                 handleParamChange(key, val);
                               }}
@@ -696,37 +1076,36 @@ const ModelConfigurationDialog = ({
                         ) : spec.type === 'array' && Array.isArray(spec.options) ? (
                           <Box sx={{ pl: 1 }}>
                             {(spec.options || []).map((opt, idx) => {
-                                const currentArr = Array.isArray(paramOverrides[key]) ? paramOverrides[key] : [];
-                                const existingIdx = matchOptionIndex(currentArr, opt.value);
-                                const checked = existingIdx >= 0;
-                                const handleToggle = (checkedVal) => {
-                                  let nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                  if (checkedVal) {
-                                    nextArr.push(deepClone(opt.value));
+                              const currentArr = Array.isArray(paramOverrides[key]) ? paramOverrides[key] : [];
+                              const existingIdx = matchOptionIndex(currentArr, opt.value);
+                              const checked = existingIdx >= 0;
+                              const handleToggle = (checkedVal) => {
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
+                                if (checkedVal) {
+                                  nextArr.push(deepClone(opt.value));
                                 } else if (existingIdx >= 0) {
                                   nextArr.splice(existingIdx, 1);
                                 }
                                 updateParamValue(key, nextArr);
                               };
-                                const handleInputFieldChange = (field, val) => {
-                                  if (existingIdx < 0) return;
-                                  const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                  nextArr[existingIdx] = setByPath(nextArr[existingIdx], field.path, val);
-                                  updateParamValue(key, nextArr);
-                                };
-                                const handleSchemaJsonChange = (val) => {
-                                  if (existingIdx < 0) return;
-                                  const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                  nextArr[existingIdx] = { ...nextArr[existingIdx], ...(val || {}) };
-                                  updateParamValue(key, nextArr);
-                                };
+                              const handleInputFieldChange = (field, val) => {
+                                if (existingIdx < 0) {
+                                  return;
+                                }
+                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
+                                nextArr[existingIdx] = setByPath(nextArr[existingIdx], field.path, val);
+                                updateParamValue(key, nextArr);
+                              };
                               return (
                                 <Paper key={`${key}-opt-${idx}`} variant="outlined" sx={{ p: 1, mb: 1 }}>
-                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Switch
-                                      checked={checked}
-                                      onChange={(e) => handleToggle(e.target.checked)}
-                                    />
+                                  <Box
+                                    sx={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 1,
+                                    }}
+                                  >
+                                    <Switch checked={checked} onChange={(e) => handleToggle(e.target.checked)} />
                                     <Typography variant="body2">{opt.label || String(opt.value)}</Typography>
                                   </Box>
                                   {checked && (opt.input_fields?.length || opt.input_schema) ? (
@@ -744,7 +1123,9 @@ const ModelConfigurationDialog = ({
                                                   const parts = field.path.split('.');
                                                   let cur = paramOverrides[key][existingIdx];
                                                   for (const p of parts) {
-                                                    if (cur == null) break;
+                                                    if (cur === null || cur === undefined) {
+                                                      break;
+                                                    }
                                                     cur = cur[p];
                                                   }
                                                   return cur ?? '';
@@ -755,19 +1136,32 @@ const ModelConfigurationDialog = ({
                                         />
                                       ))}
                                       {opt.input_schema ? (
-                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                          {Object.entries(opt.input_schema.properties || {}).map(([propKey, propSpec]) =>
-                                            renderSchemaField(
-                                              propKey,
-                                              propSpec,
-                                              existingIdx >= 0 ? paramOverrides[key][existingIdx]?.[propKey] : undefined,
-                                              (val) => {
-                                                if (existingIdx < 0) return;
-                                                const nextArr = Array.isArray(paramOverrides[key]) ? [...paramOverrides[key]] : [];
-                                                nextArr[existingIdx] = setByPath(nextArr[existingIdx], propKey, val);
-                                                updateParamValue(key, nextArr);
-                                              }
-                                            )
+                                        <Box
+                                          sx={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 1,
+                                          }}
+                                        >
+                                          {Object.entries(opt.input_schema.properties || {}).map(
+                                            ([propKey, propSpec]) =>
+                                              renderSchemaField(
+                                                propKey,
+                                                propSpec,
+                                                existingIdx >= 0
+                                                  ? paramOverrides[key][existingIdx]?.[propKey]
+                                                  : undefined,
+                                                (val) => {
+                                                  if (existingIdx < 0) {
+                                                    return;
+                                                  }
+                                                  const nextArr = Array.isArray(paramOverrides[key])
+                                                    ? [...paramOverrides[key]]
+                                                    : [];
+                                                  nextArr[existingIdx] = setByPath(nextArr[existingIdx], propKey, val);
+                                                  updateParamValue(key, nextArr);
+                                                }
+                                              )
                                           )}
                                         </Box>
                                       ) : null}
@@ -778,25 +1172,18 @@ const ModelConfigurationDialog = ({
                             })}
                           </Box>
                         ) : spec.type === 'array' && spec.items ? (
-                          renderArrayWithItems(
-                            key,
-                            spec,
-                            paramOverrides[key],
-                            (val) => handleParamChange(key, val)
-                          )
+                          renderArrayWithItems(key, spec, paramOverrides[key], (val) => handleParamChange(key, val))
                         ) : spec.type === 'object' && spec.properties ? (
                           <Box sx={{ pl: 1 }}>
                             {Object.entries(spec.properties || {}).map(([propKey, propSpec]) =>
-                              renderSchemaField(
-                                propKey,
-                                propSpec,
-                                (paramOverrides[key] || {})[propKey],
-                                (val) => {
-                                  const base = (paramOverrides[key] && typeof paramOverrides[key] === 'object') ? { ...paramOverrides[key] } : {};
-                                  const nextObj = setByPath(base, propKey, val);
-                                  updateParamValue(key, nextObj);
-                                }
-                              )
+                              renderSchemaField(propKey, propSpec, (paramOverrides[key] || {})[propKey], (val) => {
+                                const base =
+                                  paramOverrides[key] && typeof paramOverrides[key] === 'object'
+                                    ? { ...paramOverrides[key] }
+                                    : {};
+                                const nextObj = setByPath(base, propKey, val);
+                                updateParamValue(key, nextObj);
+                              })
                             )}
                           </Box>
                         ) : spec.options && spec.options.length ? (
@@ -811,9 +1198,15 @@ const ModelConfigurationDialog = ({
                               label={spec.label || key}
                               renderValue={(selected) => {
                                 const label = optionLabelForValue(spec.options, selected);
-                                if (label) return label;
+                                if (label) {
+                                  return label;
+                                }
                                 if (selected && typeof selected === 'object') {
-                                  try { return JSON.stringify(selected); } catch { return '[object]'; }
+                                  try {
+                                    return JSON.stringify(selected);
+                                  } catch {
+                                    return '[object]';
+                                  }
                                 }
                                 return selected;
                               }}
@@ -835,11 +1228,18 @@ const ModelConfigurationDialog = ({
                             </Select>
                             {(() => {
                               const chosen = optionByValue(spec.options, paramOverrides[key]);
-                              if (!chosen) return null;
-                              const baseVal = (paramOverrides[key] && typeof paramOverrides[key] === 'object') ? paramOverrides[key] : {};
+                              if (!chosen) {
+                                return null;
+                              }
+                              const baseVal =
+                                paramOverrides[key] && typeof paramOverrides[key] === 'object'
+                                  ? paramOverrides[key]
+                                  : {};
                               const inputFields = chosen.input_fields || [];
                               const inputSchemaProps = (chosen.input_schema && chosen.input_schema.properties) || {};
-                              if (!inputFields.length && !Object.keys(inputSchemaProps).length) return null;
+                              if (!inputFields.length && !Object.keys(inputSchemaProps).length) {
+                                return null;
+                              }
                               return (
                                 <Box sx={{ pl: 1, pt: 1 }}>
                                   {inputFields.map((field) => (
@@ -849,33 +1249,34 @@ const ModelConfigurationDialog = ({
                                       label={field.label || field.path}
                                       fullWidth
                                       sx={{ mb: 1 }}
-                                      value={
-                                        (() => {
-                                          const parts = field.path.split('.');
-                                          let cur = baseVal;
-                                          for (const p of parts) {
-                                            if (cur == null) break;
-                                            cur = cur[p];
+                                      value={(() => {
+                                        const parts = field.path.split('.');
+                                        let cur = baseVal;
+                                        for (const p of parts) {
+                                          if (cur === null || cur === undefined) {
+                                            break;
                                           }
-                                          return cur ?? '';
-                                        })()
-                                      }
+                                          cur = cur[p];
+                                        }
+                                        return cur ?? '';
+                                      })()}
                                       onChange={(e) => {
                                         const nextVal = setByPath(baseVal, field.path, e.target.value);
-                                        handleParamChange(key, { ...(chosen.value || {}), ...nextVal });
+                                        handleParamChange(key, {
+                                          ...(chosen.value || {}),
+                                          ...nextVal,
+                                        });
                                       }}
                                     />
                                   ))}
                                   {Object.entries(inputSchemaProps).map(([propKey, propSpec]) =>
-                                    renderSchemaField(
-                                      propKey,
-                                      propSpec,
-                                      baseVal[propKey],
-                                      (val) => {
-                                        const nextVal = setByPath(baseVal, propKey, val);
-                                        handleParamChange(key, { ...(chosen.value || {}), ...nextVal });
-                                      }
-                                    )
+                                    renderSchemaField(propKey, propSpec, baseVal[propKey], (val) => {
+                                      const nextVal = setByPath(baseVal, propKey, val);
+                                      handleParamChange(key, {
+                                        ...(chosen.value || {}),
+                                        ...nextVal,
+                                      });
+                                    })
                                   )}
                                 </Box>
                               );
@@ -890,18 +1291,18 @@ const ModelConfigurationDialog = ({
                             value={parseTextFieldValue(key, spec)}
                             onChange={(e) => {
                               const raw = e.target.value;
-                              if (raw === "") {
+                              if (raw === '') {
                                 handleParamChange(key, undefined, true);
                                 return;
                               }
                               let nextVal = raw;
-                              if (spec.type === "number") {
+                              if (spec.type === 'number') {
                                 const n = parseFloat(raw);
                                 nextVal = Number.isNaN(n) ? raw : n;
-                              } else if (spec.type === "integer") {
+                              } else if (spec.type === 'integer') {
                                 const n = parseInt(raw, 10);
                                 nextVal = Number.isNaN(n) ? raw : n;
-                              } else if (spec.type === "object" || spec.type === "array") {
+                              } else if (spec.type === 'object' || spec.type === 'array') {
                                 try {
                                   nextVal = JSON.parse(raw);
                                 } catch {
@@ -918,12 +1319,13 @@ const ModelConfigurationDialog = ({
                 </Box>
 
                 <Box>
-                  <Typography variant="subtitle2">
-                    Advanced JSON &nbsp;
-                    <Tooltip title="JSON overrides beyond mapped parameters. This form accepts any valid JSON and will apply parameters dynamically during requests.">
-                      <InfoOutlined fontSize="small" color="action" />
-                    </Tooltip>
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="subtitle2">Advanced JSON</Typography>
+                    <HelpTooltip
+                      title="JSON overrides beyond mapped parameters. This form accepts any valid JSON and will apply parameters dynamically during requests."
+                      ariaLabel="Advanced JSON help"
+                    />
+                  </Box>
                   <TextField
                     fullWidth
                     multiline
@@ -946,55 +1348,159 @@ const ModelConfigurationDialog = ({
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
               />
               <Typography variant="body2">Active</Typography>
+              <HelpTooltip
+                title="When active, this configuration will be available for use in conversations and experiences. Inactive configurations are hidden from selection."
+                ariaLabel="Active status help"
+              />
             </Box>
-            {capabilityToggles.map(({ funcKey, value, label }) => (
-              <Box key={funcKey} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Switch
-                  checked={!!value}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    functionalities: {
-                      ...(formData.functionalities || {}),
-                      [funcKey]: e.target.checked,
-                    },
-                  })}
-                />
-                <Typography variant="body2">{label}</Typography>
-              </Box>
-            ))}
+            {capabilityToggles.map(({ funcKey, value, label }) => {
+              // Determine if this is a tools or vision capability
+              const isToolsCapability = funcKey === 'supports_tools' || funcKey === 'supports_tool_calling';
+              const isVisionCapability = funcKey === 'supports_vision';
+              const showWarning = value && (isToolsCapability || isVisionCapability);
+
+              // Tooltip text for each capability
+              const getTooltipText = () => {
+                if (isToolsCapability) {
+                  return 'Enables the model to call functions/tools during generation. Required for plugin execution and structured outputs. Not all models support this feature.';
+                }
+                if (isVisionCapability) {
+                  return 'Enables the model to process and understand images in conversations. Required for image analysis. Not all models support this feature.';
+                }
+                return 'Toggle this capability for the model configuration.';
+              };
+
+              return (
+                <Box key={funcKey}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Switch
+                      checked={!!value}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          functionalities: {
+                            ...(formData.functionalities || {}),
+                            [funcKey]: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    <Typography variant="body2">{label}</Typography>
+                    <HelpTooltip title={getTooltipText()} ariaLabel={`${label} help`} />
+                  </Box>
+                  {showWarning && (
+                    <Alert severity="warning" sx={{ mt: 0.5, mb: 1, py: 0.5 }}>
+                      {isToolsCapability && (
+                        <>
+                          <strong>Tool calling support varies by model.</strong> Not all models support function/tool
+                          calling. If your model doesn't support this feature, you may encounter errors or unexpected
+                          behavior. Use the "Verify & Save" button to test your configuration.
+                        </>
+                      )}
+                      {isVisionCapability && (
+                        <>
+                          <strong>Vision support varies by model.</strong> Not all models can process images. If your
+                          model doesn't support vision, image attachments will be filtered out or may cause errors. Use
+                          the "Verify & Save" button to test your configuration.
+                        </>
+                      )}
+                    </Alert>
+                  )}
+                </Box>
+              );
+            })}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Switch
                 checked={formData.is_side_call_model || false}
-                onChange={(e) => setFormData({ ...formData, is_side_call_model: e.target.checked })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    is_side_call_model: e.target.checked,
+                  })
+                }
               />
               <Typography variant="body2">Use model for side calls</Typography>
+              <HelpTooltip
+                title="Side calls are optimized LLM requests for UI features like prompt assistance, title generation, and summaries. Only one model should have this enabled at a time."
+                ariaLabel="Side calls help"
+              />
             </Box>
           </Grid>
           <Grid item xs={12}>
             <Box sx={{ mt: 0.5 }}>
-              <NotImplemented label="Model vision toggle is informational; runtime enforcement not implemented" />
-            </Box>
-            <Box sx={{ mt: 0.5 }}>
               <Typography variant="body2" color="text.secondary">
-                <strong>Side Calls:</strong> When enabled, this model will be used for optimized LLM side-calls like prompt assistance, title generation, and UI summaries. Only one model should have this enabled at a time.
+                <strong>Side Calls:</strong> When enabled, this model will be used for optimized LLM side-calls like
+                prompt assistance, title generation, and UI summaries. Only one model should have this enabled at a
+                time.
               </Typography>
             </Box>
           </Grid>
-
         </Grid>
+
+        {/* Error Alert */}
+        {verifyError && (
+          <Alert severity="error" sx={{ mt: 2, '& .MuiAlert-message': { whiteSpace: 'pre-wrap' } }}>
+            {verifyError}
+          </Alert>
+        )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button onClick={() => {
-          onSubmit();
-          // Invalidate side-call config query if this model is marked for side calls
-          if (formData.is_side_call_model) {
-            handleSaveSuccess();
-          }
-        }} variant="contained" disabled={isSubmitting || !formData.name || !formData.llm_provider_id || !formData.model_name}>
-          {submitLabel}
+        <Button onClick={handleCancelClick}>Cancel</Button>
+        <Button
+          variant="contained"
+          startIcon={isVerifying ? <CircularProgress size={16} /> : <VerifyIcon />}
+          onClick={handleVerify}
+          disabled={!isFormValidForVerify || isVerifying || isSubmitting}
+        >
+          {isVerifying ? 'Verifying...' : 'Verify & Save'}
         </Button>
       </DialogActions>
+
+      {/* Cancel Confirmation Dialog */}
+      <Dialog open={showCancelConfirm} onClose={() => setShowCancelConfirm(false)} maxWidth="sm">
+        <DialogTitle>Discard Changes?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {isEditMode
+              ? 'Your configuration changes have not been verified. Cancelling will restore the configuration to its last working state.'
+              : 'Your new configuration has not been verified. Cancelling will discard it entirely.'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            To keep your changes, go back and complete a successful test, then click "Save Configuration".
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCancelConfirm(false)}>Go Back</Button>
+          <Button onClick={handleConfirmedCancel} color="error" variant="contained">
+            {isEditMode ? 'Restore Original' : 'Discard'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* LLM Tester Modal for Verification */}
+      <Dialog open={showLLMTester} onClose={() => setShowLLMTester(false)} maxWidth="xl" fullWidth>
+        <DialogTitle>Verify Configuration</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Test your configuration to verify it works correctly. After a successful test, click "Save Configuration" to
+            complete.
+          </Typography>
+          <LLMTester
+            prePopulatedConfigId={tempConfigId || existingConfigId}
+            onTestSuccess={handleTestSuccess}
+            onTestStatusChange={setTestSucceeded}
+            onClose={() => setShowLLMTester(false)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowLLMTester(false)}>{testSucceeded ? 'Close' : 'Back to Edit'}</Button>
+          {testSucceeded && (
+            <Button variant="contained" color="success" onClick={handleTestSuccess}>
+              Save Configuration
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 };

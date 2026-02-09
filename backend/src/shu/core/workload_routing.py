@@ -1,5 +1,4 @@
-"""
-Workload Type Routing for Queue Backend.
+"""Workload Type Routing for Queue Backend.
 
 This module provides workload-based routing for the queue system, enabling
 jobs to be enqueued by logical workload type rather than hardcoded queue names.
@@ -8,16 +7,16 @@ This abstraction enables independent scaling of different workload types.
 Example usage:
     from shu.core.workload_routing import WorkloadType, enqueue_job
     from shu.core.queue_backend import get_queue_backend
-    
+
     backend = await get_queue_backend()
-    
+
     # Enqueue a profiling job
     job = await enqueue_job(
         backend,
         WorkloadType.PROFILING,
         payload={"document_id": "doc123", "action": "profile"}
     )
-    
+
     # Enqueue an ingestion job
     job = await enqueue_job(
         backend,
@@ -27,7 +26,7 @@ Example usage:
 """
 
 from enum import Enum
-from typing import Any, Dict
+from typing import Any
 
 from .queue_backend import Job, QueueBackend
 
@@ -43,6 +42,14 @@ class WorkloadType(Enum):
         INGESTION: Document ingestion and indexing operations.
             Examples: Fetching documents from Google Drive, parsing PDFs,
             extracting text, creating embeddings, storing in vector DB.
+
+        INGESTION_OCR: OCR/text extraction stage of document pipeline.
+            Examples: Running OCR on PDFs, extracting text from images,
+            parsing document formats. First stage of async ingestion.
+
+        INGESTION_EMBED: Embedding stage of document pipeline.
+            Examples: Chunking extracted text, generating embeddings,
+            storing vectors. Second stage of async ingestion.
 
         LLM_WORKFLOW: LLM-based workflows and chat operations.
             Examples: Chat message processing, workflow execution,
@@ -66,9 +73,12 @@ class WorkloadType(Enum):
         # worker-llm:
         #   command: python -m shu.worker --workload-types=LLM_WORKFLOW,PROFILING
         #   replicas: 2
+
     """
 
     INGESTION = "ingestion"
+    INGESTION_OCR = "ingestion_ocr"
+    INGESTION_EMBED = "ingestion_embed"
     LLM_WORKFLOW = "llm_workflow"
     MAINTENANCE = "maintenance"
     PROFILING = "profiling"
@@ -85,6 +95,7 @@ class WorkloadType(Enum):
         Example:
             queue_name = WorkloadType.INGESTION.queue_name
             # Returns: "shu:ingestion"
+
         """
         return f"shu:{self.value}"
 
@@ -92,34 +103,34 @@ class WorkloadType(Enum):
 async def enqueue_job(
     backend: QueueBackend,
     workload_type: WorkloadType,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     **job_kwargs: Any,
 ) -> Job:
     """Enqueue a job for the specified workload type.
-    
+
     This is the preferred way to enqueue jobs in business logic. Instead
     of hardcoding queue names, use WorkloadType to route jobs to the
     appropriate queue.
-    
+
     Args:
         backend: The queue backend to use (typically from dependency injection).
         workload_type: The type of workload (e.g., WorkloadType.INGESTION).
         payload: Job payload data as a JSON-serializable dictionary.
         **job_kwargs: Additional Job constructor arguments (e.g., max_attempts,
             visibility_timeout). These are passed directly to the Job constructor.
-    
+
     Returns:
         The enqueued Job instance with generated ID and timestamps.
-    
+
     Raises:
         QueueConnectionError: If the backend is unreachable.
         QueueOperationError: If the job cannot be serialized or enqueued.
-    
+
     Example:
         from fastapi import Depends
         from shu.core.queue_backend import get_queue_backend_dependency, QueueBackend
         from shu.core.workload_routing import WorkloadType, enqueue_job
-        
+
         async def trigger_profiling(
             document_id: str,
             queue: QueueBackend = Depends(get_queue_backend_dependency)
@@ -135,6 +146,7 @@ async def enqueue_job(
                 visibility_timeout=600  # 10 minutes
             )
             return {"job_id": job.id}
+
     """
     job = Job(queue_name=workload_type.queue_name, payload=payload, **job_kwargs)
     await backend.enqueue(job)

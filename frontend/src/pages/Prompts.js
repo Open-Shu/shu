@@ -1,16 +1,13 @@
 /**
  * Prompts Management Page
- * 
+ *
  * Standalone page for managing prompts across all entity types.
  * This is the central hub for creating, editing, and organizing prompts
  * for knowledge bases, LLM models, agents, workflows, and plugins.
  */
 
 import React from 'react';
-import {
-  Container,
-  Paper
-} from '@mui/material';
+import { Container, Paper } from '@mui/material';
 import TextSnippetIcon from '@mui/icons-material/TextSnippet';
 import PromptManager from '../components/PromptManager';
 import PageHelpHeader from '../components/PageHelpHeader';
@@ -31,11 +28,7 @@ function Prompts() {
       />
 
       <Paper sx={{ p: 0, overflow: 'hidden' }}>
-        <PromptManager
-          title="All Prompts"
-          showEntityFilter={true}
-          open={true}
-        />
+        <PromptManager title="All Prompts" showEntityFilter={true} open={true} />
       </Paper>
     </Container>
   );

@@ -51,17 +51,17 @@ function checkDSTTransition(date, timezone) {
   try {
     // Get the timezone offset for the date
     const offset = formatInTimeZone(date, timezone, 'xxx');
-    
+
     // Check one hour before and after
     const hourBefore = new Date(date.getTime() - 60 * 60 * 1000);
     const hourAfter = new Date(date.getTime() + 60 * 60 * 1000);
-    
+
     const offsetBefore = formatInTimeZone(hourBefore, timezone, 'xxx');
     const offsetAfter = formatInTimeZone(hourAfter, timezone, 'xxx');
-    
+
     // If offsets differ, we're near a DST transition
     const isDSTTransition = offsetBefore !== offset || offsetAfter !== offset;
-    
+
     return {
       isDSTTransition,
       offset,
@@ -109,12 +109,12 @@ export function getNextExecutions(cron, timezone, count = 5) {
     // Get the next N execution times
     // Request extra executions to account for potential DST skips
     const requestCount = count + 2;
-    
+
     for (let i = 0; i < requestCount && executions.length < count; i++) {
       try {
         const next = interval.next();
         const nextDate = next.toDate();
-        
+
         // Always include the execution, even during DST transitions
         // The cron-parser library handles DST transitions correctly
         executions.push(nextDate);
@@ -156,17 +156,17 @@ export function formatExecution(date, timezone) {
     // Check for DST transition
     const dstCheck = checkDSTTransition(date, timezone);
     let dstNote = '';
-    
+
     if (dstCheck.isDSTTransition) {
       // Determine if this is spring forward or fall back
       const offsetBefore = dstCheck.offsetBefore || '';
       const offsetAfter = dstCheck.offsetAfter || '';
-      
+
       if (offsetBefore && offsetAfter && offsetBefore !== offsetAfter) {
         // Parse offset strings to compare (e.g., "-05:00" vs "-04:00")
         const beforeHours = parseInt(offsetBefore.split(':')[0], 10);
         const afterHours = parseInt(offsetAfter.split(':')[0], 10);
-        
+
         if (afterHours > beforeHours) {
           dstNote = ' (near DST spring forward)';
         } else if (afterHours < beforeHours) {
@@ -200,7 +200,7 @@ export function getSchedulePreview(cron, timezone, count = 5) {
   try {
     const description = describe(cron, timezone);
     const executions = getNextExecutions(cron, timezone, count);
-    const formattedExecutions = executions.map(date => formatExecution(date, timezone));
+    const formattedExecutions = executions.map((date) => formatExecution(date, timezone));
 
     return {
       description,

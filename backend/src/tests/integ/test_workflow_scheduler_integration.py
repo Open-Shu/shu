@@ -5,8 +5,8 @@ Covers:
 - Execution persistence on direct /plugins/{name}/execute
 - Interval schedule creation, enqueue of due schedules, and running pending executions
 """
+
 import logging
-from typing import Any, Dict
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
@@ -87,7 +87,11 @@ async def test_schedule_enqueue_and_run(client, db, auth_headers):
     resp = await client.get("/api/v1/plugins/admin/executions", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     rows = resp.json()["data"]
-    match = [r for r in rows if r["plugin_name"] == "test_schema" and r.get("result", {}).get("data", {}).get("echo") == "world"]
+    match = [
+        r
+        for r in rows
+        if r["plugin_name"] == "test_schema" and r.get("result", {}).get("data", {}).get("echo") == "world"
+    ]
     assert len(match) >= 1
     assert match[-1]["status"] in ("completed",)
 
@@ -110,4 +114,3 @@ class PluginsWorkflowSchedulerTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(PluginsWorkflowSchedulerTestSuite, globals())
-

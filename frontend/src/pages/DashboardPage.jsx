@@ -8,25 +8,25 @@ import ExperienceDashboard from '../components/ExperienceDashboard';
  * Accessible via /dashboard route.
  */
 const DashboardPage = () => {
-    const navigate = useNavigate();
+  const navigate = useNavigate();
 
-    const handleCreateConversation = () => {
-        navigate('/chat');
-    };
+  const handleCreateConversation = () => {
+    navigate('/chat');
+  };
 
-    const handleExperienceClick = (experienceId) => {
-        navigate(`/dashboard/experience/${experienceId}`);
-    };
+  const handleExperienceClick = (experienceId) => {
+    navigate(`/dashboard/experience/${experienceId}`);
+  };
 
-    return (
-        <Box sx={{ height: '100%', overflow: 'auto' }}>
-            <ExperienceDashboard
-                onCreateConversation={handleCreateConversation}
-                createConversationDisabled={false}
-                onExperienceClick={handleExperienceClick}
-            />
-        </Box>
-    );
+  return (
+    <Box sx={{ height: '100%', overflow: 'auto' }}>
+      <ExperienceDashboard
+        onCreateConversation={handleCreateConversation}
+        createConversationDisabled={false}
+        onExperienceClick={handleExperienceClick}
+      />
+    </Box>
+  );
 };
 
 export default DashboardPage;

@@ -7,10 +7,12 @@ Separates plugin state (cursors, secrets, storage) from agent memory and
 supports both per-user and system-wide entries via the ``scope`` column.
 """
 
-from sqlalchemy import Column, String, JSON, UniqueConstraint, ForeignKey, Index
+from sqlalchemy import JSON, Column, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .base import BaseModel
+
+
 class PluginStorage(BaseModel):
     """Key/value storage scoped to (scope, user_id, plugin_name, namespace, key).
 
@@ -44,20 +46,28 @@ class PluginStorage(BaseModel):
 
     __table_args__ = (
         UniqueConstraint(
-            "scope", "user_id", "plugin_name", "namespace", "key",
+            "scope",
+            "user_id",
+            "plugin_name",
+            "namespace",
+            "key",
             name="uq_plugin_storage_scope_key",
         ),
         Index(
             "ix_plugin_storage_lookup",
-            "scope", "user_id", "plugin_name", "namespace", "key",
+            "scope",
+            "user_id",
+            "plugin_name",
+            "namespace",
+            "key",
         ),
     )
 
     user = relationship("User", backref="plugin_storage_entries")
 
     def __repr__(self) -> str:
+        """Represent as string."""
         return (
             f"<PluginStorage(scope={self.scope}, user_id={self.user_id}, "
             f"plugin={self.plugin_name}, ns={self.namespace}, key={self.key})>"
         )
-

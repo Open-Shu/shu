@@ -1,32 +1,33 @@
+"""Plugin executor: coordinates rate limiting, schema validation (if provided), and plugin execution.
+
+Provider HTTP errors (HttpRequestFailed) are mapped to structured PluginResult.err() responses
+using the exception's semantic error_category (e.g., 'auth_error', 'rate_limited', 'gone',
+'not_found', 'server_error') rather than a generic code. This allows callers to handle
+specific error conditions appropriately.
 """
-Plugin executor: coordinates rate limiting, schema validation (if provided), and plugin execution.
-"""
+
 from __future__ import annotations
-import json
-import logging
-from typing import Any, Dict, Optional, List
-import sys
+
 import importlib
+import logging
+import sys
+from datetime import UTC, datetime
 from importlib.abc import MetaPathFinder
-from datetime import datetime, timezone
+from typing import Any, ClassVar, Self
 
-
-from .host.host_builder import make_host
-from .host.exceptions import HttpRequestFailed
-
-from pydantic import BaseModel, ValidationError
 from fastapi import HTTPException
+
+from .host.exceptions import HttpRequestFailed
+from .host.host_builder import make_host
 
 # Optional JSON Schema validation support
 try:
     import jsonschema  # type: ignore
-except Exception:  # noqa: BLE001
+except Exception:
     jsonschema = None  # type: ignore
-from ..core.cache_backend import get_cache_backend, CacheBackend
-
-
+from ..core.cache_backend import CacheBackend, get_cache_backend
 from ..core.config import get_settings_instance  # type: ignore
-from .base import ExecuteContext, PluginResult, Plugin
+from .base import ExecuteContext, Plugin, PluginResult
 
 logger = logging.getLogger(__name__)
 
@@ -34,84 +35,83 @@ logger = logging.getLogger(__name__)
 # Trusted module prefixes that are allowed to import shu.* even during plugin execution.
 # These are host capabilities and core services that plugins call through the host API.
 _TRUSTED_MODULE_PREFIXES = (
-    "shu.plugins.host.",      # Host capabilities (kb, http, auth, etc.)
-    "shu.services.",          # Core services called by host capabilities
-    "shu.core.",              # Core infrastructure (database, config, logging)
-    "shu.processors.",        # Text extraction, etc.
-    "shu.knowledge.",         # Knowledge base utilities
-    "shu.models.",            # SQLAlchemy models
+    "shu.plugins.host.",  # Host capabilities (kb, http, auth, etc.)
+    "shu.services.",  # Core services called by host capabilities
+    "shu.core.",  # Core infrastructure (database, config, logging)
+    "shu.processors.",  # Text extraction, etc.
+    "shu.knowledge.",  # Knowledge base utilities
+    "shu.models.",  # SQLAlchemy models
 )
+
+
+def _is_called_from_trusted_code(frame_offset: int = 2) -> bool:
+    """Check if the import is being called from trusted host code.
+
+    Walks the call stack to find the module that initiated the import.
+    If any frame in the stack is from a trusted module prefix, allow the import.
+
+    Args:
+        frame_offset: Number of frames to skip from the current frame.
+            Default is 2 (skip this function and the immediate caller).
+
+    Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
+    Short-circuits as soon as a trusted frame is found.
+
+    """
+    try:
+        frame = sys._getframe(frame_offset)
+    except ValueError:
+        return False
+
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        # Quick check: only inspect frames from shu modules
+        if "/shu/" in filename:
+            for prefix in _TRUSTED_MODULE_PREFIXES:
+                # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
+                path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
+                if path_fragment in filename:
+                    return True
+                # Also check for exact module file matches
+                path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
+                if filename.endswith(path_fragment_exact + ".py"):
+                    return True
+        frame = frame.f_back
+    return False
 
 
 class _DenyImportsFinder(MetaPathFinder):
     """Import finder that blocks certain imports during plugin execution.
-    
+
     This finder is installed into sys.meta_path during plugin execution to prevent
     plugins from importing:
     - Direct HTTP clients (requests, httpx, urllib3) - must use host.http
     - Internal shu.* modules - must use host capabilities
-    
+
     However, trusted host code (host capabilities, services, etc.) IS allowed to
     import shu.* modules. This is determined by inspecting the call stack.
     """
-    # Deny direct HTTP clients from plugins at runtime.
-    deny_always = {"requests", "httpx", "urllib3", "urllib.request"}
-    # Deny shu.* imports only from untrusted (plugin) code
-    deny_from_plugins = {"shu"}
 
-    def _is_called_from_trusted_code(self) -> bool:
-        """Check if the import is being called from trusted host code.
-        
-        Walks the call stack to find the module that initiated the import.
-        If any frame in the stack is from a trusted module prefix, allow the import.
-        
-        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-        Short-circuits as soon as a trusted frame is found.
-        """
-        import sys
-        # Walk frames directly - more efficient than traceback.extract_stack()
-        # which creates FrameSummary objects for every frame
-        try:
-            frame = sys._getframe(2)  # Skip this method and find_spec/caller
-        except ValueError:
-            return False
-        
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            # Quick check: only inspect frames from shu modules
-            if "/shu/" in filename:
-                for prefix in _TRUSTED_MODULE_PREFIXES:
-                    # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
-                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                    if path_fragment in filename:
-                        return True
-                    # Also check for exact module file matches
-                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                    if filename.endswith(path_fragment_exact + ".py"):
-                        return True
-            frame = frame.f_back
-        return False
+    # Deny direct HTTP clients from plugins at runtime.
+    deny_always: ClassVar[set[str]] = {"requests", "httpx", "urllib3", "urllib.request"}
+    # Deny shu.* imports only from untrusted (plugin) code
+    deny_from_plugins: ClassVar[set[str]] = {"shu"}
 
     def find_spec(self, fullname, path, target=None):  # type: ignore[override]
         # Block exact and submodule imports under denylisted packages
         name = str(fullname)
-        
+
         # Always block HTTP clients - no exceptions
         for p in self.deny_always:
             if name == p or name.startswith(p + "."):
-                raise ImportError(
-                    f"Import of '{fullname}' is denied by host policy. Use host.http instead."
-                )
-        
+                raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
+
         # Block shu.* imports only from plugin code, not from trusted host code
         for p in self.deny_from_plugins:
-            if name == p or name.startswith(p + "."):
-                if not self._is_called_from_trusted_code():
-                    raise ImportError(
-                        f"Import of '{fullname}' is denied by host policy. Use host.http instead."
-                    )
-        
-        return None
+            # frame_offset=2: Frame 0 is _is_called_from_trusted_code, Frame 1 is find_spec,
+            # Frame 2 is the actual caller where we start walking the stack
+            if (name == p or name.startswith(p + ".")) and not _is_called_from_trusted_code(frame_offset=2):
+                raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
 
 
 class _DenyHttpImportsCtx:
@@ -122,60 +122,36 @@ class _DenyHttpImportsCtx:
     shu.* modules while blocking plugin code from doing so. HTTP client imports are always
     blocked regardless of caller.
     """
-    def __init__(self):
-        self._finder: Optional[_DenyImportsFinder] = None
-        self._orig_import_module = None
 
-    @staticmethod
-    def _is_called_from_trusted_code() -> bool:
-        """Check if the import is being called from trusted host code.
-        
-        Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-        """
-        import sys
-        try:
-            frame = sys._getframe(2)
-        except ValueError:
-            return False
-        
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            if "/shu/" in filename:
-                for prefix in _TRUSTED_MODULE_PREFIXES:
-                    path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                    if path_fragment in filename:
-                        return True
-                    path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                    if filename.endswith(path_fragment_exact + ".py"):
-                        return True
-            frame = frame.f_back
-        return False
+    def __init__(self) -> None:
+        self._finder: _DenyImportsFinder | None = None
+        self._orig_import_module = None
 
     @staticmethod
     def _is_denied(name: str) -> bool:
         """Check if an import should be denied.
-        
+
         HTTP clients are always denied. shu.* imports are denied only from plugin code.
         """
         try:
             n = str(name)
         except Exception:
             n = ""
-        
+
         # Always deny HTTP clients
         for p in _DenyImportsFinder.deny_always:
             if n == p or n.startswith(p + "."):
                 return True
-        
+
         # Deny shu.* only from plugin code
         for p in _DenyImportsFinder.deny_from_plugins:
-            if n == p or n.startswith(p + "."):
-                if not _DenyHttpImportsCtx._is_called_from_trusted_code():
-                    return True
-        
+            # frame_offset=3: skip _is_denied -> _is_called_from_trusted_code -> sys._getframe
+            if (n == p or n.startswith(p + ".")) and not _is_called_from_trusted_code(frame_offset=3):
+                return True
+
         return False
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self._finder = _DenyImportsFinder()
         sys.meta_path.insert(0, self._finder)
         # Patch importlib.import_module to catch explicit dynamic imports
@@ -187,9 +163,7 @@ class _DenyHttpImportsCtx:
 
             def _guard(name, package=None):  # type: ignore[no-redef]
                 if _DenyHttpImportsCtx._is_denied(name):
-                    raise ImportError(
-                        f"Import of '{name}' is denied by host policy. Use host.http instead."
-                    )
+                    raise ImportError(f"Import of '{name}' is denied by host policy. Use host.http instead.")
                 return orig_import(name, package)
 
             importlib.import_module = _guard  # type: ignore[assignment]
@@ -197,7 +171,7 @@ class _DenyHttpImportsCtx:
             self._orig_import_module = None
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type, exc, tb) -> bool:
         try:
             # Restore importlib.import_module
             if self._orig_import_module is not None:
@@ -208,9 +182,8 @@ class _DenyHttpImportsCtx:
             if self._finder is not None:
                 if sys.meta_path and sys.meta_path[0] is self._finder:
                     sys.meta_path.pop(0)
-                else:
-                    if self._finder in sys.meta_path:
-                        sys.meta_path.remove(self._finder)
+                elif self._finder in sys.meta_path:
+                    sys.meta_path.remove(self._finder)
         except Exception:
             pass
         self._finder = None
@@ -219,9 +192,8 @@ class _DenyHttpImportsCtx:
 
 
 class Executor:
-    def __init__(self, settings: Optional[Any] = None):
-        """
-        Initialize executor rate limiters from configuration.
+    def __init__(self, settings: Any | None = None) -> None:
+        """Initialize executor rate limiters from configuration.
 
         If rate limiting is enabled in settings, create a per-user/per-tool TokenBucketRateLimiter (namespace "rl:plugin:user")
         and a provider/model TokenBucketRateLimiter (namespace "rl:plugin:prov") using the configured requests-per-period and period to
@@ -229,17 +201,18 @@ class Executor:
 
         Args:
             settings: Application settings (uses get_settings_instance if not provided)
+
         """
         self._limiter = None  # per-user/per-tool limiter
         self._provider_limiter = None  # provider/model limiter
+        self._settings = settings if settings is not None else get_settings_instance()
         try:
-            if settings is None:
-                settings = get_settings_instance()
-            if settings.enable_api_rate_limiting:
+            if self._settings.enable_api_rate_limiting:
                 from ..core.rate_limiting import TokenBucketRateLimiter
+
                 # Per-user defaults using settings directly
-                rpm = settings.api_rate_limit_user_requests
-                period = settings.api_rate_limit_user_period
+                rpm = self._settings.api_rate_limit_user_requests
+                period = self._settings.api_rate_limit_user_period
                 capacity = max(1, rpm)
                 refill_per_second = max(1, int(rpm / max(1, period)))
                 self._limiter = TokenBucketRateLimiter(
@@ -258,21 +231,24 @@ class Executor:
             self._limiter = None
             self._provider_limiter = None
 
-    def _validate(self, plugin: Plugin, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Validate the provided params against the plugin's input schema and return the params if validation succeeds.
-        
+    def _validate(self, plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate the provided params against the plugin's input schema and return the params if validation succeeds.
+
         If the plugin exposes no schema, the params are returned unchanged. If jsonschema is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required" field are present and raise an HTTPException 422 identifying a missing key if not.
-        
-        Parameters:
+
+        Parameters
+        ----------
             plugin (Plugin): Plugin instance whose schema will be used (via plugin.get_schema()).
             params (Dict[str, Any]): Input parameters to validate.
-        
-        Returns:
+
+        Returns
+        -------
             Dict[str, Any]: The same `params` dictionary if validation passes.
-        
-        Raises:
+
+        Raises
+        ------
             HTTPException: Raised with status code 422 and a structured detail when validation fails or required keys are missing.
+
         """
         schema = None
         try:
@@ -286,7 +262,7 @@ class Executor:
             try:
                 jsonschema.validate(instance=params, schema=schema)  # type: ignore[attr-defined]
                 return params
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # Normalize error surface
                 raise HTTPException(
                     status_code=422,
@@ -302,7 +278,7 @@ class Executor:
                 raise HTTPException(status_code=422, detail={"error": "validation_error", "missing": k})
         return params
 
-    def _validate_output(self, plugin: Plugin, data: Optional[Dict[str, Any]]) -> None:
+    def _validate_output(self, plugin: Plugin, data: dict[str, Any] | None) -> None:
         schema = None
         try:
             get_out = getattr(plugin, "get_output_schema", None)
@@ -315,7 +291,7 @@ class Executor:
         if jsonschema is not None:
             try:
                 jsonschema.validate(instance=data or {}, schema=schema)  # type: ignore[attr-defined]
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 raise HTTPException(
                     status_code=500,
                     detail={
@@ -329,7 +305,6 @@ class Executor:
             for k in required:
                 if not data or k not in data:
                     raise HTTPException(status_code=500, detail={"error": "output_validation_error", "missing": k})
-
 
     async def _enforce_quotas(self, *, bucket: str, daily_limit: int, monthly_limit: int) -> None:
         """Check and consume per-user/per-plugin quotas (daily/monthly).
@@ -345,15 +320,15 @@ class Executor:
             logger.exception("Quota enforcement unavailable; proceeding without quotas")
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # End of day
-        end_of_day = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=timezone.utc)
+        end_of_day = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=UTC)
         reset_in_day = max(1, int((end_of_day - now).total_seconds()))
         # End of month (first day of next month at 00:00:00)
         if now.month == 12:
-            next_month_start = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+            next_month_start = datetime(now.year + 1, 1, 1, tzinfo=UTC)
         else:
-            next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+            next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=UTC)
         reset_in_month = max(1, int((next_month_start - now).total_seconds()))
 
         day_key = f"quota:d:{bucket}"
@@ -387,13 +362,17 @@ class Executor:
                     try:
                         await cache.decr(day_key)
                     except Exception as decr_err:
-                        logger.error("Failed to decrement daily quota counter after monthly limit exceeded: key=%s, err=%s", day_key, decr_err)
+                        logger.error(
+                            "Failed to decrement daily quota counter after monthly limit exceeded: key=%s, err=%s",
+                            day_key,
+                            decr_err,
+                        )
                 raise
 
     async def _check_and_consume_quota(
         self,
         *,
-        cache: "CacheBackend",
+        cache: CacheBackend,
         key: str,
         limit: int,
         reset_in: int,
@@ -401,7 +380,7 @@ class Executor:
         window_seconds: int,
     ) -> None:
         """Atomically check and consume a single quota counter.
-        
+
         Uses increment-first pattern to avoid TOCTOU race conditions.
         Raises HTTPException(429) if quota is exceeded.
         """
@@ -409,20 +388,29 @@ class Executor:
         # Set expiry only when key was just created (to avoid extending TTL on existing counters)
         if new_count == 1:
             await cache.expire(key, reset_in)
-        
+
         if new_count > limit:
             # Over quota - decrement back and deny
             try:
                 await cache.decr(key)
             except Exception as decr_err:
-                logger.error("Failed to decrement %s quota counter after exceeding limit: key=%s, err=%s", period, key, decr_err)
+                logger.error(
+                    "Failed to decrement %s quota counter after exceeding limit: key=%s, err=%s",
+                    period,
+                    key,
+                    decr_err,
+                )
             headers = {
                 "Retry-After": str(reset_in),
                 "RateLimit-Limit": f"{limit};w={window_seconds}",
                 "RateLimit-Remaining": "0",
                 "RateLimit-Reset": str(reset_in),
             }
-            raise HTTPException(status_code=429, detail={"error": "quota_exceeded", "period": period, "reset_in": reset_in}, headers=headers)
+            raise HTTPException(
+                status_code=429,
+                detail={"error": "quota_exceeded", "period": period, "reset_in": reset_in},
+                headers=headers,
+            )
 
     async def _acquire_provider_concurrency(self, *, provider: str, limit: int) -> bool:
         if limit <= 0:
@@ -452,14 +440,25 @@ class Executor:
         except Exception:
             pass
 
-    async def execute(self, *, plugin: Plugin, user_id: str, user_email: Optional[str], agent_key: Optional[str], params: Dict[str, Any], limits: Optional[Dict[str, Any]] = None, provider_identities: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> PluginResult:
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def execute(  # noqa: PLR0912, PLR0915
+        self,
+        *,
+        plugin: Plugin,
+        user_id: str,
+        user_email: str | None,
+        agent_key: str | None,
+        params: dict[str, Any],
+        limits: dict[str, Any] | None = None,
+        provider_identities: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> PluginResult:
         # Split host-only overlay from plugin params (reserved key) BEFORE validation
-        """
-        Execute a plugin call with rate limiting, quotas, validation, and import-deny enforcement.
-        
+        """Execute a plugin call with rate limiting, quotas, validation, and import-deny enforcement.
+
         This method enforces per-user and provider quotas/rate-limits, optionally acquires provider concurrency slots, validates input and output against plugin schemas when available, constructs the host execution context (including resolved provider auth and schedule id), runs the plugin under a runtime import deny policy, maps host HTTP failures to structured provider errors, and returns the plugin execution result.
-        
-        Parameters:
+
+        Parameters
+        ----------
             plugin (Plugin): The plugin instance to execute.
             user_id (str): The invoking user's identifier used for quota and rate-limit scoping.
             user_email (Optional[str]): The invoking user's email for host context population.
@@ -467,12 +466,15 @@ class Executor:
             params (Dict[str, Any]): Plugin invocation parameters; a reserved "__host" dict may be supplied and will be removed from plugin-visible params and merged into the host context.
             limits (Optional[Dict[str, Any]]): Optional per-plugin overrides for quotas and rate limits. Recognized keys include "quota_daily_requests", "quota_monthly_requests", "rate_limit_user_requests", "rate_limit_user_period", "provider_name", "provider_rpm", "provider_window_seconds", and "provider_concurrency".
             provider_identities (Optional[Dict[str, List[Dict[str, Any]]]]): Optional provider identity mappings to include in the host context.
-        
-        Returns:
+
+        Returns
+        -------
             PluginResult: The plugin's execution result. On host HTTP failures returns a PluginResult with code "provider_error" and structured details; on other plugin exceptions returns a PluginResult with code "plugin_execute_error".
-        
-        Raises:
+
+        Raises
+        ------
             HTTPException: For quota, rate-limit, or provider concurrency violations (status 429) and for other HTTP-level rejections raised by the plugin execution path.
+
         """
         raw_params = dict(params or {})
         host_overlay = {}
@@ -487,7 +489,7 @@ class Executor:
         # Resolve effective limits/quotas (per-tool overrides -> global defaults)
         limits = limits or {}
         try:
-            s = get_settings_instance()
+            s = self._settings
             # Quotas
             daily = int(limits.get("quota_daily_requests") or s.plugin_quota_daily_requests_default or 0)
             monthly = int(limits.get("quota_monthly_requests") or s.plugin_quota_monthly_requests_default or 0)
@@ -514,7 +516,12 @@ class Executor:
         # Rate limit per user+plugin
         if self._limiter:
             refill = max(1, int(rl_req / max(1, rl_period)))
-            logger.debug("RateLimit check | bucket=%s capacity=%s refill_per_second=%s", bucket, max(1, rl_req), refill)
+            logger.debug(
+                "RateLimit check | bucket=%s capacity=%s refill_per_second=%s",
+                bucket,
+                max(1, rl_req),
+                refill,
+            )
             result = await self._limiter.check(key=bucket, cost=1, capacity=max(1, rl_req), refill_per_second=refill)
             if not result.allowed:
                 raise HTTPException(
@@ -529,27 +536,43 @@ class Executor:
             if self._provider_limiter and provider_name and provider_rpm > 0:
                 prov_refill = max(1, int(provider_rpm / max(1, provider_window)))
                 result = await self._provider_limiter.check(
-                    key=provider_name, cost=1, capacity=max(1, provider_rpm), refill_per_second=prov_refill
+                    key=provider_name,
+                    cost=1,
+                    capacity=max(1, provider_rpm),
+                    refill_per_second=prov_refill,
                 )
                 if not result.allowed:
                     raise HTTPException(
                         status_code=429,
-                        detail={"error": "provider_rate_limited", "provider": provider_name, "retry_after": result.retry_after_seconds},
+                        detail={
+                            "error": "provider_rate_limited",
+                            "provider": provider_name,
+                            "retry_after": result.retry_after_seconds,
+                        },
                         headers=result.to_headers(),
                     )
             # Provider concurrency cap
             if provider_name and provider_concurrency > 0:
-                acquired_concurrency = await self._acquire_provider_concurrency(provider=provider_name, limit=provider_concurrency)
+                acquired_concurrency = await self._acquire_provider_concurrency(
+                    provider=provider_name, limit=provider_concurrency
+                )
                 if not acquired_concurrency:
-                    headers = {"Retry-After": "1", "X-Provider-Concurrency-Limit": str(provider_concurrency)}
-                    raise HTTPException(status_code=429, detail={"error": "provider_concurrency_limited", "provider": provider_name}, headers=headers)
+                    headers = {
+                        "Retry-After": "1",
+                        "X-Provider-Concurrency-Limit": str(provider_concurrency),
+                    }
+                    raise HTTPException(
+                        status_code=429,
+                        detail={"error": "provider_concurrency_limited", "provider": provider_name},
+                        headers=headers,
+                    )
 
             # Validate
             vparams = self._validate(plugin, raw_params)
 
             # Derive op_auth scopes into host overlay for host.auth resolution (AUTH-REF-001)
             try:
-                op_name = str((vparams.get("op") or "")).lower()
+                op_name = str(vparams.get("op") or "").lower()
             except Exception:
                 op_name = ""
             try:
@@ -559,7 +582,7 @@ class Executor:
             if isinstance(op_auth_map, dict) and op_name and (op_name in op_auth_map):
                 try:
                     oa = op_auth_map.get(op_name) or {}
-                    provider = str((oa.get("provider") or "")).lower().strip()
+                    provider = str(oa.get("provider") or "").lower().strip()
                     scopes = oa.get("scopes") or []
                     if provider and scopes:
                         if not isinstance(host_overlay, dict):
@@ -580,6 +603,7 @@ class Executor:
             # Backfill auth mode/subject from params using resolver (AUTH-REF-001)
             try:
                 from ..services.plugin_identity import resolve_auth_requirements
+
                 provider_eff, mode_eff, subject_eff, scopes_eff = resolve_auth_requirements(plugin, vparams or {})
                 if provider_eff:
                     if not isinstance(host_overlay, dict):
@@ -618,12 +642,24 @@ class Executor:
                 pass
 
             # Build host with capability whitelist from plugin._capabilities if present
-            capabilities: List[str] = []
+            capabilities: list[str] = []
             try:
                 capabilities = list(getattr(plugin, "_capabilities", []) or [])
             except Exception:
                 capabilities = []
-            host = make_host(plugin_name=plugin.name, user_id=user_id, user_email=user_email, capabilities=capabilities, provider_identities=(provider_identities or {}), host_context=host_overlay)
+
+            # Get staging_ttl from settings for file staging configuration
+            staging_ttl = getattr(self._settings, "file_staging_ttl", None)
+
+            host = make_host(
+                plugin_name=plugin.name,
+                user_id=user_id,
+                user_email=user_email,
+                capabilities=capabilities,
+                provider_identities=(provider_identities or {}),
+                host_context=host_overlay,
+                staging_ttl=staging_ttl,
+            )
             # Execute under import deny-hook for HTTP clients and host internals
             ctx = ExecuteContext(user_id=user_id, agent_key=agent_key)
             with _DenyHttpImportsCtx():
@@ -639,24 +675,26 @@ class Executor:
                     return result
                 except HTTPException:
                     raise
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     # Map host.http failures to a structured provider_error so callers get clear surfaces
                     if isinstance(e, HttpRequestFailed):
-                        try:
-                            body = e.body
-                            # Try to extract a useful provider message
-                            if isinstance(body, dict):
-                                prov_msg = body.get("error_description") or body.get("error") or body.get("message") or str(body)
-                            else:
-                                prov_msg = str(body)[:400] if body is not None else ""
-                        except Exception:
-                            prov_msg = str(e)
                         details = {
                             "status_code": e.status_code,
                             "url": e.url,
-                            "provider_message": prov_msg,
+                            "provider_message": e.provider_message,
+                            "is_retryable": e.is_retryable,
                         }
-                        return PluginResult.err(message=f"Provider HTTP error ({e.status_code})", code="provider_error", details=details)
+                        if e.provider_error_code:
+                            details["provider_error_code"] = e.provider_error_code
+                        if e.retry_after_seconds is not None:
+                            details["retry_after_seconds"] = e.retry_after_seconds
+                        return PluginResult.err(
+                            message=f"Provider HTTP error ({e.status_code}): {e.provider_message}"
+                            if e.provider_message
+                            else f"Provider HTTP error ({e.status_code})",
+                            code=e.error_category,
+                            details=details,
+                        )
                     logger.exception("Plugin '%s' failed: %s", plugin.name, e)
                     return PluginResult.err(message=str(e), code="plugin_execute_error")
         finally:

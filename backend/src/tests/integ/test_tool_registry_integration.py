@@ -8,8 +8,9 @@ Covers:
 
 Follows custom integration test framework in tests/.
 """
+
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
@@ -34,7 +35,10 @@ async def test_registry_sync_creates_entries(client, db, auth_headers):
 
     # Check that it is disabled by default (or present with some enabled flag)
     row = next(t for t in tools if t["name"] == "test_schema")
-    assert row.get("enabled") in (False, True)  # present; sync may choose default False per implementation
+    assert row.get("enabled") in (
+        False,
+        True,
+    )  # present; sync may choose default False per implementation
 
 
 async def test_registry_enable_gates_execution(client, db, auth_headers):
@@ -84,8 +88,16 @@ async def test_registry_get_and_update_schema(client, db, auth_headers):
     )
 
     # Update schema via admin
-    new_in_schema: Dict[str, Any] = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
-    new_out_schema: Dict[str, Any] = {"type": "object", "properties": {"echo": {"type": "string"}}, "required": ["echo"]}
+    new_in_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"q": {"type": "string"}},
+        "required": ["q"],
+    }
+    new_out_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"echo": {"type": "string"}},
+        "required": ["echo"],
+    }
     resp = await client.put(
         "/api/v1/plugins/admin/test_schema/schema",
         json={"input_schema": new_in_schema, "output_schema": new_out_schema},
@@ -120,4 +132,3 @@ class ToolsRegistryTestSuite(BaseIntegrationTestSuite):
 # Allow running this file directly
 if __name__ == "__main__":
     create_test_runner_script(ToolsRegistryTestSuite, globals())
-

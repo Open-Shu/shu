@@ -8,20 +8,13 @@ import {
   Typography,
   Box,
   CircularProgress,
-  Alert
+  Alert,
 } from '@mui/material';
 import { Description } from '@mui/icons-material';
 import DocumentPreviewContent from './shared/DocumentPreviewContent';
 import api, { extractDataFromResponse } from '../services/api';
 
-const DocumentPreview = ({
-  open,
-  onClose,
-  kbId,
-  documentId,
-  maxChars = 1000,
-  showExtractionDetails = true,
-}) => {
+const DocumentPreview = ({ open, onClose, kbId, documentId, maxChars = 1000, showExtractionDetails = true }) => {
   const [document, setDocument] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -77,15 +70,13 @@ const DocumentPreview = ({
       maxWidth="md"
       fullWidth
       PaperProps={{
-        sx: { maxHeight: '90vh' }
+        sx: { maxHeight: '90vh' },
       }}
     >
       <DialogTitle>
         <Box display="flex" alignItems="center" gap={1}>
           <Description />
-          <Typography variant="h6">
-            Document Preview: {document?.title || 'Loading...'}
-          </Typography>
+          <Typography variant="h6">Document Preview: {document?.title || 'Loading...'}</Typography>
         </Box>
       </DialogTitle>
 
@@ -115,9 +106,7 @@ const DocumentPreview = ({
       </DialogContent>
 
       <DialogActions>
-        <Button onClick={onClose}>
-          Close
-        </Button>
+        <Button onClick={onClose}>Close</Button>
       </DialogActions>
     </Dialog>
   );

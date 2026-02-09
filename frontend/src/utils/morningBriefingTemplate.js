@@ -5,7 +5,7 @@
 
 export const MORNING_BRIEFING_YAML = `# Experience Export: Morning Briefing
 # Generated on: 2026-01-08 16:48:12
-# 
+#
 # This YAML file contains placeholders for user-specific values:
 # - {{ trigger_type }}: How the experience will be triggered (Cron, Scheduled, Manual)
 # - {{ trigger_config }}: The actual trigger value, depending on the schedule type

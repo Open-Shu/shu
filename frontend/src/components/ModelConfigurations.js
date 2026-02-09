@@ -33,7 +33,14 @@ import {
   Call as CallIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { modelConfigAPI, llmAPI, knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse, formatError } from '../services/api';
+import {
+  modelConfigAPI,
+  llmAPI,
+  knowledgeBaseAPI,
+  extractDataFromResponse,
+  extractItemsFromResponse,
+  formatError,
+} from '../services/api';
 import { promptAPI } from '../api/prompts';
 import { useAuth } from '../hooks/useAuth';
 import ModelConfigurationDialog from './shared/ModelConfigurationDialog';
@@ -42,12 +49,14 @@ import PageHelpHeader from './PageHelpHeader';
 import TuneIcon from '@mui/icons-material/Tune';
 
 const ModelConfigurations = () => {
-  const { canManagePromptsAndModels, user, handleAuthError } = useAuth();
+  const { canManagePromptsAndModels, handleAuthError } = useAuth();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedConfig, setSelectedConfig] = useState(null);
+  // Store original config data for rollback when edit is cancelled without successful test
+  const [originalConfigData, setOriginalConfigData] = useState(null);
   const [configToDelete, setConfigToDelete] = useState(null);
   const [testMessage, setTestMessage] = useState('Hello, how are you?');
   const [testResults, setTestResults] = useState({});
@@ -63,7 +72,7 @@ const ModelConfigurations = () => {
     kb_prompt_assignments: [],
     is_active: true,
     functionalities: {},
-    is_side_call_model: false
+    is_side_call_model: false,
   });
 
   // Advanced parameters state
@@ -74,12 +83,9 @@ const ModelConfigurations = () => {
   const queryClient = useQueryClient();
 
   // Fetch model configurations
-  const {
-    data: configurations = [],
-    isLoading: configsLoading,
-  } = useQuery(
-    'model-configurations',
-    () => modelConfigAPI.list({ include_relationships: true }),
+  const { data: configurations = [], isLoading: configsLoading } = useQuery(
+    ['model-configurations', { includeInactive: true }],
+    () => modelConfigAPI.list({ include_relationships: true, active_only: false }),
     {
       enabled: canManagePromptsAndModels(),
       select: extractItemsFromResponse,
@@ -94,48 +100,34 @@ const ModelConfigurations = () => {
   );
 
   //Fetch current side-call model configuration
-  const {
-    data: sideCallConfig = null,
-  } = useQuery(
-    'side-call-config',
-    () => sideCallsAPI.getConfig(),
-    {
-      enabled: canManagePromptsAndModels(),
-      select: (data) => data ?? null,
-      onError: (err) => {
-        if (err.response?.status === 401) {
-          handleAuthError();
-        } else {
-          log.error('ModelConfigurations - Failed to fetch side-call config:', err);
-        }
-      },
-    }
-  );
+  const { data: sideCallConfig = null } = useQuery('side-call-config', () => sideCallsAPI.getConfig(), {
+    enabled: canManagePromptsAndModels(),
+    select: (data) => data ?? null,
+    onError: (err) => {
+      if (err.response?.status === 401) {
+        handleAuthError();
+      } else {
+        log.error('ModelConfigurations - Failed to fetch side-call config:', err);
+      }
+    },
+  });
 
   // Fetch LLM providers for form
-  const {
-    data: providers = [],
-  } = useQuery(
-    'llm-providers',
-    llmAPI.getProviders,
-    {
-      enabled: canManagePromptsAndModels(),
-      select: (response) => {
-        const data = extractDataFromResponse(response);
-        return Array.isArray(data) ? data : [];
-      },
-      onError: (err) => {
-        if (err.response?.status === 401) {
-          handleAuthError();
-        }
-      },
-    }
-  );
+  const { data: providers = [] } = useQuery('llm-providers', llmAPI.getProviders, {
+    enabled: canManagePromptsAndModels(),
+    select: (response) => {
+      const data = extractDataFromResponse(response);
+      return Array.isArray(data) ? data : [];
+    },
+    onError: (err) => {
+      if (err.response?.status === 401) {
+        handleAuthError();
+      }
+    },
+  });
 
   // Fetch models for selected provider
-  const {
-    data: models = [],
-  } = useQuery(
+  const { data: models = [] } = useQuery(
     ['llm-models', formData.llm_provider_id],
     () => llmAPI.getModels(formData.llm_provider_id),
     {
@@ -153,10 +145,7 @@ const ModelConfigurations = () => {
   );
 
   // Fetch prompts for form (both LLM model and knowledge base prompts)
-  const {
-    data: prompts = [],
-    isLoading: promptsLoading,
-  } = useQuery(
+  const { data: prompts = [], isLoading: promptsLoading } = useQuery(
     'prompts-for-model-configs', // Changed key to force cache refresh
     () => promptAPI.list({ limit: 100 }), // Fetch all prompts, filter in UI
     {
@@ -170,15 +159,12 @@ const ModelConfigurations = () => {
       },
       onSuccess: (data) => {
         log.info('Prompts loaded successfully:', data);
-      }
+      },
     }
   );
 
   // Fetch knowledge bases for form
-  const {
-    data: knowledgeBases = [],
-    isLoading: knowledgeBasesLoading,
-  } = useQuery(
+  const { data: knowledgeBases = [], isLoading: knowledgeBasesLoading } = useQuery(
     'knowledge-bases-for-models',
     knowledgeBaseAPI.list,
     {
@@ -188,103 +174,94 @@ const ModelConfigurations = () => {
         if (err.response?.status === 401) {
           handleAuthError();
         }
-      }
+      },
     }
   );
 
   // Create mutation
-  const createMutation = useMutation(
-    (data) => modelConfigAPI.create(data),
-    {
-      onSuccess: (response, variables) => {
-        log.info('ModelConfigurations - Create success:', response);
-        queryClient.invalidateQueries('model-configurations');
-        // Invalidate side-call config query if this model is marked for side calls
-        if (variables.is_side_call_model) {
-          queryClient.invalidateQueries('side-call-config');
-        }
-        setCreateDialogOpen(false);
-        resetForm();
-        setError(null);
-        setSubmitError(null);
-      },
-      onError: (err) => {
-        log.error('ModelConfigurations - Create error:', err);
-        const serverMsg = err?.response?.data?.error?.message || formatError(err).message;
-        setSubmitError(serverMsg);
+  const createMutation = useMutation((data) => modelConfigAPI.create(data), {
+    onSuccess: (response, variables) => {
+      log.info('ModelConfigurations - Create success:', response);
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+      // Invalidate side-call config query if this model is marked for side calls
+      if (variables.is_side_call_model) {
+        queryClient.invalidateQueries('side-call-config');
       }
-    }
-  );
+      setCreateDialogOpen(false);
+      resetForm();
+      setError(null);
+      setSubmitError(null);
+    },
+    onError: (err) => {
+      log.error('ModelConfigurations - Create error:', err);
+      const serverMsg = err?.response?.data?.error?.message || formatError(err).message;
+      setSubmitError(serverMsg);
+    },
+  });
 
   // Update mutation
-  const updateMutation = useMutation(
-    ({ id, data }) => modelConfigAPI.update(id, data),
-    {
-      onSuccess: (response, variables) => {
-        queryClient.invalidateQueries('model-configurations');
+  const updateMutation = useMutation(({ id, data }) => modelConfigAPI.update(id, data), {
+    onSuccess: (response, variables) => {
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
 
-        const payload = variables?.data || {};
-        const isSideCallFlagProvided = Object.prototype.hasOwnProperty.call(
-          payload,
-          'is_side_call_model'
-        );
-        const isCurrentlySideCallModel =
-          sideCallConfig?.side_call_model_config?.id &&
-          sideCallConfig.side_call_model_config.id === variables?.id;
+      const payload = variables?.data || {};
+      const isSideCallFlagProvided = Object.prototype.hasOwnProperty.call(payload, 'is_side_call_model');
+      const isCurrentlySideCallModel =
+        sideCallConfig?.side_call_model_config?.id && sideCallConfig.side_call_model_config.id === variables?.id;
 
-        if (isSideCallFlagProvided || isCurrentlySideCallModel) {
-          queryClient.invalidateQueries('side-call-config');
-        }
-
-        setEditDialogOpen(false);
-        setSelectedConfig(null);
-        resetForm();
-        setError(null);
-        setSubmitError(null);
-      },
-      onError: (err) => {
-        const serverMsg = err?.response?.data?.error?.message || formatError(err).message;
-        setSubmitError(serverMsg);
+      if (isSideCallFlagProvided || isCurrentlySideCallModel) {
+        queryClient.invalidateQueries('side-call-config');
       }
-    }
-  );
+
+      setEditDialogOpen(false);
+      setSelectedConfig(null);
+      resetForm();
+      setError(null);
+      setSubmitError(null);
+    },
+    onError: (err) => {
+      const serverMsg = err?.response?.data?.error?.message || formatError(err).message;
+      setSubmitError(serverMsg);
+    },
+  });
 
   // Delete mutation
-  const deleteMutation = useMutation(
-    (id) => modelConfigAPI.delete(id),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('model-configurations');
-        setDeleteDialogOpen(false);
-        setConfigToDelete(null);
-        setError(null);
-      },
-      onError: (err) => {
-        setError(formatError(err).message);
-      }
-    }
-  );
+  const deleteMutation = useMutation((id) => modelConfigAPI.delete(id), {
+    onSuccess: () => {
+      queryClient.invalidateQueries(['model-configurations', { includeInactive: true }]);
+      setDeleteDialogOpen(false);
+      setConfigToDelete(null);
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
 
   // Test mutation
   const testMutation = useMutation(
-    ({ id, message }) => modelConfigAPI.test(id, { test_message: message, include_knowledge_bases: true }),
+    ({ id, message }) => {
+      const formData = new FormData();
+      formData.append('test_message', message);
+      formData.append('include_knowledge_bases', 'true');
+      return modelConfigAPI.testWithFile(id, formData);
+    },
     {
       onSuccess: (response, { id }) => {
         const result = extractDataFromResponse(response);
-        setTestResults(prev => ({
+        setTestResults((prev) => ({
           ...prev,
-          [id]: { success: true, ...result }
+          [id]: { success: true, ...result },
         }));
       },
       onError: (err, { id }) => {
-        setTestResults(prev => ({
+        setTestResults((prev) => ({
           ...prev,
-          [id]: { success: false, error: formatError(err) }
+          [id]: { success: false, error: formatError(err) },
         }));
-      }
+      },
     }
   );
-
 
   const sideCallConfigId = sideCallConfig?.side_call_model_config?.id ?? null;
 
@@ -294,9 +271,14 @@ const ModelConfigurations = () => {
   if (prompts.length > 0) {
     log.debug('ModelConfigurations - First prompt object:', JSON.stringify(prompts[0], null, 2));
   }
-  log.debug('ModelConfigurations - LLM prompts:', prompts.filter(p => p.entity_type === 'llm_model'));
-  log.debug('ModelConfigurations - KB prompts:', prompts.filter(p => p.entity_type === 'knowledge_base'));
-
+  log.debug(
+    'ModelConfigurations - LLM prompts:',
+    prompts.filter((p) => p.entity_type === 'llm_model')
+  );
+  log.debug(
+    'ModelConfigurations - KB prompts:',
+    prompts.filter((p) => p.entity_type === 'knowledge_base')
+  );
 
   // Resolve provider type definition for typed parameter mapping
   const selectedProvider = providers.find((p) => p.id === formData.llm_provider_id);
@@ -311,27 +293,17 @@ const ModelConfigurations = () => {
         if (err.response?.status === 401) {
           handleAuthError();
         }
-      }
+      },
     }
   );
-  const parameterMapping = useMemo(
-    () => providerTypeDef?.parameter_mapping || {},
-    [providerTypeDef]
-  );
+  const parameterMapping = useMemo(() => providerTypeDef?.parameter_mapping || {}, [providerTypeDef]);
   const visibleParams = useMemo(
     () => Object.entries(parameterMapping).filter(([, spec]) => spec && spec.type !== 'hidden'),
     [parameterMapping]
   );
 
-
-
   if (!canManagePromptsAndModels()) {
-    return (
-
-      <Alert severity="error">
-        You don't have permission to manage model configurations.
-      </Alert>
-    );
+    return <Alert severity="error">You don't have permission to manage model configurations.</Alert>;
   }
 
   // Show authentication error if present
@@ -363,35 +335,8 @@ const ModelConfigurations = () => {
       kb_prompt_assignments: [],
       is_active: true,
       functionalities: {},
-      is_side_call_model: false
+      is_side_call_model: false,
     });
-  };
-
-  const handleCreate = () => {
-    // Merge typed overrides with advanced JSON (typed wins). Only submit user-set values.
-    let extra = {};
-    if (advancedJson && advancedJson.trim()) {
-      try {
-        extra = JSON.parse(advancedJson);
-        setAdvancedJsonError(null);
-      } catch (e) {
-        setAdvancedJsonError('Invalid JSON');
-        return;
-      }
-    }
-    const merged = { ...extra, ...paramOverrides };
-    const pruned = Object.fromEntries(
-      Object.entries(merged).filter(([_, v]) =>
-        v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '') && !(typeof v === 'number' && Number.isNaN(v))
-      )
-    );
-    const payload = {
-      ...formData,
-      created_by: user?.id || 'unknown-user',
-      prompt_id: formData.prompt_id || null,
-      ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
-    };
-    createMutation.mutate(payload);
   };
 
   const handleEdit = (config) => {
@@ -404,7 +349,7 @@ const ModelConfigurations = () => {
     }
 
     // Extract knowledge base IDs
-    const kbIds = config.knowledge_bases?.map(kb => kb.id) || [];
+    const kbIds = config.knowledge_bases?.map((kb) => kb.id) || [];
 
     // Extract KB prompt assignments
     const kbPromptAssignments = [];
@@ -412,7 +357,7 @@ const ModelConfigurations = () => {
       Object.entries(config.kb_prompts).forEach(([kbId, promptInfo]) => {
         kbPromptAssignments.push({
           knowledge_base_id: kbId,
-          prompt_id: promptInfo.id
+          prompt_id: promptInfo.id,
         });
       });
     }
@@ -427,12 +372,20 @@ const ModelConfigurations = () => {
       kb_prompt_assignments: kbPromptAssignments,
       is_active: config.is_active,
       functionalities: config.functionalities,
-      is_side_call_model: config.id === sideCallConfigId
+      is_side_call_model: config.id === sideCallConfigId,
     };
 
     setFormData(newFormData);
-    // Initialize advanced parameter editors from existing overrides (if any)
+
+    // Store original config data for rollback if user cancels without successful test
+    // This is the payload format needed for the update API
     const existingOverrides = config.parameter_overrides || {};
+    setOriginalConfigData({
+      ...newFormData,
+      parameter_overrides: existingOverrides,
+    });
+
+    // Initialize advanced parameter editors from existing overrides (if any)
     setParamOverrides(existingOverrides);
     try {
       setAdvancedJson(JSON.stringify(existingOverrides, null, 2));
@@ -441,34 +394,6 @@ const ModelConfigurations = () => {
       setAdvancedJson('');
     }
     setEditDialogOpen(true);
-  };
-
-  const handleUpdate = () => {
-    let extra = {};
-    if (advancedJson && advancedJson.trim()) {
-      try {
-        extra = JSON.parse(advancedJson);
-        setAdvancedJsonError(null);
-      } catch (e) {
-        setAdvancedJsonError('Invalid JSON');
-        return;
-      }
-    }
-    const merged = { ...extra, ...paramOverrides };
-    const pruned = Object.fromEntries(
-      Object.entries(merged).filter(([_, v]) =>
-        v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '') && !(typeof v === 'number' && Number.isNaN(v))
-      )
-    );
-    const payload = {
-      ...formData,
-      prompt_id: formData.prompt_id || null,
-      ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
-    };
-    updateMutation.mutate({
-      id: selectedConfig.id,
-      data: payload
-    });
   };
 
   const handleDelete = (config) => {
@@ -491,7 +416,7 @@ const ModelConfigurations = () => {
     if (selectedConfig) {
       testMutation.mutate({
         id: selectedConfig.id,
-        message: testMessage
+        message: testMessage,
       });
     }
   };
@@ -505,7 +430,7 @@ const ModelConfigurations = () => {
         tips={[
           'Create at least one Model Configuration to enable the chat interface',
           'Each configuration links a provider (e.g., OpenAI, Anthropic) with a specific model',
-          'Attach a system prompt to define the assistant\'s personality and behavior',
+          "Attach a system prompt to define the assistant's personality and behavior",
           'Add Knowledge Bases to enable RAG—the assistant will search them for context',
           'Use parameter overrides to tune temperature, max tokens, and other model settings',
         ]}
@@ -514,7 +439,7 @@ const ModelConfigurations = () => {
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={() => queryClient.invalidateQueries('model-configurations')}
+              onClick={() => queryClient.invalidateQueries(['model-configurations', { includeInactive: true }])}
               disabled={configsLoading}
             >
               Refresh
@@ -522,7 +447,14 @@ const ModelConfigurations = () => {
             <Button
               variant="contained"
               startIcon={<AddIcon />}
-              onClick={() => { resetForm(); setParamOverrides({}); setAdvancedJson(''); setAdvancedJsonError(null); setSubmitError(null); setCreateDialogOpen(true); }}
+              onClick={() => {
+                resetForm();
+                setParamOverrides({});
+                setAdvancedJson('');
+                setAdvancedJsonError(null);
+                setSubmitError(null);
+                setCreateDialogOpen(true);
+              }}
             >
               Create Configuration
             </Button>
@@ -552,7 +484,14 @@ const ModelConfigurations = () => {
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-            onClick={() => { resetForm(); setParamOverrides({}); setAdvancedJson(''); setAdvancedJsonError(null); setSubmitError(null); setCreateDialogOpen(true); }}
+            onClick={() => {
+              resetForm();
+              setParamOverrides({});
+              setAdvancedJson('');
+              setAdvancedJsonError(null);
+              setSubmitError(null);
+              setCreateDialogOpen(true);
+            }}
           >
             Create Configuration
           </Button>
@@ -562,108 +501,101 @@ const ModelConfigurations = () => {
           {configurations.map((config) => {
             // Mark if this is the current side-call model
             const isSideCallModel = config.id === sideCallConfigId;
-            
+
             return (
-            <Grid item xs={12} md={6} lg={4} key={config.id}>
-              <Card>
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                    <Typography variant="h6" component="div">
-                      {config.name}
-                    </Typography>
-                    <Box>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleTest(config)}
-                        title="Test Configuration"
-                      >
-                        <TestIcon />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleEdit(config)}
-                        title="Edit Configuration"
-                      >
-                        <EditIcon />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDelete(config)}
-                        title="Delete Configuration"
-                        color="error"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
+              <Grid item xs={12} md={6} lg={4} key={config.id}>
+                <Card>
+                  <CardContent>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        mb: 2,
+                      }}
+                    >
+                      <Typography variant="h6" component="div">
+                        {config.name}
+                      </Typography>
+                      <Box>
+                        <IconButton size="small" onClick={() => handleTest(config)} title="Test Configuration">
+                          <TestIcon />
+                        </IconButton>
+                        <IconButton size="small" onClick={() => handleEdit(config)} title="Edit Configuration">
+                          <EditIcon />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleDelete(config)}
+                          title="Delete Configuration"
+                          color="error"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </Box>
                     </Box>
-                  </Box>
 
-                  {config.description && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      {config.description}
-                    </Typography>
-                  )}
+                    {config.description && (
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        {config.description}
+                      </Typography>
+                    )}
 
-                  <Box sx={{ mb: 2 }}>
-                    <Chip
-                      icon={<ModelIcon />}
-                      label={`${config.llm_provider?.name || 'Unknown'} / ${config.model_name}`}
-                      size="small"
-                      sx={{ mr: 1, mb: 1 }}
-                    />
-                    {config.prompt && (
+                    <Box sx={{ mb: 2 }}>
                       <Chip
-                        icon={<PromptIcon />}
-                        label={config.prompt.name}
+                        icon={<ModelIcon />}
+                        label={`${config.llm_provider?.name || 'Unknown'} / ${config.model_name}`}
                         size="small"
                         sx={{ mr: 1, mb: 1 }}
                       />
-                    )}
-                    {config.knowledge_bases?.length > 0 && (
-                      <Chip
-                        icon={<KnowledgeBaseIcon />}
-                        label={`${config.knowledge_bases.length} KB${config.knowledge_bases.length > 1 ? 's' : ''}`}
-                        size="small"
-                        sx={{ mr: 1, mb: 1 }}
-                      />
-                    )}
-                    {config.kb_prompts && Object.keys(config.kb_prompts).length > 0 && (
-                      <Chip
-                        icon={<PromptIcon />}
-                        label={`${Object.keys(config.kb_prompts).length} KB Prompt${Object.keys(config.kb_prompts).length > 1 ? 's' : ''}`}
-                        size="small"
-                        color="secondary"
-                        sx={{ mr: 1, mb: 1 }}
-                      />
-                    )}
-                  </Box>
-
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Box sx={{ display: 'flex', gap: 0.5 }}>
-                      <Chip
-                        label={config.is_active ? 'Active' : 'Inactive'}
-                        color={config.is_active ? 'success' : 'default'}
-                        size="small"
-                      />
-                      {isSideCallModel && (
+                      {config.prompt && (
+                        <Chip icon={<PromptIcon />} label={config.prompt.name} size="small" sx={{ mr: 1, mb: 1 }} />
+                      )}
+                      {config.knowledge_bases?.length > 0 && (
                         <Chip
-                          icon={<CallIcon />}
-                          label="Side Call"
-                          color="info"
+                          icon={<KnowledgeBaseIcon />}
+                          label={`${config.knowledge_bases.length} KB${config.knowledge_bases.length > 1 ? 's' : ''}`}
+                          size="small"
+                          sx={{ mr: 1, mb: 1 }}
+                        />
+                      )}
+                      {config.kb_prompts && Object.keys(config.kb_prompts).length > 0 && (
+                        <Chip
+                          icon={<PromptIcon />}
+                          label={`${Object.keys(config.kb_prompts).length} KB Prompt${Object.keys(config.kb_prompts).length > 1 ? 's' : ''}`}
+                          size="small"
+                          color="secondary"
+                          sx={{ mr: 1, mb: 1 }}
+                        />
+                      )}
+                    </Box>
+
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        <Chip
+                          label={config.is_active ? 'Active' : 'Inactive'}
+                          color={config.is_active ? 'success' : 'default'}
+                          size="small"
+                        />
+                        {isSideCallModel && <Chip icon={<CallIcon />} label="Side Call" color="info" size="small" />}
+                      </Box>
+                      {testResults[config.id] && (
+                        <Chip
+                          label={testResults[config.id].success ? 'Test Passed' : 'Test Failed'}
+                          color={testResults[config.id].success ? 'success' : 'error'}
                           size="small"
                         />
                       )}
                     </Box>
-                    {testResults[config.id] && (
-                      <Chip
-                        label={testResults[config.id].success ? 'Test Passed' : 'Test Failed'}
-                        color={testResults[config.id].success ? 'success' : 'error'}
-                        size="small"
-                      />
-                    )}
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
+                  </CardContent>
+                </Card>
+              </Grid>
             );
           })}
         </Grid>
@@ -690,9 +622,9 @@ const ModelConfigurations = () => {
         advancedJsonError={advancedJsonError}
         setAdvancedJsonError={setAdvancedJsonError}
         submitError={submitError}
-        onSubmit={handleCreate}
-        submitLabel={createMutation.isLoading ? 'Creating...' : 'Create'}
         isSubmitting={createMutation.isLoading}
+        isEditMode={false}
+        existingConfigId={null}
       />
 
       {/* Edit Dialog */}
@@ -716,9 +648,10 @@ const ModelConfigurations = () => {
         advancedJsonError={advancedJsonError}
         setAdvancedJsonError={setAdvancedJsonError}
         submitError={submitError}
-        onSubmit={handleUpdate}
-        submitLabel={updateMutation.isLoading ? 'Saving...' : 'Save'}
         isSubmitting={updateMutation.isLoading}
+        isEditMode={true}
+        existingConfigId={selectedConfig?.id}
+        originalConfigData={originalConfigData}
       />
 
       {/* Delete Dialog */}
@@ -726,18 +659,13 @@ const ModelConfigurations = () => {
         <DialogTitle>Delete Model Configuration</DialogTitle>
         <DialogContent>
           <Typography>
-            Are you sure you want to delete the model configuration "{configToDelete?.name}"?
-            This action cannot be undone.
+            Are you sure you want to delete the model configuration "{configToDelete?.name}"? This action cannot be
+            undone.
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleConfirmDelete}
-            color="error"
-            variant="contained"
-            disabled={deleteMutation.isLoading}
-          >
+          <Button onClick={handleConfirmDelete} color="error" variant="contained" disabled={deleteMutation.isLoading}>
             {deleteMutation.isLoading ? 'Deleting...' : 'Delete'}
           </Button>
         </DialogActions>
@@ -780,12 +708,15 @@ const ModelConfigurations = () => {
                     <strong>Prompt Applied:</strong> {testResults[selectedConfig.id].prompt_applied ? 'Yes' : 'No'}
                   </Typography>
                   <Typography variant="body2" sx={{ mb: 1 }}>
-                    <strong>Knowledge Bases:</strong> {testResults[selectedConfig.id].knowledge_bases_used?.join(', ') || 'None'}
+                    <strong>Knowledge Bases:</strong>{' '}
+                    {testResults[selectedConfig.id].knowledge_bases_used?.join(', ') || 'None'}
                   </Typography>
                 </Box>
               ) : (
                 <Alert severity="error">
-                  <Typography variant="subtitle2" gutterBottom>Test failed</Typography>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Test failed
+                  </Typography>
                   {testResults[selectedConfig.id].error}
                 </Alert>
               )}
@@ -794,11 +725,7 @@ const ModelConfigurations = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setTestDialogOpen(false)}>Close</Button>
-          <Button
-            onClick={handleRunTest}
-            variant="contained"
-            disabled={!testMessage.trim() || testMutation.isLoading}
-          >
+          <Button onClick={handleRunTest} variant="contained" disabled={!testMessage.trim() || testMutation.isLoading}>
             {testMutation.isLoading ? 'Testing...' : 'Run Test'}
           </Button>
         </DialogActions>

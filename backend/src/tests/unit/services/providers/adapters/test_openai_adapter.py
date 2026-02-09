@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from shu.services.providers.adapters.openai_adapter import OpenAIAdapter
 from shu.services.providers.adapter_base import ProviderAdapterContext
+from shu.services.providers.adapters.openai_adapter import OpenAIAdapter
 
 
 @pytest.fixture(scope="function")
@@ -33,7 +33,6 @@ def openai_adapter(mock_db_session, mock_provider):
 
 
 def test_provider_settings(openai_adapter):
-
     info = openai_adapter.get_provider_information()
     assert info.key == "openai"
     assert info.display_name == "OpenAI"
@@ -49,7 +48,9 @@ def test_provider_settings(openai_adapter):
     assert openai_adapter.get_model_information_path() == "data[*].{id: id, name: id}"
 
     authorization_header = openai_adapter.get_authorization_header()
-    assert authorization_header.get("headers", {}).get("Authorization") == f"Bearer {None}"  # We're not testing decryption
+    assert (
+        authorization_header.get("headers", {}).get("Authorization") == f"Bearer {None}"
+    )  # We're not testing decryption
 
     # TODO: We'll want to evaluate the mapping in the future to ensure it is valid.
     parameter_mapping = openai_adapter.get_parameter_mapping()

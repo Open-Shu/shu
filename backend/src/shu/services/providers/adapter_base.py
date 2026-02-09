@@ -6,25 +6,25 @@ This scaffolding intentionally avoids runtime wiring until concrete adapters lan
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
 import base64
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Self
 
 from cryptography.fernet import Fernet
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from shu.services.plugin_execution import execute_plugin
-from shu.models.plugin_execution import CallableTool
-from shu.services.providers.events import ProviderStreamEvent
 from shu.core.config import get_settings_instance
-from shu.core.logging import get_logger
 from shu.core.exceptions import LLMConfigurationError
-from shu.models.llm_provider import LLMProvider
+from shu.core.logging import get_logger
 from shu.models.attachment import Attachment
+from shu.models.llm_provider import LLMProvider
+from shu.models.plugin_execution import CallableTool
 from shu.services.chat_types import ChatContext, ChatMessage
+from shu.services.plugin_execution import execute_plugin
+from shu.services.providers.events import ProviderStreamEvent
 
 logger = get_logger(__name__)
 
@@ -37,11 +37,12 @@ class ProviderAdapterContext:
         provider: LLMProvider ORM row
         model_configuration: ModelConfiguration ORM row
         encryption_key: Fernet key used to decrypt provider API keys
+
     """
 
     db_session: AsyncSession
-    provider: Optional[LLMProvider] = None
-    conversation_owner_id: Optional[str] = None
+    provider: LLMProvider | None = None
+    conversation_owner_id: str | None = None
 
 
 @dataclass
@@ -56,7 +57,7 @@ class ProviderCapabilities:
     tools: bool = False
     vision: bool = False
 
-    def to_dict(self, include_disabled: bool = False, supported_mask: "ProviderCapabilities | None" = None):
+    def to_dict(self, include_disabled: bool = False, supported_mask: ProviderCapabilities | None = None):
         capabilities = {
             "streaming": {"value": self.streaming, "label": "Supports Streaming"},
             "tools": {"value": self.tools, "label": "Supports Tool Calling"},
@@ -78,19 +79,19 @@ class ProviderCapabilities:
         return {k: v for k, v in capabilities.items() if v.get("value")}
 
     @classmethod
-    def from_request_dict(cls, request_dict):
+    def from_request_dict(cls, request_dict) -> Self:
         return ProviderCapabilities(
             streaming=request_dict.get("streaming", {}).get("value", False),
             tools=request_dict.get("tools", {}).get("value", False),
-            vision=request_dict.get("vision", {}).get("value", False)
+            vision=request_dict.get("vision", {}).get("value", False),
         )
 
 
 @dataclass
 class ToolCallInstructions:
-    plugin_name: str 
+    plugin_name: str
     operation: str
-    args_dict: Dict[str, Any]
+    args_dict: dict[str, Any]
 
 
 @dataclass
@@ -101,9 +102,9 @@ class ProviderEventResult:
 
 @dataclass(kw_only=True)
 class ProviderToolCallEventResult(ProviderEventResult):
-    tool_calls: List[ToolCallInstructions]
-    additional_messages: List[ChatMessage]
-    content: Optional[Any]
+    tool_calls: list[ToolCallInstructions]
+    additional_messages: list[ChatMessage]
+    content: Any | None
     type: str = "function_call"
 
     def to_provider_stream_event(self, model, provider, metadata) -> ProviderStreamEvent:
@@ -136,7 +137,7 @@ class ProviderReasoningDeltaEventResult(ProviderEventResult):
 class ProviderFinalEventResult(ProviderEventResult):
     content: str
     type: str = "final_message"
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(kw_only=True)
@@ -153,18 +154,20 @@ class BaseProviderAdapter:
 
     """
 
-    def __init__(self, context: ProviderAdapterContext):
+    def __init__(self, context: ProviderAdapterContext) -> None:
         self.provider = context.provider
         self.conversation_owner_id = context.conversation_owner_id
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
         self.api_key = None
-        self.usage: Dict[str, int] = {}
+        self.usage: dict[str, int] = {}
 
         self.db_session = context.db_session
 
         if self.provider and self.encryption_key:
-            self.api_key = self.__decrypt_api_key(self.provider.api_key_encrypted) if self.provider.api_key_encrypted else None
+            self.api_key = (
+                self.__decrypt_api_key(self.provider.api_key_encrypted) if self.provider.api_key_encrypted else None
+            )
 
     def __decrypt_api_key(self, encrypted_key: str) -> str:
         """Decrypt stored API key."""
@@ -174,11 +177,20 @@ class BaseProviderAdapter:
         except Exception as e:
             logger.error(f"Failed to decrypt API key for provider {self.provider.name}: {e}")
             raise LLMConfigurationError(f"Failed to decrypt API key: {e}")
-        
+
     async def _call_plugin(self, plugin_name, operation, args_dict):
-        return json.dumps(await execute_plugin(self.db_session, plugin_name, operation, args_dict, self.conversation_owner_id))
-    
-    def _get_usage(self, input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int, total_tokens: int) -> Dict[str, int]:
+        return json.dumps(
+            await execute_plugin(self.db_session, plugin_name, operation, args_dict, self.conversation_owner_id)
+        )
+
+    def _get_usage(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int,
+        reasoning_tokens: int,
+        total_tokens: int,
+    ) -> dict[str, int]:
         return {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -186,29 +198,29 @@ class BaseProviderAdapter:
             "reasoning_tokens": reasoning_tokens,
             "total_tokens": total_tokens,
         }
-    
-    def _aggregate_usage(self, first: Dict[str, int], second: Dict[str, int]) -> Dict[str, int]:
-        return {
-            k: first.get(k, 0) + second.get(k, 0)
-            for k in set(first) | set(second)
-        }
+
+    def _aggregate_usage(self, first: dict[str, int], second: dict[str, int]) -> dict[str, int]:
+        return {k: first.get(k, 0) + second.get(k, 0) for k in set(first) | set(second)}
 
     def _flatten_chat_context(
-            self,
-            ctx: ChatContext,
-            message_modifier: Callable = lambda x: {"role": getattr(x, "role", ""), "content": getattr(x, "content", "")}
-        ) -> List[Dict[str, Any]]:
+        self,
+        ctx: ChatContext,
+        message_modifier: Callable = lambda x: {
+            "role": getattr(x, "role", ""),
+            "content": getattr(x, "content", ""),
+        },
+    ) -> list[dict[str, Any]]:
         """Convert ChatContext into a provider-agnostic list of role/content dicts."""
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         if ctx.system_prompt:
             messages.append({"role": "system", "content": ctx.system_prompt})
         for m in ctx.messages:
             messages.append(message_modifier(m))
         return messages
 
-    def _read_attachment_base64(self, attachment: Attachment) -> Optional[str]:
+    def _read_attachment_base64(self, attachment: Attachment) -> str | None:
         """Read attachment content from disk and return as base64 string.
-        
+
         Validates that the path is within the configured attachment storage directory
         to prevent arbitrary file reads via tampered attachment records.
         """
@@ -216,18 +228,18 @@ class BaseProviderAdapter:
             return None
         try:
             path = Path(attachment.storage_path)
-            
+
             # Resolve to absolute path - use strict=False since we check existence separately
             try:
                 resolved_path = path.resolve()
             except (OSError, ValueError):
                 logger.warning(f"Invalid attachment path: {attachment.storage_path}")
                 return None
-            
+
             if not resolved_path.exists():
                 logger.warning(f"Attachment file not found: {attachment.storage_path}")
                 return None
-            
+
             # Validate path is within the configured attachment storage directory
             storage_dir = Path(self.settings.chat_attachment_storage_dir).resolve()
             try:
@@ -235,14 +247,14 @@ class BaseProviderAdapter:
             except ValueError:
                 logger.warning(f"Path traversal blocked for attachment {attachment.id}: {resolved_path}")
                 return None
-            
+
             # Reject symlinks
             if path.is_symlink():
                 logger.warning(f"Symlink access blocked for attachment {attachment.id}")
                 return None
-            
+
             content = resolved_path.read_bytes()
-            return base64.b64encode(content).decode('utf-8')
+            return base64.b64encode(content).decode("utf-8")
         except Exception as e:
             logger.error(f"Failed to read attachment {attachment.id}: {e}")
             return None
@@ -251,16 +263,16 @@ class BaseProviderAdapter:
         """Check if an attachment is an image based on mime type."""
         return attachment.mime_type.startswith("image/") if attachment.mime_type else False
 
-    def _attachment_to_data_uri(self, attachment: Attachment) -> Optional[str]:
+    def _attachment_to_data_uri(self, attachment: Attachment) -> str | None:
         """Convert attachment to data URI format (data:mime;base64,...)."""
         b64 = self._read_attachment_base64(attachment)
         if not b64:
             return None
         return f"data:{attachment.mime_type};base64,{b64}"
 
-    def _attachment_to_text_fallback(self, attachment: Attachment) -> Optional[Dict[str, Any]]:
+    def _attachment_to_text_fallback(self, attachment: Attachment) -> dict[str, Any] | None:
         """Convert attachment to text fallback format using extracted_text (Completions API format).
-        
+
         Returns None if no extracted_text is available.
         Used when native document support is disabled or file read fails.
         """
@@ -268,30 +280,37 @@ class BaseProviderAdapter:
             return None
         return {
             "type": "text",
-            "text": f"[Attached: {attachment.original_filename}]\n{attachment.extracted_text}"
+            "text": f"[Attached: {attachment.original_filename}]\n{attachment.extracted_text}",
         }
 
-    def _attachment_to_input_text_fallback(self, attachment: Attachment) -> Optional[Dict[str, Any]]:
+    def _attachment_to_input_text_fallback(self, attachment: Attachment) -> dict[str, Any] | None:
         """Convert attachment to input_text fallback format (Responses API format).
-        
+
         Returns None if no extracted_text is available.
         """
         if not attachment.extracted_text:
             return None
         return {
             "type": "input_text",
-            "text": f"[Attached: {attachment.original_filename}]\n{attachment.extracted_text}"
+            "text": f"[Attached: {attachment.original_filename}]\n{attachment.extracted_text}",
         }
-    
+
     def supports_native_documents(self) -> bool:
         """Return True if provider supports native document uploads (PDFs, etc).
-        
+
         Override in child adapters that support native document formats.
         When False, non-image attachments fall back to extracted_text.
         """
         return False
 
-    def _update_usage(self,  input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int, total_tokens: int):
+    def _update_usage(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int,
+        reasoning_tokens: int,
+        total_tokens: int,
+    ) -> None:
         usage_dict = self._get_usage(
             input_tokens,
             output_tokens,
@@ -323,7 +342,7 @@ class BaseProviderAdapter:
 
         return value
 
-    def get_endpoint_settings(self) -> Dict[str, Any]:
+    def get_endpoint_settings(self) -> dict[str, Any]:
         return {
             "chat": {
                 "path": self.get_field_with_override("get_chat_endpoint"),
@@ -340,7 +359,10 @@ class BaseProviderAdapter:
                 "path": self.get_field_with_override("get_models_endpoint"),
                 "label": "The endpoint at which the provider exposes the available models.",
                 "options": {
-                    "get_model_information_path": {"value": self.get_field_with_override("get_model_information_path"), "label": "Path to extract the model names and IDs from."},
+                    "get_model_information_path": {
+                        "value": self.get_field_with_override("get_model_information_path"),
+                        "label": "Path to extract the model names and IDs from.",
+                    },
                 },
             },
         }
@@ -372,58 +394,58 @@ class BaseProviderAdapter:
 
     def get_capabilities(self) -> ProviderCapabilities:
         raise NotImplementedError("Function get_capabilities is not implemented.")
-    
+
     def get_api_base_url(self) -> str:
         raise NotImplementedError("Function get_api_base_url is not implemented.")
 
     def get_chat_endpoint(self) -> str:
         raise NotImplementedError("Function get_chat_endpoint is not implemented.")
-    
+
     def get_models_endpoint(self) -> str:
         raise NotImplementedError("Function get_models_endpoint is not implemented.")
-    
-    def get_authorization_header(self) -> Dict[str, Any]:
+
+    def get_authorization_header(self) -> dict[str, Any]:
         raise NotImplementedError("Function get_authorization_header is not implemented.")
 
-    def get_parameter_mapping(self) -> Dict[str, Any]:
+    def get_parameter_mapping(self) -> dict[str, Any]:
         return {}
-    
+
     # PROVIDER HANDLERS
-    async def handle_provider_event(self, chunk: Dict[str, Any]) -> ProviderEventResult:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
         raise NotImplementedError("Function handle_provider_event is not implemented.")
-    
-    async def handle_provider_completion(self, data: Dict[str, Any]) -> List[ProviderEventResult]:
+
+    async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
         raise NotImplementedError("Function handle_provider_completion is not implemented.")
-    
-    async def finalize_provider_events(self) -> List[ProviderEventResult]:
+
+    async def finalize_provider_events(self) -> list[ProviderEventResult]:
         return []
-    
-    async def set_messages_in_payload(self, messages: ChatContext, payload: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError("Function set_messages_in_payload is not implemented.")
-    
-    async def inject_tool_payload(self, tools: List[CallableTool], payload: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError("Function inject_tool_payload is not implemented.")
-    
-    async def inject_model_parameter(self, model_value: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def inject_model_parameter(self, model_value: str, payload: dict[str, Any]) -> dict[str, Any]:
         payload["model"] = model_value
         return payload
 
-    async def inject_streaming_parameter(self, should_stream: bool, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def inject_streaming_parameter(self, should_stream: bool, payload: dict[str, Any]) -> dict[str, Any]:
         payload["stream"] = should_stream
         return payload
-    
-    def inject_override_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+
+    def inject_override_parameters(self, params: dict[str, Any]) -> dict[str, Any]:
         return params
 
-    async def post_process_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def post_process_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload
 
 
 # Registry mapping adapter name -> class
-_ADAPTERS: Dict[str, Type[BaseProviderAdapter]] = {}
+_ADAPTERS: dict[str, type[BaseProviderAdapter]] = {}
 
 
-def register_adapter(name: str, cls: Type[BaseProviderAdapter]) -> None:
+def register_adapter(name: str, cls: type[BaseProviderAdapter]) -> None:
     _ADAPTERS[name] = cls
 
 
@@ -433,8 +455,10 @@ def get_adapter(name: str, context: ProviderAdapterContext) -> BaseProviderAdapt
     return _ADAPTERS[name](context)
 
 
-def get_adapter_from_provider(db_session: AsyncSession, provider: LLMProvider, conversation_owner_id: Optional[str] = None) -> BaseProviderAdapter:
+def get_adapter_from_provider(
+    db_session: AsyncSession, provider: LLMProvider, conversation_owner_id: str | None = None
+) -> BaseProviderAdapter:
     return get_adapter(
         provider.provider_definition.provider_adapter_name,
-        ProviderAdapterContext(db_session=db_session, provider=provider, conversation_owner_id=conversation_owner_id)
-)
+        ProviderAdapterContext(db_session=db_session, provider=provider, conversation_owner_id=conversation_owner_id),
+    )

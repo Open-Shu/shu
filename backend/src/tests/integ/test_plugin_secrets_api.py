@@ -125,4 +125,3 @@ class PluginSecretsApiTestSuite(BaseIntegrationTestSuite):
 
 if __name__ == "__main__":
     create_test_runner_script(PluginSecretsApiTestSuite, globals())
-

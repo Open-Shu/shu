@@ -21,10 +21,7 @@ import {
   Grid,
 } from '@mui/material';
 import HelpTooltip from './HelpTooltip.jsx';
-import {
-  Save as SaveIcon,
-  Refresh as RefreshIcon,
-} from '@mui/icons-material';
+import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 import { useMutation, useQuery } from 'react-query';
 import { knowledgeBaseAPI, formatError, extractDataFromResponse } from '../services/api';
 import { log } from '../utils/log';
@@ -37,8 +34,8 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
     reference_format: 'markdown',
     context_format: 'detailed',
     prompt_template: 'custom',
-    search_threshold: 0.7,  // Default value to prevent uncontrolled component issues
-    max_results: 10,        // Default value to prevent uncontrolled component issues
+    search_threshold: 0.7, // Default value to prevent uncontrolled component issues
+    max_results: 10, // Default value to prevent uncontrolled component issues
     chunk_overlap_ratio: 0.2, // Default value to prevent uncontrolled component issues
     search_type: 'hybrid',
     // Title Search Configuration
@@ -53,12 +50,10 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
   });
   const [hasChanges, setHasChanges] = useState(false);
 
-
-
   // Fetch current RAG configuration
   const { isLoading, error, refetch } = useQuery(
     ['ragConfig', knowledgeBase?.id],
-    () => knowledgeBase ? knowledgeBaseAPI.getRAGConfig(knowledgeBase.id) : null,
+    () => (knowledgeBase ? knowledgeBaseAPI.getRAGConfig(knowledgeBase.id) : null),
     {
       enabled: !!knowledgeBase?.id && open,
       staleTime: 0, // Always consider data stale
@@ -91,7 +86,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
           });
           setHasChanges(false);
         }
-      }
+      },
     }
   );
 
@@ -138,7 +133,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
   );
 
   const handleConfigChange = (field, value) => {
-    setConfig(prev => ({ ...prev, [field]: value }));
+    setConfig((prev) => ({ ...prev, [field]: value }));
     setHasChanges(true);
   };
 
@@ -151,15 +146,15 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
     refetch();
   };
 
-  if (!knowledgeBase) return null;
+  if (!knowledgeBase) {
+    return null;
+  }
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Box display="flex" alignItems="center" justifyContent="space-between">
-          <Typography variant="h6">
-            Configure RAG Settings - {knowledgeBase.name}
-          </Typography>
+          <Typography variant="h6">Configure RAG Settings - {knowledgeBase.name}</Typography>
           <IconButton onClick={handleReset} disabled={isLoading}>
             <RefreshIcon />
           </IconButton>
@@ -172,7 +167,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
             Loading configuration...
           </Alert>
         )}
-        
+
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             Error loading configuration: {formatError(error)}
@@ -209,7 +204,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                     marks={[
                       { value: 0.1, label: '0.1 (Broad)' },
                       { value: 0.5, label: '0.5' },
-                      { value: 0.9, label: '0.9 (Precise)' }
+                      { value: 0.9, label: '0.9 (Precise)' },
                     ]}
                     valueLabelDisplay="on"
                   />
@@ -323,7 +318,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
                   { value: 1.0, label: '1.0x' },
                   { value: 3.0, label: '3.0x' },
                   { value: 5.0, label: '5.0x' },
-                  { value: 10.0, label: '10.0x' }
+                  { value: 10.0, label: '10.0x' },
                 ]}
                 disabled={!config.title_weighting_enabled}
                 sx={{ mt: 1 }}
@@ -448,9 +443,7 @@ const KBConfigDialog = ({ open, onClose, knowledgeBase }) => {
       </DialogContent>
 
       <DialogActions>
-        <Button onClick={onClose}>
-          Cancel
-        </Button>
+        <Button onClick={onClose}>Cancel</Button>
         <Button
           onClick={handleSave}
           variant="contained"

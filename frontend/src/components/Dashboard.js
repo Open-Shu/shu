@@ -1,22 +1,7 @@
 import React from 'react';
 import { useQuery } from 'react-query';
-import {
-  Grid,
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Chip,
-  Button,
-  Alert,
-  CircularProgress,
-} from '@mui/material';
-import {
-  Storage as KnowledgeBasesIcon,
-
-  HealthAndSafety as HealthIcon,
-  Search as QueryIcon,
-} from '@mui/icons-material';
+import { Grid, Card, CardContent, Typography, Box, Chip, Button, Alert, CircularProgress } from '@mui/material';
+import { Storage as KnowledgeBasesIcon, HealthAndSafety as HealthIcon, Search as QueryIcon } from '@mui/icons-material';
 import { healthAPI, knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
 import { log } from '../utils/log';
 import NotImplemented from './NotImplemented';
@@ -24,11 +9,11 @@ import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName } from '../utils/constants';
 
 function Dashboard() {
-  const { data: healthResponse, isLoading: healthLoading, error: healthError } = useQuery(
-    'health',
-    healthAPI.getHealth,
-    { refetchInterval: 30000 }
-  );
+  const {
+    data: healthResponse,
+    isLoading: healthLoading,
+    error: healthError,
+  } = useQuery('health', healthAPI.getHealth, { refetchInterval: 30000 });
 
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
@@ -36,29 +21,28 @@ function Dashboard() {
   // Extract health data from envelope format
   const health = extractDataFromResponse(healthResponse);
 
-  const { data: knowledgeBasesResponse, isLoading: kbLoading, error: kbError } = useQuery(
-    'knowledgeBases',
-    knowledgeBaseAPI.list,
-    {
-      refetchInterval: 30000,
-      onSuccess: (data) => {
-        log.debug('Dashboard - Knowledge bases response:', data);
-        const extractedData = extractDataFromResponse(data);
-        log.debug('Dashboard - Knowledge bases extracted data:', extractedData);
-        const items = extractItemsFromResponse(data);
-        log.debug('Dashboard - Knowledge bases items:', items);
-        log.debug('Dashboard - Knowledge bases count:', items?.length);
-      },
-      onError: (error) => {
-        log.error('Dashboard - Knowledge bases error:', error);
-      }
-    }
-  );
+  const {
+    data: knowledgeBasesResponse,
+    isLoading: kbLoading,
+    error: kbError,
+  } = useQuery('knowledgeBases', knowledgeBaseAPI.list, {
+    refetchInterval: 30000,
+    onSuccess: (data) => {
+      log.debug('Dashboard - Knowledge bases response:', data);
+      const extractedData = extractDataFromResponse(data);
+      log.debug('Dashboard - Knowledge bases extracted data:', extractedData);
+      const items = extractItemsFromResponse(data);
+      log.debug('Dashboard - Knowledge bases items:', items);
+      log.debug('Dashboard - Knowledge bases count:', items?.length);
+    },
+    onError: (error) => {
+      log.error('Dashboard - Knowledge bases error:', error);
+    },
+  });
 
   // Extract knowledge bases data from envelope format
   const knowledgeBasesData = extractDataFromResponse(knowledgeBasesResponse);
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
-
 
   const getStatusColor = (status) => {
     if (!status || typeof status !== 'string') {
@@ -119,18 +103,17 @@ function Dashboard() {
       )}
 
       {/* Debug Information */}
-      <Alert severity="info" sx={{ mb: 3 }}>
-        <Typography variant="body2">
-          <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} |
-          Loading: {kbLoading ? 'Yes' : 'No'} |
-          Error: {kbError ? 'Yes' : 'No'} |
-          Response: {knowledgeBasesResponse ? 'Present' : 'Missing'} |
-          Items: {knowledgeBases ? 'Present' : 'Missing'} |
-          Total: {knowledgeBasesData?.total || 0} |
-          Raw Response Type: {typeof knowledgeBasesResponse} |
-          Raw Response Keys: {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'}
-        </Typography>
-      </Alert>
+      {process.env.NODE_ENV !== 'production' && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}
+            {kbLoading ? 'Yes' : 'No'} | Error: {kbError ? 'Yes' : 'No'} | Response:{' '}
+            {knowledgeBasesResponse ? 'Present' : 'Missing'} | Items: {knowledgeBases ? 'Present' : 'Missing'} | Total:{' '}
+            {knowledgeBasesData?.total || 0} | Raw Response Type: {typeof knowledgeBasesResponse} | Raw Response Keys:{' '}
+            {knowledgeBasesResponse ? Object.keys(knowledgeBasesResponse).join(', ') : 'None'}
+          </Typography>
+        </Alert>
+      )}
 
       <Grid container spacing={3}>
         {/* System Health */}
@@ -145,11 +128,7 @@ function Dashboard() {
                 <Typography variant="body2" color="text.secondary">
                   API Status
                 </Typography>
-                <Chip
-                  label={health?.status || 'Unknown'}
-                  color={getStatusColor(health?.status)}
-                  size="small"
-                />
+                <Chip label={health?.status || 'Unknown'} color={getStatusColor(health?.status)} size="small" />
               </Box>
               <Typography variant="caption" display="block" sx={{ mt: 1 }}>
                 {getStatusIcon(health?.status)} {health?.status || 'Unknown'}
@@ -178,7 +157,6 @@ function Dashboard() {
             </CardContent>
           </Card>
         </Grid>
-
 
         {/* Query Stats */}
         <Grid item xs={12} md={6} lg={3}>
@@ -212,19 +190,32 @@ function Dashboard() {
                 <Button
                   variant="contained"
                   color="secondary"
-                  onClick={() => window.location.href = '/admin/briefing'}
+                  onClick={() => (window.location.href = '/admin/briefing')}
                 >
                   Run Morning Briefing (Demo/Experimental)
                 </Button>
               </Box>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Experimental/Demo feature — requires Gmail, Google Drive, and Google Calendar plugins to be installed and authorized. This is a hard-coded test of the future "Experience Creator" feature. 
-                <Typography variant="body1" color="text.secondary">The Experience Creator will allow:</Typography>
-                <Typography variant="body2" color="text.secondary">- Run one or more plugin ops with parameters</Typography>
-                <Typography variant="body2" color="text.secondary">- Assemble plugin outputs into a prompt via a template</Typography>
-                <Typography variant="body2" color="text.secondary">- Execute an LLM provider with that prompt</Typography>
-                <Typography variant="body2" color="text.secondary">- Produce a runnable, saveable, reusable experience (with run history)</Typography>
-                <Typography variant="body2" color="text.secondary">- And later, combine with agents and workflows to create automations</Typography>                                                                
+                Experimental/Demo feature — requires Gmail, Google Drive, and Google Calendar plugins to be installed
+                and authorized. This is a hard-coded test of the future "Experience Creator" feature.
+                <Typography variant="body1" color="text.secondary">
+                  The Experience Creator will allow:
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  - Run one or more plugin ops with parameters
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  - Assemble plugin outputs into a prompt via a template
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  - Execute an LLM provider with that prompt
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  - Produce a runnable, saveable, reusable experience (with run history)
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  - And later, combine with agents and workflows to create automations
+                </Typography>
               </Typography>
             </CardContent>
           </Card>

@@ -6,8 +6,9 @@ and maintains its existing public API.
 """
 
 import json
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, Mock
 
 from shu.core.cache import ConfigCache, get_config_cache, get_config_cache_dependency
 from shu.core.cache_backend import CacheBackend, InMemoryCacheBackend
@@ -40,10 +41,10 @@ class TestConfigCache:
         kb_id = "test_kb_123"
         expected_config = {"model": "gpt-4", "temperature": 0.7}
         mock_backend.get.return_value = json.dumps(expected_config)
-        
+
         # Act
         result = await config_cache_with_mock.get_rag_config(kb_id)
-        
+
         # Assert
         assert result == expected_config
         mock_backend.get.assert_called_once_with("config:rag:test_kb_123")
@@ -54,10 +55,10 @@ class TestConfigCache:
         # Arrange
         kb_id = "test_kb_123"
         mock_backend.get.return_value = None
-        
+
         # Act
         result = await config_cache_with_mock.get_rag_config(kb_id)
-        
+
         # Assert
         assert result is None
         mock_backend.get.assert_called_once_with("config:rag:test_kb_123")
@@ -68,16 +69,12 @@ class TestConfigCache:
         # Arrange
         kb_id = "test_kb_123"
         config = {"model": "gpt-4", "temperature": 0.7}
-        
+
         # Act
         await config_cache_with_mock.set_rag_config(kb_id, config)
-        
+
         # Assert
-        mock_backend.set.assert_called_once_with(
-            "config:rag:test_kb_123",
-            json.dumps(config),
-            ttl_seconds=300
-        )
+        mock_backend.set.assert_called_once_with("config:rag:test_kb_123", json.dumps(config), ttl_seconds=300)
 
     @pytest.mark.asyncio
     async def test_get_prompt_template_cache_hit(self, config_cache_with_mock, mock_backend):
@@ -86,10 +83,10 @@ class TestConfigCache:
         template_name = "summarize"
         expected_template = {"prompt": "Summarize: {text}", "max_tokens": 150}
         mock_backend.get.return_value = json.dumps(expected_template)
-        
+
         # Act
         result = await config_cache_with_mock.get_prompt_template(template_name)
-        
+
         # Assert
         assert result == expected_template
         mock_backend.get.assert_called_once_with("config:prompt:summarize")
@@ -100,10 +97,10 @@ class TestConfigCache:
         # Arrange
         template_name = "summarize"
         mock_backend.get.return_value = None
-        
+
         # Act
         result = await config_cache_with_mock.get_prompt_template(template_name)
-        
+
         # Assert
         assert result is None
         mock_backend.get.assert_called_once_with("config:prompt:summarize")
@@ -114,25 +111,21 @@ class TestConfigCache:
         # Arrange
         template_name = "summarize"
         template = {"prompt": "Summarize: {text}", "max_tokens": 150}
-        
+
         # Act
         await config_cache_with_mock.set_prompt_template(template_name, template)
-        
+
         # Assert
-        mock_backend.set.assert_called_once_with(
-            "config:prompt:summarize",
-            json.dumps(template),
-            ttl_seconds=300
-        )
+        mock_backend.set.assert_called_once_with("config:prompt:summarize", json.dumps(template), ttl_seconds=300)
 
     def test_namespace_key_formatting(self, config_cache_with_mock):
         """Test that keys are properly namespaced."""
         cache = config_cache_with_mock
-        
+
         # Test RAG key formatting
         rag_key = cache._make_rag_key("kb_123")
         assert rag_key == "config:rag:kb_123"
-        
+
         # Test prompt key formatting
         prompt_key = cache._make_prompt_key("template_name")
         assert prompt_key == "config:prompt:template_name"
@@ -143,10 +136,10 @@ class TestConfigCache:
         # Arrange
         kb_id = "test_kb_123"
         mock_backend.get.side_effect = Exception("Cache error")
-        
+
         # Act
         result = await config_cache_with_mock.get_rag_config(kb_id)
-        
+
         # Assert
         assert result is None  # Should return None on error, not raise
 
@@ -157,7 +150,7 @@ class TestConfigCache:
         kb_id = "test_kb_123"
         config = {"model": "gpt-4"}
         mock_backend.set.side_effect = Exception("Cache error")
-        
+
         # Act & Assert - should not raise exception
         await config_cache_with_mock.set_rag_config(kb_id, config)
 
@@ -166,7 +159,7 @@ class TestConfigCache:
         """Test get_stats returns basic cache information."""
         # Act
         stats = await config_cache_with_mock.get_stats()
-        
+
         # Assert
         assert "cache_ttl" in stats
         assert "backend_type" in stats
@@ -191,13 +184,13 @@ class TestConfigCacheIntegration:
             "model": "gpt-4",
             "temperature": 0.7,
             "max_tokens": 1000,
-            "system_prompt": "You are a helpful assistant."
+            "system_prompt": "You are a helpful assistant.",
         }
-        
+
         # Act
         await config_cache.set_rag_config(kb_id, config)
         result = await config_cache.get_rag_config(kb_id)
-        
+
         # Assert
         assert result == config
 
@@ -209,13 +202,13 @@ class TestConfigCacheIntegration:
         template = {
             "prompt": "Answer the question: {question}\nContext: {context}",
             "max_tokens": 500,
-            "temperature": 0.1
+            "temperature": 0.1,
         }
-        
+
         # Act
         await config_cache.set_prompt_template(template_name, template)
         result = await config_cache.get_prompt_template(template_name)
-        
+
         # Assert
         assert result == template
 
@@ -225,24 +218,24 @@ class TestConfigCacheIntegration:
         # Arrange
         kb_id = "test_kb_ttl"
         config = {"model": "gpt-3.5-turbo"}
-        
+
         # Override TTL for faster testing
         config_cache._cache_ttl = 1  # 1 second
-        
+
         # Act
         await config_cache.set_rag_config(kb_id, config)
-        
+
         # Should be available immediately
         result1 = await config_cache.get_rag_config(kb_id)
         assert result1 == config
-        
+
         # Wait for expiration (simulate with direct backend access)
         backend = await config_cache._get_backend()
         key = config_cache._make_rag_key(kb_id)
-        
+
         # Manually delete the key to simulate expiration for testing
         await backend.delete(key)
-        
+
         # Should be None after deletion (simulating expiration)
         result2 = await config_cache.get_rag_config(kb_id)
         assert result2 is None
@@ -254,15 +247,15 @@ class TestConfigCacheIntegration:
         same_id = "test_123"
         rag_config = {"type": "rag", "model": "gpt-4"}
         prompt_template = {"type": "prompt", "template": "Hello {name}"}
-        
+
         # Act
         await config_cache.set_rag_config(same_id, rag_config)
         await config_cache.set_prompt_template(same_id, prompt_template)
-        
+
         # Assert - both should be retrievable independently
         retrieved_rag = await config_cache.get_rag_config(same_id)
         retrieved_prompt = await config_cache.get_prompt_template(same_id)
-        
+
         assert retrieved_rag == rag_config
         assert retrieved_prompt == prompt_template
         assert retrieved_rag != retrieved_prompt

@@ -317,6 +317,101 @@ service = SomeService(db, config_manager)  # Service receives config_manager
   - **Impact**: Affects plugin cache, rate limiting, configuration cache, and quota tracking
   - **Deployment flexibility**: Same application code works with or without Redis
 
+#### Queue Configuration
+- `SHU_REDIS_URL`: Redis connection string for queue backend (shared with cache)
+  - **When set and Redis is reachable**: Uses RedisQueueBackend for all queue operations
+  - **When not set**: Uses InMemoryQueueBackend for all queue operations
+  - **Impact**: Affects background job processing, document profiling, scheduled tasks
+  - **Deployment flexibility**: Same application code works with or without Redis
+
+- `SHU_WORKERS_ENABLED`: Enable background workers in this process (default: `true`)
+  - **`true`** (default): Workers run in-process with the API server
+    - Suitable for single-node deployments, development, and bare-metal installs
+    - No additional processes needed - workers start automatically with the API
+    - Uses InMemoryQueueBackend when Redis is not configured
+  - **`false`**: Workers disabled in this process
+    - Use when running separate dedicated worker processes
+    - API process serves HTTP only (no background job processing)
+    - Workers started separately via `python -m shu.worker`
+    - Requires Redis for cross-process queue communication
+
+- `SHU_WORKER_CONCURRENCY`: Number of concurrent worker tasks per process (default: `10`)
+  - Controls how many async worker tasks run concurrently within a single process
+  - Higher values improve throughput for I/O-bound jobs (LLM calls, API requests)
+  - All workers share the same queue backend and compete for jobs
+  - Applies to both inline workers (with API) and dedicated worker processes
+  - Recommended: 8-16 for I/O-bound workloads, lower for CPU-bound work
+
+##### Separate Worker Processes
+When `SHU_WORKERS_ENABLED=false` on the API, start workers separately:
+
+```bash
+# Start a worker consuming all workload types
+python -m shu.worker
+
+# Start a worker with increased concurrency (4 concurrent tasks)
+python -m shu.worker --concurrency 4
+
+# Start a worker for specific workload types only
+python -m shu.worker --workload-types INGESTION,PROFILING
+
+# Start multiple specialized workers (in separate terminals/containers)
+python -m shu.worker --workload-types INGESTION --concurrency 4
+python -m shu.worker --workload-types LLM_WORKFLOW --concurrency 2
+python -m shu.worker --workload-types MAINTENANCE,PROFILING
+```
+
+##### Horizontal Scaling Scenarios
+
+**Scenario 1: Single-Node Development/Bare-Metal**
+```bash
+# No Redis needed, workers run in-process
+SHU_WORKERS_ENABLED=true  # or unset (default)
+# Start API - workers included automatically
+python -m uvicorn shu.main:app --app-dir backend/src
+```
+
+**Scenario 2: Horizontally-Scaled Production**
+```bash
+# Redis required for cross-process communication
+SHU_REDIS_URL=redis://redis:6379/0
+SHU_WORKERS_ENABLED=false  # Disable workers in API process
+
+# Deploy API replicas (no workers)
+# Container 1-N: API only
+python -m uvicorn shu.main:app --app-dir backend/src
+
+# Deploy specialized worker replicas
+# Container A1-AN: Ingestion workers (scale based on document volume)
+python -m shu.worker --workload-types INGESTION
+
+# Container B1-BN: LLM workers (scale based on LLM request volume)
+python -m shu.worker --workload-types LLM_WORKFLOW
+
+# Container C1-CN: Maintenance workers (typically 1-2 replicas)
+python -m shu.worker --workload-types MAINTENANCE,PROFILING
+```
+
+**Scenario 3: Mixed Workload Scaling**
+```bash
+# Scale ingestion workers independently from LLM workers
+# Useful when document ingestion spikes don't correlate with chat usage
+
+# Kubernetes example:
+# - api: 3 replicas, SHU_WORKERS_ENABLED=false
+# - worker-ingestion: 5 replicas, --workload-types INGESTION
+# - worker-llm: 2 replicas, --workload-types LLM_WORKFLOW
+# - worker-maintenance: 1 replica, --workload-types MAINTENANCE,PROFILING
+```
+
+##### WorkloadType Reference
+- **INGESTION**: Document ingestion and indexing tasks (legacy, general ingestion)
+- **INGESTION_OCR**: OCR/text extraction stage of document pipeline (first stage of async ingestion)
+- **INGESTION_EMBED**: Embedding stage of document pipeline (chunking, embedding generation, vector storage)
+- **LLM_WORKFLOW**: LLM-based workflows and chat processing
+- **MAINTENANCE**: Scheduled tasks, cleanup, and system maintenance
+- **PROFILING**: Document profiling (LLM-based analysis)
+
 #### Sync Configuration
 - `SHU_SYNC_TIMEOUT`: Default timeout for sync operations in seconds (default: `3600`)
 - `SHU_SYNC_RETRY_ATTEMPTS`: Default number of retry attempts for failed documents (default: `3`)

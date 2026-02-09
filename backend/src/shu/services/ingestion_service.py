@@ -1,5 +1,4 @@
-"""
-High-level ingestion helpers used by host.kb capability.
+"""High-level ingestion helpers used by host.kb capability.
 
 Implementation Status: Partial
 - Currently implements ingest_document, ingest_email, ingest_text, ingest_thread
@@ -13,20 +12,23 @@ Limitations/Known Issues:
 Security Vulnerabilities:
 - Callers must ensure redaction/PII policies before passing content to ingestion.
 """
+
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
-import asyncio
+
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging import get_logger
-from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
-from ..services.document_service import DocumentService
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
+from ..services.document_service import DocumentService
+
+if TYPE_CHECKING:
+    from ..core.queue_backend import QueueBackend
 
 logger = get_logger(__name__)
 
@@ -34,18 +36,19 @@ logger = get_logger(__name__)
 @dataclass
 class UpsertResult:
     """Result of document upsert operation."""
+
     document: Document
-    extraction: Dict[str, Any]
+    extraction: dict[str, Any]
     skipped: bool
-    skip_reason: Optional[str] = None
+    skip_reason: str | None = None
 
 
 def _build_skipped_result(
     document: Document,
-    extraction: Dict[str, Any],
+    extraction: dict[str, Any],
     ko_id: str,
-    skip_reason: Optional[str] = None,
-) -> Dict[str, Any]:
+    skip_reason: str | None = None,
+) -> dict[str, Any]:
     """Build a result dict for a skipped (unchanged) document.
 
     Centralizes the skip-result pattern to avoid duplication across ingestion functions.
@@ -62,37 +65,20 @@ def _build_skipped_result(
     }
 
 
-# Module-level semaphore for limiting concurrent profiling tasks.
-# Prevents LLM rate-limit storms during bulk imports. Tasks beyond this limit
-# queue in memory until a slot opens. See SHU-211 for persistent queue migration.
-_profiling_semaphore: Optional[asyncio.Semaphore] = None
-
-
-def _get_profiling_semaphore() -> asyncio.Semaphore:
-    """Get or create the profiling semaphore with configured concurrency limit."""
-    global _profiling_semaphore
-    if _profiling_semaphore is None:
-        from ..core.config import get_settings_instance
-        settings = get_settings_instance()
-        _profiling_semaphore = asyncio.Semaphore(settings.profiling_max_concurrent_tasks)
-    return _profiling_semaphore
-
-
 async def _trigger_profiling_if_enabled(document_id: str) -> None:
-    """
-    Trigger async document profiling if enabled (SHU-344).
+    """Trigger async document profiling if enabled (SHU-344).
 
-    This spawns a fire-and-forget background task that:
-    1. Acquires a slot from the profiling semaphore (waits if at capacity)
-    2. Opens a new DB session
-    3. Calls the profiling orchestrator
-    4. Updates document/chunk records with profile data
+    Enqueues a profiling job to the QueueBackend with PROFILING WorkloadType.
+    The job will be processed by a worker consuming from the profiling queue.
+
+    Benefits over asyncio.create_task():
+    - Jobs persist across server restarts (with Redis backend)
+    - Visibility into queue depth and progress
+    - Automatic retry with exponential backoff on transient failures
+    - Horizontal scaling across multiple worker replicas
+    - Concurrency control via worker pool size instead of semaphore
 
     Does not block the caller - ingestion returns immediately.
-    Must be called from an async context to ensure event loop exists.
-
-    Note: Tasks queue in memory if concurrency limit is reached. Tasks are lost
-    on server restart. See SHU-211 for migration to persistent work queue.
     """
     from ..core.config import get_settings_instance
 
@@ -100,52 +86,63 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
     if not settings.enable_document_profiling:
         return
 
-    semaphore = _get_profiling_semaphore()
+    # Import queue backend dependencies
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
 
-    async def _run_profiling():
-        async with semaphore:
-            try:
-                from ..core.database import get_async_session_local
-                from ..core.config import get_config_manager
-                from .side_call_service import SideCallService
-                from .profiling_orchestrator import ProfilingOrchestrator
+    try:
+        # Get the queue backend
+        backend = await get_queue_backend()
 
-                session_local = get_async_session_local()
-                async with session_local() as bg_session:
-                    config_manager = get_config_manager()
-                    side_call_service = SideCallService(bg_session, config_manager)
-                    orchestrator = ProfilingOrchestrator(bg_session, settings, side_call_service)
-                    result = await orchestrator.run_for_document(document_id)
-                    if result.success:
-                        logger.info(
-                            "Document profiling complete: document_id=%s mode=%s tokens_used=%s duration_ms=%s",
-                            document_id,
-                            result.profiling_mode.value,
-                            result.tokens_used,
-                            result.duration_ms,
-                        )
-                    else:
-                        logger.warning(
-                            "Document profiling failed: document_id=%s error=%s",
-                            document_id,
-                            result.error,
-                        )
-            except Exception as e:
-                logger.error(
-                    "Document profiling error: document_id=%s error=%s",
-                    document_id,
-                    str(e),
-                )
+        # Enqueue profiling job with PROFILING WorkloadType
+        # Use higher max_attempts and longer visibility_timeout for LLM calls
+        job = await enqueue_job(
+            backend,
+            WorkloadType.PROFILING,
+            payload={
+                "document_id": document_id,
+                "action": "profile_document",
+            },
+            max_attempts=5,  # Retry up to 5 times for transient failures
+            visibility_timeout=600,  # 10 minutes for LLM API calls
+        )
 
-    # Fire-and-forget - don't await
-    asyncio.create_task(_run_profiling())
+        logger.info(
+            "Document profiling job enqueued",
+            extra={
+                "document_id": document_id,
+                "job_id": job.id,
+                "queue_name": job.queue_name,
+            },
+        )
+    except Exception as e:
+        # Log error but don't fail ingestion if profiling enqueue fails
+        logger.error(
+            "Failed to enqueue profiling job: document_id=%s error=%s",
+            document_id,
+            str(e),
+        )
 
 
 def _infer_file_type(filename: str, mime_type: str) -> str:
     name = (filename or "").lower()
     if name.endswith(".pdf") or mime_type == "application/pdf":
         return "pdf"
-    for ext in (".md", ".txt", ".docx", ".doc", ".rtf", ".html", ".htm", ".eml", ".csv", ".py", ".js", ".xlsx", ".pptx"):
+    for ext in (
+        ".md",
+        ".txt",
+        ".docx",
+        ".doc",
+        ".rtf",
+        ".html",
+        ".htm",
+        ".eml",
+        ".csv",
+        ".py",
+        ".js",
+        ".xlsx",
+        ".pptx",
+    ):
         if name.endswith(ext):
             return ext.lstrip(".")
     if mime_type in (
@@ -172,7 +169,13 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
             return "html"
         if mime_type == "text/csv":
             return "csv"
-        if mime_type in ("text/javascript", "application/javascript", "application/x-javascript", "text/ecmascript", "application/ecmascript"):
+        if mime_type in (
+            "text/javascript",
+            "application/javascript",
+            "application/x-javascript",
+            "text/ecmascript",
+            "application/ecmascript",
+        ):
             return "js"
         if mime_type in ("text/x-python", "application/x-python", "application/x-python-code"):
             return "py"
@@ -180,7 +183,7 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
     return "txt"
 
 
-def _safe_dt(value: Optional[str]) -> Optional[datetime]:
+def _safe_dt(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -188,20 +191,19 @@ def _safe_dt(value: Optional[str]) -> Optional[datetime]:
         if s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except Exception:
         return None
 
 
-def _hashes_match(incoming_source_hash: Optional[str], incoming_content_hash: str,
-                  existing: Document) -> Tuple[bool, str]:
-    """
-    Compare incoming hashes with existing document hashes.
+def _hashes_match(incoming_source_hash: str | None, incoming_content_hash: str, existing: Document) -> tuple[bool, str]:
+    """Compare incoming hashes with existing document hashes.
 
     Priority: source_hash (provider-supplied, e.g., md5Checksum) > content_hash (computed SHA256).
 
     Returns:
         Tuple of (match: bool, matched_hash: str for logging, empty if no comparison possible)
+
     """
     # Prefer source_hash comparison if both sides have it
     if incoming_source_hash and existing.source_hash:
@@ -215,6 +217,74 @@ def _hashes_match(incoming_source_hash: Optional[str], incoming_content_hash: st
     return (False, "")
 
 
+def _check_skip(
+    existing: Document | None,
+    source_hash: str | None,
+    content_hash: str,
+    force_reingest: bool,
+    ko_id: str,
+) -> dict[str, Any] | None:
+    """Check if document ingestion should be skipped due to unchanged content.
+
+    Returns skip result dict if document should be skipped, None otherwise.
+
+    Only skips if:
+    - Document exists
+    - force_reingest is False
+    - Hash matches (source_hash or content_hash)
+    - Document is in terminal successful state (is_ready or is_processed)
+    """
+    if existing is None or force_reingest:
+        return None
+
+    # Check hash match - prefer source_hash, fall back to content_hash
+    hash_matches = False
+
+    if source_hash and existing.source_hash:
+        hash_matches = source_hash == existing.source_hash
+    elif existing.content_hash:
+        hash_matches = content_hash == existing.content_hash
+
+    # Only skip if hash matches AND document is in terminal successful state
+    if hash_matches and existing.is_processed:
+        return {
+            "ko_id": ko_id,
+            "document_id": existing.id,
+            "status": existing.processing_status,
+            "word_count": existing.word_count or 0,
+            "character_count": existing.character_count or 0,
+            "chunk_count": existing.chunk_count or 0,
+            "skipped": True,
+            "skip_reason": "hash_match",
+        }
+
+    return None
+
+
+async def _enqueue_embed_job(queue: QueueBackend, document_id: str, knowledge_base_id: str) -> None:
+    """Enqueue an embedding job for a document.
+
+    Args:
+        queue: QueueBackend instance
+        document_id: Document ID to embed
+        knowledge_base_id: Knowledge base ID
+
+    """
+    from ..core.workload_routing import WorkloadType, enqueue_job
+
+    await enqueue_job(
+        queue,
+        WorkloadType.INGESTION_EMBED,
+        payload={
+            "document_id": document_id,
+            "knowledge_base_id": knowledge_base_id,
+            "action": "embed_document",
+        },
+        max_attempts=3,
+        visibility_timeout=300,
+    )
+
+
 async def _upsert_document_record(
     svc: DocumentService,
     knowledge_base_id: str,
@@ -224,12 +294,11 @@ async def _upsert_document_record(
     title: str,
     file_type: str,
     content: str,
-    extraction: Dict[str, Any],
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
+    extraction: dict[str, Any],
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
 ) -> UpsertResult:
-    """
-    Create or update a document record.
+    """Create or update a document record.
 
     If the document already exists and hashes match (unchanged content),
     returns skipped=True to signal callers to skip chunk recomputation.
@@ -256,6 +325,7 @@ async def _upsert_document_record(
     if existing is None:
         # New document - create it
         from ..schemas.document import DocumentCreate
+
         doc_create = DocumentCreate(
             knowledge_base_id=knowledge_base_id,
             title=normalized_title,
@@ -282,9 +352,11 @@ async def _upsert_document_record(
         return UpsertResult(document=document, extraction=extraction_data, skipped=False)
 
     # Existing document - check if content is unchanged
+    # Only skip if document is in a terminal successful state (PROCESSED).
+    # Documents that are PENDING, in-progress, or ERROR should be re-processed.
     if not force_reingest:
         match, matched_hash = _hashes_match(source_hash, content_hash, existing)
-        if match:
+        if match and existing.is_processed:
             logger.info(
                 "Skipping unchanged document",
                 extra={
@@ -293,7 +365,7 @@ async def _upsert_document_record(
                     "source_id": source_id,
                     "hash": matched_hash,
                     "document_id": existing.id,
-                }
+                },
             )
             return UpsertResult(
                 document=existing,
@@ -329,7 +401,8 @@ async def _upsert_document_record(
     return UpsertResult(document=document, extraction=extraction_data, skipped=False)
 
 
-async def ingest_document(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_document(  # noqa: PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,
@@ -339,176 +412,187 @@ async def ingest_document(
     filename: str,
     mime_type: str,
     source_id: str,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-    ocr_mode: Optional[str] = None,
-) -> Dict[str, Any]:
-    # OCR/text extraction
-    mt = (mime_type or "").lower()
-    # Prefer filename extension when available; allow caller hint via attributes; fall back to MIME type
-    fname = (filename or "")
-    ext_from_name = None
-    if isinstance(fname, str) and "." in fname:
-        ext_from_name = "." + fname.rsplit(".", 1)[-1].lower()
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+    ocr_mode: str | None = None,
+    staging_ttl: int | None = None,
+) -> dict[str, Any]:
+    """Ingest a document asynchronously via queue pipeline.
 
-    ext_map = {
-        "application/pdf": ".pdf",
-        "text/plain": ".txt",
-        "text/markdown": ".md",
-        "text/csv": ".csv",
-        "text/html": ".html",
-        "application/xhtml+xml": ".html",
-        "message/rfc822": ".eml",
-        # JavaScript mimetypes
-        "text/javascript": ".js",
-        "application/javascript": ".js",
-        "application/x-javascript": ".js",
-        "text/ecmascript": ".js",
-        "application/ecmascript": ".js",
-        # Common Python mimetypes observed in the wild
-        "text/x-python": ".py",
-        "application/x-python": ".py",
-        "application/x-python-code": ".py",
-        # Office
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-        # XML
-        "text/xml": ".xml",
-        "application/xml": ".xml",
-    }
+    Creates Document record with PENDING status and enqueues OCR job.
+    Returns immediately without waiting for processing.
 
-    # Optional caller hint via attributes: preferred_extension or force_extension
-    preferred_ext = None
-    try:
-        if attributes and isinstance(attributes, dict):
-            preferred_ext = attributes.get("preferred_extension") or attributes.get("force_extension")
-            if preferred_ext and not str(preferred_ext).startswith("."):
-                preferred_ext = f".{preferred_ext}"
-    except Exception:
-        preferred_ext = None
+    The pipeline stages are:
+    1. PENDING → EXTRACTING: OCR job extracts text
+    2. EXTRACTING → EMBEDDING: Embed job creates chunks and embeddings
+    3. EMBEDDING → PROFILING/PROCESSED: Profiling job (if enabled) or done
 
-    # Choose suffix: caller hint > filename extension > MIME mapping > generic text/* -> .txt > .bin
-    suffix = (
-        preferred_ext
-        or ext_from_name
-        or ext_map.get(mt)
-        or (".txt" if mt.startswith("text/") else ".bin")
-    )
-    file_path = f"/virtual/input{suffix}"
-    extractor = TextExtractor()
-    eff = (ocr_mode or "auto").strip().lower()
-    if eff not in {"auto", "always", "never", "fallback"}:
-        eff = "auto"
-    try:
-        if eff == "fallback":
-            res_no = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=False, kb_config=None, progress_context=None)
-            text = ""
-            meta: Dict[str, Any] = {}
-            if isinstance(res_no, dict):
-                text = str(res_no.get("text") or "")
-                meta = (res_no.get("metadata") or {})
-                if text.strip():
-                    extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
-                else:
-                    res_ocr = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=True, kb_config=None, progress_context=None)
-                    if isinstance(res_ocr, dict):
-                        text = str(res_ocr.get("text") or "")
-                        meta = (res_ocr.get("metadata") or {})
-                    else:
-                        text = str(res_ocr or "")
-                        meta = {}
-                    extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
-            else:
-                text = str(res_no or "")
-                if not text.strip():
-                    res_ocr = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=True, kb_config=None, progress_context=None)
-                    if isinstance(res_ocr, dict):
-                        text = str(res_ocr.get("text") or "")
-                        meta = (res_ocr.get("metadata") or {})
-                    else:
-                        text = str(res_ocr or "")
-                        meta = {}
-                extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
-        else:
-            use_ocr = True if eff == "always" else False if eff == "never" else (mt == "application/pdf")
-            res = await extractor.extract_text(file_path, file_content=file_bytes, use_ocr=use_ocr, kb_config=None, progress_context=None)
-            if isinstance(res, dict):
-                text = str(res.get("text") or "")
-                meta = (res.get("metadata") or {})
-            else:
-                text = str(res or "")
-                meta = {}
-            extraction = {"method": meta.get("method"), "engine": meta.get("engine"), "confidence": meta.get("confidence"), "duration": meta.get("duration"), "details": meta}
-    except UnsupportedFileFormatError:
-        # Preserve a useful reason in extraction details for upstream callers
-        text = ""
-        extraction = {
-            "method": None,
-            "engine": None,
-            "confidence": None,
-            "duration": None,
-            "details": {"error": "unsupported_format", "file_extension": suffix},
-        }
-    except Exception:
-        text = ""
-        extraction = {"method": None, "engine": None, "confidence": None, "duration": None, "details": {}}
+    Args:
+        db: Database session.
+        knowledge_base_id: Target knowledge base ID.
+        plugin_name: Name of the plugin ingesting the document.
+        user_id: User ID performing the ingestion.
+        file_bytes: Raw file bytes to ingest.
+        filename: Original filename.
+        mime_type: MIME type of the file.
+        source_id: Unique source identifier.
+        source_url: Optional source URL.
+        attributes: Optional additional attributes.
+        ocr_mode: Optional OCR mode override.
+        staging_ttl: Optional TTL for staged files (defaults to settings.file_staging_ttl).
 
-    # Persist Document (create or update by kb_id/source_id)
+    """
+    from ..core.cache_backend import get_cache_backend
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
+    from ..models.document import DocumentStatus
+    from ..schemas.document import DocumentCreate
+    from .file_staging_service import FileStagingService
+
+    # Check for existing document with same source_id (for hash-based skip)
     svc = DocumentService(db)
+    existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
+
+    attrs = attributes or {}
+    source_hash = attrs.get("source_hash")
+    force_reingest = bool(attrs.get("force_reingest"))
+
+    # Check if we should skip due to unchanged content
+    # For ingest_document, we only have source_hash (no content yet), so pass empty content_hash
+    ko_id = deterministic_ko_id(f"{plugin_name}:{user_id}", source_id)
+    skip_result = _check_skip(existing, source_hash, "", force_reingest, ko_id)
+    if skip_result:
+        logger.info(
+            "Skipping unchanged document",
+            extra={
+                "kb_id": knowledge_base_id,
+                "source_id": source_id,
+                "hash": source_hash,
+                "document_id": existing.id,
+            },
+        )
+        return skip_result
+
+    # Create document record with PENDING status and empty content
     source_type = f"plugin:{plugin_name}"
     file_type = _infer_file_type(filename, mime_type)
     title = filename or source_id
-    content = text or ""
+    source_modified_at = _safe_dt(attrs.get("modified_at"))
+    effective_source_url = source_url or attrs.get("source_url")
 
-    upsert_result = await _upsert_document_record(
-        svc,
-        knowledge_base_id,
-        source_id=source_id,
-        source_type=source_type,
-        title=title,
-        file_type=file_type,
-        content=content,
-        extraction={
-            "method": extraction.get("method") or ("ocr" if extraction.get("engine") else "text"),
-            "engine": extraction.get("engine") or plugin_name,
-            "confidence": extraction.get("confidence"),
-            "duration": extraction.get("duration"),
-            "details": extraction.get("details"),
-        },
-        source_url=source_url,
-        attributes=attributes,
-    )
-
-    document = upsert_result.document
-    extraction = upsert_result.extraction
-
-    # Skip chunk recomputation if document is unchanged
-    if upsert_result.skipped:
-        return _build_skipped_result(
-            document,
-            extraction,
-            deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
-            upsert_result.skip_reason,
+    if existing is None:
+        # New document - create it with PENDING status
+        doc_create = DocumentCreate(
+            knowledge_base_id=knowledge_base_id,
+            title=title,
+            file_type=file_type,
+            source_type=source_type,
+            source_id=source_id,
+            source_url=effective_source_url,
+            file_size=len(file_bytes) if file_bytes else None,
+            content="",  # Will be populated by OCR handler
+            content_hash=None,
+            source_hash=source_hash,
+            source_modified_at=source_modified_at,
         )
+        created = await svc.create_document(doc_create)
+        from sqlalchemy import select
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        title,
-        content,
+        res = await db.execute(select(Document).where(Document.id == created.id))
+        document = res.scalar_one()
+        # Set status to PENDING atomically with creation
+        document.update_status(DocumentStatus.PENDING)
+        await db.commit()
+    else:
+        # Existing document - update for re-ingestion with PENDING status
+        document = existing
+        document.title = title
+        document.file_type = file_type
+        document.source_type = source_type
+        document.file_size = len(file_bytes) if file_bytes else None
+        document.content = ""  # Will be populated by OCR handler
+        document.content_hash = None
+        if effective_source_url:
+            document.source_url = effective_source_url
+        if source_hash:
+            document.source_hash = source_hash
+        if source_modified_at is not None:
+            document.source_modified_at = source_modified_at
+        # Clear stale extraction metadata so previous OCR results don't persist
+        document.extraction_method = None
+        document.extraction_engine = None
+        document.extraction_confidence = None
+        document.extraction_duration = None
+        document.extraction_metadata = None
+        # Set status to PENDING atomically with update
+        document.update_status(DocumentStatus.PENDING)
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+
+    # Stage file bytes and enqueue OCR job
+    staging_key = None
+    staging_service = None
+    try:
+        cache = await get_cache_backend()
+        staging_service = (
+            FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
+        )
+        staging_key = await staging_service.stage_file(document.id, file_bytes)
+
+        # Enqueue OCR job
+        queue = await get_queue_backend()
+        job_payload = {
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "source_id": source_id,
+            "staging_key": staging_key,
+            "ocr_mode": ocr_mode,
+            "action": "extract_text",
+        }
+
+        await enqueue_job(
+            queue,
+            WorkloadType.INGESTION_OCR,
+            payload=job_payload,
+            max_attempts=3,
+            visibility_timeout=600,  # 10 minutes for large PDFs
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to stage/enqueue document ingestion",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        # Mark document as ERROR so it doesn't stay PENDING forever
+        document.update_status(DocumentStatus.ERROR)
+        document.processing_error = f"Failed to stage/enqueue: {e}"
+        db.add(document)
+        await db.commit()
+        # Clean up staged bytes if staging succeeded but enqueue failed
+        if staging_key and staging_service:
+            await staging_service.delete_staged_file(staging_key)
+        raise
+
+    logger.info(
+        "Document ingestion enqueued",
+        extra={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "source_id": source_id,
+            "staging_key": staging_key,
+        },
     )
-
-    # Trigger async profiling if enabled (SHU-344)
-    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
         "document_id": document.id,
-        "word_count": word_count,
-        "character_count": character_count,
-        "chunk_count": chunk_count,
-        "extraction": extraction,
+        "status": DocumentStatus.PENDING.value,
         "skipped": False,
     }
 
@@ -520,19 +604,19 @@ async def ingest_email(
     plugin_name: str,
     user_id: str,
     subject: str,
-    sender: Optional[str],
-    recipients: Dict[str, List[str]],
-    date: Optional[str],
+    sender: str | None,
+    recipients: dict[str, list[str]],
+    date: str | None,
     message_id: str,
-    thread_id: Optional[str],
-    body_text: Optional[str],
-    body_html: Optional[str] = None,
-    labels: Optional[List[str]] = None,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    thread_id: str | None,
+    body_text: str | None,
+    body_html: str | None = None,
+    labels: list[str] | None = None,
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     # Build an indexable text body
-    header_lines: List[str] = []
+    header_lines: list[str] = []
     header_lines.append(f"Subject: {subject or '(no subject)'}")
     if sender:
         header_lines.append(f"From: {sender}")
@@ -552,6 +636,7 @@ async def ingest_email(
     if not body and body_html:
         # very naive strip; caller should prefer body_text
         import re as _re
+
         s = _re.sub(r"<script[\s\S]*?</script>", " ", body_html, flags=_re.IGNORECASE)
         s = _re.sub(r"<style[\s\S]*?</style>", " ", s, flags=_re.IGNORECASE)
         s = _re.sub(r"<[^>]+>", " ", s)
@@ -566,7 +651,7 @@ async def ingest_email(
     file_type = "email"
     title = subject or "(no subject)"
 
-    extraction_details: Dict[str, Any] = {
+    extraction_details: dict[str, Any] = {
         "external_id": external_id,
         "message_id": message_id,
         "thread_id": thread_id,
@@ -628,7 +713,8 @@ async def ingest_email(
     }
 
 
-async def ingest_text(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_text(  # noqa: PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,
@@ -637,68 +723,145 @@ async def ingest_text(
     title: str,
     content: str,
     source_id: str,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Ingest text content directly via queue pipeline (no OCR needed).
+
+    Creates Document with content and enqueues EMBED job directly,
+    skipping the OCR stage. Returns immediately without waiting for processing.
+
+    The pipeline stages are:
+    1. EMBEDDING: Embed job creates chunks and embeddings
+    2. EMBEDDING → PROFILING/PROCESSED: Profiling job (if enabled) or done
+    """
+    from ..core.queue_backend import get_queue_backend
+    from ..models.document import DocumentStatus
+    from ..schemas.document import DocumentCreate
+
     svc = DocumentService(db)
     source_type = f"plugin:{plugin_name}"
     file_type = "txt"
     effective_title = title or source_id
     effective_content = content or ""
 
-    upsert_result = await _upsert_document_record(
-        svc,
-        knowledge_base_id,
-        source_id=source_id,
-        source_type=source_type,
-        title=effective_title,
-        file_type=file_type,
-        content=effective_content,
-        extraction={
-            "method": "text",
-            "engine": "direct",
-            "confidence": None,
-            "duration": None,
-            "details": {},
-        },
-        source_url=source_url,
-        attributes=attributes,
-    )
+    attrs = attributes or {}
+    source_hash = attrs.get("source_hash")
+    force_reingest = bool(attrs.get("force_reingest"))
 
-    document = upsert_result.document
-    extraction = upsert_result.extraction
+    # Compute content hash once for skip check and document creation
+    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
 
-    # Skip chunk recomputation if document is unchanged
-    if upsert_result.skipped:
-        return _build_skipped_result(
-            document,
-            extraction,
-            deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
-            upsert_result.skip_reason,
+    # Check for existing document with same source_id (for hash-based skip)
+    existing = await svc.get_document_by_source_id(knowledge_base_id, source_id)
+
+    # Check if we should skip due to unchanged content
+    ko_id = deterministic_ko_id(f"{plugin_name}:{user_id}", source_id)
+    skip_result = _check_skip(existing, source_hash, content_hash, force_reingest, ko_id)
+    if skip_result:
+        logger.info(
+            "Skipping unchanged document",
+            extra={
+                "kb_id": knowledge_base_id,
+                "source_id": source_id,
+                "hash": content_hash,
+                "document_id": existing.id,
+            },
         )
+        return skip_result
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        effective_title,
-        effective_content,
+    source_modified_at = _safe_dt(attrs.get("modified_at"))
+    effective_source_url = source_url or attrs.get("source_url")
+
+    if existing is None:
+        # New document - create it with content populated
+        doc_create = DocumentCreate(
+            knowledge_base_id=knowledge_base_id,
+            title=effective_title,
+            file_type=file_type,
+            source_type=source_type,
+            source_id=source_id,
+            source_url=effective_source_url,
+            file_size=len(effective_content) if effective_content else None,
+            content=effective_content,
+            content_hash=content_hash,
+            source_hash=source_hash,
+            source_modified_at=source_modified_at,
+            extraction_method="text",
+            extraction_engine="direct",
+        )
+        created = await svc.create_document(doc_create)
+        from sqlalchemy import select
+
+        res = await db.execute(select(Document).where(Document.id == created.id))
+        document = res.scalar_one()
+    else:
+        # Existing document - update for re-ingestion
+        document = existing
+        document.title = effective_title
+        document.file_type = file_type
+        document.source_type = source_type
+        document.file_size = len(effective_content) if effective_content else None
+        document.content = effective_content
+        document.content_hash = content_hash
+        document.extraction_method = "text"
+        document.extraction_engine = "direct"
+        # Clear stale extraction metadata from previous ingestion (e.g. OCR)
+        document.extraction_confidence = None
+        document.extraction_duration = None
+        document.extraction_metadata = None
+        if effective_source_url:
+            document.source_url = effective_source_url
+        if source_hash:
+            document.source_hash = source_hash
+        if source_modified_at is not None:
+            document.source_modified_at = source_modified_at
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+
+    # Set status to EMBEDDING (skip OCR stage)
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
+
+    # Enqueue embedding job directly (no file staging needed)
+    try:
+        queue = await get_queue_backend()
+        await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+    except Exception as e:
+        logger.error(
+            "Failed to enqueue text ingestion embedding job",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        document.update_status(DocumentStatus.ERROR)
+        document.processing_error = f"Failed to enqueue embedding: {e}"
+        db.add(document)
+        await db.commit()
+        raise
+
+    logger.info(
+        "Text ingestion enqueued (skipping OCR)",
+        extra={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "source_id": source_id,
+        },
     )
-
-    # Trigger async profiling if enabled (SHU-344)
-    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", source_id),
         "document_id": document.id,
-        "word_count": word_count,
-        "character_count": character_count,
-        "chunk_count": chunk_count,
-        "extraction": extraction,
+        "status": DocumentStatus.EMBEDDING.value,
         "skipped": False,
     }
 
 
-async def ingest_thread(
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def ingest_thread(  # noqa: PLR0915
     db: AsyncSession,
     knowledge_base_id: str,
     *,
@@ -707,63 +870,138 @@ async def ingest_thread(
     title: str,
     content: str,
     thread_id: str,
-    source_url: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    # Treat as a text document with file_type 'thread'
+    source_url: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Ingest thread content directly via queue pipeline (no OCR needed).
+
+    Creates Document with content and enqueues EMBED job directly,
+    skipping the OCR stage. Returns immediately without waiting for processing.
+
+    The pipeline stages are:
+    1. EMBEDDING: Embed job creates chunks and embeddings
+    2. EMBEDDING → PROFILING/PROCESSED: Profiling job (if enabled) or done
+    """
+    from ..core.queue_backend import get_queue_backend
+    from ..models.document import DocumentStatus
+    from ..schemas.document import DocumentCreate
+
     svc = DocumentService(db)
     source_type = f"plugin:{plugin_name}"
     file_type = "thread"
     effective_title = title or thread_id
     effective_content = content or ""
 
-    upsert_result = await _upsert_document_record(
-        svc,
-        knowledge_base_id,
-        source_id=thread_id,
-        source_type=source_type,
-        title=effective_title,
-        file_type=file_type,
-        content=effective_content,
-        extraction={
-            "method": "text",
-            "engine": "direct",
-            "confidence": None,
-            "duration": None,
-            "details": {},
-        },
-        source_url=source_url,
-        attributes=attributes,
-    )
+    attrs = attributes or {}
+    source_hash = attrs.get("source_hash")
+    force_reingest = bool(attrs.get("force_reingest"))
 
-    document = upsert_result.document
-    extraction = upsert_result.extraction
+    # Compute content hash once for skip check and document creation
+    content_hash = hashlib.sha256(effective_content.encode("utf-8")).hexdigest()
 
-    # Skip chunk recomputation if document is unchanged
-    if upsert_result.skipped:
-        return _build_skipped_result(
-            document,
-            extraction,
-            deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),
-            upsert_result.skip_reason,
+    # Check for existing document with same source_id (for hash-based skip)
+    existing = await svc.get_document_by_source_id(knowledge_base_id, thread_id)
+
+    # Check if we should skip due to unchanged content
+    ko_id = deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id)
+    skip_result = _check_skip(existing, source_hash, content_hash, force_reingest, ko_id)
+    if skip_result:
+        logger.info(
+            "Skipping unchanged thread",
+            extra={
+                "kb_id": knowledge_base_id,
+                "thread_id": thread_id,
+                "hash": content_hash,
+                "document_id": existing.id,
+            },
         )
+        return skip_result
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        effective_title,
-        effective_content,
+    source_modified_at = _safe_dt(attrs.get("modified_at"))
+    effective_source_url = source_url or attrs.get("source_url")
+
+    if existing is None:
+        # New document - create it with content populated
+        doc_create = DocumentCreate(
+            knowledge_base_id=knowledge_base_id,
+            title=effective_title,
+            file_type=file_type,
+            source_type=source_type,
+            source_id=thread_id,
+            source_url=effective_source_url,
+            file_size=len(effective_content) if effective_content else None,
+            content=effective_content,
+            content_hash=content_hash,
+            source_hash=source_hash,
+            source_modified_at=source_modified_at,
+            extraction_method="text",
+            extraction_engine="direct",
+        )
+        created = await svc.create_document(doc_create)
+        from sqlalchemy import select
+
+        res = await db.execute(select(Document).where(Document.id == created.id))
+        document = res.scalar_one()
+    else:
+        # Existing document - update for re-ingestion
+        document = existing
+        document.title = effective_title
+        document.file_type = file_type
+        document.source_type = source_type
+        document.file_size = len(effective_content) if effective_content else None
+        document.content = effective_content
+        document.content_hash = content_hash
+        document.extraction_method = "text"
+        document.extraction_engine = "direct"
+        # Clear stale extraction metadata from previous ingestion (e.g. OCR)
+        document.extraction_confidence = None
+        document.extraction_duration = None
+        document.extraction_metadata = None
+        if effective_source_url:
+            document.source_url = effective_source_url
+        if source_hash:
+            document.source_hash = source_hash
+        if source_modified_at is not None:
+            document.source_modified_at = source_modified_at
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+
+    # Set status to EMBEDDING (skip OCR stage)
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
+
+    # Enqueue embedding job directly (no file staging needed)
+    try:
+        queue = await get_queue_backend()
+        await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+    except Exception as e:
+        logger.error(
+            "Failed to enqueue thread ingestion embedding job",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        document.update_status(DocumentStatus.ERROR)
+        document.processing_error = f"Failed to enqueue embedding: {e}"
+        db.add(document)
+        await db.commit()
+        raise
+
+    logger.info(
+        "Thread ingestion enqueued (skipping OCR)",
+        extra={
+            "document_id": document.id,
+            "knowledge_base_id": knowledge_base_id,
+            "thread_id": thread_id,
+        },
     )
-
-    # Trigger async profiling if enabled (SHU-344)
-    await _trigger_profiling_if_enabled(document.id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", thread_id),
         "document_id": document.id,
-        "word_count": word_count,
-        "character_count": character_count,
-        "chunk_count": chunk_count,
-        "extraction": extraction,
+        "status": DocumentStatus.EMBEDDING.value,
         "skipped": False,
     }

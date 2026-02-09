@@ -1,31 +1,37 @@
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime, timezone
-import json
 import logging
-import time
 import uuid
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shu.core.exceptions import LLMProviderError, LLMTimeoutError, LLMRateLimitError, LLMError
-from shu.core.config import get_settings_instance
+from shu.core.config import ConfigurationManager, get_settings_instance
+from shu.core.exceptions import LLMError, LLMProviderError, LLMRateLimitError
 from shu.core.rate_limiting import get_rate_limit_service
-from shu.services.providers.events import ProviderStreamEvent
-from shu.services.providers.adapter_base import ProviderContentDeltaEventResult, ProviderErrorEventResult, ProviderEventResult, ProviderFinalEventResult, ProviderReasoningDeltaEventResult, ProviderToolCallEventResult, get_adapter_from_provider
-from shu.core.config import ConfigurationManager
-from shu.services.message_context_builder import MessageContextBuilder
 from shu.llm.client import UnifiedLLMClient
+from shu.services.message_context_builder import MessageContextBuilder
+from shu.services.providers.adapter_base import (
+    ProviderContentDeltaEventResult,
+    ProviderErrorEventResult,
+    ProviderEventResult,
+    ProviderFinalEventResult,
+    ProviderReasoningDeltaEventResult,
+    ProviderToolCallEventResult,
+    get_adapter_from_provider,
+)
+from shu.services.providers.events import ProviderStreamEvent
 
 from ..models.llm_provider import LLMProvider
-from ..services.message_utils import serialize_message_for_sse
 from ..services.chat_types import ChatContext, ChatMessage
+from ..services.message_utils import serialize_message_for_sse
 
 if TYPE_CHECKING:  # pragma: no cover
     from .chat_service import ChatService, ModelExecutionInputs
-    
+
 else:
     ChatService = Any
     ModelExecutionInputs = Any
@@ -39,16 +45,24 @@ class ProviderResponseEvent:
 
     type: Literal["content_delta", "reasoning_delta", "final_message", "user_message", "error"]
     content: Any
-    variant_index: Optional[int] = None
-    model_configuration_id: Optional[str] = None
-    model_configuration: Optional[Dict[str, Any]] = None
-    model_name: Optional[str] = None
-    model_display_name: Optional[str] = None
-    client_temp_id: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    variant_index: int | None = None
+    model_configuration_id: str | None = None
+    model_configuration: dict[str, Any] | None = None
+    model_name: str | None = None
+    model_display_name: str | None = None
+    client_temp_id: str | None = None
+    metadata: dict[str, Any] | None = None
 
     @classmethod
-    def from_provider_event_result(cls, event: ProviderEventResult, variant_index: int, model_configuration_id: str, model_configuration: Dict[str, Any], model_display_name: str, model_name: str):
+    def from_provider_event_result(
+        cls,
+        event: ProviderEventResult,
+        variant_index: int,
+        model_configuration_id: str,
+        model_configuration: dict[str, Any],
+        model_display_name: str,
+        model_name: str,
+    ) -> Self:
         return ProviderResponseEvent(
             type=event.type,
             variant_index=variant_index,
@@ -57,11 +71,11 @@ class ProviderResponseEvent:
             model_name=model_name,
             model_display_name=model_display_name,
             content=event.content,
-            metadata=getattr(event, "metadata", None)
+            metadata=getattr(event, "metadata", None),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
-        data: Dict[str, Any] = {
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
             "event": self.type,
             "variant_index": self.variant_index,
             "model_configuration_id": self.model_configuration_id,
@@ -79,7 +93,13 @@ class ProviderResponseEvent:
 class EnsembleStreamingHelper:
     """Helper that encapsulates ensemble streaming and execution workflows."""
 
-    def __init__(self, chat_service: "ChatService", message_context_builder: MessageContextBuilder, db_session: AsyncSession, config_manager: ConfigurationManager) -> None:
+    def __init__(
+        self,
+        chat_service: "ChatService",
+        message_context_builder: MessageContextBuilder,
+        db_session: AsyncSession,
+        config_manager: ConfigurationManager,
+    ) -> None:
         self.chat_service = chat_service
         self.message_context_builder = message_context_builder
         self.db_session = db_session
@@ -90,7 +110,7 @@ class EnsembleStreamingHelper:
         error_content: str,
         variant_index: int,
         inputs: "ModelExecutionInputs",
-        model_snapshot: Optional[Dict[str, Any]],
+        model_snapshot: dict[str, Any] | None,
         model_display_name: str,
     ) -> ProviderResponseEvent:
         """Create a standardized error event for streaming errors."""
@@ -104,26 +124,31 @@ class EnsembleStreamingHelper:
             model_display_name=model_display_name,
         )
 
-    def _get_tools_enabled(self,  client: UnifiedLLMClient, inputs: "ModelExecutionInputs"):
-        model_functionalities = getattr(inputs.model_configuration, "functionalities") or {}
+    def _get_tools_enabled(self, client: UnifiedLLMClient, inputs: "ModelExecutionInputs"):
+        model_functionalities = inputs.model_configuration.functionalities or {}
         provider: LLMProvider = getattr(client, "provider", None)
         capabilities = get_adapter_from_provider(self.db_session, provider).get_field_with_override("get_capabilities")
         provider_and_model_support_tools = (
             capabilities.get("tools", {}).get("value", False)
-            and (model_functionalities.get("supports_functions", False) or model_functionalities.get("supports_tools", False))  # We used to call it `supports_functions`
+            and (
+                model_functionalities.get("supports_functions", False)
+                or model_functionalities.get("supports_tools", False)
+            )  # We used to call it `supports_functions`
         )
-        chat_plugins_enabled = getattr(self.config_manager.settings, 'chat_plugins_enabled', False)
+        chat_plugins_enabled = getattr(self.config_manager.settings, "chat_plugins_enabled", False)
         return provider_and_model_support_tools and chat_plugins_enabled
-    
+
     async def _get_conversation_owner(self, conversation_id):
-        """
-        Fetches the owner user ID for a conversation by its ID.
-        
-        Parameters:
+        """Fetch the owner user ID for a conversation by its ID.
+
+        Parameters
+        ----------
             conversation_id: Identifier of the conversation to look up.
-        
-        Returns:
+
+        Returns
+        -------
             `str` user ID if the conversation exists and has a user_id, `None` if the conversation is missing, has no user_id, or an error occurs while fetching it.
+
         """
         conversation_owner_id = None
         try:
@@ -141,25 +166,29 @@ class EnsembleStreamingHelper:
         tpm_limit: int,
         estimated_tokens: int = 100,
     ) -> None:
-        """
-        Enforces per-provider requests-per-minute (RPM) and tokens-per-minute (TPM) limits for a user before making an LLM call.
-        
+        """Enforces per-provider requests-per-minute (RPM) and tokens-per-minute (TPM) limits for a user before making an LLM call.
+
         Checks the configured provider limits and, when rate limiting is enabled, queries the rate limit service to verify both RPM and TPM allowances. A limit value of 0 disables that specific check.
-        
-        Parameters:
+
+        Parameters
+        ----------
             user_id (str): ID of the conversation owner / user making the request.
             provider_id (str): Provider identifier to check limits against.
             rpm_limit (int): Requests-per-minute limit for the provider; 0 means no RPM check.
             tpm_limit (int): Tokens-per-minute limit for the provider; 0 means no TPM check.
             estimated_tokens (int): Estimated number of tokens the pending request will consume (used for TPM calculation).
-        
-        Raises:
+
+        Raises
+        ------
             LLMRateLimitError: If the RPM or TPM check fails; error details include provider_id, limit_type ("rpm" or "tpm"), limit, and retry_after.
+
         """
         rate_limit_service = get_rate_limit_service()
         logger.debug(
             "Rate limit service enabled=%s, rpm_limit=%d, tpm_limit=%d",
-            rate_limit_service.enabled, rpm_limit, tpm_limit
+            rate_limit_service.enabled,
+            rpm_limit,
+            tpm_limit,
         )
         if not rate_limit_service.enabled:
             logger.debug("Rate limiting is disabled, skipping checks")
@@ -167,13 +196,28 @@ class EnsembleStreamingHelper:
 
         # Check RPM with provider-specific limit (0 means no limit)
         if rpm_limit > 0:
-            logger.debug("Checking RPM limit: user=%s, provider=%s, limit=%d", user_id, provider_id, rpm_limit)
+            logger.debug(
+                "Checking RPM limit: user=%s, provider=%s, limit=%d",
+                user_id,
+                provider_id,
+                rpm_limit,
+            )
             rpm_result = await rate_limit_service.check_llm_rpm_limit(
                 user_id, provider_id=provider_id, rpm_override=rpm_limit
             )
-            logger.debug("RPM check result: allowed=%s, remaining=%d, limit=%d", rpm_result.allowed, rpm_result.remaining, rpm_result.limit)
+            logger.debug(
+                "RPM check result: allowed=%s, remaining=%d, limit=%d",
+                rpm_result.allowed,
+                rpm_result.remaining,
+                rpm_result.limit,
+            )
             if not rpm_result.allowed:
-                logger.warning("RPM limit exceeded: user=%s, provider=%s, limit=%d", user_id, provider_id, rpm_limit)
+                logger.warning(
+                    "RPM limit exceeded: user=%s, provider=%s, limit=%d",
+                    user_id,
+                    provider_id,
+                    rpm_limit,
+                )
                 raise LLMRateLimitError(
                     f"Provider rate limit exceeded ({rpm_limit} RPM). Retry after {rpm_result.retry_after_seconds}s.",
                     details={
@@ -181,7 +225,7 @@ class EnsembleStreamingHelper:
                         "limit_type": "rpm",
                         "limit": rpm_limit,
                         "retry_after": rpm_result.retry_after_seconds,
-                    }
+                    },
                 )
         else:
             logger.debug("RPM limit is 0, skipping RPM check")
@@ -199,7 +243,7 @@ class EnsembleStreamingHelper:
                         "limit_type": "tpm",
                         "limit": tpm_limit,
                         "retry_after": tpm_result.retry_after_seconds,
-                    }
+                    },
                 )
 
     async def _call_provider(
@@ -208,18 +252,17 @@ class EnsembleStreamingHelper:
         client: UnifiedLLMClient,
         messages: ChatContext,
         inputs: "ModelExecutionInputs",
-        model_snapshot: Dict[str, Any],
-        model_display_name: Optional[str],
+        model_snapshot: dict[str, Any],
+        model_display_name: str | None,
         allowed_to_stream: bool,
         queue: asyncio.Queue,
         variant_index: int,
         tools_enabled: bool,
-    ) -> tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
+    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None]:
+        """Stream provider responses for a single model variant and enqueue interim events to the provided queue.
 
-        """
-        Stream provider responses for a single model variant and enqueue interim events to the provided queue.
-        
-        Parameters:
+        Parameters
+        ----------
             client (UnifiedLLMClient): LLM client to call for chat completions.
             messages (ChatContext): Conversation context to send to the provider.
             inputs (ModelExecutionInputs): Execution inputs including model and configuration.
@@ -229,14 +272,16 @@ class EnsembleStreamingHelper:
             queue (asyncio.Queue): Queue to which intermediate ProviderResponseEvent objects are put.
             variant_index (int): Index of the current model variant within the ensemble.
             tools_enabled (bool): Whether tool-calling is enabled for this run.
-        
-        Returns:
+
+        Returns
+        -------
             tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
                 final_message_event: The provider's final event (content or error) if produced, otherwise None.
                 followup_messages: Additional messages emitted by the provider (e.g., from a tool call) to be sent back for follow-up, or None.
+
         """
-        final_message_event: Optional[ProviderFinalEventResult] = None
-        followup_messages: Optional[List[ChatMessage]] = None
+        final_message_event: ProviderFinalEventResult | None = None
+        followup_messages: list[ChatMessage] | None = None
         llm_params = None
 
         async for stream_event in await client.chat_completion(
@@ -248,7 +293,7 @@ class EnsembleStreamingHelper:
             return_as_stream=True,  # We always stream to our frontends
             tools_enabled=tools_enabled,
         ):
-            stream_event: ProviderEventResult = stream_event
+            stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
             logger.debug("EVENT %s", stream_event)
             if isinstance(stream_event, ProviderToolCallEventResult) and tools_enabled:
                 followup_messages = stream_event.additional_messages
@@ -264,7 +309,10 @@ class EnsembleStreamingHelper:
                             model_display_name=model_display_name,
                         )
                     )
-            elif isinstance(stream_event, (ProviderContentDeltaEventResult, ProviderReasoningDeltaEventResult)) and stream_event.content:
+            elif (
+                isinstance(stream_event, (ProviderContentDeltaEventResult, ProviderReasoningDeltaEventResult))
+                and stream_event.content
+            ):
                 await queue.put(
                     ProviderResponseEvent.from_provider_event_result(
                         stream_event,
@@ -287,45 +335,51 @@ class EnsembleStreamingHelper:
 
         return final_message_event, followup_messages
 
-    async def stream_ensemble_responses(
+    # TODO: Refactor this function. It's too complex (number of branches and statements).
+    async def stream_ensemble_responses(  # noqa: PLR0915
         self,
-        ensemble_inputs: List["ModelExecutionInputs"],
+        ensemble_inputs: list["ModelExecutionInputs"],
         conversation_id: str,
-        parent_message_id_override: Optional[str] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Stream responses from multiple model configurations in parallel and emit multiplexed server-sent-event style events.
-        
+        parent_message_id_override: str | None = None,
+        force_no_streaming: bool = False,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream responses from multiple model configurations in parallel and emit multiplexed server-sent-event style events.
+
         This coroutine concurrently executes each provided ModelExecutionInputs variant, forwards intermediate deltas and final results into a shared queue, persists the final assistant message and usage, and yields each queued ProviderResponseEvent as a dictionary suitable for SSE delivery. The generator yields content and reasoning deltas as they arrive, final_message events when a variant completes, and error events when a variant fails.
-        
-        Parameters:
+
+        Parameters
+        ----------
             ensemble_inputs (List[ModelExecutionInputs]): One entry per model/variant describing provider, model configuration, context, and rate limits to execute.
             conversation_id (str): Identifier of the conversation to which produced assistant messages will be appended.
             parent_message_id_override (Optional[str]): If provided, use this value as the parent message id for all produced messages; otherwise a new UUID is generated and the first variant may reuse it as the message id.
-        
-        Returns:
+            force_no_streaming (bool): If True, force non-streaming mode regardless of provider/model configuration settings.
+
+        Returns
+        -------
             AsyncGenerator[Dict[str, Any], None]: An async generator that yields dictionaries representing ProviderResponseEvent objects (SSE-serializable events) with keys such as `event`/`type`, `content`, `variant_index`, and model/metadata fields.
+
         """
         service = self.chat_service
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         total_variants = len(ensemble_inputs)
 
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
 
         parent_message_id = parent_message_id_override or str(uuid.uuid4())
         use_parent_as_message_id = parent_message_id_override is None
 
         conversation_owner_id = await self._get_conversation_owner(conversation_id)
 
-        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs"):
+        # TODO: Refactor this function. It's too complex (number of branches and statements).
+        async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs") -> None:  # noqa: PLR0915
+            """Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
 
-            """
-            Handle streaming for a single ensemble variant: call the LLM provider (with per-provider rate-limit checks), stream intermediate events into the shared queue, persist the final assistant message, record usage, and enqueue the final or error event.
-            
-            Parameters:
-            	variant_index (int): Zero-based index of the variant within the ensemble.
-            	inputs (ModelExecutionInputs): Execution inputs and configuration for this variant, including provider/model identifiers, context messages, and rate-limit settings.
+            Parameters
+            ----------
+                variant_index (int): Zero-based index of the variant within the ensemble.
+                inputs (ModelExecutionInputs): Execution inputs and configuration for this variant, including provider/model identifiers, context messages, and rate-limit settings.
+
             """
             client = await service.llm_service.get_client(inputs.provider_id, conversation_owner_id)
             config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
@@ -348,7 +402,11 @@ class EnsembleStreamingHelper:
                     estimated_tokens = max(100, estimated_tokens)
                     logger.info(
                         "Checking rate limits: user=%s, provider=%s, rpm_limit=%d, tpm_limit=%d, est_tokens=%d",
-                        conversation_owner_id, inputs.provider_id, inputs.rate_limit_rpm, inputs.rate_limit_tpm, estimated_tokens
+                        conversation_owner_id,
+                        inputs.provider_id,
+                        inputs.rate_limit_rpm,
+                        inputs.rate_limit_tpm,
+                        estimated_tokens,
                     )
                     await self._check_provider_rate_limits(
                         user_id=str(conversation_owner_id),
@@ -364,11 +422,12 @@ class EnsembleStreamingHelper:
                     logger.info("Tool calling enabled for this call")
 
                 allowed_to_stream = (
-                    client.provider.supports_streaming and
-                    (getattr(inputs.model_configuration, "functionalities") or {}).get("supports_streaming", False)
+                    not force_no_streaming
+                    and client.provider.supports_streaming
+                    and (inputs.model_configuration.functionalities or {}).get("supports_streaming", False)
                 )
 
-                final_message_event: Optional[ProviderResponseEvent] = None
+                final_message_event: ProviderResponseEvent | None = None
                 call_messages = inputs.context_messages
 
                 # We loop until the agens are done pulling what they need to pull.
@@ -377,7 +436,7 @@ class EnsembleStreamingHelper:
                     final_message_event, additional_messages = await self._call_provider(
                         client=client,
                         messages=call_messages,
-                        inputs=inputs, 
+                        inputs=inputs,
                         model_snapshot=model_snapshot,
                         model_display_name=model_display_name,
                         allowed_to_stream=allowed_to_stream,
@@ -396,20 +455,23 @@ class EnsembleStreamingHelper:
                     # but keep as a fallback for edge cases
                     raise LLMProviderError(
                         "AI provider response incomplete. Please try again.",
-                        details={"error_type": "NoFinalMessage"}
+                        details={"error_type": "NoFinalMessage"},
                     )
 
                 if final_message_event.type == "error":
                     raise LLMProviderError(final_message_event.content)
 
-                full_content, final_source_metadata = await self.message_context_builder._post_process_references(
+                (
+                    full_content,
+                    final_source_metadata,
+                ) = await self.message_context_builder._post_process_references(
                     final_message_event.content,
                     inputs.source_metadata or [],
                     inputs.knowledge_base_id,
                 )
 
                 if full_content != final_message_event.content and len(full_content) > len(final_message_event.content):
-                    added = full_content[len(final_message_event.content):]
+                    added = full_content[len(final_message_event.content) :]
                     await queue.put(
                         ProviderResponseEvent(
                             type="content_delta",
@@ -422,7 +484,9 @@ class EnsembleStreamingHelper:
                         )
                     )
 
-                metadata = await self._adjust_event_metadata(final_message_event, final_source_metadata, config_metadata, service, start_time)
+                metadata = await self._adjust_event_metadata(
+                    final_message_event, final_source_metadata, config_metadata, service, start_time
+                )
 
                 # TODO: We currently only retain the final assistant message and loose track of the tool calls and reasoning messages. We should fix this at some point.
                 assistant_message = await service.add_message(
@@ -462,16 +526,16 @@ class EnsembleStreamingHelper:
                 )
 
             except LLMError as exc:
-                # LLM-specific errors have user-friendly messages
+                # LLM-specific errors - log full details and pass technical message through
                 logger.error(
                     "LLM streaming failed: %s (type=%s, details=%s)",
                     exc.message,
                     type(exc).__name__,
-                    getattr(exc, 'details', None),
-                    exc_info=True
+                    getattr(exc, "details", None),
+                    exc_info=True,
                 )
                 await service._handle_exception(conversation_id, inputs.model, exc)
-                # Use the exception's message directly - it's already user-friendly
+                # Pass through the technical error message - it will be sanitized by the endpoint
                 await queue.put(
                     self._create_error_event(exc.message, variant_index, inputs, model_snapshot, model_display_name)
                 )
@@ -481,7 +545,7 @@ class EnsembleStreamingHelper:
                     "Unexpected streaming error: %s (type=%s)",
                     exc,
                     type(exc).__name__,
-                    stack_info=True
+                    stack_info=True,
                 )
                 await service._handle_exception(conversation_id, inputs.model, exc)
                 # For unknown errors, show details only in development
@@ -513,10 +577,16 @@ class EnsembleStreamingHelper:
         finally:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _adjust_event_metadata(self, final_message_event: ProviderStreamEvent, final_source_metadata: List[Dict], config_metadata: Dict[str, Any], service: ChatService, start_time: datetime) -> Dict[str, Any]:
-        
+    async def _adjust_event_metadata(
+        self,
+        final_message_event: ProviderStreamEvent,
+        final_source_metadata: list[dict],
+        config_metadata: dict[str, Any],
+        service: ChatService,
+        start_time: datetime,
+    ) -> dict[str, Any]:
         metadata = final_message_event.metadata or {}
-        metadata["response_time_ms"] = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        metadata["response_time_ms"] = (datetime.now(UTC) - start_time).total_seconds() * 1000
         metadata["streamed"] = True
 
         # add citation metadata

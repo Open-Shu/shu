@@ -43,7 +43,19 @@ import PluginUploadDialog from './PluginUploadDialog';
 import PageHelpHeader from './PageHelpHeader';
 import ExtensionIcon from '@mui/icons-material/Extension';
 
-const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpandLimits, onExpandSecrets, onDelete, expanded, limitsExpanded, secretsExpanded, isLoading }) => {
+const PluginCard = ({
+  plugin,
+  onToggleEnabled,
+  onExecute,
+  onExpandSchema,
+  onExpandLimits,
+  onExpandSecrets,
+  onDelete,
+  expanded,
+  limitsExpanded,
+  secretsExpanded,
+  isLoading,
+}) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const menuOpen = Boolean(anchorEl);
 
@@ -63,25 +75,25 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
   // Helper function to get capability tooltips
   const getCapabilityTooltip = (capability) => {
     const tooltips = {
-      'auth': 'Plugin can authenticate users and manage authentication tokens',
-      'storage': 'Plugin can store and retrieve data persistently',
-      'http': 'Plugin can make HTTP requests to external services',
-      'file': 'Plugin can read and write files',
-      'email': 'Plugin can send and receive emails',
-      'calendar': 'Plugin can access and manage calendar events',
-      'search': 'Plugin can perform search operations',
-      'ai': 'Plugin can interact with AI/ML services',
-      'database': 'Plugin can connect to and query databases',
-      'webhook': 'Plugin can receive and process webhook notifications',
-      'oauth': 'Plugin supports OAuth authentication flows',
-      'encryption': 'Plugin can encrypt and decrypt data',
-      'notification': 'Plugin can send notifications to users',
-      'scheduling': 'Plugin can schedule and manage recurring tasks',
-      'monitoring': 'Plugin can monitor system health and metrics',
-      'identity': 'Plugin can access user identity information and profile data',
-      'kb': 'Plugin can interact with knowledge bases for storing and retrieving documents',
-      'secrets': 'Plugin can access and manage encrypted user secrets and credentials',
-      'cache': 'Plugin can use caching mechanisms for improved performance',
+      auth: 'Plugin can authenticate users and manage authentication tokens',
+      storage: 'Plugin can store and retrieve data persistently',
+      http: 'Plugin can make HTTP requests to external services',
+      file: 'Plugin can read and write files',
+      email: 'Plugin can send and receive emails',
+      calendar: 'Plugin can access and manage calendar events',
+      search: 'Plugin can perform search operations',
+      ai: 'Plugin can interact with AI/ML services',
+      database: 'Plugin can connect to and query databases',
+      webhook: 'Plugin can receive and process webhook notifications',
+      oauth: 'Plugin supports OAuth authentication flows',
+      encryption: 'Plugin can encrypt and decrypt data',
+      notification: 'Plugin can send notifications to users',
+      scheduling: 'Plugin can schedule and manage recurring tasks',
+      monitoring: 'Plugin can monitor system health and metrics',
+      identity: 'Plugin can access user identity information and profile data',
+      kb: 'Plugin can interact with knowledge bases for storing and retrieving documents',
+      secrets: 'Plugin can access and manage encrypted user secrets and credentials', // pragma: allowlist secret
+      cache: 'Plugin can use caching mechanisms for improved performance',
     };
     return tooltips[capability] || `Host capability: ${capability}`;
   };
@@ -93,7 +105,8 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
     return {
       bgcolor: colors[colorIndex],
       color: 'white',
-      children: name.charAt(0).toUpperCase() + (name.split('_')[1]?.[0]?.toUpperCase() || name.charAt(1)?.toUpperCase() || ''),
+      children:
+        name.charAt(0).toUpperCase() + (name.split('_')[1]?.[0]?.toUpperCase() || name.charAt(1)?.toUpperCase() || ''),
     };
   };
 
@@ -102,7 +115,7 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
     : [];
   const allowed = Array.isArray(plugin.allowed_feed_ops) ? plugin.allowed_feed_ops : [];
   const defaultOp = plugin.default_feed_op || null;
-  const ops = (enumOps && enumOps.length) ? enumOps : allowed;
+  const ops = enumOps && enumOps.length ? enumOps : allowed;
 
   return (
     <Card
@@ -151,10 +164,24 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
                       Host Capabilities
                     </Typography>
-                    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'wrap', gap: 0.5, minHeight: 20 }}>
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
+                      alignItems="center"
+                      sx={{ flexWrap: 'wrap', gap: 0.5, minHeight: 20 }}
+                    >
                       {plugin.capabilities.slice(0, 2).map((c) => (
                         <Tooltip key={c} title={getCapabilityTooltip(c)} arrow>
-                          <Chip size="small" label={c} variant="outlined" sx={{ fontSize: '0.7rem', height: 20, lineHeight: 1 }} />
+                          <Chip
+                            size="small"
+                            label={c}
+                            variant="outlined"
+                            sx={{
+                              fontSize: '0.7rem',
+                              height: 20,
+                              lineHeight: 1,
+                            }}
+                          />
                         </Tooltip>
                       ))}
                       {plugin.capabilities.length > 2 && (
@@ -185,11 +212,20 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                                 fontSize: '0.875rem',
                                 maxWidth: 300,
                                 p: 2,
-                              }
-                            }
+                              },
+                            },
                           }}
                         >
-                          <Chip size="small" label={`+${plugin.capabilities.length - 2}`} variant="outlined" sx={{ fontSize: '0.7rem', height: 20, lineHeight: 1 }} />
+                          <Chip
+                            size="small"
+                            label={`+${plugin.capabilities.length - 2}`}
+                            variant="outlined"
+                            sx={{
+                              fontSize: '0.7rem',
+                              height: 20,
+                              lineHeight: 1,
+                            }}
+                          />
                         </Tooltip>
                       )}
                     </Stack>
@@ -206,12 +242,17 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
                   Operations
                 </Typography>
-                <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'wrap', gap: 0.5, minHeight: 20 }}>
+                <Stack
+                  direction="row"
+                  spacing={0.5}
+                  alignItems="center"
+                  sx={{ flexWrap: 'wrap', gap: 0.5, minHeight: 20 }}
+                >
                   {ops.slice(0, 3).map((op) => {
                     const feedSafe = allowed.includes(op);
                     const isDefault = defaultOp === op;
                     const opDef = plugin?.input_schema?.properties?.op || {};
-                    const xui = (opDef['x-ui'] || opDef['x_ui']) || {};
+                    const xui = opDef['x-ui'] || opDef['x_ui'] || {};
                     const enumLabels = xui.enum_labels || {};
                     const enumHelp = xui.enum_help || {};
                     const label = enumLabels[String(op)] || String(op);
@@ -222,7 +263,7 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                         size="small"
                         label={label}
                         variant={isDefault ? 'filled' : 'outlined'}
-                        color={isDefault ? 'primary' : (feedSafe ? 'success' : 'default')}
+                        color={isDefault ? 'primary' : feedSafe ? 'success' : 'default'}
                         sx={{ fontSize: '0.7rem', height: 20, lineHeight: 1 }}
                       />
                     );
@@ -230,7 +271,9 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                       <Tooltip key={op} title={help} arrow>
                         <span>{chip}</span>
                       </Tooltip>
-                    ) : chip;
+                    ) : (
+                      chip
+                    );
                   })}
                   {ops.length > 3 && (
                     <Tooltip
@@ -241,7 +284,7 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                           </Typography>
                           {ops.slice(3).map((op) => {
                             const opDef = plugin?.input_schema?.properties?.op || {};
-                            const xui = (opDef['x-ui'] || opDef['x_ui']) || {};
+                            const xui = opDef['x-ui'] || opDef['x_ui'] || {};
                             const enumLabels = xui.enum_labels || {};
                             const enumHelp = xui.enum_help || {};
                             const label = enumLabels[String(op)] || String(op);
@@ -268,11 +311,16 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                             fontSize: '0.875rem',
                             maxWidth: 300,
                             p: 2,
-                          }
-                        }
+                          },
+                        },
                       }}
                     >
-                      <Chip size="small" label={`+${ops.length - 3}`} variant="outlined" sx={{ fontSize: '0.7rem', height: 20, lineHeight: 1 }} />
+                      <Chip
+                        size="small"
+                        label={`+${ops.length - 3}`}
+                        variant="outlined"
+                        sx={{ fontSize: '0.7rem', height: 20, lineHeight: 1 }}
+                      />
                     </Tooltip>
                   )}
                 </Stack>
@@ -331,7 +379,7 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
                     disabled={!plugin.enabled}
                     sx={{
                       bgcolor: plugin.enabled ? 'primary.50' : 'transparent',
-                      '&:hover': { bgcolor: 'primary.100' }
+                      '&:hover': { bgcolor: 'primary.100' },
                     }}
                   >
                     <PlayCircleOutlineIcon fontSize="small" />
@@ -341,11 +389,7 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
 
               {/* More Actions Menu */}
               <Tooltip title="More actions">
-                <IconButton
-                  size="small"
-                  onClick={handleMenuClick}
-                  sx={{ color: 'text.secondary' }}
-                >
+                <IconButton size="small" onClick={handleMenuClick} sx={{ color: 'text.secondary' }}>
                   <MoreVertIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
@@ -357,12 +401,33 @@ const PluginCard = ({ plugin, onToggleEnabled, onExecute, onExpandSchema, onExpa
         <Collapse in={!!expanded} timeout="auto" unmountOnExit>
           <Divider sx={{ my: 2 }} />
           <Box>
-            <Typography variant="subtitle2" gutterBottom>Input Schema</Typography>
-            <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1, border: '1px solid', borderColor: 'grey.200', mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Input Schema
+            </Typography>
+            <Box
+              sx={{
+                bgcolor: 'grey.50',
+                p: 2,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'grey.200',
+                mb: 2,
+              }}
+            >
               <JSONPretty data={plugin.input_schema || {}} />
             </Box>
-            <Typography variant="subtitle2" gutterBottom>Output Schema</Typography>
-            <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1, border: '1px solid', borderColor: 'grey.200' }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Output Schema
+            </Typography>
+            <Box
+              sx={{
+                bgcolor: 'grey.50',
+                p: 2,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'grey.200',
+              }}
+            >
               <JSONPretty data={plugin.output_schema || {}} />
             </Box>
           </Box>
@@ -450,16 +515,17 @@ export default function PluginsAdmin() {
   const enableMut = useMutation(
     ({ name, enabled }) => pluginsAPI.setEnabled(name, enabled).then(extractDataFromResponse),
     {
-      onSuccess: () => { qc.invalidateQueries(['plugins', 'list']); },
+      onSuccess: () => {
+        qc.invalidateQueries(['plugins', 'list']);
+      },
     }
   );
 
-  const syncMut = useMutation(
-    () => pluginsAPI.sync().then(extractDataFromResponse),
-    {
-      onSuccess: () => { qc.invalidateQueries(['plugins', 'list']); },
-    }
-  );
+  const syncMut = useMutation(() => pluginsAPI.sync().then(extractDataFromResponse), {
+    onSuccess: () => {
+      qc.invalidateQueries(['plugins', 'list']);
+    },
+  });
 
   const handleToggleEnabled = (name, enabled) => {
     enableMut.mutate({ name, enabled });
@@ -470,7 +536,6 @@ export default function PluginsAdmin() {
   };
 
   const handleExpandSchema = (name) => {
-
     setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
@@ -482,16 +547,19 @@ export default function PluginsAdmin() {
     setSecretsExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
-  const enabledCount = plugins.filter(t => t.enabled).length;
+  const enabledCount = plugins.filter((t) => t.enabled).length;
   const totalCount = plugins.length;
 
-  const deleteMut = useMutation(
-    (name) => pluginsAPI.deletePlugin(name).then(extractDataFromResponse),
-    { onSuccess: () => { qc.invalidateQueries(['plugins', 'list']); } }
-  );
+  const deleteMut = useMutation((name) => pluginsAPI.deletePlugin(name).then(extractDataFromResponse), {
+    onSuccess: () => {
+      qc.invalidateQueries(['plugins', 'list']);
+    },
+  });
 
   const onDelete = (name) => {
-    if (!window.confirm('Delete this plugin and remove its files from the server?')) return;
+    if (!window.confirm('Delete this plugin and remove its files from the server?')) {
+      return;
+    }
     deleteMut.mutate(name);
   };
 
@@ -519,11 +587,7 @@ export default function PluginsAdmin() {
         <Stack direction="row" spacing={1}>
           <Tooltip title="Upload a plugin package (.zip/.tgz) to install into the server">
             <span>
-              <Button
-                variant="contained"
-                onClick={() => setUploadOpen(true)}
-                sx={{ minWidth: 140 }}
-              >
+              <Button variant="contained" onClick={() => setUploadOpen(true)} sx={{ minWidth: 140 }}>
                 Upload Plugin
               </Button>
             </span>
@@ -569,7 +633,9 @@ export default function PluginsAdmin() {
         <Box display="flex" alignItems="center" justifyContent="center" py={8}>
           <Stack alignItems="center" spacing={2}>
             <CircularProgress size={40} />
-            <Typography variant="body2" color="text.secondary">Loading plugins...</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Loading plugins...
+            </Typography>
           </Stack>
         </Box>
       )}
@@ -583,7 +649,7 @@ export default function PluginsAdmin() {
             borderColor: 'error.200',
             borderRadius: 1,
             p: 2,
-            mb: 3
+            mb: 3,
           }}
         >
           <Typography color="error.main">{formatError(error)}</Typography>
@@ -601,7 +667,7 @@ export default function PluginsAdmin() {
                 bgcolor: 'grey.50',
                 borderRadius: 2,
                 border: '1px dashed',
-                borderColor: 'grey.300'
+                borderColor: 'grey.300',
               }}
             >
               <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -640,11 +706,7 @@ export default function PluginsAdmin() {
         </Stack>
       )}
 
-      <PluginExecutionModal
-        open={!!execPlugin}
-        plugin={execPlugin}
-        onClose={() => setExecPlugin(null)}
-      />
+      <PluginExecutionModal open={!!execPlugin} plugin={execPlugin} onClose={() => setExecPlugin(null)} />
       <PluginUploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
@@ -656,4 +718,3 @@ export default function PluginsAdmin() {
     </Box>
   );
 }
-

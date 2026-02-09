@@ -1,21 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Box,
-  Button,
-  Paper,
-  Alert,
-  Drawer,
-  Stack,
-  Typography,
-  useMediaQuery,
-} from '@mui/material';
+import { Box, Button, Paper, Alert, Drawer, Stack, Typography, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import {
-  Add as AddIcon,
-  ChatBubbleOutline as ChatIcon,
-  Dashboard as DashboardIcon,
-} from '@mui/icons-material';
+import { Add as AddIcon, ChatBubbleOutline as ChatIcon, Dashboard as DashboardIcon } from '@mui/icons-material';
 
 import ConversationSidebar from './ConversationSidebar';
 import ChatHeader from './ChatHeader';
@@ -60,7 +47,6 @@ const ModernChatView = ({
   createConversationButtonDisabled,
   mobileSidebarOpen,
   onCloseMobileSidebar,
-  onToggleMobileSidebar,
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -72,11 +58,7 @@ const ModernChatView = ({
     <>
       <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
         {/* Desktop sidebar - always visible */}
-        {!isMobile && (
-          <Box sx={{ width: SIDEBAR_WIDTH, flexShrink: 0 }}>
-            {sidebarContent}
-          </Box>
-        )}
+        {!isMobile && <Box sx={{ width: SIDEBAR_WIDTH, flexShrink: 0 }}>{sidebarContent}</Box>}
 
         {/* Mobile sidebar - drawer */}
         {isMobile && (
@@ -96,13 +78,17 @@ const ModernChatView = ({
           </Drawer>
         )}
 
-        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <Box
+          sx={{
+            flexGrow: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+          }}
+        >
           {selectedConversation ? (
             <>
-              <ChatHeader
-                {...headerProps}
-                isMobile={isMobile}
-              />
+              <ChatHeader {...headerProps} isMobile={isMobile} />
 
               <AutomationMenu {...automationMenuProps} />
 
@@ -116,7 +102,14 @@ const ModernChatView = ({
 
               <DocumentPreview {...documentPreviewProps} />
 
-              <Paper sx={{ p: { xs: 1, sm: 1.5 }, borderRadius: 0, borderTop: 1, borderColor: 'divider' }}>
+              <Paper
+                sx={{
+                  p: { xs: 1, sm: 1.5 },
+                  borderRadius: 0,
+                  borderTop: 1,
+                  borderColor: 'divider',
+                }}
+              >
                 {error && (
                   <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
                     {error}
@@ -131,9 +124,7 @@ const ModernChatView = ({
                 <InputBar {...inputBarProps} isMobile={isMobile} />
               </Paper>
 
-              {pluginsEnabled && (
-                <PluginPickerDialog {...pluginPickerDialogProps} />
-              )}
+              {pluginsEnabled && <PluginPickerDialog {...pluginPickerDialogProps} />}
 
               {pluginsEnabled && pluginExecutionModalProps.plugin && (
                 <PluginExecutionModal {...pluginExecutionModalProps} />

@@ -1,0 +1,88 @@
+{
+  "extends": [
+    "react-app",
+    "react-app/jest",
+    "eslint:recommended",
+    "plugin:react/recommended",
+    "plugin:react-hooks/recommended",
+    "plugin:prettier/recommended"
+  ],
+  "plugins": ["react", "react-hooks", "prettier"],
+  "ignorePatterns": ["*.json", "node_modules/", "build/", "coverage/"],
+  "rules": {
+    "prettier/prettier": "error",
+    "react/no-unescaped-entities": "off",
+    "no-empty": "off",
+    "no-console": [
+      "warn",
+      {
+        "allow": ["warn", "error"]
+      }
+    ],
+    "no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_"
+      }
+    ],
+    "react/prop-types": "off",
+    "react/react-in-jsx-scope": "off",
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn",
+    "prefer-const": "error",
+    "no-var": "error",
+    "eqeqeq": ["error", "always"],
+    "curly": ["error", "all"],
+    "max-lines": [
+      "warn",
+      {
+        "max": 500,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "max-lines-per-function": [
+      "warn",
+      {
+        "max": 100,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "complexity": ["warn", 10],
+    "no-magic-numbers": [
+      "warn",
+      {
+        "ignore": [0, 1, -1],
+        "ignoreArrayIndexes": true
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["**/__tests__/**/*", "**/*.test.js", "**/*.test.jsx"],
+      "rules": {
+        "no-import-assign": "off",
+        "testing-library/no-node-access": "warn",
+        "testing-library/prefer-screen-queries": "warn",
+        "testing-library/no-wait-for-multiple-assertions": "warn",
+        "testing-library/no-container": "warn",
+        "jest/no-conditional-expect": "warn",
+        "no-magic-numbers": "off",
+        "max-lines-per-function": "off",
+        "max-lines": "off"
+      }
+    }
+  ],
+  "settings": {
+    "react": {
+      "version": "detect"
+    }
+  },
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "node": true,
+    "jest": true
+  }
+}

@@ -63,7 +63,16 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
         borderColor: 'divider',
       }}
     >
-      <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Box
+        sx={{
+          p: 2,
+          borderBottom: 1,
+          borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+        }}
+      >
         <Button
           fullWidth
           variant="outlined"
@@ -97,8 +106,8 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
           variant="outlined"
           autoComplete="off"
           InputProps={{
-            endAdornment: (searchValue && searchValue.length > 0)
-              ? (
+            endAdornment:
+              searchValue && searchValue.length > 0 ? (
                 <InputAdornment position="end">
                   <IconButton
                     size="small"
@@ -110,8 +119,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     <ClearIcon fontSize="small" />
                   </IconButton>
                 </InputAdornment>
-              )
-              : null
+              ) : null,
           }}
         />
         {searchFeedback ? (
@@ -149,18 +157,17 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                 }}
               >
                 <Tooltip
-                  title={(
+                  title={
                     <Box sx={{ maxWidth: 360, p: 0.5 }}>
                       {conversation.summary_text ? (
-                        <MarkdownRenderer 
-                          content={conversation.summary_text} 
-                          isDarkMode={isDarkMode}
-                        />
+                        <MarkdownRenderer content={conversation.summary_text} isDarkMode={isDarkMode} />
                       ) : (
-                        <Typography variant="caption" color="text.secondary">No summary yet</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          No summary yet
+                        </Typography>
                       )}
                     </Box>
-                  )}
+                  }
                   placement="right"
                   arrow
                   disableHoverListener={!conversation.summary_text}
@@ -175,9 +182,10 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                       pr: 1,
                       minHeight: 56,
                       border: `1px solid ${chatStyles.conversationBorderColor}`,
-                      color: selectedConversationId === conversation.id
-                        ? chatStyles.conversationSelectedText
-                        : theme.palette.text.primary,
+                      color:
+                        selectedConversationId === conversation.id
+                          ? chatStyles.conversationSelectedText
+                          : theme.palette.text.primary,
                       '&.Mui-selected': {
                         bgcolor: chatStyles.conversationSelectedBg,
                         color: chatStyles.conversationSelectedText,
@@ -197,9 +205,10 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                           <Typography
                             variant="caption"
                             sx={{
-                              color: selectedConversationId === conversation.id
-                                ? alpha(chatStyles.conversationSelectedText, 0.85)
-                                : theme.palette.text.secondary,
+                              color:
+                                selectedConversationId === conversation.id
+                                  ? alpha(chatStyles.conversationSelectedText, 0.85)
+                                  : theme.palette.text.secondary,
                               fontWeight: 500,
                             }}
                           >
@@ -209,9 +218,10 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                             <KnowledgeBaseIcon
                               sx={{
                                 fontSize: 12,
-                                color: selectedConversationId === conversation.id
-                                  ? theme.palette.secondary.main
-                                  : theme.palette.primary.main,
+                                color:
+                                  selectedConversationId === conversation.id
+                                    ? theme.palette.secondary.main
+                                    : theme.palette.primary.main,
                               }}
                             />
                           )}
@@ -224,15 +234,21 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                             />
                           )}
                           {conversation?.meta?.title_locked && (
-                            <Chip size="small" icon={<LockIcon sx={{ fontSize: 12 }} />} label="Locked" variant="outlined" />
+                            <Chip
+                              size="small"
+                              icon={<LockIcon sx={{ fontSize: 12 }} />}
+                              label="Locked"
+                              variant="outlined"
+                            />
                           )}
                         </Box>
                       }
                       primaryTypographyProps={{
                         sx: {
-                          color: selectedConversationId === conversation.id
-                            ? chatStyles.conversationSelectedText
-                            : theme.palette.text.primary,
+                          color:
+                            selectedConversationId === conversation.id
+                              ? chatStyles.conversationSelectedText
+                              : theme.palette.text.primary,
                           fontWeight: 600,
                         },
                       }}
@@ -242,7 +258,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
 
                 <IconButton
                   className="conversation-action-button"
-                  aria-label={conversation.is_favorite ? "Remove from favorites" : "Add to favorites"}
+                  aria-label={conversation.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
                   onClick={(event) => {
                     event.stopPropagation();
                     onToggleFavorite?.(conversation);
@@ -255,7 +271,10 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
                     transition: 'opacity 0.2s',
                     color: conversation.is_favorite ? theme.palette.warning.main : theme.palette.text.secondary,
                     '&:hover': {
-                      bgcolor: alpha(conversation.is_favorite ? theme.palette.warning.main : theme.palette.primary.main, 0.12),
+                      bgcolor: alpha(
+                        conversation.is_favorite ? theme.palette.warning.main : theme.palette.primary.main,
+                        0.12
+                      ),
                     },
                     width: 28,
                     height: 28,

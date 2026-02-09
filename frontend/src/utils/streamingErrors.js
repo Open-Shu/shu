@@ -90,7 +90,7 @@ const ERROR_MESSAGES = {
 async function parseResponseError(response) {
   const retryAfterHeader = response.headers.get('Retry-After');
   const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : null;
-  
+
   let bodyError = null;
   try {
     const contentType = response.headers.get('Content-Type') || '';
@@ -98,14 +98,10 @@ async function parseResponseError(response) {
       const json = await response.json();
       // Handle envelope format: { error: { message: "...", code: "..." } }
       if (json?.error?.message) {
-        bodyError = typeof json.error.message === 'string' 
-          ? json.error.message 
-          : JSON.stringify(json.error.message);
+        bodyError = typeof json.error.message === 'string' ? json.error.message : JSON.stringify(json.error.message);
       } else if (json?.detail) {
         // FastAPI HTTPException format
-        bodyError = typeof json.detail === 'string' 
-          ? json.detail 
-          : JSON.stringify(json.detail);
+        bodyError = typeof json.detail === 'string' ? json.detail : JSON.stringify(json.detail);
       } else if (json?.message) {
         bodyError = json.message;
       }
@@ -113,7 +109,7 @@ async function parseResponseError(response) {
   } catch {
     // Body parsing failed, continue with status-based message
   }
-  
+
   return { bodyError, retryAfter };
 }
 
@@ -127,28 +123,25 @@ export async function createStreamingErrorFromResponse(response) {
     userMessage: `Request failed (${status})`,
     retryable: status >= 500,
   };
-  
+
   let userMessage = statusInfo.userMessage;
-  
+
   // For 429, include retry-after info if available
   if (status === 429 && retryAfter) {
     userMessage = `Too many requests. Please try again in ${retryAfter} seconds.`;
   }
-  
+
   // If we got a specific error message from the body, use it
   if (bodyError) {
     userMessage = bodyError;
   }
-  
-  return new StreamingError(
-    `HTTP ${status}: ${response.statusText}`,
-    {
-      status,
-      retryable: statusInfo.retryable,
-      retryAfter,
-      userMessage,
-    }
-  );
+
+  return new StreamingError(`HTTP ${status}: ${response.statusText}`, {
+    status,
+    retryable: statusInfo.retryable,
+    retryAfter,
+    userMessage,
+  });
 }
 
 /**

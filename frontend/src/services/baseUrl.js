@@ -4,7 +4,9 @@ import { log } from '../utils/log';
 // Note: No hardcoded port; set REACT_APP_API_BASE_URL to control host:port.
 export function getApiBaseUrl() {
   const explicit = process.env.REACT_APP_API_BASE_URL; // e.g., "http://localhost:8000" or "https://shu.mxw.ai"
-  if (explicit) return explicit;
+  if (explicit) {
+    return explicit;
+  }
 
   // Warn in local dev if running on :3000 without explicit API base, since WS may not proxy correctly
   try {
@@ -12,7 +14,9 @@ export function getApiBaseUrl() {
     if ((u.hostname === 'localhost' || u.hostname === '127.0.0.1') && u.port === '3000') {
       // Visible warning preferred by project standards
       // eslint-disable-next-line no-console
-      log.warn('[Shu] REACT_APP_API_BASE_URL not set; using same-origin (localhost:3000). If WebSocket upgrades fail, set REACT_APP_API_BASE_URL=http://localhost:8000');
+      log.warn(
+        '[Shu] REACT_APP_API_BASE_URL not set; using same-origin (localhost:3000). If WebSocket upgrades fail, set REACT_APP_API_BASE_URL=http://localhost:8000'
+      );
     }
     return `${u.protocol}//${u.host}`;
   } catch (e) {
@@ -38,4 +42,3 @@ export function getWsBaseUrl() {
     return `${protocol}//${window.location.host}`;
   }
 }
-

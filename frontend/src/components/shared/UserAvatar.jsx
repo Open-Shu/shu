@@ -7,7 +7,9 @@ const MAX_RETRIES = 2;
 
 const addCacheBuster = (url, n) => {
   try {
-    if (!url) return url;
+    if (!url) {
+      return url;
+    }
     const u = new URL(url, window.location.origin);
     u.searchParams.set('shu_avoid_cache', String(Date.now()));
     if (typeof n === 'number') {
@@ -38,7 +40,9 @@ const UserAvatar = ({ user, size = 32, fallbackChar = 'U', sx = {} }) => {
   }, [baseUrl]);
 
   const effectiveSrc = useMemo(() => {
-    if (!baseUrl || broken) return null;
+    if (!baseUrl || broken) {
+      return null;
+    }
     return retry > 0 ? addCacheBuster(baseUrl, retry) : baseUrl;
   }, [baseUrl, broken, retry]);
 
@@ -59,7 +63,14 @@ const UserAvatar = ({ user, size = 32, fallbackChar = 'U', sx = {} }) => {
         crossOrigin: 'anonymous',
         onError: handleError,
       }}
-      sx={{ width: size, height: size, backgroundColor: 'background.paper', color: 'primary.main', fontWeight: 600, ...sx }}
+      sx={{
+        width: size,
+        height: size,
+        backgroundColor: 'background.paper',
+        color: 'primary.main',
+        fontWeight: 600,
+        ...sx,
+      }}
     >
       {fallbackChar}
     </Avatar>

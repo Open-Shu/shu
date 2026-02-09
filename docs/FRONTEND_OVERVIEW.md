@@ -159,4 +159,3 @@ Streaming completion contract:
   - Add/update the UI plan in this doc (section above)
   - Update task files to reflect UI work (if not already present)
   - Defer actual UI edits if the user requested backend‑only scope; otherwise implement using the scripts and patterns above
-
