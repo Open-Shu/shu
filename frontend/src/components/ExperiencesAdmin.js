@@ -39,6 +39,7 @@ import ImportExperienceWizard from './ImportExperienceWizard';
 import PageHelpHeader from './PageHelpHeader';
 import { MORNING_BRIEFING_YAML } from '../utils/morningBriefingTemplate';
 import { keyframes } from '@mui/system';
+import log from '../utils/log';
 
 // Pulsing animation for highlighting the import button
 const pulseAnimation = keyframes`
@@ -521,7 +522,7 @@ export default function ExperiencesAdmin() {
         onSuccess={handleImportSuccess}
         prePopulatedYAML={prePopulatedYAML}
         onError={(error) => {
-          console.error('Import failed:', error);
+          log.error('Import failed:', error);
           // Keep wizard open to show error - the wizard handles error display
         }}
       />

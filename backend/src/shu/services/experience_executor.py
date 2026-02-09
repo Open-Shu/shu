@@ -510,14 +510,14 @@ class ExperienceExecutor:
             if user_timezone:
                 user_tz_str = user_timezone
         except Exception as e:
-            logger.warning(f"Failed to get user timezone preference: {e}")
+            logger.warning("Failed to get user timezone preference: %s", e)
 
         # Convert to user's timezone
         try:
             user_tz = zoneinfo.ZoneInfo(user_tz_str)
             now_local = now_utc.astimezone(user_tz)
         except Exception as e:
-            logger.warning(f"Invalid timezone '{user_tz_str}', falling back to UTC: {e}")
+            logger.warning("Invalid timezone '%s', falling back to UTC: %s", user_tz_str, e)
             now_local = now_utc
             user_tz_str = "UTC"
 
@@ -573,7 +573,7 @@ class ExperienceExecutor:
             tmpl = self.jinja_env.from_string(template)
             return tmpl.render(**context)
         except (TemplateSyntaxError, UndefinedError) as e:
-            logger.warning(f"Template rendering failed: {e}")
+            logger.warning("Template rendering failed: %s", e)
             return template
 
     def _render_params(self, params_template: dict | None, context: dict) -> dict[str, Any]:
@@ -708,13 +708,14 @@ class ExperienceExecutor:
 
         # Guard against None return (should not happen with current implementation, but defensive)
         if result is None:
-            logger.warning(f"Decision control step '{step.step_key}' returned None, using safe default")
+            logger.warning("Decision control step '%s' returned None, using safe default", step.step_key)
             result = {"should_execute": False, "rationale": "No decision returned", "metadata": {}}
 
         logger.info(
-            f"Decision control step '{step.step_key}' executed: "
-            f"should_execute={result.get('should_execute')}, "
-            f"rationale={result.get('rationale')}"
+            "Decision control step '%s' executed: should_execute=%s, rationale=%s",
+            step.step_key,
+            result.get("should_execute"),
+            result.get("rationale"),
         )
 
         return result

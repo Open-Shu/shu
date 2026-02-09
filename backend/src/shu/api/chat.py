@@ -6,6 +6,7 @@ messages, and LLM interactions.
 
 import json
 import traceback
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path as PathlibPath
 from typing import Any, Literal
@@ -72,7 +73,9 @@ def _sanitize_chat_error_message(error_content: str) -> str:
     return "The request failed. You may want to try another model."
 
 
-async def create_sse_stream_generator(event_generator, error_context: str = "streaming"):
+async def create_sse_stream_generator(
+    event_generator: AsyncGenerator[Any, None], error_context: str = "streaming"
+) -> AsyncGenerator[str, None]:
     """Wrap an async event generator with robust error handling for SSE streaming.
 
     Args:
