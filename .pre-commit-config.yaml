@@ -15,6 +15,7 @@ repos:
       # Run the formatter
       - id: ruff-format
         types_or: [python, pyi]
+        exclude: ^(plugins)
 
   # Python: Check for common security issues
   - repo: https://github.com/PyCQA/bandit
