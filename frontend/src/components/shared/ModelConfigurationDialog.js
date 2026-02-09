@@ -800,10 +800,12 @@ const ModelConfigurationDialog = ({
                       Examples:
                     </Typography>
                     <Typography variant="body2" component="div">
-                      • OpenAI: gpt-4, gpt-3.5-turbo
+                      • OpenAI: gpt-4o, gpt-4o-mini, o1, o1-mini
                       <br />
-                      • Anthropic: claude-3-opus, claude-3-sonnet
-                      <br />• Ollama: llama2, mistral, codellama
+                      • Anthropic: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
+                      <br />
+                      • Ollama: llama3.3, qwen2.5, deepseek-r1
+                      <br />• LM Studio: Any model loaded in LM Studio
                     </Typography>
                   </Box>
                 }

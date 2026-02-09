@@ -139,7 +139,11 @@ const LLMProviderForm = ({
               hasExistingValue={!!provider.has_api_key}
               placeholder={provider.has_api_key ? 'Leave empty to keep existing key' : undefined}
               editPlaceholder="Enter API key"
-              helperText={setupInstructions ? `Format: ${setupInstructions.apiKeyFormat}` : undefined}
+              helperText={
+                setupInstructions
+                  ? `Format: ${setupInstructions.apiKeyFormat}`
+                  : 'Optional for local providers (Ollama, LM Studio)'
+              }
             />
           </Box>
           <Box sx={{ mt: 3 }}>
@@ -155,8 +159,8 @@ const LLMProviderForm = ({
                   <Typography variant="body2" component="div">
                     • <strong>OpenAI:</strong> platform.openai.com/api-keys
                     <br />• <strong>Anthropic:</strong> console.anthropic.com/settings/keys
-                    <br />• <strong>Ollama:</strong> No API key needed (local)
-                    <br />• <strong>LM Studio:</strong> No API key needed (local)
+                    <br />• <strong>Ollama:</strong> Optional (can be set if configured)
+                    <br />• <strong>LM Studio:</strong> Optional (can be set if configured)
                     <br />• <strong>Azure OpenAI:</strong> Azure Portal → Your resource → Keys and Endpoint
                   </Typography>
                   {setupInstructions && (
