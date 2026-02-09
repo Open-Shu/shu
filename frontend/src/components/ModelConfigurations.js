@@ -49,7 +49,7 @@ import PageHelpHeader from './PageHelpHeader';
 import TuneIcon from '@mui/icons-material/Tune';
 
 const ModelConfigurations = () => {
-  const { canManagePromptsAndModels, user, handleAuthError } = useAuth();
+  const { canManagePromptsAndModels, handleAuthError } = useAuth();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -338,37 +338,6 @@ const ModelConfigurations = () => {
     });
   };
 
-  const handleCreate = () => {
-    // Merge typed overrides with advanced JSON (typed wins). Only submit user-set values.
-    let extra = {};
-    if (advancedJson && advancedJson.trim()) {
-      try {
-        extra = JSON.parse(advancedJson);
-        setAdvancedJsonError(null);
-      } catch (e) {
-        setAdvancedJsonError('Invalid JSON');
-        return;
-      }
-    }
-    const merged = { ...extra, ...paramOverrides };
-    const pruned = Object.fromEntries(
-      Object.entries(merged).filter(
-        ([_, v]) =>
-          v !== undefined &&
-          v !== null &&
-          !(typeof v === 'string' && v.trim() === '') &&
-          !(typeof v === 'number' && Number.isNaN(v))
-      )
-    );
-    const payload = {
-      ...formData,
-      created_by: user?.id || 'unknown-user',
-      prompt_id: formData.prompt_id || null,
-      ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
-    };
-    createMutation.mutate(payload);
-  };
-
   const handleEdit = (config) => {
     setSelectedConfig(config);
 
@@ -424,38 +393,6 @@ const ModelConfigurations = () => {
       setAdvancedJson('');
     }
     setEditDialogOpen(true);
-  };
-
-  const handleUpdate = () => {
-    let extra = {};
-    if (advancedJson && advancedJson.trim()) {
-      try {
-        extra = JSON.parse(advancedJson);
-        setAdvancedJsonError(null);
-      } catch (e) {
-        setAdvancedJsonError('Invalid JSON');
-        return;
-      }
-    }
-    const merged = { ...extra, ...paramOverrides };
-    const pruned = Object.fromEntries(
-      Object.entries(merged).filter(
-        ([_, v]) =>
-          v !== undefined &&
-          v !== null &&
-          !(typeof v === 'string' && v.trim() === '') &&
-          !(typeof v === 'number' && Number.isNaN(v))
-      )
-    );
-    const payload = {
-      ...formData,
-      prompt_id: formData.prompt_id || null,
-      ...(Object.keys(pruned).length ? { parameter_overrides: pruned } : {}),
-    };
-    updateMutation.mutate({
-      id: selectedConfig.id,
-      data: payload,
-    });
   };
 
   const handleDelete = (config) => {
@@ -684,8 +621,6 @@ const ModelConfigurations = () => {
         advancedJsonError={advancedJsonError}
         setAdvancedJsonError={setAdvancedJsonError}
         submitError={submitError}
-        onSubmit={handleCreate}
-        submitLabel={createMutation.isLoading ? 'Creating...' : 'Create'}
         isSubmitting={createMutation.isLoading}
         isEditMode={false}
         existingConfigId={null}
@@ -712,8 +647,6 @@ const ModelConfigurations = () => {
         advancedJsonError={advancedJsonError}
         setAdvancedJsonError={setAdvancedJsonError}
         submitError={submitError}
-        onSubmit={handleUpdate}
-        submitLabel={updateMutation.isLoading ? 'Saving...' : 'Save'}
         isSubmitting={updateMutation.isLoading}
         isEditMode={true}
         existingConfigId={selectedConfig?.id}
