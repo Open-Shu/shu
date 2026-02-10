@@ -195,11 +195,11 @@ async def test_scheduler_jobs_enqueued(client, db, auth_headers):
 
 async def test_scheduler_idempotency_preserved(client, db, auth_headers):
     """Test that scheduler idempotency guards are preserved with queue backend.
-    
+
     The idempotency guard prevents duplicate executions when a feed is still due
     but already has a PENDING/RUNNING execution. After the first enqueue, the
     schedule advances (schedule_next()), so subsequent calls won't see it as due.
-    
+
     This test verifies:
     1. First enqueue creates exactly one execution record
     2. Only one job is enqueued to the queue

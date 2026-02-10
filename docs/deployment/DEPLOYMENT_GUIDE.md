@@ -588,4 +588,3 @@ In-memory queues are only suitable for development and single-node deployments w
 - **Worker Implementation**: `backend/src/shu/worker.py`
 - **Workload Routing**: `backend/src/shu/core/workload_routing.py`
 - **Queue Backend**: `backend/src/shu/core/queue_backend.py`
-
