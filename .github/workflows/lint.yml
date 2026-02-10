@@ -47,7 +47,7 @@ jobs:
 
       - name: Get changed Python files
         id: changed-py-files
-        uses: tj-actions/changed-files@v44
+        uses: tj-actions/changed-files@v46
         with:
           base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
           files: |
@@ -121,7 +121,7 @@ jobs:
 
       - name: Get changed frontend files
         id: changed-frontend-files
-        uses: tj-actions/changed-files@v44
+        uses: tj-actions/changed-files@v46
         with:
           base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
           files: |
@@ -129,7 +129,7 @@ jobs:
 
       - name: Get changed JS/JSX files for ESLint
         id: changed-js-files
-        uses: tj-actions/changed-files@v44
+        uses: tj-actions/changed-files@v46
         with:
           base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
           files: |
@@ -213,7 +213,7 @@ jobs:
 
       - name: Get all changed files
         id: changed-files-all
-        uses: tj-actions/changed-files@v44
+        uses: tj-actions/changed-files@v46
         with:
           base_sha: ${{ github.event.pull_request.base.sha || github.event.before }}
 
