@@ -6,9 +6,9 @@ This document is the quick reference for the React frontend located at `./fronte
 - Framework: React 18
 - Libraries: Material‑UI (MUI), React Query, Axios, React Router
 - Admin Console: Dashboard, Knowledge Base Management, Plugin Feeds, Query Tester, Health Monitor
-- Dev server: `npm start` (http://localhost:3000)
+- Dev server: `npm start` (http://localhost:3000, powered by Vite)
 - Build: `npm run build`
-- API base URL: `REACT_APP_API_BASE_URL` (optional). If unset, frontend assumes same‑origin behind ingress
+- API base URL: `VITE_API_BASE_URL` (optional). If unset, frontend assumes same‑origin behind ingress
 - Source layout (from README):
   - `src/components/` — Dashboard, KnowledgeBases, PluginsAdmin, PluginsAdminFeeds, QueryTester, LLMTester, HealthMonitor, ModernChat, etc.
   - `src/layouts/` — AdminLayout, UserLayout

@@ -4,19 +4,19 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { vi } from 'vitest';
 import LLMTester from '../LLMTester';
 import * as api from '../../services/api';
 
 // Mock dependencies
-jest.mock('../../services/api');
-
-// Polyfill TextEncoder for tests
-if (typeof global.TextEncoder === 'undefined') {
-  global.TextEncoder = require('util').TextEncoder;
-}
-if (typeof global.TextDecoder === 'undefined') {
-  global.TextDecoder = require('util').TextDecoder;
-}
+vi.mock('../../services/api', () => ({
+  modelConfigAPI: { list: vi.fn(), testWithFile: vi.fn() },
+  llmAPI: { getProviders: vi.fn() },
+  knowledgeBaseAPI: { list: vi.fn(), getRAGConfig: vi.fn() },
+  extractDataFromResponse: vi.fn((response) => response?.data),
+  extractItemsFromResponse: vi.fn((response) => response?.data || []),
+  formatError: vi.fn((error) => error?.message || 'Unknown error'),
+}));
 
 // Test wrapper component
 const TestWrapper = ({ children }) => {
@@ -51,17 +51,11 @@ const TestWrapper = ({ children }) => {
  */
 describe('LLMTester - Property 5: Pre-population', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
-    // Mock extractDataFromResponse and extractItemsFromResponse
-    api.extractDataFromResponse = jest.fn().mockImplementation((response) => response?.data);
-    api.extractItemsFromResponse = jest.fn().mockImplementation((response) => response?.data || []);
-
-    // Mock getRAGConfig to prevent errors in QueryConfiguration component
-    api.knowledgeBaseAPI = {
-      list: jest.fn().mockResolvedValue({ data: [] }),
-      getRAGConfig: jest.fn().mockResolvedValue({ data: {} }),
-    };
+    // Reset mock implementations
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
+    api.knowledgeBaseAPI.getRAGConfig.mockResolvedValue({ data: {} });
   });
 
   test('provider and model are displayed when configuration is pre-populated', async () => {
@@ -81,15 +75,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
     render(
@@ -105,8 +93,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
 
     // Verify: Configuration is selected (check that the config name appears in the select)
     await waitFor(() => {
-      const configName = screen.getByText(testConfig.name);
-      expect(configName).toBeInTheDocument();
+      // The config name should appear in the document (in the select or details)
+      const configElements = screen.getAllByText(testConfig.name);
+      expect(configElements.length).toBeGreaterThan(0);
     });
 
     // Verify: Provider is displayed in configuration details
@@ -148,15 +137,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
     render(
@@ -214,15 +197,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB1, testKB2] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [testKB1, testKB2] });
 
     // Render component with pre-populated config
     render(
@@ -293,15 +270,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [testKB] });
 
     // Render component with pre-populated config
     render(
@@ -345,15 +316,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component with pre-populated config
     render(
@@ -427,15 +392,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [testKB] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [testKB] });
 
     // Render component with pre-populated config
     render(
@@ -504,15 +463,9 @@ describe('LLMTester - Property 5: Pre-population', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component WITHOUT pre-populated config
     render(
@@ -549,18 +502,10 @@ describe('LLMTester - Property 5: Pre-population', () => {
  * endpoint is called correctly and results are displayed properly.
  */
 describe('LLMTester - Property 14: Resource Cleanup', () => {
-  // Increase timeout for this suite due to multiple async operations
-  jest.setTimeout(15000);
+  // Timeout is configured globally in vite.config.js (15000ms)
 
   beforeEach(() => {
-    jest.clearAllMocks();
-
-    // Mock extractDataFromResponse and extractItemsFromResponse
-    api.extractDataFromResponse = jest.fn().mockImplementation((response) => response?.data);
-    api.extractItemsFromResponse = jest.fn().mockImplementation((response) => response?.data || []);
-
-    // Mock formatError
-    api.formatError = jest.fn().mockImplementation((error) => error?.message || 'Unknown error');
+    vi.clearAllMocks();
   });
 
   test('endpoint is called with correct parameters on successful test', async () => {
@@ -589,16 +534,10 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockResolvedValue({ data: testResult });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -665,16 +604,10 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockResolvedValue({ data: testResult });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -736,16 +669,10 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
     };
 
     // Mock API responses - test endpoint throws network error
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockRejectedValue(new Error('Network error')),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockRejectedValue(new Error('Network error'));
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -814,18 +741,10 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
  * which returns structured error responses. These tests verify error handling.
  */
 describe('LLMTester - Property 15: Error Resilience', () => {
-  // Increase timeout for this suite due to multiple async operations
-  jest.setTimeout(15000);
+  // Timeout is configured globally in vite.config.js (15000ms)
 
   beforeEach(() => {
-    jest.clearAllMocks();
-
-    // Mock extractDataFromResponse and extractItemsFromResponse
-    api.extractDataFromResponse = jest.fn().mockImplementation((response) => response?.data);
-    api.extractItemsFromResponse = jest.fn().mockImplementation((response) => response?.data || []);
-
-    // Mock formatError
-    api.formatError = jest.fn().mockImplementation((error) => error?.message || 'Unknown error');
+    vi.clearAllMocks();
   });
 
   test('component displays error when test endpoint returns failure', async () => {
@@ -850,16 +769,10 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockResolvedValue({ data: testResult });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -923,16 +836,10 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     };
 
     // Mock API responses - test endpoint throws exception
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockRejectedValue(new Error('Server error: 500')),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockRejectedValue(new Error('Server error: 500'));
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1001,16 +908,10 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     };
 
     // Mock API responses
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockResolvedValue({ data: testResult }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockResolvedValue({ data: testResult });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1078,16 +979,10 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     const timeoutError = new Error('timeout of 30000ms exceeded');
     timeoutError.code = 'ECONNABORTED';
 
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest.fn().mockRejectedValue(timeoutError),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile.mockRejectedValue(timeoutError);
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(
@@ -1166,19 +1061,12 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     };
 
     // Mock API responses - first call fails, second succeeds
-    api.modelConfigAPI = {
-      list: jest.fn().mockResolvedValue({ data: [testConfig] }),
-      testWithFile: jest
-        .fn()
-        .mockResolvedValueOnce({ data: failResult })
-        .mockResolvedValueOnce({ data: successResult }),
-    };
-
-    api.llmAPI = {
-      getProviders: jest.fn().mockResolvedValue({ data: [testProvider] }),
-    };
-
-    api.knowledgeBaseAPI.list = jest.fn().mockResolvedValue({ data: [] });
+    api.modelConfigAPI.list.mockResolvedValue({ data: [testConfig] });
+    api.modelConfigAPI.testWithFile
+      .mockResolvedValueOnce({ data: failResult })
+      .mockResolvedValueOnce({ data: successResult });
+    api.llmAPI.getProviders.mockResolvedValue({ data: [testProvider] });
+    api.knowledgeBaseAPI.list.mockResolvedValue({ data: [] });
 
     // Render component
     const { getByText, getByLabelText } = render(

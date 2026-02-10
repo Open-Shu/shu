@@ -520,7 +520,7 @@ This section introduces the Shu Admin Console (the web UI) and how it talks to t
 
 ### A) Tech stack at a glance
 - React 18 (UI): https://react.dev/
-- Create React App tooling (react-scripts)
+- Vite (build tool): https://vitejs.dev/
 - Material UI (components): https://mui.com/
 - Axios (HTTP client): https://axios-http.com/
 - React Router (navigation): https://reactrouter.com/

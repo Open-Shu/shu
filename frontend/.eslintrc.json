@@ -1,13 +1,18 @@
 {
   "extends": [
-    "react-app",
-    "react-app/jest",
     "eslint:recommended",
     "plugin:react/recommended",
     "plugin:react-hooks/recommended",
     "plugin:prettier/recommended"
   ],
   "plugins": ["react", "react-hooks", "prettier"],
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "ecmaFeatures": {
+      "jsx": true
+    }
+  },
   "ignorePatterns": ["*.json", "node_modules/", "build/", "coverage/"],
   "rules": {
     "prettier/prettier": "error",
@@ -60,14 +65,26 @@
   },
   "overrides": [
     {
+      "files": ["src/**/*.{js,jsx,ts,tsx}"],
+      "excludedFiles": ["src/services/api.js"],
+      "rules": {
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "MemberExpression[property.name='data'][object.type='MemberExpression'][object.property.name='data']",
+            "message": "Avoid response.data.data. Use extractDataFromResponse from services/api."
+          },
+          {
+            "selector": "MemberExpression[property.name='success'][object.type='MemberExpression'][object.property.name='data']",
+            "message": "Avoid checking response.data.success. Use HTTP status and extractDataFromResponse/formatError."
+          }
+        ]
+      }
+    },
+    {
       "files": ["**/__tests__/**/*", "**/*.test.js", "**/*.test.jsx"],
       "rules": {
         "no-import-assign": "off",
-        "testing-library/no-node-access": "warn",
-        "testing-library/prefer-screen-queries": "warn",
-        "testing-library/no-wait-for-multiple-assertions": "warn",
-        "testing-library/no-container": "warn",
-        "jest/no-conditional-expect": "warn",
         "no-magic-numbers": "off",
         "max-lines-per-function": "off",
         "max-lines": "off"

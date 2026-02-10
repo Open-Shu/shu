@@ -20,9 +20,9 @@ Shu uses a **custom integration test framework** for API/database integration te
 | Run Command | `python -m pytest backend/src/tests/unit` | `python -m tests.integ.run_all_integration_tests` |
 
 **Frontend Unit Tests:**
-- Framework: Jest (via react-scripts)
+- Framework: Vitest
 - Location: `frontend/src/components/__tests__/`
-- Run Command: `cd frontend && npm test -- --watchAll=false`
+- Run Command: `cd frontend && npm test`
 
 ### When to Use Unit Tests (pytest)
 
@@ -435,8 +435,8 @@ The testing system now has two components:
 
 3. **Frontend Unit Tests** (`frontend/src/components/__tests__/`)
    - Used for React component testing
-   - Jest framework via react-scripts
-   - Run via `cd frontend && npm test -- --watchAll=false`
+   - Vitest framework
+   - Run via `cd frontend && npm test`
 
 This dual approach provides the best of both worlds: pytest's excellent test discovery and assertion introspection for unit tests, while maintaining the custom framework's event loop control for integration tests.
 

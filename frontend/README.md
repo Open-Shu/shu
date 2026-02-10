@@ -10,12 +10,12 @@ A React-based interface for the Shu Backend API.
 - **Query Tester**: Test vector similarity and hybrid search queries
 - **Health Monitor**: Real-time system health monitoring
 
-## Frontend Unit Tests (Jest)
+## Frontend Unit Tests (Vitest)
 
 - Location: `frontend/src/components/__tests__/`
-- Run: `cd frontend && npm test -- --watchAll=false`
+- Run: `cd frontend && npm test`
 - Purpose: React component testing with React Testing Library
-- Framework: Jest via react-scripts with Material-UI and React Router mocking
+- Framework: Vitest with Material-UI and React Router mocking
 
 ## Setup
 
@@ -30,7 +30,7 @@ A React-based interface for the Shu Backend API.
    Create a `.env` file in the frontend directory:
 
    ```bash
-   REACT_APP_API_BASE_URL=http://localhost:8000
+   VITE_API_BASE_URL=http://localhost:8000
    # If not set, the frontend will use same-origin behind your ingress
    ```
 
@@ -127,7 +127,8 @@ frontend/
 - **React Query**: Data fetching and caching
 - **React Router**: Navigation
 - **Axios**: HTTP client
-- **React JSON View**: JSON visualization
+- **Vite**: Build tool and dev server
+- **Vitest**: Unit testing framework
 
 ### End-to-End Testing (Playwright)
 
@@ -139,7 +140,7 @@ frontend/
 
 ### Environment Variables
 
-- `REACT_APP_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: http://localhost:8000
+- `VITE_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: http://localhost:8000
 
 ### API Endpoints
 
@@ -175,7 +176,7 @@ To create a production build:
 npm run build
 ```
 
-The build artifacts will be in the `build/` directory.
+The build artifacts will be in the `dist/` directory.
 
 ## Contributing
 

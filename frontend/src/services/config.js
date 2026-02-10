@@ -7,7 +7,7 @@ import { getApiBaseUrl } from './baseUrl';
 import { log } from '../utils/log';
 
 const API_BASE_URL = getApiBaseUrl();
-const API_KEY = process.env.REACT_APP_API_KEY; // Optional API key
+const API_KEY = import.meta.env.VITE_API_KEY; // Optional API key
 
 class ConfigService {
   constructor() {

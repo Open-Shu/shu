@@ -1,8 +1,8 @@
 /* Simple logging utility gated by environment
- * - DEBUG mode if REACT_APP_DEBUG==='true' or NODE_ENV!=='production'
+ * - DEBUG mode if VITE_DEBUG==='true' or MODE!=='production'
  * - error() always logs
  */
-const DEBUG = process.env.REACT_APP_DEBUG === 'true' || process.env.NODE_ENV !== 'production';
+const DEBUG = import.meta.env.VITE_DEBUG === 'true' || import.meta.env.MODE !== 'production';
 
 export const log = {
   debug: (...args) => {

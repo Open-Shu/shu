@@ -622,7 +622,7 @@ export default function PluginsAdmin() {
       </Stack>
 
       {/* Debug panel - show only in non-production AND when explicitly enabled */}
-      {process.env.NODE_ENV !== 'production' && process.env.REACT_APP_SHOW_LIMIT_STATS === '1' && (
+      {import.meta.env.MODE !== 'production' && import.meta.env.VITE_SHOW_LIMIT_STATS === '1' && (
         <Box mb={3}>
           <LimitsStatsPanel />
         </Box>

@@ -1,23 +1,35 @@
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { vi } from 'vitest';
 import QuickStart from '../QuickStart';
 import * as api from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
 import { getBrandingAppName } from '../../utils/constants';
 
 // Mock dependencies
-jest.mock('../../services/api');
-jest.mock('../../contexts/ThemeContext');
-jest.mock('../../utils/constants');
-
-const mockNavigate = jest.fn();
-jest.mock('react-router-dom', () => ({
-  ...jest.requireActual('react-router-dom'),
-  useNavigate: () => mockNavigate,
+vi.mock('../../services/api', () => ({
+  setupAPI: { getStatus: vi.fn() },
+  extractDataFromResponse: vi.fn((response) => response.data),
 }));
+
+vi.mock('../../contexts/ThemeContext', () => ({
+  useTheme: vi.fn(),
+}));
+
+vi.mock('../../utils/constants', () => ({
+  getBrandingAppName: vi.fn(),
+}));
+
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 // Test wrapper component
 const TestWrapper = ({ children }) => {
@@ -32,7 +44,7 @@ const TestWrapper = ({ children }) => {
 describe('QuickStart Component - Experiences Card', () => {
   beforeEach(() => {
     // Reset mocks
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // Mock theme context
     useAppTheme.mockReturnValue({
@@ -43,22 +55,20 @@ describe('QuickStart Component - Experiences Card', () => {
     getBrandingAppName.mockReturnValue('Test App');
 
     // Mock extractDataFromResponse
-    api.extractDataFromResponse = jest.fn().mockImplementation((response) => response.data);
+    api.extractDataFromResponse.mockImplementation((response) => response.data);
 
     // Mock setup API with default status
-    api.setupAPI = {
-      getStatus: jest.fn().mockResolvedValue({
-        data: {
-          llm_provider_configured: true,
-          model_configuration_created: true,
-          knowledge_base_created: true,
-          documents_added: true,
-          plugins_enabled: true,
-          plugin_feed_created: true,
-          experience_created: false,
-        },
-      }),
-    };
+    api.setupAPI.getStatus.mockResolvedValue({
+      data: {
+        llm_provider_configured: true,
+        model_configuration_created: true,
+        knowledge_base_created: true,
+        documents_added: true,
+        plugins_enabled: true,
+        plugin_feed_created: true,
+        experience_created: false,
+      },
+    });
   });
 
   test('Experiences card appears in Getting Started section', async () => {

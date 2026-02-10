@@ -1,9 +1,9 @@
-import { log } from '../utils/log';
+import { log } from '../utils/log.js';
 
 // Derived API base: prefer explicit env; else use same-origin.
-// Note: No hardcoded port; set REACT_APP_API_BASE_URL to control host:port.
+// Note: No hardcoded port; set VITE_API_BASE_URL to control host:port.
 export function getApiBaseUrl() {
-  const explicit = process.env.REACT_APP_API_BASE_URL; // e.g., "http://localhost:8000" or "https://shu.mxw.ai"
+  const explicit = import.meta.env.VITE_API_BASE_URL; // e.g., "http://localhost:8000" or "https://shu.mxw.ai"
   if (explicit) {
     return explicit;
   }
@@ -15,7 +15,7 @@ export function getApiBaseUrl() {
       // Visible warning preferred by project standards
       // eslint-disable-next-line no-console
       log.warn(
-        '[Shu] REACT_APP_API_BASE_URL not set; using same-origin (localhost:3000). If WebSocket upgrades fail, set REACT_APP_API_BASE_URL=http://localhost:8000'
+        '[Shu] VITE_API_BASE_URL not set; using same-origin (localhost:3000). If WebSocket upgrades fail, set VITE_API_BASE_URL=http://localhost:8000'
       );
     }
     return `${u.protocol}//${u.host}`;

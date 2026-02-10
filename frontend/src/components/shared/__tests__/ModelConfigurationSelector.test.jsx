@@ -1,15 +1,15 @@
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from 'react-query';
+import { vi } from 'vitest';
 import ModelConfigurationSelector from '../ModelConfigurationSelector';
 import * as api from '../../../services/api';
 
 // Mock the API
-jest.mock('../../../services/api', () => ({
+vi.mock('../../../services/api', () => ({
   modelConfigAPI: {
-    list: jest.fn(),
+    list: vi.fn(),
   },
-  extractDataFromResponse: jest.fn(),
+  extractDataFromResponse: vi.fn(),
 }));
 
 const mockModelConfigurations = [

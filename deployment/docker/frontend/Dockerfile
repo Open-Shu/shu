@@ -21,20 +21,22 @@ RUN if [ -f yarn.lock ]; then \
     fi
 
 # Copy source
+COPY frontend/index.html ./
+COPY frontend/vite.config.js ./
 COPY frontend/public ./public
 COPY frontend/src ./src
 COPY frontend/nginx-default.conf ./nginx-default.conf
 
 # Optional: pass explicit backend base URL at build time (else same-origin is used)
-ARG REACT_APP_API_BASE_URL
-ENV REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL}
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 # Build
 RUN npm run build
 
 # Runtime stage
 FROM nginx:1.27-alpine
-COPY --from=build /app/build /usr/share/nginx/html
+COPY --from=build /app/dist /usr/share/nginx/html
 # Replace default server config with our SPA-friendly config
 COPY --from=build /app/nginx-default.conf /etc/nginx/conf.d/default.conf
 
