@@ -13,6 +13,7 @@ line-length = 120  # Increased from 100 to reduce awkward line breaks
 target-version = "py311"
 
 # Exclude directories
+# Matches GitHub Actions lint.yml exclusions so local and CI results are consistent
 exclude = [
     ".git",
     ".venv",
@@ -26,6 +27,9 @@ exclude = [
     "node_modules",
     "frontend",
     "migrations/versions",  # Don't lint auto-generated migrations
+    "backend/src/tests",    # Tests have relaxed rules; excluded from CI lint
+    "backend/migrations",   # Auto-generated migrations; excluded from CI lint
+    "backend/scripts",      # Dev utilities; excluded from CI lint
 ]
 
 [tool.ruff.format]

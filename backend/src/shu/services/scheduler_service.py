@@ -49,9 +49,7 @@ class SchedulableSource(Protocol):
         """
         ...
 
-    async def enqueue_due(
-        self, db: AsyncSession, queue: QueueBackend, *, limit: int
-    ) -> dict[str, int]:
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
         """Find due items, create tracking records, enqueue jobs.
 
         Returns a dict of counters (source-specific keys).
@@ -76,9 +74,7 @@ class PluginFeedSource:
         svc = PluginsSchedulerService(db)
         return await svc.cleanup_stale_executions()
 
-    async def enqueue_due(
-        self, db: AsyncSession, queue: QueueBackend, *, limit: int
-    ) -> dict[str, int]:
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
         from .plugins_scheduler_service import PluginsSchedulerService
 
         svc = PluginsSchedulerService(db)
@@ -103,9 +99,7 @@ class ExperienceSource:
         # a future enhancement could mark old queued runs as failed.
         return 0
 
-    async def enqueue_due(
-        self, db: AsyncSession, queue: QueueBackend, *, limit: int
-    ) -> dict[str, int]:
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
         from sqlalchemy import and_, select
         from sqlalchemy.orm import selectinload
 
@@ -160,6 +154,7 @@ class ExperienceSource:
         for exp in due_experiences:
             # Fan out: one job per active user
             for user in all_users:
+                run = None
                 try:
                     # Create ExperienceRun in QUEUED status for observability
                     run = ExperienceRun(
@@ -201,8 +196,9 @@ class ExperienceSource:
                 except Exception as e:
                     # Remove the flushed run so it doesn't get committed
                     # as an orphaned "queued" record with no corresponding job.
-                    await db.delete(run)
-                    await db.flush()
+                    if run is not None:
+                        await db.delete(run)
+                        await db.flush()
                     logger.error(
                         "Failed to enqueue experience job: %s",
                         e,
@@ -220,9 +216,7 @@ class ExperienceSource:
             if exp.created_by:
                 try:
                     tz_result = await db.execute(
-                        select(UserPreferences).where(
-                            UserPreferences.user_id == exp.created_by
-                        )
+                        select(UserPreferences).where(UserPreferences.user_id == exp.created_by)
                     )
                     prefs = tz_result.scalar_one_or_none()
                     creator_tz = prefs.timezone if prefs else None
@@ -274,21 +268,16 @@ class UnifiedSchedulerService:
         for source in self.sources:
             try:
                 stale_cleaned = await source.cleanup_stale(self.db)
-                enqueue_result = await source.enqueue_due(
-                    self.db, self.queue, limit=limit
-                )
+                enqueue_result = await source.enqueue_due(self.db, self.queue, limit=limit)
                 results[source.name] = {
                     "stale_cleaned": stale_cleaned,
                     **enqueue_result,
                 }
             except Exception as e:
-                logger.warning(
-                    "Scheduler source '%s' failed: %s", source.name, e
-                )
+                logger.warning("Scheduler source '%s' failed: %s", source.name, e)
                 results[source.name] = {"error": str(e)}
 
         return results
-
 
 
 async def start_scheduler() -> asyncio.Task:
@@ -382,10 +371,12 @@ async def start_scheduler() -> asyncio.Task:
                     if has_activity:
                         logger.info("Scheduler tick | %s", results)
                         try:
-                            TICK_HISTORY.append({
-                                "ts": datetime.now(UTC).isoformat(),
-                                **results,
-                            })
+                            TICK_HISTORY.append(
+                                {
+                                    "ts": datetime.now(UTC).isoformat(),
+                                    **results,
+                                }
+                            )
                         except Exception:
                             pass
             except Exception as ex:

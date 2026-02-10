@@ -401,6 +401,7 @@ async def _handle_embed_job(job) -> None:
                 await session.commit()
             raise
 
+
 # TODO: Refactor this function. It's too complex (number of branches and statements).
 async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
     """Handle an INGESTION plugin feed execution job.
@@ -461,9 +462,7 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
     async with session_local() as session:
         # Load execution record and check it's still PENDING (race guard)
         result = await session.execute(
-            select(PluginExecution)
-            .where(PluginExecution.id == execution_id)
-            .with_for_update(skip_locked=True)
+            select(PluginExecution).where(PluginExecution.id == execution_id).with_for_update(skip_locked=True)
         )
         rec = result.scalar_one_or_none()
 
@@ -525,9 +524,7 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                 return
 
             # Per-plugin limits
-            lrow = await session.execute(
-                select(PluginDefinition).where(PluginDefinition.name == rec.plugin_name)
-            )
+            lrow = await session.execute(select(PluginDefinition).where(PluginDefinition.name == rec.plugin_name))
             ldef = lrow.scalars().first()
             per_plugin_limits = getattr(ldef, "limits", None) or {}
 
@@ -548,6 +545,12 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                 for pi in pi_res.scalars().all():
                     providers_map.setdefault(pi.provider_key, []).append(pi.to_dict())
             except Exception:
+                logger.warning(
+                    "Failed to load provider identities, proceeding with empty map | exec_id=%s user=%s",
+                    rec.id,
+                    rec.user_id,
+                    exc_info=True,
+                )
                 providers_map = {}
 
             # Auth preflight
@@ -564,9 +567,7 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                         try:
                             from .services.host_auth_service import HostAuthService
 
-                            subs = await HostAuthService.list_subscriptions(
-                                session, str(rec.user_id), provider, None
-                            )
+                            subs = await HostAuthService.list_subscriptions(session, str(rec.user_id), provider, None)
                             if subs:
                                 subscribed_names = {s.plugin_name for s in subs}
                                 if str(rec.plugin_name) not in subscribed_names:
@@ -579,7 +580,14 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                                     await _fail("subscription_required")
                                     return
                         except Exception:
-                            pass
+                            logger.exception(
+                                "Subscription enforcement check failed, failing closed | user=%s provider=%s plugin=%s",
+                                str(rec.user_id),
+                                provider,
+                                str(rec.plugin_name),
+                            )
+                            await _fail("subscription_check_error")
+                            return
                         tok = await auth.provider_user_token(provider, required_scopes=sc or None)
                         if not tok:
                             await _fail("identity_required")
@@ -600,7 +608,14 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                             await _fail("identity_required")
                             return
             except Exception:
-                pass
+                # Resolution/setup failure defaults to allow — inner checks
+                # (subscription, token, delegation) handle fail-closed decisions.
+                logger.warning(
+                    "Auth preflight resolution failed, defaulting to allow | exec_id=%s plugin=%s",
+                    rec.id,
+                    rec.plugin_name,
+                    exc_info=True,
+                )
 
             # Secrets preflight
             try:
@@ -664,9 +679,7 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
             rec.result = payload
             rec.completed_at = datetime.now(UTC)
             rec.status = (
-                PluginExecutionStatus.COMPLETED
-                if payload.get("status") == "success"
-                else PluginExecutionStatus.FAILED
+                PluginExecutionStatus.COMPLETED if payload.get("status") == "success" else PluginExecutionStatus.FAILED
             )
             _err_val = payload.get("error") if payload.get("status") != "success" else None
             if isinstance(_err_val, (dict, list)):
@@ -686,9 +699,7 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
             # and update last_run_at to reflect actual execution time
             if rec.schedule_id:
                 try:
-                    feed_res = await session.execute(
-                        select(PluginFeed).where(PluginFeed.id == rec.schedule_id)
-                    )
+                    feed_res = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
                     feed = feed_res.scalars().first()
                     if feed:
                         # Update last_run_at to actual execution completion time
@@ -705,7 +716,12 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                             if modified:
                                 feed.params = params_dict
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Failed to update feed after execution (one-shot params / last_run_at) | exec_id=%s schedule_id=%s",
+                        rec.id,
+                        rec.schedule_id,
+                        exc_info=True,
+                    )
 
             await session.commit()
 
@@ -785,9 +801,7 @@ async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
 
         from .models.experience import ExperienceRun
 
-        result = await session.execute(
-            select(ExperienceRun).where(ExperienceRun.id == run_id)
-        )
+        result = await session.execute(select(ExperienceRun).where(ExperienceRun.id == run_id))
         run = result.scalar_one_or_none()
         if run and run.status == "queued":
             run.status = "failed"
@@ -849,9 +863,7 @@ async def _handle_experience_execution_job(job) -> None:
     async with session_local() as session:
         # Load experience with steps eagerly loaded
         exp_result = await session.execute(
-            select(Experience)
-            .options(selectinload(Experience.steps))
-            .where(Experience.id == experience_id)
+            select(Experience).options(selectinload(Experience.steps)).where(Experience.id == experience_id)
         )
         experience = exp_result.scalar_one_or_none()
 
@@ -864,9 +876,7 @@ async def _handle_experience_execution_job(job) -> None:
             return
 
         # Load user
-        user_result = await session.execute(
-            select(User).where(User.id == user_id)
-        )
+        user_result = await session.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
 
         if not user:
@@ -1064,14 +1074,7 @@ async def process_job(job):
         if action == "plugin_feed_execution":
             await _handle_plugin_execution_job(job)
         else:
-            logger.warning(
-                "INGESTION job with unknown action",
-                extra={
-                    "job_id": job.id,
-                    "queue": job.queue_name,
-                    "action": action,
-                },
-            )
+            raise ValueError(f"INGESTION job {job.id} has unknown action: {action!r}")
 
     elif workload_type == WorkloadType.LLM_WORKFLOW:
         # Route based on action in payload
@@ -1079,14 +1082,7 @@ async def process_job(job):
         if action == "experience_execution":
             await _handle_experience_execution_job(job)
         else:
-            logger.warning(
-                "LLM_WORKFLOW job with unknown action",
-                extra={
-                    "job_id": job.id,
-                    "queue": job.queue_name,
-                    "action": action,
-                },
-            )
+            raise ValueError(f"LLM_WORKFLOW job {job.id} has unknown action: {action!r}")
 
     else:
         raise ValueError(f"Unsupported workload type: {workload_type}")

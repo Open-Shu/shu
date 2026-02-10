@@ -289,9 +289,7 @@ class ExperienceExecutor:
         run: ExperienceRun | None = None
 
         # Consume events - timeout is enforced within execute_streaming
-        async for event in self.execute_streaming(
-            experience, user_id, input_params, current_user, run_id=run_id
-        ):
+        async for event in self.execute_streaming(experience, user_id, input_params, current_user, run_id=run_id):
             if event.type == ExperienceEventType.RUN_STARTED:
                 run_id = event.data.get("run_id")
                 if run_id:
@@ -411,14 +409,24 @@ class ExperienceExecutor:
         """Create a new ExperienceRun or resume a pre-created queued run.
 
         If run_id is provided, loads the existing run and transitions it to
-        "running". Otherwise creates a new run (for on-demand execution).
+        "running" only if the current status allows it (queued or pending).
+        Otherwise creates a new run (for on-demand execution).
+
+        Raises:
+            ValueError: If the run exists but is in a terminal or already-running
+                state that cannot transition to "running".
+
         """
         if run_id:
-            result = await self.db.execute(
-                select(ExperienceRun).where(ExperienceRun.id == run_id)
-            )
+            result = await self.db.execute(select(ExperienceRun).where(ExperienceRun.id == run_id))
             run = result.scalar_one_or_none()
             if run:
+                # Only allow transition from queued/pending → running
+                allowed_statuses = {"queued", "pending"}
+                if run.status not in allowed_statuses:
+                    raise ValueError(
+                        f"Cannot resume run {run_id}: status is '{run.status}', " f"expected one of {allowed_statuses}"
+                    )
                 run.status = "running"
                 run.started_at = datetime.now(UTC)
                 await self.db.commit()
