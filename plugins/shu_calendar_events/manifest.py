@@ -18,11 +18,7 @@ PLUGIN_MANIFEST = {
     "chat_callable_ops": ["list"],
     # Identity requirements (user OAuth Calendar scopes)
     "required_identities": [
-        {
-            "provider": "google",
-            "mode": "user",
-            "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
-        }
+        {"provider": "google", "mode": "user", "scopes": ["https://www.googleapis.com/auth/calendar.readonly"]}
     ],
     # Per-op auth configuration
     "op_auth": {

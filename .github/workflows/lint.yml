@@ -56,6 +56,7 @@ jobs:
             backend/src/tests/**
             backend/migrations/**
             backend/scripts/**
+            plugins/**
 
       - name: Run Ruff linter on changed files
         if: steps.changed-py-files.outputs.any_changed == 'true'

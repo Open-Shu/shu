@@ -15,23 +15,38 @@ import {
   Typography,
   CircularProgress,
   Alert,
+  Collapse,
+  IconButton,
 } from '@mui/material';
+import { ExpandMore as ExpandMoreIcon, ExpandLess as ExpandLessIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { experiencesAPI } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
 import MarkdownRenderer from './shared/MarkdownRenderer';
+import DataRenderer from './shared/DataRenderer';
+import log from '../utils/log';
 
 export default function ExperienceRunDialog({ open, onClose, experienceId, experienceName, steps = [] }) {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === 'dark';
 
   const [status, setStatus] = useState('pending'); // pending, running, completed, failed
-  const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error } }
+  const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error, data } }
+  const [expandedSteps, setExpandedSteps] = useState({}); // { step_key: boolean }
   const [llmContent, setLlmContent] = useState('');
   const [error, setError] = useState(null);
   const abortControllerRef = useRef(null);
+  const executionStartedRef = useRef(false); // Track if execution has started
+
+  const toggleStepExpanded = (stepKey) => {
+    setExpandedSteps((prev) => ({
+      ...prev,
+      [stepKey]: !prev[stepKey],
+    }));
+  };
 
   const startExecution = React.useCallback(async () => {
+    log.debug('[ExperienceRunDialog] startExecution called for experience:', experienceId);
     try {
       abortControllerRef.current = new AbortController();
 
@@ -69,7 +84,6 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
               if (jsonStr.trim() === '[DONE]') {
                 continue;
               }
-
               try {
                 const event = JSON.parse(jsonStr);
 
@@ -79,10 +93,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                 } else if (event.type === 'step_started') {
                   setStepStates((prev) => ({
                     ...prev,
-                    [event.step_key]: {
-                      status: 'running',
-                      ...prev[event.step_key],
-                    },
+                    [event.step_key]: { status: 'running', ...prev[event.step_key] },
                   }));
                 } else if (event.type === 'step_completed') {
                   setStepStates((prev) => ({
@@ -90,6 +101,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                     [event.step_key]: {
                       status: 'succeeded',
                       summary: event.summary,
+                      data: event.data, // Store the actual data returned by the step
                     },
                   }));
                 } else if (event.type === 'step_failed') {
@@ -138,20 +150,33 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
 
   // Reset state when opening
   useEffect(() => {
-    if (open) {
+    log.debug(
+      '[ExperienceRunDialog] useEffect triggered - open:',
+      open,
+      'experienceId:',
+      experienceId,
+      'executionStarted:',
+      executionStartedRef.current
+    );
+    if (open && !executionStartedRef.current) {
+      executionStartedRef.current = true;
       setStatus('running');
       setStepStates({});
+      setExpandedSteps({});
       setLlmContent('');
       setError(null);
 
+      log.debug('[ExperienceRunDialog] Starting execution for experience:', experienceId);
       startExecution();
-    } else {
+    } else if (!open) {
       // Cleanup on close
+      executionStartedRef.current = false;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
     }
-  }, [open, startExecution]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]); // Only depend on 'open', not 'startExecution' to avoid double execution
 
   // Handle incoming events (helper function merged into startExecution loop)
   // const handleEvent = ... removed to avoid stale closures
@@ -166,8 +191,15 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
         }
         onClose();
       }}
-      maxWidth="md"
-      fullWidth
+      maxWidth={false}
+      PaperProps={{
+        sx: {
+          width: '95vw',
+          height: '95vh',
+          maxWidth: '95vw',
+          maxHeight: '95vh',
+        },
+      }}
     >
       <DialogTitle>
         Execute: {experienceName}
@@ -177,40 +209,80 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
           </Typography>
         )}
       </DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={3}>
+      <DialogContent dividers sx={{ height: 'calc(95vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+        <Stack spacing={3} sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {error && <Alert severity="error">{error}</Alert>}
 
           {/* Steps Progress */}
-          <Box>
+          <Box sx={{ flex: '0 0 auto', maxHeight: '40vh', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="subtitle2" gutterBottom>
               Steps Execution
             </Typography>
-            <Paper variant="outlined">
+            <Paper variant="outlined" sx={{ flex: 1, overflow: 'auto' }}>
               <List dense>
                 {steps.map((step) => {
                   const state = stepStates[step.step_key];
+                  const isExpanded = expandedSteps[step.step_key];
+                  const hasData = state?.data !== undefined && state?.data !== null;
+
                   return (
-                    <ListItem key={step.step_key}>
-                      <ListItemIcon>
-                        <StepStatusIcon state={state} />
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={step.step_key}
-                        secondary={
-                          state?.error
-                            ? `Error: ${state.error}`
-                            : state?.summary
-                              ? state.summary
-                              : state?.reason
-                                ? `Skipped: ${state.reason}`
-                                : step.step_type
-                        }
-                        primaryTypographyProps={{
-                          color: state?.status === 'failed' ? 'error' : 'textPrimary',
-                        }}
-                      />
-                    </ListItem>
+                    <React.Fragment key={step.step_key}>
+                      <ListItem>
+                        <ListItemIcon>
+                          <StepStatusIcon state={state} />
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={step.step_key}
+                          secondary={
+                            state?.error
+                              ? `Error: ${state.error}`
+                              : state?.summary
+                                ? state.summary
+                                : state?.reason
+                                  ? `Skipped: ${state.reason}`
+                                  : step.step_type
+                          }
+                          primaryTypographyProps={{
+                            color: state?.status === 'failed' ? 'error' : 'textPrimary',
+                          }}
+                        />
+                        {hasData && (
+                          <IconButton
+                            size="small"
+                            onClick={() => toggleStepExpanded(step.step_key)}
+                            sx={{ ml: 1 }}
+                            aria-label={isExpanded ? `Collapse step ${step.step_key}` : `Expand step ${step.step_key}`}
+                            aria-expanded={isExpanded}
+                          >
+                            {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                          </IconButton>
+                        )}
+                      </ListItem>
+                      {hasData && (
+                        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                          <Box sx={{ px: 2, pb: 2, pl: 9 }}>
+                            <Paper
+                              variant="outlined"
+                              sx={{
+                                p: 2,
+                                bgcolor: 'background.default',
+                                maxHeight: '30vh',
+                                overflowY: 'auto',
+                              }}
+                            >
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ display: 'block', mb: 2, fontWeight: 600 }}
+                              >
+                                Step Output Data:
+                              </Typography>
+                              <DataRenderer data={state.data} />
+                            </Paper>
+                          </Box>
+                        </Collapse>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </List>
@@ -218,7 +290,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
           </Box>
 
           {/* LLM Output */}
-          <Box sx={{ minHeight: 200 }}>
+          <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             <Typography variant="subtitle2" gutterBottom>
               Synthesized Result
             </Typography>
@@ -226,14 +298,19 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
               variant="outlined"
               sx={{
                 p: 2,
-                bgcolor: 'grey.50',
-                minHeight: 200,
-                maxHeight: 400,
+                bgcolor: 'background.default',
+                flex: 1,
                 overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
               }}
             >
               {llmContent ? (
-                <MarkdownRenderer content={llmContent} isDarkMode={isDarkMode} />
+                <MarkdownRenderer
+                  key={status === 'completed' ? 'final' : 'streaming'}
+                  content={llmContent}
+                  isDarkMode={isDarkMode}
+                />
               ) : (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   {status === 'running' && <CircularProgress size={16} />}

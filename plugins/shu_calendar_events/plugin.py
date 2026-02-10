@@ -46,14 +46,8 @@ class CalendarEventsPlugin:
                     "default": 48,
                     "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
                 },
-                "time_min": {
-                    "type": ["string", "null"],
-                    "x-ui": {"help": "ISO timeMin override (UTC)."},
-                },
-                "time_max": {
-                    "type": ["string", "null"],
-                    "x-ui": {"help": "ISO timeMax override (UTC)."},
-                },
+                "time_min": {"type": ["string", "null"], "x-ui": {"help": "ISO timeMin override (UTC)."}},
+                "time_max": {"type": ["string", "null"], "x-ui": {"help": "ISO timeMax override (UTC)."}},
                 "max_results": {"type": "integer", "minimum": 1, "maximum": 250, "default": 50},
                 "kb_id": {"type": ["string", "null"], "x-ui": {"hidden": True}},
             },
@@ -89,12 +83,7 @@ class CalendarEventsPlugin:
             return None, None
 
     async def _http_json(
-        self,
-        host: Any,
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        params: dict[str, Any] | None = None,
+        self, host: Any, method: str, url: str, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> Any:
         kwargs: dict[str, Any] = {"headers": headers}
         if params:
@@ -319,12 +308,8 @@ class CalendarEventsPlugin:
             if "HTTP 410" in msg or "status_code': 410" in msg:
                 existing_sync = None
             else:
-                # Use semantic error_category from HttpRequestFailed if available
-                error_code = getattr(e, "error_category", None) or "provider_error"
                 return _Result.err(
-                    "Calendar API error during ingest",
-                    code=error_code,
-                    details={"message": msg[:300]},
+                    "Calendar API error during ingest", code="provider_error", details={"message": msg[:300]}
                 )
 
         # Advance cursor if available
@@ -353,14 +338,6 @@ class CalendarEventsPlugin:
             return await self._list(host, params, user_email, calendar_id, since_hours, time_min, time_max, max_results)
         if op == "ingest":
             return await self._ingest(
-                host,
-                params,
-                user_email,
-                params.get("kb_id"),
-                calendar_id,
-                since_hours,
-                time_min,
-                time_max,
-                max_results,
+                host, params, user_email, params.get("kb_id"), calendar_id, since_hours, time_min, time_max, max_results
             )
         return _Result.err(f"Unsupported op: {op}")

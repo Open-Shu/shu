@@ -42,12 +42,7 @@ class GChatDigestPlugin:
                     "x-ui": {"help": "Look-back window in hours for recent messages."},
                 },
                 "max_spaces": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
-                "max_messages_per_space": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 1000,
-                    "default": 100,
-                },
+                "max_messages_per_space": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
                 "kb_id": {"type": ["string", "null"], "x-ui": {"hidden": True}},
             },
             "required": [],
@@ -82,12 +77,7 @@ class GChatDigestPlugin:
             return None, None
 
     async def _http_json(
-        self,
-        host: Any,
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        params: dict[str, Any] | None = None,
+        self, host: Any, method: str, url: str, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> Any:
         kwargs: dict[str, Any] = {"headers": headers}
         if params:
@@ -175,12 +165,7 @@ class GChatDigestPlugin:
         return profile
 
     async def _list(
-        self,
-        host: Any,
-        params: dict[str, Any],
-        since_hours: int,
-        max_spaces: int,
-        max_messages_per_space: int,
+        self, host: Any, params: dict[str, Any], since_hours: int, max_spaces: int, max_messages_per_space: int
     ) -> _Result:
         token, _ = await self._resolve_token_and_target(host, params or {}, op="list")
         if not token:
@@ -219,13 +204,7 @@ class GChatDigestPlugin:
                 if not page:
                     break
         out.sort(key=lambda x: x.get("createTime") or "", reverse=True)
-        return _Result.ok(
-            {
-                "messages": out,
-                "count": len(out),
-                "last_ts": (out[0].get("createTime") if out else None),
-            }
-        )
+        return _Result.ok({"messages": out, "count": len(out), "last_ts": (out[0].get("createTime") if out else None)})
 
     async def _ingest(
         self,
