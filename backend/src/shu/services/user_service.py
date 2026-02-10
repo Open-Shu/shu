@@ -128,7 +128,7 @@ class UserService:
         return result.scalar_one_or_none() is None
 
     def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
-        return is_first_user or user_role == UserRole.ADMIN
+        return is_first_user or user_role == UserRole.ADMIN or self.settings.auto_activate_users
 
     async def get_user_auth_method(self, db: AsyncSession, email: str) -> str | None:
         auth_method_result = await db.execute(select(User.auth_method).where(func.lower(User.email) == email.lower()))
