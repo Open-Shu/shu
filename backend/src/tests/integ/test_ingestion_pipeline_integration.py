@@ -8,7 +8,6 @@ and that DocumentChunks are created.
 
 import asyncio
 import logging
-import sys
 import uuid
 from collections.abc import Callable
 
@@ -239,7 +238,7 @@ async def test_ocr_failure_sets_failed_status(client, db, auth_headers):
     await cache.delete(staging_key)
     logger.info(f"Deleted staged file with key: {staging_key}")
 
-    logger.info(f"Waiting for pipeline to fail due to missing staged file...")
+    logger.info("Waiting for pipeline to fail due to missing staged file...")
 
     # Wait for pipeline to complete (expecting failure)
     try:

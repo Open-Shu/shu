@@ -1356,12 +1356,12 @@ class TestBinaryBackendSubstitutability:
         """Parametrized fixture providing both backends with binary support."""
         if request.param == "inmemory":
             return InMemoryCacheBackend(cleanup_interval_seconds=0)
-        else:  # redis (shared storage models real Redis)
-            shared_data: dict[str, Any] = {}
-            shared_expiry: dict[str, float] = {}
-            mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
-            mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
-            return RedisCacheBackend(mock_string_client, mock_binary_client)
+        # redis (shared storage models real Redis)
+        shared_data: dict[str, Any] = {}
+        shared_expiry: dict[str, float] = {}
+        mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
+        mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
+        return RedisCacheBackend(mock_string_client, mock_binary_client)
 
     @pytest.mark.asyncio
     @settings(max_examples=100)

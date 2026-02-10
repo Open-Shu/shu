@@ -571,7 +571,7 @@ class PluginsSchedulerService:
 
 
 async def start_plugins_scheduler():
-    """Deprecated: Use start_scheduler() from scheduler_service instead.
+    """Delegate to the unified scheduler (deprecated in favor of start_scheduler).
 
     Kept for backward compatibility. Delegates to the unified scheduler
     with only the plugin feeds source enabled.

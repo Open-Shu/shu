@@ -320,7 +320,7 @@ class TestSkipsArray:
             # Delta query to get initial token
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"})
         ]
-        
+
         # Make ingestion fail to trigger skip
         mock_host.kb.ingest_email.side_effect = Exception("Message not found in mailbox")
 

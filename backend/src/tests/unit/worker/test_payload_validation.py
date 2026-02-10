@@ -7,7 +7,6 @@ required payload fields and raise descriptive errors for missing fields.
 Feature: queue-ingestion-pipeline
 """
 
-import json
 
 import pytest
 from hypothesis import given, settings

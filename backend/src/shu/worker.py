@@ -907,7 +907,7 @@ async def _handle_experience_execution_job(job) -> None:
                 },
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception(
                 "Experience execution failed | experience=%s user=%s",
                 experience_id,
