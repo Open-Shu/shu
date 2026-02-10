@@ -709,7 +709,7 @@ class ExperienceExecutor:
         # Guard against None return (should not happen with current implementation, but defensive)
         if result is None:
             logger.warning("Decision control step '%s' returned None, using safe default", step.step_key)
-            result = {"should_execute": False, "rationale": "No decision returned", "metadata": {}}
+            result = {"should_execute": False, "rationale": "No decision returned", "confidence": 0.0, "metadata": {}}
 
         logger.info(
             "Decision control step '%s' executed: should_execute=%s, rationale=%s",

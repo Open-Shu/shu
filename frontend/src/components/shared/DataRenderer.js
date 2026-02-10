@@ -59,7 +59,7 @@ export default function DataRenderer({ data, depth = 0 }) {
         );
       }
       // For arrays of primitives, show as chips
-      if (value.every((item) => typeof item !== 'object')) {
+      if (value.every((item) => item === null || item === undefined || typeof item !== 'object')) {
         return (
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
             {value.map((item, idx) => (

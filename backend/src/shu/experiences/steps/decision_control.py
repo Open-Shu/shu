@@ -92,13 +92,16 @@ class DecisionControlStep:
 
             # Log to host audit if available (with correlation ID, not raw exception)
             if host and hasattr(host, "audit"):
-                await host.audit.log(
-                    {
-                        "correlation_id": correlation_id,
-                        "step": "decision_control",
-                        "error": "Decision evaluation failed",
-                    }
-                )
+                try:
+                    await host.audit.log(
+                        {
+                            "correlation_id": correlation_id,
+                            "step": "decision_control",
+                            "error": "Decision evaluation failed",
+                        }
+                    )
+                except Exception:
+                    logger.warning("Failed to write audit log for correlation_id=%s", correlation_id, exc_info=True)
 
             # Return sanitized error to caller without exposing internal details
             return {

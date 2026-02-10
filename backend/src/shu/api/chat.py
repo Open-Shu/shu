@@ -90,7 +90,7 @@ async def create_sse_stream_generator(
         async for event in event_generator:
             try:
                 # Sanitize error messages for regular chat users
-                if event.type == "error":
+                if getattr(event, "type", None) == "error":
                     event.content = _sanitize_chat_error_message(event.content or "")
 
                 payload = event.to_dict()
