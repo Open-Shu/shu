@@ -58,7 +58,7 @@ compose-build-dev:
 # - make up-worker:    Dedicated worker (production)
 # - make up-worker-dev: Dedicated worker with hot-reload
 
-.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-dev-split down logs logs-worker ps
+.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d
