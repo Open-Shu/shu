@@ -766,6 +766,147 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
             raise
 
 
+async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
+    """Mark a pre-created queued ExperienceRun as failed when the worker skips execution."""
+    if not run_id:
+        return
+    try:
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+
+        from .models.experience import ExperienceRun
+
+        result = await session.execute(
+            select(ExperienceRun).where(ExperienceRun.id == run_id)
+        )
+        run = result.scalar_one_or_none()
+        if run and run.status == "queued":
+            run.status = "failed"
+            run.error_message = error
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _handle_experience_execution_job(job) -> None:
+    """Handle an LLM_WORKFLOW experience execution job.
+
+    Loads the Experience and User, instantiates ExperienceExecutor, and
+    runs the experience in non-streaming mode. Creates an ExperienceRun
+    record via the executor.
+
+    Args:
+        job: The job containing experience_id, user_id, and input_params
+            in payload.
+
+    Raises:
+        ValueError: If required fields are missing from payload.
+        Exception: If execution fails (triggers retry).
+
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .auth.models import User
+    from .core.config import get_config_manager
+    from .core.database import get_async_session_local
+    from .models.experience import Experience
+    from .services.experience_executor import ExperienceExecutor
+
+    experience_id = job.payload.get("experience_id")
+    if not experience_id:
+        raise ValueError("Experience execution job missing experience_id in payload")
+
+    user_id = job.payload.get("user_id")
+    if not user_id:
+        raise ValueError("Experience execution job missing user_id in payload")
+
+    input_params = job.payload.get("input_params", {})
+    run_id = job.payload.get("run_id")
+
+    logger.info(
+        "Processing experience execution job",
+        extra={
+            "job_id": job.id,
+            "experience_id": experience_id,
+            "user_id": user_id,
+            "run_id": run_id,
+        },
+    )
+
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        # Load experience with steps eagerly loaded
+        exp_result = await session.execute(
+            select(Experience)
+            .options(selectinload(Experience.steps))
+            .where(Experience.id == experience_id)
+        )
+        experience = exp_result.scalar_one_or_none()
+
+        if not experience:
+            logger.warning(
+                "Experience not found, skipping",
+                extra={"job_id": job.id, "experience_id": experience_id},
+            )
+            await _fail_queued_run(session, run_id, "experience_not_found")
+            return
+
+        # Load user
+        user_result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = user_result.scalar_one_or_none()
+
+        if not user:
+            logger.warning(
+                "User not found, skipping",
+                extra={"job_id": job.id, "user_id": user_id},
+            )
+            await _fail_queued_run(session, run_id, "user_not_found")
+            return
+
+        if not user.is_active:
+            logger.debug(
+                "User inactive, skipping experience execution",
+                extra={"job_id": job.id, "user_id": user_id},
+            )
+            await _fail_queued_run(session, run_id, "user_inactive")
+            return
+
+        try:
+            config_manager = get_config_manager()
+            executor = ExperienceExecutor(session, config_manager)
+            run = await executor.execute(
+                experience=experience,
+                user_id=user_id,
+                input_params=input_params,
+                current_user=user,
+                run_id=run_id,
+            )
+
+            logger.info(
+                "Experience execution completed",
+                extra={
+                    "job_id": job.id,
+                    "experience_id": experience_id,
+                    "user_id": user_id,
+                    "run_id": run.id if run else None,
+                    "status": run.status if run else "unknown",
+                },
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Experience execution failed | experience=%s user=%s",
+                experience_id,
+                user_id,
+            )
+            # Let the queue retry mechanism handle transient failures
+            raise
 
 
 async def _handle_profiling_job(job) -> None:
@@ -925,14 +1066,19 @@ async def process_job(job):
             )
 
     elif workload_type == WorkloadType.LLM_WORKFLOW:
-        # Placeholder for future LLM workflow jobs
-        logger.warning(
-            "LLM_WORKFLOW workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
+        # Route based on action in payload
+        action = (job.payload or {}).get("action", "")
+        if action == "experience_execution":
+            await _handle_experience_execution_job(job)
+        else:
+            logger.warning(
+                "LLM_WORKFLOW job with unknown action",
+                extra={
+                    "job_id": job.id,
+                    "queue": job.queue_name,
+                    "action": action,
+                },
+            )
 
     else:
         raise ValueError(f"Unsupported workload type: {workload_type}")
@@ -1041,7 +1187,7 @@ Valid workload types:
   INGESTION       - Plugin feed ingestion (Gmail, Drive, Outlook, etc.)
   INGESTION_OCR   - OCR/text extraction stage of document pipeline
   INGESTION_EMBED - Embedding stage of document pipeline
-  LLM_WORKFLOW    - LLM-based workflows and chat
+  LLM_WORKFLOW    - Scheduled experience execution and LLM workflows
   MAINTENANCE     - Cleanup and scheduled maintenance tasks
   PROFILING       - Document profiling with LLM calls
         """,

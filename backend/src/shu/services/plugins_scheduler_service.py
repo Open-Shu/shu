@@ -3,23 +3,20 @@
 - Enqueue due PluginFeed rows into QueueBackend as jobs with INGESTION WorkloadType
 - Workers dequeue and process jobs from the queue
 - PluginExecution records track execution state for idempotency and observability
-- Exposed start_plugins_scheduler() to run in FastAPI lifespan
 
 DRY: API endpoints delegate to this service.
 Concurrency: uses QueueBackend for job distribution and SELECT ... FOR UPDATE SKIP LOCKED
 for database-level idempotency guards.
 
-The scheduler is enqueue-only: it creates PluginExecution records and enqueues jobs
-for worker processing. Actual plugin execution happens in the worker handler
-(_handle_plugin_execution_job in worker.py).
+The scheduler loop has been moved to scheduler_service.py (UnifiedSchedulerService).
+This module retains PluginsSchedulerService for use by the unified scheduler's
+PluginFeedSource and by API manual-trigger endpoints.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,7 +25,6 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
-from ..core.database import get_db_session
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..models.plugin_registry import PluginDefinition
@@ -42,9 +38,9 @@ from ..services.plugin_identity import (
     resolve_auth_requirements,
 )
 
-# In-memory per-process tick history for observability (SCHED-004)
-# Stores last 500 tick summaries: {"ts": iso8601, "enqueue": {...}, "run": {...}}
-TICK_HISTORY = deque(maxlen=500)
+# In-memory per-process tick history for observability.
+# Re-exported from scheduler_service for backward compatibility with API endpoints.
+from .scheduler_service import TICK_HISTORY  # noqa: F401
 
 # Feed params that should be automatically cleared after successful execution.
 # These are "one-shot" params meant to apply only once.
@@ -574,76 +570,12 @@ class PluginsSchedulerService:
 
 
 async def start_plugins_scheduler():
-    import os
+    """Deprecated: Use start_scheduler() from scheduler_service instead.
 
-    settings = get_settings_instance()
-    # Read runtime env to allow tests to override after app import
-    enabled_env = os.getenv("SHU_PLUGINS_SCHEDULER_ENABLED")
-    if enabled_env is not None:
-        enabled = enabled_env.lower() in ("1", "true", "yes", "on")
-    else:
-        enabled = getattr(settings, "plugins_scheduler_enabled", True)
-    if not enabled:
-        logger.info("Plugins scheduler disabled by configuration")
-        return asyncio.create_task(asyncio.sleep(0), name="plugins:scheduler:disabled")
+    Kept for backward compatibility. Delegates to the unified scheduler
+    with only the plugin feeds source enabled.
+    """
+    from .scheduler_service import start_scheduler
 
-    tick = max(
-        1,
-        int(
-            os.getenv(
-                "SHU_PLUGINS_SCHEDULER_TICK_SECONDS",
-                str(getattr(settings, "plugins_scheduler_tick_seconds", 60)),
-            )
-        ),
-    )
-    batch = max(
-        1,
-        int(
-            os.getenv(
-                "SHU_PLUGINS_SCHEDULER_BATCH_LIMIT",
-                str(getattr(settings, "plugins_scheduler_batch_limit", 10)),
-            )
-        ),
-    )
-
-    async def _runner() -> None:
-        while True:
-            try:
-                db = await get_db_session()
-                async with db as session:
-                    svc = PluginsSchedulerService(session)
-                    # Stale cleanup MUST run before enqueue so the idempotency
-                    # guard does not skip schedules whose previous execution was
-                    # orphaned by a server restart.
-                    stale_cleaned = await svc.cleanup_stale_executions()
-                    e = await svc.enqueue_due_schedules(limit=batch)
-                    if (e.get("enqueued") or 0) or stale_cleaned:
-                        logger.info(
-                            "Plugins scheduler tick | due=%s enq=%s queue_enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s stale_cleaned=%s",
-                            e.get("due"),
-                            e.get("enqueued"),
-                            e.get("queue_enqueued"),
-                            e.get("skipped_no_owner"),
-                            e.get("skipped_missing_plugin"),
-                            e.get("skipped_already_enqueued"),
-                            stale_cleaned,
-                        )
-                        try:
-                            TICK_HISTORY.append(
-                                {
-                                    "ts": datetime.now(UTC).isoformat(),
-                                    "stale_cleaned": stale_cleaned,
-                                    "enqueue": e,
-                                }
-                            )
-                        except Exception:
-                            pass
-            except Exception as ex:
-                logger.warning(f"Plugins scheduler tick failed: {ex}")
-            finally:
-                try:
-                    await asyncio.sleep(tick)
-                except asyncio.CancelledError:
-                    break
-
-    return asyncio.create_task(_runner(), name="plugins:scheduler")
+    logger.info("start_plugins_scheduler() is deprecated; delegating to unified scheduler")
+    return await start_scheduler()

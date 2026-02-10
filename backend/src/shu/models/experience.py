@@ -248,7 +248,7 @@ class ExperienceRun(BaseModel):
 
     # Status tracking
     status = Column(String(20), default="pending", nullable=False, index=True)
-    # Values: pending, running, succeeded, failed, cancelled
+    # Values: queued, pending, running, succeeded, failed, cancelled
     started_at = Column(TIMESTAMP(timezone=True), nullable=True)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
 

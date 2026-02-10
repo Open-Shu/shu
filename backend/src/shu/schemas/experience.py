@@ -44,6 +44,7 @@ class StepType(str, Enum):
 class RunStatus(str, Enum):
     """Status values for experience runs."""
 
+    QUEUED = "queued"
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"

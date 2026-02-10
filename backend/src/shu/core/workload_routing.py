@@ -51,9 +51,10 @@ class WorkloadType(Enum):
             Examples: Chunking extracted text, generating embeddings,
             storing vectors. Second stage of async ingestion.
 
-        LLM_WORKFLOW: LLM-based workflows and chat operations.
-            Examples: Chat message processing, workflow execution,
-            prompt generation, LLM API calls for conversations.
+        LLM_WORKFLOW: LLM-based workflows and experience execution.
+            Examples: Scheduled experience execution (Morning Briefing,
+            Inbox Triage, Project Pulse), chat message processing,
+            workflow execution, prompt generation.
 
         MAINTENANCE: Scheduled maintenance and cleanup operations.
             Examples: Cache cleanup, database maintenance,
