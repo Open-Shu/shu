@@ -77,7 +77,6 @@
       "last 1 safari version"
     ]
   },
-  "proxy": "http://localhost:8000",
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@testing-library/jest-dom": "^6.1.5",

@@ -24,7 +24,7 @@ jobs:
     - name: Run unit tests with coverage
       run: |
         cd frontend
-        npm test -- --watchAll=false --coverage --testPathIgnorePatterns=tests/
+        npm test --coverage --testPathIgnorePatterns=tests/
       env:
         CI: true
 
