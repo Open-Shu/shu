@@ -11,10 +11,11 @@ repos:
       - id: ruff
         args: [--fix]
         types_or: [python, pyi]
-        exclude: ^(backend/src/tests/|backend/migrations/|backend/scripts)
+        exclude: ^(backend/src/tests/|backend/migrations/|backend/scripts|plugins)
       # Run the formatter
       - id: ruff-format
         types_or: [python, pyi]
+        exclude: ^(plugins)
 
   # Python: Check for common security issues
   - repo: https://github.com/PyCQA/bandit

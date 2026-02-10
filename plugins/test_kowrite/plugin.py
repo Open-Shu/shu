@@ -38,10 +38,7 @@ class TestKoWritePlugin:
                         "enum_help": {"run": "Write a single KO into the selected KB"},
                     },
                 },
-                "kb_id": {
-                    "type": "string",
-                    "x-ui": {"hidden": True, "help": "Target Knowledge Base"},
-                },
+                "kb_id": {"type": "string", "x-ui": {"hidden": True, "help": "Target Knowledge Base"}},
                 "type": {"type": "string"},
                 "external_id": {"type": "string"},
                 "title": {"type": ["string", "null"]},

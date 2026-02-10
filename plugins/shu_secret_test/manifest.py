@@ -9,26 +9,15 @@ PLUGIN_MANIFEST = {
     "op_auth": {
         "validate_api_key": {
             "secrets": {
-                "api_key": {
-                    "allowed_scope": "system_or_user",
-                    "description": "API key for external service validation",
-                }
+                "api_key": {"allowed_scope": "system_or_user", "description": "API key for external service validation"}
             }
         },
         "validate_user_token": {
-            "secrets": {
-                "user_token": {
-                    "allowed_scope": "user",
-                    "description": "User-specific authentication token",
-                }
-            }
+            "secrets": {"user_token": {"allowed_scope": "user", "description": "User-specific authentication token"}}
         },
         "validate_system_credential": {
             "secrets": {
-                "system_credential": {
-                    "allowed_scope": "system",
-                    "description": "System-wide credential (admin only)",
-                }
+                "system_credential": {"allowed_scope": "system", "description": "System-wide credential (admin only)"}
             }
         },
     },

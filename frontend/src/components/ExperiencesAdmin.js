@@ -39,6 +39,7 @@ import ImportExperienceWizard from './ImportExperienceWizard';
 import PageHelpHeader from './PageHelpHeader';
 import { MORNING_BRIEFING_YAML } from '../utils/morningBriefingTemplate';
 import { keyframes } from '@mui/system';
+import log from '../utils/log';
 
 // Pulsing animation for highlighting the import button
 const pulseAnimation = keyframes`
@@ -220,7 +221,9 @@ export default function ExperiencesAdmin() {
   const highlightImport = searchParams.get('action') === 'import-morning-briefing';
 
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [runDialogExperience, setRunDialogExperience] = useState(null);
+  const [runDialogExperienceId, setRunDialogExperienceId] = useState(null);
+  const [runDialogExperienceName, setRunDialogExperienceName] = useState('');
+  const [runDialogExperienceSteps, setRunDialogExperienceSteps] = useState([]);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [prePopulatedYAML, setPrePopulatedYAML] = useState('');
   const [showFirstTimeAlert, setShowFirstTimeAlert] = useState(false);
@@ -305,7 +308,9 @@ export default function ExperiencesAdmin() {
   };
 
   const handleRun = (experience) => {
-    setRunDialogExperience(experience);
+    setRunDialogExperienceId(experience.id);
+    setRunDialogExperienceName(experience.name);
+    setRunDialogExperienceSteps(experience.steps || []);
   };
 
   const handleHistory = (experience) => {
@@ -495,13 +500,18 @@ export default function ExperiencesAdmin() {
       />
 
       {/* Run Dialog */}
-      {runDialogExperience && (
+      {runDialogExperienceId && (
         <ExperienceRunDialog
-          open={!!runDialogExperience}
-          onClose={() => setRunDialogExperience(null)}
-          experienceId={runDialogExperience.id}
-          experienceName={runDialogExperience.name}
-          steps={runDialogExperience.steps || []}
+          key={runDialogExperienceId}
+          open={!!runDialogExperienceId}
+          onClose={() => {
+            setRunDialogExperienceId(null);
+            setRunDialogExperienceName('');
+            setRunDialogExperienceSteps([]);
+          }}
+          experienceId={runDialogExperienceId}
+          experienceName={runDialogExperienceName}
+          steps={runDialogExperienceSteps}
         />
       )}
 
@@ -511,6 +521,10 @@ export default function ExperiencesAdmin() {
         onClose={handleImportClose}
         onSuccess={handleImportSuccess}
         prePopulatedYAML={prePopulatedYAML}
+        onError={(error) => {
+          log.error('Import failed:', error);
+          // Keep wizard open to show error - the wizard handles error display
+        }}
       />
     </Box>
   );

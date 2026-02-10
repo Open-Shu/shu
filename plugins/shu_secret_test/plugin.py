@@ -39,11 +39,7 @@ class SecretTestPlugin:
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": [
-                        "validate_api_key",
-                        "validate_user_token",
-                        "validate_system_credential",
-                    ],
+                    "enum": ["validate_api_key", "validate_user_token", "validate_system_credential"],
                     "description": "Operation to perform",
                     "x-ui": {
                         "help": "Select the secret validation operation to test",

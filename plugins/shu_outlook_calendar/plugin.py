@@ -22,7 +22,7 @@ class _Result:
 
 def _is_http_request_failed(e: Exception) -> bool:
     """Check if exception is HttpRequestFailed via duck-typing.
-    
+
     The real HttpRequestFailed is defined in shu.plugins.host.exceptions.
     We detect it by checking for error_category and status_code attributes
     rather than importing the class (which would create circular imports).
@@ -46,7 +46,7 @@ class OutlookCalendarPlugin:
 
     def _window(self, since_hours: int, time_min: Optional[str], time_max: Optional[str]) -> tuple[str, str]:
         """Compute symmetric time window (past + future) for calendar events.
-        
+
         Supports partial overrides:
         - Both provided: return unchanged
         - Only time_min: compute time_max = time_min + since_hours
@@ -55,7 +55,7 @@ class OutlookCalendarPlugin:
         """
         if time_min and time_max:
             return time_min, time_max
-        
+
         if time_min:
             # Parse time_min and compute time_max
             try:
@@ -64,7 +64,7 @@ class OutlookCalendarPlugin:
                 return time_min, tmax_dt.isoformat().replace("+00:00", "Z")
             except ValueError as e:
                 raise ValueError(f"Invalid time_min format: {time_min}") from e
-        
+
         if time_max:
             # Parse time_max and compute time_min
             try:
@@ -73,7 +73,7 @@ class OutlookCalendarPlugin:
                 return tmin_dt.isoformat().replace("+00:00", "Z"), time_max
             except ValueError as e:
                 raise ValueError(f"Invalid time_max format: {time_max}") from e
-        
+
         # Neither provided: symmetric window around now
         now = datetime.now(timezone.utc)
         tmin = now - timedelta(hours=since_hours)
@@ -299,7 +299,7 @@ class OutlookCalendarPlugin:
 
         async def _process_event(ev: Dict[str, Any]) -> tuple[int, int]:
             """Process a single event (upsert or delete). Returns (upserts, deletes).
-            
+
             Errors are logged but don't abort the sync - a single event failure
             shouldn't prevent processing of remaining events.
             """
@@ -451,4 +451,3 @@ class OutlookCalendarPlugin:
                 code="execution_error",
                 details={"exception_type": type(e).__name__}
             )
-

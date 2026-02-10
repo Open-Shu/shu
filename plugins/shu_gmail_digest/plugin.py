@@ -259,12 +259,7 @@ class GmailDigestPlugin:
         }
 
     async def _perform_action(
-        self,
-        host: Any,
-        params: dict[str, Any],
-        user_email: str | None,
-        op: str,
-        message_ids: list[str],
+        self, host: Any, params: dict[str, Any], user_email: str | None, op: str, message_ids: list[str]
     ) -> dict[str, Any]:
         token, target_user = await self._resolve_token_and_target(host, params or {}, op=op)
         if not token or not target_user:
@@ -374,22 +369,14 @@ class GmailDigestPlugin:
             "title": title,
             "content": content,
             "attributes": {
-                "window": {
-                    "since": since_dt.isoformat(),
-                    "until": now.isoformat(),
-                    "hours": since_hours,
-                },
+                "window": {"since": since_dt.isoformat(), "until": now.isoformat(), "hours": since_hours},
                 "message_count": len(messages),
                 "top_senders": top_senders,
                 "items": items,
             },
         }
         return _Result.ok(
-            {
-                "ko": ko,
-                "count": len(messages),
-                "window": {"since": since_dt.isoformat(), "until": now.isoformat()},
-            }
+            {"ko": ko, "count": len(messages), "window": {"since": since_dt.isoformat(), "until": now.isoformat()}}
         )
 
     async def _ingest(
@@ -622,14 +609,7 @@ class GmailDigestPlugin:
             return await self._list(host, params, user_email, query_filter, max_results, since_dt)
         if op == "digest":
             return await self._digest(
-                host,
-                params,
-                user_email,
-                params.get("kb_id"),
-                query_filter,
-                max_results,
-                since_dt,
-                since_hours,
+                host, params, user_email, params.get("kb_id"), query_filter, max_results, since_dt, since_hours
             )
         if op == "ingest":
             return await self._ingest(

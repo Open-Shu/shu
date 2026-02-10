@@ -32,14 +32,14 @@ class OutlookMailPlugin:
     def _build_odata_query_string(self, params: Dict[str, str]) -> str:
         """
         Build OData query string with proper URL encoding for Microsoft Graph API.
-        
+
         OData parameters like $select, $filter, $orderby should keep the $ prefix
         unencoded. Values are URL-encoded but certain characters are kept safe
         for OData compatibility.
-        
+
         Args:
             params: Dictionary of OData parameters (e.g., {"$select": "id,subject"})
-            
+
         Returns:
             URL-encoded query string (e.g., "$select=id,subject&$filter=...")
         """
@@ -58,10 +58,10 @@ class OutlookMailPlugin:
     @staticmethod
     def _extract_recipients(recipient_list: List[Dict[str, Any]]) -> List[str]:
         """Extract email addresses from recipient list.
-        
+
         Args:
             recipient_list: List of recipient objects from Graph API
-            
+
         Returns:
             List of formatted email strings (e.g., "Name <email@example.com>")
         """
@@ -222,10 +222,10 @@ class OutlookMailPlugin:
         """Execute plugin operation (list, digest, or ingest)."""
         # Extract and validate operation
         op = (params.get("op") or "ingest").lower()
-        
+
         if op not in ["list", "digest", "ingest"]:
             return _Result.err(f"Unsupported op: {op}", code="invalid_parameter")
-        
+
         # Validate required parameters for specific operations
         if op == "ingest":
             kb_id = params.get("kb_id")
@@ -234,7 +234,7 @@ class OutlookMailPlugin:
                     "kb_id is required for op=ingest (target Knowledge Base to write KOs)",
                     code="missing_parameter"
                 )
-        
+
         # Validate parameter ranges
         since_hours = params.get("since_hours", 48)
         if not isinstance(since_hours, int) or since_hours < 1 or since_hours > 3360:
@@ -242,14 +242,14 @@ class OutlookMailPlugin:
                 "since_hours must be between 1 and 3360",
                 code="invalid_parameter"
             )
-        
+
         max_results = params.get("max_results", 50)
         if not isinstance(max_results, int) or max_results < 1 or max_results > 500:
             return _Result.err(
                 "max_results must be between 1 and 500",
                 code="invalid_parameter"
             )
-        
+
         # Resolve Microsoft OAuth token before API requests
         try:
             auth_result = await host.auth.resolve_token_and_target("microsoft")
@@ -259,7 +259,7 @@ class OutlookMailPlugin:
                 code="auth_missing_or_insufficient_scopes",
                 details={"exception_type": type(e).__name__}
             )
-        
+
         if auth_result is None:
             return _Result.err(
                 "No Microsoft access token available. Connect OAuth or configure host.auth.",
@@ -275,7 +275,7 @@ class OutlookMailPlugin:
                 "No Microsoft access token available. Connect OAuth or configure host.auth.",
                 code="auth_missing_or_insufficient_scopes"
             )
-        
+
         # Route to appropriate operation handler
         # HttpRequestFailed exceptions bubble up to the executor which converts them
         # to structured PluginResult.err() with semantic error_category.
@@ -285,7 +285,7 @@ class OutlookMailPlugin:
             return await self._execute_digest(params, context, host, access_token)
         else:  # op == "ingest"
             return await self._execute_ingest(params, context, host, access_token)
-    
+
     async def _graph_api_request(
         self,
         host: Any,
@@ -317,7 +317,7 @@ class OutlookMailPlugin:
             json=body
         )
         return response
-    
+
     async def _fetch_all_pages(
         self,
         host: Any,
@@ -327,23 +327,23 @@ class OutlookMailPlugin:
     ) -> List[Dict[str, Any]]:
         """
         Fetch all pages from a paginated Graph API response.
-        
+
         Args:
             host: Host capabilities object
             access_token: OAuth access token
             initial_url: Initial URL to fetch (can be full URL or endpoint path)
             max_results: Optional maximum number of items to return
-            
+
         Returns:
             List of all items collected across pages
         """
         all_items = []
         next_url = initial_url
-        
+
         # If initial_url is just an endpoint path, prepend base URL
         if not next_url.startswith("http"):
             next_url = f"https://graph.microsoft.com/v1.0{next_url}"
-        
+
         while next_url:
             # Make request with full URL
             # HttpRequestFailed exceptions bubble up - caller can check error_category
@@ -357,7 +357,7 @@ class OutlookMailPlugin:
                 url=next_url,
                 headers=headers
             )
-            
+
             # Extract items from response body
             # host.http.fetch returns {"status_code": ..., "headers": ..., "body": ...}
             # The actual Graph API response is in the "body" field
@@ -367,36 +367,36 @@ class OutlookMailPlugin:
             else:
                 items = []
             all_items.extend(items)
-            
+
             # Check if we've reached max_results
             if max_results and len(all_items) >= max_results:
                 all_items = all_items[:max_results]
                 break
-            
+
             # Get next page URL from response body
             if isinstance(body, dict):
                 next_url = body.get("@odata.nextLink")
             else:
                 next_url = None
-        
+
         return all_items
-    
+
     async def _execute_list(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
         """
         Execute list operation to fetch recent messages.
-        
+
         Fetches messages from /me/mailFolders/inbox/messages with:
         - Time filtering based on since_hours parameter
         - Optional OData query_filter
         - Result limit via max_results
         - Metadata fields: Subject, From, To, Cc, ReceivedDateTime, BodyPreview
-        
+
         Args:
             params: Operation parameters
             context: Execution context
             host: Host capabilities
             access_token: Microsoft OAuth access token
-            
+
         Returns:
             _Result with messages array and metadata
         """
@@ -405,41 +405,41 @@ class OutlookMailPlugin:
         query_filter = params.get("query_filter")
         max_results = params.get("max_results", 50)
         debug_mode = params.get("debug", False)
-        
+
         # Initialize diagnostics array
         diagnostics = []
-        
+
         # Calculate time window for filtering
         now = datetime.now(timezone.utc)
         since_time = now - timedelta(hours=since_hours)
-        
+
         if debug_mode:
             diagnostics.append(f"Time window: {since_time.isoformat()} to {now.isoformat()}")
-        
+
         # Build OData query parameters
         odata_params = {
             "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview",
             "$orderby": "receivedDateTime desc",
             "$top": str(max_results)
         }
-        
+
         # Build $filter parameter for time-based filtering
         filter_parts = []
-        
+
         # Add time filter
         since_iso = since_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         filter_parts.append(f"receivedDateTime ge {since_iso}")
-        
+
         # Add custom query filter if provided
         if query_filter:
             filter_parts.append(f"({query_filter})")
             if debug_mode:
                 diagnostics.append(f"Applied custom filter: {query_filter}")
-        
+
         # Combine filters with AND
         if filter_parts:
             odata_params["$filter"] = " and ".join(filter_parts)
-        
+
         # Fetch messages from Graph API
         # HttpRequestFailed exceptions bubble up to the executor.
         endpoint = "/me/mailFolders/inbox/messages"
@@ -475,24 +475,24 @@ class OutlookMailPlugin:
 
         # Return successful result
         return _Result.ok(result_data)
-    
+
     async def _execute_digest(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
         """
         Execute digest operation to create inbox summary.
-        
+
         Creates a digest summary of inbox activity by:
         - Fetching messages using list operation logic
         - Analyzing top senders with message counts
         - Extracting recent message subjects
         - Creating a Knowledge Object with type "email_digest"
         - Writing the digest to the knowledge base
-        
+
         Args:
             params: Operation parameters
             context: Execution context
             host: Host capabilities
             access_token: Microsoft OAuth access token
-            
+
         Returns:
             _Result with ko object, count, and window metadata
         """
@@ -502,41 +502,41 @@ class OutlookMailPlugin:
         max_results = params.get("max_results", 50)
         kb_id = params.get("kb_id")
         debug_mode = params.get("debug", False)
-        
+
         # Initialize diagnostics array
         diagnostics = []
-        
+
         # Calculate time window for filtering
         now = datetime.now(timezone.utc)
         since_time = now - timedelta(hours=since_hours)
-        
+
         if debug_mode:
             diagnostics.append(f"Time window: {since_time.isoformat()} to {now.isoformat()}")
-        
+
         # Build OData query parameters (same as list operation)
         odata_params = {
             "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview",
             "$orderby": "receivedDateTime desc",
             "$top": str(max_results)
         }
-        
+
         # Build $filter parameter for time-based filtering
         filter_parts = []
-        
+
         # Add time filter
         since_iso = since_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         filter_parts.append(f"receivedDateTime ge {since_iso}")
-        
+
         # Add custom query filter if provided
         if query_filter:
             filter_parts.append(f"({query_filter})")
             if debug_mode:
                 diagnostics.append(f"Applied custom filter: {query_filter}")
-        
+
         # Combine filters with AND
         if filter_parts:
             odata_params["$filter"] = " and ".join(filter_parts)
-        
+
         # Fetch messages from Graph API (reuse list operation logic)
         # HttpRequestFailed exceptions bubble up to the executor.
         endpoint = "/me/mailFolders/inbox/messages"
@@ -667,11 +667,11 @@ class OutlookMailPlugin:
 
         # Return ko object, count, and window in result
         return _Result.ok(result_data)
-    
+
     async def _execute_ingest(self, params: Dict[str, Any], context: Any, host: Any, access_token: str) -> _Result:
         """
         Execute ingest operation to add emails to knowledge base.
-        
+
         Ingests individual emails by:
         - Validating kb_id parameter is present
         - Using delta sync when cursor exists (incremental updates)
@@ -681,13 +681,13 @@ class OutlookMailPlugin:
         - Calling host.kb.ingest_email() with extracted fields
         - Handling message deletions via host.kb.delete_ko()
         - Tracking ingestion count and deletion count
-        
+
         Args:
             params: Operation parameters including kb_id
             context: Execution context
             host: Host capabilities
             access_token: Microsoft OAuth access token
-            
+
         Returns:
             _Result with count of ingested messages and deleted messages
         """
@@ -698,28 +698,28 @@ class OutlookMailPlugin:
                 "kb_id is required for op=ingest (target Knowledge Base to write KOs)",
                 code="missing_parameter"
             )
-        
+
         # Check that kb capability is available
         if not hasattr(host, "kb"):
             return _Result.err(
                 "kb capability not available. Add 'kb' to manifest capabilities.",
                 code="missing_capability"
             )
-        
+
         # Extract parameters
         since_hours = params.get("since_hours", 48)
         query_filter = params.get("query_filter")
         max_results = params.get("max_results", 50)
         reset_cursor = params.get("reset_cursor", False)
         debug_mode = params.get("debug", False)
-        
+
         # Initialize diagnostics array
         diagnostics = []
-        
+
         # Retrieve cursor via host.cursor.get(kb_id) before processing
         cursor_data = None
         use_delta_sync = False
-        
+
         if hasattr(host, "cursor") and not reset_cursor:
             try:
                 cursor_data = await host.cursor.get(kb_id)
@@ -731,14 +731,14 @@ class OutlookMailPlugin:
                 # If cursor retrieval fails, fall back to full sync
                 if debug_mode:
                     diagnostics.append(f"Cursor retrieval failed, falling back to full sync: {str(e)}")
-        
+
         if reset_cursor and debug_mode:
             diagnostics.append("Reset cursor requested, performing full sync")
-        
+
         # Calculate time window for filtering (used for full sync)
         now = datetime.now(timezone.utc)
         since_time = now - timedelta(hours=since_hours)
-        
+
         messages = []
         delta_link = None
 
@@ -761,7 +761,7 @@ class OutlookMailPlugin:
                         "Authorization": f"Bearer {access_token}",
                         "Content-Type": "application/json"
                     }
-                    
+
                     next_url = delta_url
                     while next_url:
                         response = await host.http.fetch(
@@ -774,7 +774,7 @@ class OutlookMailPlugin:
                         if isinstance(body, dict):
                             page_messages = body.get("value", [])
                             messages.extend(page_messages)
-                            
+
                             # Check for next page or final delta link
                             next_url = body.get("@odata.nextLink")
                             if not next_url:
@@ -782,7 +782,7 @@ class OutlookMailPlugin:
                                 delta_link = body.get("@odata.deltaLink")
                         else:
                             next_url = None
-                    
+
                     if debug_mode:
                         diagnostics.append(f"Delta sync fetched {len(messages)} messages")
 
@@ -802,7 +802,7 @@ class OutlookMailPlugin:
             else:
                 # No valid delta URL - fall back to full sync
                 use_delta_sync = False
-        
+
         # If not using delta sync, perform full list-based sync
         # This runs when: no cursor exists, cursor retrieval failed, or delta token expired
         if not use_delta_sync:
@@ -812,29 +812,29 @@ class OutlookMailPlugin:
                 "$orderby": "receivedDateTime desc",
                 "$top": str(max_results)
             }
-            
+
             # Build $filter parameter for time-based filtering
             filter_parts = []
-            
+
             # Add time filter
             since_iso = since_time.strftime("%Y-%m-%dT%H:%M:%SZ")
             filter_parts.append(f"receivedDateTime ge {since_iso}")
-            
+
             # Add custom query filter if provided
             if query_filter:
                 filter_parts.append(f"({query_filter})")
-            
+
             # Combine filters with AND
             if filter_parts:
                 odata_params["$filter"] = " and ".join(filter_parts)
-            
+
             # Fetch messages from Graph API (reuse list operation logic)
             endpoint = "/me/mailFolders/inbox/messages"
-            
+
             # Build full URL with properly URL-encoded query parameters
             query_string = self._build_odata_query_string(odata_params)
             full_endpoint = f"{endpoint}?{query_string}"
-            
+
             # Fetch all pages up to max_results
             messages = await self._fetch_all_pages(
                 host=host,
@@ -842,10 +842,10 @@ class OutlookMailPlugin:
                 initial_url=full_endpoint,
                 max_results=max_results
             )
-            
+
             if debug_mode:
                 diagnostics.append(f"Full sync fetched {len(messages)} messages")
-            
+
             # For initial sync, we need to get the delta link for future syncs
             # Make a delta query to get the initial delta token
             try:
@@ -853,29 +853,29 @@ class OutlookMailPlugin:
                 delta_params = {
                     "$select": "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,body,bodyPreview"
                 }
-                
+
                 # Add the same filters to delta query
                 if filter_parts:
                     delta_params["$filter"] = " and ".join(filter_parts)
-                
+
                 # Build delta URL with properly URL-encoded query parameters
                 delta_query_string = self._build_odata_query_string(delta_params)
                 delta_full_endpoint = f"{delta_endpoint}?{delta_query_string}"
-                
+
                 # Fetch delta to get initial token
                 delta_response = await self._graph_api_request(
                     host=host,
                     access_token=access_token,
                     endpoint=delta_full_endpoint
                 )
-                
+
                 # Extract delta link for next sync from response body
                 delta_body = delta_response.get("body", {})
                 if isinstance(delta_body, dict):
                     delta_link = delta_body.get("@odata.deltaLink")
                 else:
                     delta_link = None
-                
+
             except Exception as e:
                 # If we can't get delta link, that's okay - we'll do full sync next time
                 logger.warning("Failed to get delta link for kb_id=%s: %s", kb_id, e)
@@ -901,7 +901,7 @@ class OutlookMailPlugin:
                             "code": "deletion_failed"
                         })
                 continue
-            
+
             # For messageAdded: ingest new messages
             message_id = message.get("id")
             if not message_id:
@@ -911,40 +911,40 @@ class OutlookMailPlugin:
                     "code": "missing_id"
                 })
                 continue
-            
+
             try:
                 # Extract email fields directly from the message (body included in initial query)
                 subject = message.get("subject") or "(no subject)"
-                
+
                 # Extract sender
                 from_field = message.get("from", {})
                 sender_email_obj = from_field.get("emailAddress", {})
                 sender_name = sender_email_obj.get("name", "")
                 sender_address = sender_email_obj.get("address", "")
                 sender = f"{sender_name} <{sender_address}>" if sender_name else sender_address
-                
+
                 # Extract recipients (to/cc/bcc)
                 to_recipients = self._extract_recipients(message.get("toRecipients", []))
                 cc_recipients = self._extract_recipients(message.get("ccRecipients", []))
                 bcc_recipients = self._extract_recipients(message.get("bccRecipients", []))
-                
+
                 recipients = {
                     "to": to_recipients,
                     "cc": cc_recipients,
                     "bcc": bcc_recipients
                 }
-                
+
                 # Extract date
                 date = message.get("receivedDateTime")
-                
+
                 # Extract body text from body.content field
                 body_obj = message.get("body", {})
                 body_content = body_obj.get("content", "")
                 body_type = body_obj.get("contentType", "text")
-                
+
                 # Use body content if available, fall back to bodyPreview
                 body_text = body_content or message.get("bodyPreview", "")
-                
+
                 # Call host.kb.ingest_email() with extracted fields
                 await host.kb.ingest_email(
                     kb_id,
@@ -965,9 +965,9 @@ class OutlookMailPlugin:
                         }
                     }
                 )
-                
+
                 ingestion_count += 1
-                
+
             except Exception as e:
                 # Track failed ingestion in skips array
                 error_str = str(e)
@@ -977,7 +977,7 @@ class OutlookMailPlugin:
                     "code": "ingestion_failed"
                 })
                 continue
-        
+
         # Store delta token via host.cursor.set_safe() after successful processing
         # set_safe returns bool and doesn't raise on failure
         if delta_link and hasattr(host, "cursor"):

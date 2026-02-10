@@ -324,11 +324,7 @@ class GoogleDriveFilesPlugin:
             if folder_id:
                 try:
                     ids = await self._list_child_folders(
-                        host,
-                        headers,
-                        parent_id=folder_id,
-                        include_shared=include_shared,
-                        recursive=recursive,
+                        host, headers, parent_id=folder_id, include_shared=include_shared, recursive=recursive
                     )
                     subtree_ids = set(ids + [folder_id])
                 except Exception:
@@ -616,13 +612,7 @@ class GoogleDriveFilesPlugin:
         return files, removed_ids, new_start
 
     async def _list_child_folders(
-        self,
-        host: Any,
-        headers: dict[str, str],
-        *,
-        parent_id: str,
-        include_shared: bool,
-        recursive: bool = True,
+        self, host: Any, headers: dict[str, str], *, parent_id: str, include_shared: bool, recursive: bool = True
     ) -> list[str]:
         """List all child folder IDs under parent_id.
 
@@ -709,12 +699,7 @@ class GoogleDriveFilesPlugin:
         return body
 
     async def _http_bytes(
-        self,
-        host: Any,
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        params: dict[str, Any] | None = None,
+        self, host: Any, method: str, url: str, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> bytes:
         kwargs: dict[str, Any] = {"headers": headers}
         if params:

@@ -26,6 +26,7 @@ exclude = [
     "node_modules",
     "frontend",
     "migrations/versions",  # Don't lint auto-generated migrations
+    "plugins",
 ]
 
 [tool.ruff.format]
