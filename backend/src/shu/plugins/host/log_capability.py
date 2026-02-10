@@ -147,4 +147,3 @@ class LogCapability(ImmutableCapabilityMixin):
 
         """
         plugin_logger.exception(msg, extra=self._make_extra(extra))
-

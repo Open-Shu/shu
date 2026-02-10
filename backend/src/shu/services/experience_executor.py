@@ -421,12 +421,27 @@ class ExperienceExecutor:
             result = await self.db.execute(select(ExperienceRun).where(ExperienceRun.id == run_id))
             run = result.scalar_one_or_none()
             if run:
+                # Ownership validation: ensure the run belongs to this experience and user
+                if run.experience_id != str(experience.id):
+                    raise ValueError(
+                        f"Run {run_id} belongs to experience '{run.experience_id}', "
+                        f"not '{experience.id}'"
+                    )
+                if run.user_id != str(user_id):
+                    raise PermissionError(
+                        f"Run {run_id} belongs to a different user"
+                    )
+
                 # Only allow transition from queued/pending → running
                 allowed_statuses = {"queued", "pending"}
                 if run.status not in allowed_statuses:
                     raise ValueError(
                         f"Cannot resume run {run_id}: status is '{run.status}', " f"expected one of {allowed_statuses}"
                     )
+
+                # Refresh from authoritative source so stale queue-time values are overwritten
+                run.input_params = input_params
+                run.model_configuration_id = experience.model_configuration_id
                 run.status = "running"
                 run.started_at = datetime.now(UTC)
                 await self.db.commit()

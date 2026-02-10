@@ -137,8 +137,12 @@ class ExperienceSource:
         all_users = list(user_result.scalars().all())
 
         if not all_users:
-            # No users — still advance schedules so we don't tight-loop
+            # No users — still advance schedules so we don't tight-loop.
+            # Set last_run_at so that one-time "scheduled" experiences see
+            # they have already been processed and schedule_next() clears
+            # next_run_at instead of leaving it in the past.
             for exp in due_experiences:
+                exp.last_run_at = now
                 exp.schedule_next()
             await db.commit()
             return {

@@ -159,4 +159,3 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 errors.append((item, e))
 
         return kept, errors
-
