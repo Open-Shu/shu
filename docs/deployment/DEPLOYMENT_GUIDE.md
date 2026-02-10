@@ -582,9 +582,9 @@ In-memory queues are only suitable for development and single-node deployments w
 
 ## Additional Resources
 
-- **Architecture Overview**: [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
-- **Configuration Guide**: [docs/policies/CONFIGURATION.md](./policies/CONFIGURATION.md)
-- **Development Standards**: [docs/policies/DEVELOPMENT_STANDARDS.md](./policies/DEVELOPMENT_STANDARDS.md)
+- **Architecture Overview**: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)
+- **Configuration Guide**: [docs/policies/CONFIGURATION.md](../policies/CONFIGURATION.md)
+- **Development Standards**: [docs/policies/DEVELOPMENT_STANDARDS.md](../policies/DEVELOPMENT_STANDARDS.md)
 - **Worker Implementation**: `backend/src/shu/worker.py`
 - **Workload Routing**: `backend/src/shu/core/workload_routing.py`
 - **Queue Backend**: `backend/src/shu/core/queue_backend.py`

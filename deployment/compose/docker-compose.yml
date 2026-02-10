@@ -15,7 +15,7 @@ services:
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=production
       - SHU_APP_VERSION=0.0.6
-      - SHU_WORKERS_ENABLED=true
+      - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"
@@ -51,7 +51,7 @@ services:
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=development
       - SHU_APP_VERSION=0.0.6-dev
-      - SHU_WORKERS_ENABLED=true
+      - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
       - PYTHONPATH=/app/src
     ports:
       - "8000:8000"

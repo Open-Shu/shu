@@ -212,9 +212,7 @@ class TestExperienceSource:
         assert mock_enqueue.call_count == 2
         calls = mock_enqueue.call_args_list
 
-        payload_1 = calls[0].kwargs.get("payload") or calls[0][1].get("payload", calls[0][0][2] if len(calls[0][0]) > 2 else None)
-        if payload_1 is None:
-            payload_1 = calls[0].kwargs["payload"]
+        payload_1 = calls[0].kwargs["payload"]
 
         assert payload_1["action"] == "experience_execution"
         assert payload_1["experience_id"] == "exp-1"

@@ -199,6 +199,10 @@ class ExperienceSource:
                         },
                     )
                 except Exception as e:
+                    # Remove the flushed run so it doesn't get committed
+                    # as an orphaned "queued" record with no corresponding job.
+                    await db.delete(run)
+                    await db.flush()
                     logger.error(
                         "Failed to enqueue experience job: %s",
                         e,

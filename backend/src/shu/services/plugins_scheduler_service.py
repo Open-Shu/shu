@@ -174,7 +174,8 @@ class PluginsSchedulerService:
                     logger.error(
                         f"Failed to enqueue job to queue: {e}", extra={"execution_id": exec_rec.id, "schedule_id": s.id}
                     )
-                    # Continue - the PluginExecution record is created, so the worker can still process it
+                    # Continue - the PluginExecution record is created with PENDING status,
+                    # and will be picked up by _claim_pending() on the next scheduler cycle.
 
             # Advance schedule to next time; safe under lock
             s.schedule_next()

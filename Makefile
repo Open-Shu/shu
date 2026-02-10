@@ -58,7 +58,7 @@ compose-build-dev:
 # - make up-worker:    Dedicated worker (production)
 # - make up-worker-dev: Dedicated worker with hot-reload
 
-.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev down logs logs-worker ps
+.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-dev-split down logs logs-worker ps
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -88,6 +88,10 @@ up-workers:
 # Start API with inline workers disabled + workload-specific workers
 up-split:
 	SHU_WORKERS_ENABLED=false docker compose -f $(COMPOSE_FILE) --profile workers up -d
+
+# Start dev API with inline workers disabled + workload-specific workers
+up-dev-split:
+	SHU_WORKERS_ENABLED=false docker compose -f $(COMPOSE_FILE) --profile dev --profile workers up -d shu-api-dev shu-postgres shu-db-migrate redis shu-worker-ingestion shu-worker-llm shu-worker-maintenance
 
 down:
 	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev --profile workers down --remove-orphans || true

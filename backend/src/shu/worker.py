@@ -759,9 +759,17 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
                 rec.plugin_name,
                 rec.id,
             )
-            rec.status = PluginExecutionStatus.FAILED
-            rec.error = str(e)
-            rec.completed_at = datetime.now(UTC)
+            # If retries remain, reset to PENDING so the requeued job can
+            # pick up the record again (the race guard checks for PENDING).
+            # Only mark FAILED on the final attempt.
+            if job.attempts < job.max_attempts:
+                rec.status = PluginExecutionStatus.PENDING
+                rec.started_at = None
+                rec.error = str(e)
+            else:
+                rec.status = PluginExecutionStatus.FAILED
+                rec.error = str(e)
+                rec.completed_at = datetime.now(UTC)
             await session.commit()
             raise
 
