@@ -423,20 +423,15 @@ class ExperienceExecutor:
             if run:
                 # Ownership validation: ensure the run belongs to this experience and user
                 if run.experience_id != str(experience.id):
-                    raise ValueError(
-                        f"Run {run_id} belongs to experience '{run.experience_id}', "
-                        f"not '{experience.id}'"
-                    )
+                    raise ValueError(f"Run {run_id} belongs to experience '{run.experience_id}', not '{experience.id}'")
                 if run.user_id != str(user_id):
-                    raise PermissionError(
-                        f"Run {run_id} belongs to a different user"
-                    )
+                    raise PermissionError(f"Run {run_id} belongs to a different user")
 
                 # Only allow transition from queued/pending → running
                 allowed_statuses = {"queued", "pending"}
                 if run.status not in allowed_statuses:
                     raise ValueError(
-                        f"Cannot resume run {run_id}: status is '{run.status}', " f"expected one of {allowed_statuses}"
+                        f"Cannot resume run {run_id}: status is '{run.status}', expected one of {allowed_statuses}"
                     )
 
                 # Refresh from authoritative source so stale queue-time values are overwritten
