@@ -291,6 +291,7 @@ class ExperienceExecutor:
 
         # Consume events - timeout is enforced within execute_streaming
         async for event in self.execute_streaming(experience, user_id, input_params, current_user, run_id=run_id):
+        async for event in self.execute_streaming(experience, user_id, input_params, current_user, run_id=run_id):
             if event.type == ExperienceEventType.RUN_STARTED:
                 run_id = event.data.get("run_id")
                 if run_id:
