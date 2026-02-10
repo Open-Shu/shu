@@ -23,7 +23,7 @@ DEFAULT_STAGING_TTL = 3600
 class FileStagingError(ShuException):
     """Raised when file staging operations fail."""
 
-    def __init__(self, message: str, details: dict[str, Any] | None = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         super().__init__(
             message=message,
             error_code="FILE_STAGING_ERROR",
@@ -44,7 +44,7 @@ class FileStagingService:
 
     """
 
-    def __init__(self, cache: CacheBackend, staging_ttl: int = DEFAULT_STAGING_TTL):
+    def __init__(self, cache: CacheBackend, staging_ttl: int = DEFAULT_STAGING_TTL) -> None:
         """Initialize the file staging service.
 
         Args:
