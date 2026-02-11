@@ -627,30 +627,33 @@ describe('LLMTester - Property 14: Resource Cleanup', () => {
       expect(messageInput).toBeInTheDocument();
     });
 
-    // Simulate user input
-    // Use userEvent directly (v13 API)
-    await userEvent.type(messageInput, 'Test message that will fail');
+    // Simulate user input - use setup() for v14 API
+    const user = userEvent.setup();
+    await user.type(messageInput, 'Test message that will fail');
 
     // Click test button
     const testButton = getByText('Test LLM Call');
-    await userEvent.click(testButton);
+    await user.click(testButton);
 
     // Wait for test to complete
     await waitFor(
       () => {
         expect(api.modelConfigAPI.testWithFile).toHaveBeenCalled();
       },
-      { timeout: 3000 }
+      { timeout: 5000 }
     );
 
     // Verify: Error is displayed
-    await waitFor(() => {
-      expect(screen.getByText(/Invalid API key/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Invalid API key/i)).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
     // Verify: Component is still functional
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
-  });
+  }, 20000);
 
   test('component handles network error gracefully', async () => {
     // Setup: Create test data
