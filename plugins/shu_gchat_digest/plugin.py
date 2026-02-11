@@ -1,29 +1,35 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+_logger = logging.getLogger(__name__)
+
 
 class _Result:
-    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None):
+    def __init__(self, status: str, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> None:
         self.status = status
         self.data = data
         self.error = error
 
     @classmethod
-    def ok(cls, data: dict[str, Any] | None = None):
+    def ok(cls, data: dict[str, Any] | None = None) -> _Result:
         return cls("success", data or {})
 
     @classmethod
-    def err(cls, message: str, code: str = "tool_error", details: dict[str, Any] | None = None):
+    def err(cls, message: str, code: str = "tool_error", details: dict[str, Any] | None = None) -> _Result:
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
 
 
 class GChatDigestPlugin:
+    """Google Chat digest plugin for listing and ingesting chat messages."""
+
     name = "gchat_digest"
     version = "1"
 
     def get_schema(self) -> dict[str, Any] | None:
+        """Return the input parameter schema for this plugin."""
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -50,6 +56,7 @@ class GChatDigestPlugin:
         }
 
     def get_output_schema(self) -> dict[str, Any] | None:
+        """Return the output schema for this plugin."""
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -64,7 +71,7 @@ class GChatDigestPlugin:
         }
 
     async def _resolve_token_and_target(
-        self, host: Any, params: dict[str, Any], *, op: str
+        self, host: Any, _params: dict[str, Any], *, _op: str
     ) -> tuple[str | None, str | None]:
         auth = getattr(host, "auth", None)
         if not auth:
@@ -129,8 +136,7 @@ class GChatDigestPlugin:
                 if cached:
                     return cached
             except Exception:
-                pass
-        # Try Admin Directory only if we have an email-like display or 'email' in sender
+                _logger.debug("Cache read failed for sender %s", sender_id)
         email = sender.get("email")
         profile = {"id": sender_id or None, "displayName": display, "email": email}
         if email:
@@ -155,40 +161,46 @@ class GChatDigestPlugin:
                     }
             except Exception:
                 # Missing scope or 404; keep fallback
-                pass
+                _logger.debug("Admin directory lookup failed for %s", email)
         # Cache result briefly
         if cache and cache_key:
             try:
                 await cache.set(cache_key, profile, ttl_seconds=6 * 3600)
             except Exception:
-                pass
+                _logger.debug("Cache write failed for sender %s", sender_id)
         return profile
 
     async def _list(
         self, host: Any, params: dict[str, Any], since_hours: int, max_spaces: int, max_messages_per_space: int
     ) -> _Result:
-        token, _ = await self._resolve_token_and_target(host, params or {}, op="list")
+        token, _ = await self._resolve_token_and_target(host, params or {}, _op="list")
         if not token:
             return _Result.err("No Google access token available. Connect OAuth or configure host.auth.")
         headers = {"Authorization": f"Bearer {token}"}
         base = "https://chat.googleapis.com/v1"
         tmin_iso = self._window(since_hours)
 
+        # Use Google Chat API filter to only fetch messages within the time window
+        # This avoids fetching old messages and then filtering them client-side
+        time_filter = f'createTime > "{tmin_iso}"'
+
         spaces = await self._list_spaces(host, headers, max_spaces)
+
         out: list[dict[str, Any]] = []
         for sp in spaces:
             page: str | None = None
             fetched = 0
             while True and fetched < max_messages_per_space:
-                q: dict[str, Any] = {"pageSize": min(100, max_messages_per_space - fetched)}
+                q: dict[str, Any] = {
+                    "pageSize": min(100, max_messages_per_space - fetched),
+                    "filter": time_filter,
+                }
                 if page:
                     q["pageToken"] = page
                 data = await self._http_json(host, "GET", f"{base}/{sp}/messages", headers, params=q)
                 msgs = data.get("messages") or []
                 for m in msgs:
                     ctime = m.get("createTime")
-                    if ctime and ctime < tmin_iso:
-                        continue
                     sender = await self._resolve_sender(host, m.get("sender") or {})
                     out.append(
                         {
@@ -206,7 +218,7 @@ class GChatDigestPlugin:
         out.sort(key=lambda x: x.get("createTime") or "", reverse=True)
         return _Result.ok({"messages": out, "count": len(out), "last_ts": (out[0].get("createTime") if out else None)})
 
-    async def _ingest(
+    async def _ingest(  # noqa: C901
         self,
         host: Any,
         params: dict[str, Any],
@@ -220,7 +232,7 @@ class GChatDigestPlugin:
         if not hasattr(host, "kb"):
             return _Result.err("kb capability not available. Add 'kb' to manifest capabilities.")
 
-        token, _ = await self._resolve_token_and_target(host, params or {}, op="ingest")
+        token, _ = await self._resolve_token_and_target(host, params or {}, _op="ingest")
         if not token:
             return _Result.err("No Google access token available for ingest. Connect OAuth or configure host.auth.")
         headers = {"Authorization": f"Bearer {token}"}
@@ -274,11 +286,12 @@ class GChatDigestPlugin:
             if hasattr(host, "cursor") and newest_ts:
                 await host.cursor.set(kb_id, newest_ts)
         except Exception:
-            pass
+            _logger.debug("Failed to advance cursor for kb %s", kb_id)
 
         return _Result.ok({"count": upserts, "last_ts": newest_ts})
 
-    async def execute(self, params: dict[str, Any], context: Any, host: Any) -> _Result:
+    async def execute(self, params: dict[str, Any], _context: Any, host: Any) -> _Result:
+        """Execute the plugin operation (list or ingest)."""
         op = (params.get("op") or "list").lower()
         since_hours = int(params.get("since_hours", 168))
         max_spaces = int(params.get("max_spaces", 50))

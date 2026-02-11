@@ -1,24 +1,22 @@
-"""In-process Plugin Feeds Scheduler service.
+"""Plugin Feeds Scheduler service.
 
-- Enqueue due PluginFeed rows into QueueBackend as jobs with MAINTENANCE WorkloadType
+- Enqueue due PluginFeed rows into QueueBackend as jobs with INGESTION WorkloadType
 - Workers dequeue and process jobs from the queue
 - PluginExecution records track execution state for idempotency and observability
-- Exposed start_plugins_scheduler() to run in FastAPI lifespan
 
 DRY: API endpoints delegate to this service.
 Concurrency: uses QueueBackend for job distribution and SELECT ... FOR UPDATE SKIP LOCKED
 for database-level idempotency guards.
 
-Migration Note (SHU-211): Migrated from direct execution to queue-based job distribution.
-Jobs are now enqueued to QueueBackend with MAINTENANCE WorkloadType and processed by workers.
+The scheduler loop has been moved to scheduler_service.py (UnifiedSchedulerService).
+This module retains PluginsSchedulerService for use by the unified scheduler's
+PluginFeedSource and by API manual-trigger endpoints.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -27,7 +25,6 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
-from ..core.database import get_db_session
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..models.plugin_registry import PluginDefinition
@@ -41,9 +38,9 @@ from ..services.plugin_identity import (
     resolve_auth_requirements,
 )
 
-# In-memory per-process tick history for observability (SCHED-004)
-# Stores last 500 tick summaries: {"ts": iso8601, "enqueue": {...}, "run": {...}}
-TICK_HISTORY = deque(maxlen=500)
+# In-memory per-process tick history for observability.
+# Re-exported from scheduler_service for backward compatibility with API endpoints.
+from .scheduler_service import TICK_HISTORY  # noqa: F401
 
 # Feed params that should be automatically cleared after successful execution.
 # These are "one-shot" params meant to apply only once.
@@ -63,7 +60,7 @@ class PluginsSchedulerService:
         """Atomically claim due schedules and enqueue executions to QueueBackend.
 
         Creates PluginExecution records for tracking and idempotency, then enqueues
-        jobs to QueueBackend with MAINTENANCE WorkloadType for worker processing.
+        jobs to QueueBackend with INGESTION WorkloadType for worker processing.
 
         Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j, "queue_enqueued": p}
         """
@@ -146,13 +143,14 @@ class PluginsSchedulerService:
             self.db.add(exec_rec)
             await self.db.flush()  # Flush to get exec_rec.id
 
-            # Enqueue job to QueueBackend with MAINTENANCE WorkloadType
+            # Enqueue job to QueueBackend with INGESTION WorkloadType
             if queue_backend:
                 try:
                     job = await enqueue_job(
                         queue_backend,
-                        WorkloadType.MAINTENANCE,
+                        WorkloadType.INGESTION,
                         payload={
+                            "action": "plugin_feed_execution",
                             "execution_id": str(exec_rec.id),
                             "schedule_id": str(s.id),
                             "plugin_name": s.plugin_name,
@@ -176,7 +174,8 @@ class PluginsSchedulerService:
                     logger.error(
                         f"Failed to enqueue job to queue: {e}", extra={"execution_id": exec_rec.id, "schedule_id": s.id}
                     )
-                    # Continue - the PluginExecution record is created, so run_pending can still process it
+                    # Continue - the PluginExecution record is created with PENDING status,
+                    # and will be picked up by _claim_pending() on the next scheduler cycle.
 
             # Advance schedule to next time; safe under lock
             s.schedule_next()
@@ -572,83 +571,12 @@ class PluginsSchedulerService:
 
 
 async def start_plugins_scheduler():
-    import os
+    """Delegate to the unified scheduler (deprecated in favor of start_scheduler).
 
-    settings = get_settings_instance()
-    # Read runtime env to allow tests to override after app import
-    enabled_env = os.getenv("SHU_PLUGINS_SCHEDULER_ENABLED")
-    if enabled_env is not None:
-        enabled = enabled_env.lower() in ("1", "true", "yes", "on")
-    else:
-        enabled = getattr(settings, "plugins_scheduler_enabled", True)
-    if not enabled:
-        logger.info("Plugins scheduler disabled by configuration")
-        return asyncio.create_task(asyncio.sleep(0), name="plugins:scheduler:disabled")
+    Kept for backward compatibility. Delegates to the unified scheduler
+    with only the plugin feeds source enabled.
+    """
+    from .scheduler_service import start_scheduler
 
-    tick = max(
-        1,
-        int(
-            os.getenv(
-                "SHU_PLUGINS_SCHEDULER_TICK_SECONDS",
-                str(getattr(settings, "plugins_scheduler_tick_seconds", 60)),
-            )
-        ),
-    )
-    batch = max(
-        1,
-        int(
-            os.getenv(
-                "SHU_PLUGINS_SCHEDULER_BATCH_LIMIT",
-                str(getattr(settings, "plugins_scheduler_batch_limit", 10)),
-            )
-        ),
-    )
-
-    async def _runner() -> None:
-        while True:
-            try:
-                db = await get_db_session()
-                async with db as session:
-                    svc = PluginsSchedulerService(session)
-                    # Stale cleanup MUST run before enqueue so the idempotency
-                    # guard does not skip schedules whose previous execution was
-                    # orphaned by a server restart.
-                    stale_cleaned = await svc.cleanup_stale_executions()
-                    e = await svc.enqueue_due_schedules(limit=batch)
-                    r = await svc.run_pending(limit=batch)
-                    if (e.get("enqueued") or 0) or (r.get("ran") or 0) or stale_cleaned:
-                        logger.info(
-                            "Plugins scheduler tick | due=%s enq=%s queue_enq=%s skipped_no_owner=%s skipped_missing_plugin=%s skipped_already_enqueued=%s attempted=%s ran=%s failed_owner_required=%s skipped_disabled=%s stale_cleaned=%s deferred_429=%s",
-                            e.get("due"),
-                            e.get("enqueued"),
-                            e.get("queue_enqueued"),
-                            e.get("skipped_no_owner"),
-                            e.get("skipped_missing_plugin"),
-                            e.get("skipped_already_enqueued"),
-                            r.get("attempted"),
-                            r.get("ran"),
-                            r.get("failed_owner_required"),
-                            r.get("skipped_disabled"),
-                            stale_cleaned,
-                            r.get("deferred_429"),
-                        )
-                        try:
-                            TICK_HISTORY.append(
-                                {
-                                    "ts": datetime.now(UTC).isoformat(),
-                                    "stale_cleaned": stale_cleaned,
-                                    "enqueue": e,
-                                    "run": r,
-                                }
-                            )
-                        except Exception:
-                            pass
-            except Exception as ex:
-                logger.warning(f"Plugins scheduler tick failed: {ex}")
-            finally:
-                try:
-                    await asyncio.sleep(tick)
-                except asyncio.CancelledError:
-                    break
-
-    return asyncio.create_task(_runner(), name="plugins:scheduler")
+    logger.info("start_plugins_scheduler() is deprecated; delegating to unified scheduler")
+    return await start_scheduler()

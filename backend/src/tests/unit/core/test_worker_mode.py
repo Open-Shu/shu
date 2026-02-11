@@ -283,6 +283,7 @@ async def test_workers_enabled_starts_with_api():
     creates worker tasks when workers are enabled.
     """
     from fastapi import FastAPI
+
     from shu.main import lifespan
 
     # Create app with workers enabled (concurrency=1 default)
@@ -330,8 +331,9 @@ async def test_workers_enabled_with_concurrency():
 
     When SHU_WORKER_CONCURRENCY is set, that many workers should be created.
     """
-    from shu.main import lifespan
     from fastapi import FastAPI
+
+    from shu.main import lifespan
 
     app = FastAPI()
 

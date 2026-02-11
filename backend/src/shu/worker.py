@@ -402,6 +402,531 @@ async def _handle_embed_job(job) -> None:
             raise
 
 
+# TODO: Refactor this function. It's too complex (number of branches and statements).
+async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
+    """Handle an INGESTION plugin feed execution job.
+
+    Loads the PluginExecution record, verifies it is still PENDING (race guard),
+    resolves the plugin, builds host capabilities, runs the plugin via EXECUTOR,
+    and updates execution status.
+
+    Args:
+        job: The job containing execution_id, schedule_id, plugin_name, user_id,
+            agent_key, and params in payload.
+
+    Raises:
+        ValueError: If required fields are missing from payload.
+        Exception: If plugin execution fails (triggers retry).
+
+    """
+    import json
+
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from .core.config import get_settings_instance
+    from .core.database import get_async_session_local
+    from .models.plugin_execution import PluginExecution, PluginExecutionStatus
+    from .models.plugin_feed import PluginFeed
+    from .models.plugin_registry import PluginDefinition
+    from .models.provider_identity import ProviderIdentity
+    from .plugins.executor import EXECUTOR
+    from .plugins.registry import REGISTRY
+    from .services.plugin_identity import (
+        PluginIdentityError,
+        ensure_secrets_for_plugin,
+        resolve_auth_requirements,
+    )
+    from .services.plugins_scheduler_service import ONE_SHOT_FEED_PARAMS
+
+    execution_id = job.payload.get("execution_id")
+    if not execution_id:
+        raise ValueError("Plugin execution job missing execution_id in payload")
+
+    plugin_name = job.payload.get("plugin_name")
+    if not plugin_name:
+        raise ValueError("Plugin execution job missing plugin_name in payload")
+
+    logger.info(
+        "Processing plugin execution job",
+        extra={
+            "job_id": job.id,
+            "execution_id": execution_id,
+            "plugin_name": plugin_name,
+        },
+    )
+
+    settings = get_settings_instance()
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        # Load execution record and check it's still PENDING (race guard)
+        result = await session.execute(
+            select(PluginExecution).where(PluginExecution.id == execution_id).with_for_update(skip_locked=True)
+        )
+        rec = result.scalar_one_or_none()
+
+        if not rec:
+            logger.warning(
+                "Plugin execution record not found, skipping",
+                extra={"job_id": job.id, "execution_id": execution_id},
+            )
+            return
+
+        if rec.status != PluginExecutionStatus.PENDING:
+            logger.info(
+                "Plugin execution no longer PENDING, skipping",
+                extra={
+                    "job_id": job.id,
+                    "execution_id": execution_id,
+                    "current_status": rec.status,
+                },
+            )
+            return
+
+        # Mark as RUNNING
+        from datetime import UTC, datetime
+
+        rec.status = PluginExecutionStatus.RUNNING
+        rec.started_at = datetime.now(UTC)
+        await session.commit()
+
+        async def _fail(error_code: str) -> None:
+            rec.status = PluginExecutionStatus.FAILED
+            rec.error = error_code
+            rec.result = {"status": "error", "error": error_code}
+            rec.completed_at = datetime.now(UTC)
+            await session.commit()
+
+        try:
+            # Check if schedule is disabled
+            if rec.schedule_id:
+                srow = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
+                s = srow.scalars().first()
+                if s and not s.enabled:
+                    await _fail("schedule_disabled")
+                    return
+
+            # Resolve plugin
+            plugin = await REGISTRY.resolve(rec.plugin_name, session)
+            if not plugin:
+                await _fail("plugin_not_found")
+                # Auto-disable the feed to prevent repeated failures
+                if rec.schedule_id:
+                    try:
+                        srow = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
+                        s = srow.scalars().first()
+                        if s and s.enabled:
+                            s.enabled = False
+                            await session.commit()
+                    except Exception:
+                        pass
+                return
+
+            # Per-plugin limits
+            lrow = await session.execute(select(PluginDefinition).where(PluginDefinition.name == rec.plugin_name))
+            ldef = lrow.scalars().first()
+            per_plugin_limits = getattr(ldef, "limits", None) or {}
+
+            # Identity resolution
+            p = rec.params or {}
+            mode = str(p.get("auth_mode") or "").lower()
+            user_email_val = p.get("user_email")
+            if not user_email_val and mode == "domain_delegate":
+                imp = p.get("impersonate_email")
+                if imp:
+                    user_email_val = imp
+
+            # Build provider identities map for the owner/runner
+            providers_map: dict = {}
+            try:
+                q_pi = select(ProviderIdentity).where(ProviderIdentity.user_id == str(rec.user_id))
+                pi_res = await session.execute(q_pi)
+                for pi in pi_res.scalars().all():
+                    providers_map.setdefault(pi.provider_key, []).append(pi.to_dict())
+            except Exception:
+                logger.warning(
+                    "Failed to load provider identities, proceeding with empty map | exec_id=%s user=%s",
+                    rec.id,
+                    rec.user_id,
+                    exc_info=True,
+                )
+                providers_map = {}
+
+            # Auth preflight
+            try:
+                from .plugins.host.auth_capability import AuthCapability
+
+                provider, mode_eff, subject, scopes = resolve_auth_requirements(plugin, rec.params or {})
+                if provider:
+                    auth = AuthCapability(plugin_name=str(rec.plugin_name), user_id=str(rec.user_id))
+                    mode_str = (mode_eff or "").strip().lower()
+                    sc = scopes or []
+                    if mode_str == "user":
+                        # Subscription enforcement
+                        try:
+                            from .services.host_auth_service import HostAuthService
+
+                            subs = await HostAuthService.list_subscriptions(session, str(rec.user_id), provider, None)
+                            if subs:
+                                subscribed_names = {s.plugin_name for s in subs}
+                                if str(rec.plugin_name) not in subscribed_names:
+                                    logger.warning(
+                                        "subscription.enforced | user=%s provider=%s plugin=%s path=worker",
+                                        str(rec.user_id),
+                                        provider,
+                                        str(rec.plugin_name),
+                                    )
+                                    await _fail("subscription_required")
+                                    return
+                        except Exception:
+                            logger.exception(
+                                "Subscription enforcement check failed, failing closed | user=%s provider=%s plugin=%s",
+                                str(rec.user_id),
+                                provider,
+                                str(rec.plugin_name),
+                            )
+                            await _fail("subscription_check_error")
+                            return
+                        tok = await auth.provider_user_token(provider, required_scopes=sc or None)
+                        if not tok:
+                            await _fail("identity_required")
+                            return
+                    elif mode_str == "domain_delegate":
+                        subj = (subject or "").strip()
+                        if not subj:
+                            await _fail("identity_required")
+                            return
+                        resp = await auth.provider_delegation_check(provider, scopes=sc, subject=subj)
+                        if not (isinstance(resp, dict) and resp.get("ready") is True):
+                            await _fail("identity_required")
+                            return
+                    elif mode_str == "service_account":
+                        try:
+                            _ = await auth.provider_service_account_token(provider, scopes=sc, subject=None)
+                        except Exception:
+                            await _fail("identity_required")
+                            return
+            except Exception:
+                # Resolution/setup failure defaults to allow — inner checks
+                # (subscription, token, delegation) handle fail-closed decisions.
+                logger.warning(
+                    "Auth preflight resolution failed, defaulting to allow | exec_id=%s plugin=%s",
+                    rec.id,
+                    rec.plugin_name,
+                    exc_info=True,
+                )
+
+            # Secrets preflight
+            try:
+                await ensure_secrets_for_plugin(plugin, str(rec.plugin_name), str(rec.user_id), rec.params or {})
+            except PluginIdentityError:
+                await _fail("missing_secrets")
+                return
+            except Exception as e:
+                logger.warning(
+                    "Secrets preflight check failed unexpectedly for exec %s plugin %s: %s",
+                    rec.id,
+                    rec.plugin_name,
+                    e,
+                )
+
+            # Inject schedule_id into params so plugins can scope cursors per-feed
+            base_params = rec.params or {}
+            eff_params = dict(base_params) if isinstance(base_params, dict) else {}
+            if rec.schedule_id:
+                eff_params["__schedule_id"] = str(rec.schedule_id)
+
+            # Execute plugin
+            exec_result = await EXECUTOR.execute(
+                plugin=plugin,
+                user_id=str(rec.user_id),
+                user_email=user_email_val,
+                agent_key=rec.agent_key,
+                params=eff_params,
+                limits=per_plugin_limits,
+                provider_identities=providers_map,
+            )
+
+            # Normalize result to dict
+            try:
+                payload = exec_result.model_dump()
+            except Exception:
+                if isinstance(exec_result, dict):
+                    payload = exec_result
+                else:
+                    payload = {
+                        "status": getattr(exec_result, "status", None),
+                        "data": getattr(exec_result, "data", None),
+                        "error": getattr(exec_result, "error", None),
+                    }
+
+            # Enforce output byte cap
+            try:
+                payload_json = json.dumps(payload, separators=(",", ":"), default=str)
+                payload_size = len(payload_json.encode("utf-8"))
+            except Exception:
+                payload_size = 0
+            max_bytes = getattr(settings, "plugin_exec_output_max_bytes", 0) or 0
+            if max_bytes > 0 and payload_size > max_bytes:
+                rec.completed_at = datetime.now(UTC)
+                rec.status = PluginExecutionStatus.FAILED
+                rec.error = f"output exceeds max bytes ({payload_size} > {max_bytes})"
+                rec.result = {"status": "error", "error": "output_too_large"}
+                await session.commit()
+                return
+
+            rec.result = payload
+            rec.completed_at = datetime.now(UTC)
+            rec.status = (
+                PluginExecutionStatus.COMPLETED if payload.get("status") == "success" else PluginExecutionStatus.FAILED
+            )
+            _err_val = payload.get("error") if payload.get("status") != "success" else None
+            if isinstance(_err_val, (dict, list)):
+                rec.error = json.dumps(_err_val, separators=(",", ":"), default=str)
+            else:
+                rec.error = _err_val
+
+            # Diagnostics logging
+            try:
+                from .plugins.utils import log_plugin_diagnostics as _log_diags
+            except Exception:
+                _log_diags = None
+            if _log_diags:
+                _log_diags(payload, plugin_name=str(rec.plugin_name), exec_id=str(rec.id))
+
+            # Clear one-shot params from feed after successful execution
+            # and update last_run_at to reflect actual execution time
+            if rec.schedule_id:
+                try:
+                    feed_res = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
+                    feed = feed_res.scalars().first()
+                    if feed:
+                        # Update last_run_at to actual execution completion time
+                        if rec.status == PluginExecutionStatus.COMPLETED:
+                            feed.last_run_at = datetime.now(UTC)
+                        # Clear one-shot params on success
+                        if rec.status == PluginExecutionStatus.COMPLETED and feed.params:
+                            params_dict = dict(feed.params) if isinstance(feed.params, dict) else {}
+                            modified = False
+                            for key in ONE_SHOT_FEED_PARAMS:
+                                if key in params_dict:
+                                    del params_dict[key]
+                                    modified = True
+                            if modified:
+                                feed.params = params_dict
+                except Exception:
+                    logger.warning(
+                        "Failed to update feed after execution (one-shot params / last_run_at) | exec_id=%s schedule_id=%s",
+                        rec.id,
+                        rec.schedule_id,
+                        exc_info=True,
+                    )
+
+            await session.commit()
+
+            logger.info(
+                "Plugin execution job completed",
+                extra={
+                    "job_id": job.id,
+                    "execution_id": execution_id,
+                    "plugin_name": plugin_name,
+                    "status": rec.status,
+                },
+            )
+
+        except HTTPException as he:
+            code = he.status_code
+            detail = he.detail if isinstance(he.detail, dict) else {}
+            err = str(detail.get("error") or "")
+            if code == 429 and err in (
+                "provider_rate_limited",
+                "provider_concurrency_limited",
+                "rate_limited",
+            ):
+                # Rate limited: set back to PENDING and raise so the queue backend
+                # re-enqueues the job with its retry/visibility timeout mechanism.
+                logger.info(
+                    "Deferred plugin execution due to 429 (%s) | plugin=%s exec_id=%s",
+                    err,
+                    rec.plugin_name,
+                    rec.id,
+                )
+                rec.status = PluginExecutionStatus.PENDING
+                rec.started_at = None
+                rec.error = f"deferred:{err}"
+                await session.commit()
+                raise
+
+            # Other HTTP errors: mark failed
+            logger.exception(
+                "Plugin execution HTTPException | plugin=%s exec_id=%s",
+                rec.plugin_name,
+                rec.id,
+            )
+            rec.status = PluginExecutionStatus.FAILED
+            rec.error = str(he.detail)
+            rec.completed_at = datetime.now(UTC)
+            await session.commit()
+
+        except Exception as e:
+            logger.exception(
+                "Plugin execution failed | plugin=%s exec_id=%s",
+                rec.plugin_name,
+                rec.id,
+            )
+            # If retries remain, reset to PENDING so the requeued job can
+            # pick up the record again (the race guard checks for PENDING).
+            # Only mark FAILED on the final attempt.
+            if job.attempts < job.max_attempts:
+                rec.status = PluginExecutionStatus.PENDING
+                rec.started_at = None
+                rec.error = str(e)
+            else:
+                rec.status = PluginExecutionStatus.FAILED
+                rec.error = str(e)
+                rec.completed_at = datetime.now(UTC)
+            await session.commit()
+            raise
+
+
+async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
+    """Mark a pre-created queued ExperienceRun as failed when the worker skips execution."""
+    if not run_id:
+        return
+    try:
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+
+        from .models.experience import ExperienceRun
+
+        result = await session.execute(select(ExperienceRun).where(ExperienceRun.id == run_id))
+        run = result.scalar_one_or_none()
+        if run and run.status == "queued":
+            run.status = "failed"
+            run.error_message = error
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _handle_experience_execution_job(job) -> None:
+    """Handle an LLM_WORKFLOW experience execution job.
+
+    Loads the Experience and User, instantiates ExperienceExecutor, and
+    runs the experience in non-streaming mode. Creates an ExperienceRun
+    record via the executor.
+
+    Args:
+        job: The job containing experience_id, user_id, and input_params
+            in payload.
+
+    Raises:
+        ValueError: If required fields are missing from payload.
+        Exception: If execution fails (triggers retry).
+
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .auth.models import User
+    from .core.config import get_config_manager
+    from .core.database import get_async_session_local
+    from .models.experience import Experience
+    from .services.experience_executor import ExperienceExecutor
+
+    experience_id = job.payload.get("experience_id")
+    if not experience_id:
+        raise ValueError("Experience execution job missing experience_id in payload")
+
+    user_id = job.payload.get("user_id")
+    if not user_id:
+        raise ValueError("Experience execution job missing user_id in payload")
+
+    input_params = job.payload.get("input_params", {})
+    run_id = job.payload.get("run_id")
+
+    logger.info(
+        "Processing experience execution job",
+        extra={
+            "job_id": job.id,
+            "experience_id": experience_id,
+            "user_id": user_id,
+            "run_id": run_id,
+        },
+    )
+
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        # Load experience with steps eagerly loaded
+        exp_result = await session.execute(
+            select(Experience).options(selectinload(Experience.steps)).where(Experience.id == experience_id)
+        )
+        experience = exp_result.scalar_one_or_none()
+
+        if not experience:
+            logger.warning(
+                "Experience not found, skipping",
+                extra={"job_id": job.id, "experience_id": experience_id},
+            )
+            await _fail_queued_run(session, run_id, "experience_not_found")
+            return
+
+        # Load user
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+
+        if not user:
+            logger.warning(
+                "User not found, skipping",
+                extra={"job_id": job.id, "user_id": user_id},
+            )
+            await _fail_queued_run(session, run_id, "user_not_found")
+            return
+
+        if not user.is_active:
+            logger.debug(
+                "User inactive, skipping experience execution",
+                extra={"job_id": job.id, "user_id": user_id},
+            )
+            await _fail_queued_run(session, run_id, "user_inactive")
+            return
+
+        try:
+            config_manager = get_config_manager()
+            executor = ExperienceExecutor(session, config_manager)
+            run = await executor.execute(
+                experience=experience,
+                user_id=user_id,
+                input_params=input_params,
+                current_user=user,
+                run_id=run_id,
+            )
+
+            logger.info(
+                "Experience execution completed",
+                extra={
+                    "job_id": job.id,
+                    "experience_id": experience_id,
+                    "user_id": user_id,
+                    "run_id": run.id if run else None,
+                    "status": run.status if run else "unknown",
+                },
+            )
+
+        except Exception:
+            logger.exception(
+                "Experience execution failed | experience=%s user=%s",
+                experience_id,
+                user_id,
+            )
+            # Let the queue retry mechanism handle transient failures
+            raise
+
+
 async def _handle_profiling_job(job) -> None:
     """Handle a PROFILING workload job.
 
@@ -534,11 +1059,7 @@ async def process_job(job):
         await _handle_embed_job(job)
 
     elif workload_type == WorkloadType.MAINTENANCE:
-        # TODO: Implement in task 11.2 (scheduler migration)
-        # IMPORTANT: When implementing, the handler MUST check PluginExecution.status
-        # before processing. There is a race condition where run_pending() can claim
-        # the same PENDING execution that was already enqueued here. The handler
-        # should skip executions that are no longer PENDING.
+        # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)
         logger.warning(
             "MAINTENANCE workload handler not yet implemented",
             extra={
@@ -546,27 +1067,22 @@ async def process_job(job):
                 "queue": job.queue_name,
             },
         )
-        # For now, just acknowledge to avoid blocking
 
     elif workload_type == WorkloadType.INGESTION:
-        # Placeholder for future ingestion jobs
-        logger.warning(
-            "INGESTION workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
+        # Route based on action in payload
+        action = (job.payload or {}).get("action", "")
+        if action == "plugin_feed_execution":
+            await _handle_plugin_execution_job(job)
+        else:
+            raise ValueError(f"INGESTION job {job.id} has unknown action: {action!r}")
 
     elif workload_type == WorkloadType.LLM_WORKFLOW:
-        # Placeholder for future LLM workflow jobs
-        logger.warning(
-            "LLM_WORKFLOW workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
+        # Route based on action in payload
+        action = (job.payload or {}).get("action", "")
+        if action == "experience_execution":
+            await _handle_experience_execution_job(job)
+        else:
+            raise ValueError(f"LLM_WORKFLOW job {job.id} has unknown action: {action!r}")
 
     else:
         raise ValueError(f"Unsupported workload type: {workload_type}")
@@ -672,11 +1188,11 @@ Examples:
   python -m shu.worker --workload-types=LLM_WORKFLOW --poll-interval=0.5
 
 Valid workload types:
-  INGESTION       - Document ingestion and indexing
+  INGESTION       - Plugin feed ingestion (Gmail, Drive, Outlook, etc.)
   INGESTION_OCR   - OCR/text extraction stage of document pipeline
   INGESTION_EMBED - Embedding stage of document pipeline
-  LLM_WORKFLOW    - LLM-based workflows and chat
-  MAINTENANCE     - Scheduled tasks and cleanup
+  LLM_WORKFLOW    - Scheduled experience execution and LLM workflows
+  MAINTENANCE     - Cleanup and scheduled maintenance tasks
   PROFILING       - Document profiling with LLM calls
         """,
     )

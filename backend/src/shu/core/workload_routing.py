@@ -39,9 +39,9 @@ class WorkloadType(Enum):
     ingestion workers independently from LLM workflow workers.
 
     Attributes:
-        INGESTION: Document ingestion and indexing operations.
-            Examples: Fetching documents from Google Drive, parsing PDFs,
-            extracting text, creating embeddings, storing in vector DB.
+        INGESTION: Plugin feed ingestion operations.
+            Examples: Running plugin feeds (Gmail, Google Drive, Outlook, etc.)
+            to pull data from external sources into knowledge bases.
 
         INGESTION_OCR: OCR/text extraction stage of document pipeline.
             Examples: Running OCR on PDFs, extracting text from images,
@@ -51,13 +51,14 @@ class WorkloadType(Enum):
             Examples: Chunking extracted text, generating embeddings,
             storing vectors. Second stage of async ingestion.
 
-        LLM_WORKFLOW: LLM-based workflows and chat operations.
-            Examples: Chat message processing, workflow execution,
-            prompt generation, LLM API calls for conversations.
+        LLM_WORKFLOW: LLM-based workflows and experience execution.
+            Examples: Scheduled experience execution (Morning Briefing,
+            Inbox Triage, Project Pulse), chat message processing,
+            workflow execution, prompt generation.
 
-        MAINTENANCE: Scheduled tasks and cleanup operations.
-            Examples: Plugin feed scheduler, cache cleanup, database
-            maintenance, expired session cleanup.
+        MAINTENANCE: Scheduled maintenance and cleanup operations.
+            Examples: Cache cleanup, database maintenance,
+            expired session cleanup.
 
         PROFILING: Document profiling with LLM calls.
             Examples: Generating document summaries, extracting metadata,

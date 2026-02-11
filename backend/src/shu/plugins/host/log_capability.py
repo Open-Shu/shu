@@ -21,27 +21,27 @@ plugin_logger = logging.getLogger("shu.plugins.runtime")
 
 class LogCapability(ImmutableCapabilityMixin):
     """Plugin logging capability with automatic context injection.
-    
+
     Provides structured logging for plugins. Each log entry automatically
     includes the plugin name, user ID, and optional operation context.
-    
+
     This capability is always available to plugins (no declaration required)
     to encourage proper logging over silent exception swallowing.
-    
+
     Security: This class is immutable (via ImmutableCapabilityMixin) to prevent
     plugins from mutating _plugin_name or _user_id to spoof log entries.
-    
+
     Example:
         # In a plugin
         async def my_tool(host):
             host.log.info("Starting sync")
-            
+
             try:
                 result = await do_something()
             except Exception as e:
                 host.log.error(f"Sync failed: {e}")
                 raise
-            
+
             host.log.info(f"Sync complete: {result['count']} items")
 
     """
@@ -58,9 +58,9 @@ class LogCapability(ImmutableCapabilityMixin):
         plugin_name: str,
         user_id: str,
         operation: str | None = None,
-    ):
+    ) -> None:
         """Initialize the log capability.
-        
+
         Args:
             plugin_name: The name of the plugin using this capability.
             user_id: The ID of the user the plugin is running for.
@@ -73,13 +73,13 @@ class LogCapability(ImmutableCapabilityMixin):
 
     def _make_extra(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         """Create the extra dict with plugin context.
-        
+
         Args:
             extra: Optional additional context to include.
-            
+
         Returns:
             Dict with plugin context merged with any extra context.
-            
+
         Note:
             Protected fields (plugin_name, user_id, operation) are set after
             merging extra to prevent plugins from spoofing log context.
@@ -97,7 +97,7 @@ class LogCapability(ImmutableCapabilityMixin):
 
     def debug(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log a debug message.
-        
+
         Args:
             msg: The message to log.
             extra: Optional additional context to include.
@@ -107,7 +107,7 @@ class LogCapability(ImmutableCapabilityMixin):
 
     def info(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log an info message.
-        
+
         Args:
             msg: The message to log.
             extra: Optional additional context to include.
@@ -117,7 +117,7 @@ class LogCapability(ImmutableCapabilityMixin):
 
     def warning(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log a warning message.
-        
+
         Args:
             msg: The message to log.
             extra: Optional additional context to include.
@@ -127,7 +127,7 @@ class LogCapability(ImmutableCapabilityMixin):
 
     def error(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log an error message.
-        
+
         Args:
             msg: The message to log.
             extra: Optional additional context to include.
@@ -137,14 +137,13 @@ class LogCapability(ImmutableCapabilityMixin):
 
     def exception(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log an error message with exception info.
-        
+
         This should be called from within an exception handler to include
         the traceback in the log entry.
-        
+
         Args:
             msg: The message to log.
             extra: Optional additional context to include.
 
         """
         plugin_logger.exception(msg, extra=self._make_extra(extra))
-
