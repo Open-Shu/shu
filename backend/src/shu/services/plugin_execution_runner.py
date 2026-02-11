@@ -168,6 +168,7 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
             rec.plugin_name,
             e,
         )
+        return _preflight_failure(rec, "secrets_preflight_error")
 
     # Step 8: Inject schedule_id into params
     base_params = rec.params or {}
@@ -368,13 +369,13 @@ async def _auth_preflight(
                 return _preflight_failure(rec, "identity_required")
 
     except Exception:
-        # Resolution/setup failure defaults to allow — inner checks handle fail-closed.
         logger.warning(
-            "Auth preflight resolution failed, defaulting to allow | exec_id=%s plugin=%s",
+            "Auth preflight resolution failed | exec_id=%s plugin=%s",
             rec.id,
             rec.plugin_name,
             exc_info=True,
         )
+        return _preflight_failure(rec, "auth_preflight_error")
 
     return None
 
@@ -400,12 +401,12 @@ async def _check_subscription(
                 )
                 return _preflight_failure(rec, "subscription_required")
     except Exception:
-        # Fail-open: do not block execution if enforcement check fails unexpectedly
-        logger.debug(
-            "Subscription enforcement check failed, defaulting to allow | user=%s provider=%s plugin=%s",
+        logger.warning(
+            "Subscription enforcement check failed | user=%s provider=%s plugin=%s",
             str(rec.user_id),
             provider,
             str(rec.plugin_name),
             exc_info=True,
         )
+        return _preflight_failure(rec, "subscription_check_error")
     return None
