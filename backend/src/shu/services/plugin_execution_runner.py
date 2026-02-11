@@ -113,7 +113,12 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
             try:
                 feed.enabled = False
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to auto-disable feed for missing plugin | exec_id=%s schedule_id=%s",
+                    rec.id,
+                    rec.schedule_id,
+                    exc_info=True,
+                )
         return _preflight_failure(rec, "plugin_not_found")
 
     # Step 3: Per-plugin limits
@@ -395,6 +400,12 @@ async def _check_subscription(
                 )
                 return _preflight_failure(rec, "subscription_required")
     except Exception:
-        # Do not block execution if enforcement check fails unexpectedly
-        pass
+        # Fail-open: do not block execution if enforcement check fails unexpectedly
+        logger.debug(
+            "Subscription enforcement check failed, defaulting to allow | user=%s provider=%s plugin=%s",
+            str(rec.user_id),
+            provider,
+            str(rec.plugin_name),
+            exc_info=True,
+        )
     return None
