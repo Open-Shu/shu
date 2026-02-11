@@ -54,7 +54,7 @@ export default defineConfig(({ mode }) => {
       coverage: {
         provider: 'v8',
         reporter: ['text', 'text-summary', 'html', 'lcov'],
-        exclude: ['src/index.js', 'src/reportWebVitals.js', 'src/**/*.test.{js,jsx}', 'src/**/__tests__/**'],
+        exclude: ['src/index.js', 'src/**/*.test.{js,jsx}', 'src/**/__tests__/**'],
       },
     },
   };

@@ -36,47 +36,6 @@
     "format": "prettier --write \"src/**/*.{js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,json,css,md}\""
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ],
-    "overrides": [
-      {
-        "files": [
-          "src/**/*.{js,jsx,ts,tsx}"
-        ],
-        "excludedFiles": [
-          "src/services/api.js"
-        ],
-        "rules": {
-          "no-restricted-syntax": [
-            "error",
-            {
-              "selector": "MemberExpression[property.name='data'][object.type='MemberExpression'][object.property.name='data']",
-              "message": "Avoid response.data.data. Use extractDataFromResponse from services/api."
-            },
-            {
-              "selector": "MemberExpression[property.name='success'][object.type='MemberExpression'][object.property.name='data']",
-              "message": "Avoid checking response.data.success. Use HTTP status and extractDataFromResponse/formatError."
-            }
-          ]
-        }
-      }
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@testing-library/jest-dom": "^6.1.5",
