@@ -60,6 +60,7 @@ class TestRoleActivationConsistency:
         service = UserService()
         service.settings = MagicMock()
         service.settings.admin_emails = ["admin@example.com", "superuser@test.org"]
+        service.settings.auto_activate_users = False
 
         # Determine expected role
         is_admin_email = email.lower() in [e.lower() for e in service.settings.admin_emails]
@@ -108,10 +109,12 @@ class TestRoleActivationConsistency:
         service1 = UserService()
         service1.settings = MagicMock()
         service1.settings.admin_emails = ["admin@example.com"]
+        service1.settings.auto_activate_users = False
 
         service2 = UserService()
         service2.settings = MagicMock()
         service2.settings.admin_emails = ["admin@example.com"]
+        service2.settings.auto_activate_users = False
 
         # Get role from both "providers"
         role1 = service1.determine_user_role(email, is_first_user)
