@@ -402,8 +402,7 @@ async def _handle_embed_job(job) -> None:
             raise
 
 
-# TODO: Refactor this function. It's too complex (number of branches and statements).
-async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
+async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
     """Handle an INGESTION plugin feed execution job.
 
     Loads the PluginExecution record, verifies it is still PENDING (race guard),
@@ -419,25 +418,12 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
         Exception: If plugin execution fails (triggers retry).
 
     """
-    import json
-
     from fastapi import HTTPException
     from sqlalchemy import select
 
     from .core.config import get_settings_instance
     from .core.database import get_async_session_local
     from .models.plugin_execution import PluginExecution, PluginExecutionStatus
-    from .models.plugin_feed import PluginFeed
-    from .models.plugin_registry import PluginDefinition
-    from .models.provider_identity import ProviderIdentity
-    from .plugins.executor import EXECUTOR
-    from .plugins.registry import REGISTRY
-    from .services.plugin_identity import (
-        PluginIdentityError,
-        ensure_secrets_for_plugin,
-        resolve_auth_requirements,
-    )
-    from .services.plugins_scheduler_service import ONE_SHOT_FEED_PARAMS
 
     execution_id = job.payload.get("execution_id")
     if not execution_id:
@@ -491,238 +477,10 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0912, PLR0915
         rec.started_at = datetime.now(UTC)
         await session.commit()
 
-        async def _fail(error_code: str) -> None:
-            rec.status = PluginExecutionStatus.FAILED
-            rec.error = error_code
-            rec.result = {"status": "error", "error": error_code}
-            rec.completed_at = datetime.now(UTC)
-            await session.commit()
-
         try:
-            # Check if schedule is disabled
-            if rec.schedule_id:
-                srow = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
-                s = srow.scalars().first()
-                if s and not s.enabled:
-                    await _fail("schedule_disabled")
-                    return
+            from .services.plugin_execution_runner import execute_plugin_record
 
-            # Resolve plugin
-            plugin = await REGISTRY.resolve(rec.plugin_name, session)
-            if not plugin:
-                await _fail("plugin_not_found")
-                # Auto-disable the feed to prevent repeated failures
-                if rec.schedule_id:
-                    try:
-                        srow = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
-                        s = srow.scalars().first()
-                        if s and s.enabled:
-                            s.enabled = False
-                            await session.commit()
-                    except Exception:
-                        pass
-                return
-
-            # Per-plugin limits
-            lrow = await session.execute(select(PluginDefinition).where(PluginDefinition.name == rec.plugin_name))
-            ldef = lrow.scalars().first()
-            per_plugin_limits = getattr(ldef, "limits", None) or {}
-
-            # Identity resolution
-            p = rec.params or {}
-            mode = str(p.get("auth_mode") or "").lower()
-            user_email_val = p.get("user_email")
-            if not user_email_val and mode == "domain_delegate":
-                imp = p.get("impersonate_email")
-                if imp:
-                    user_email_val = imp
-
-            # Build provider identities map for the owner/runner
-            providers_map: dict = {}
-            try:
-                q_pi = select(ProviderIdentity).where(ProviderIdentity.user_id == str(rec.user_id))
-                pi_res = await session.execute(q_pi)
-                for pi in pi_res.scalars().all():
-                    providers_map.setdefault(pi.provider_key, []).append(pi.to_dict())
-            except Exception:
-                logger.warning(
-                    "Failed to load provider identities, proceeding with empty map | exec_id=%s user=%s",
-                    rec.id,
-                    rec.user_id,
-                    exc_info=True,
-                )
-                providers_map = {}
-
-            # Auth preflight
-            try:
-                from .plugins.host.auth_capability import AuthCapability
-
-                provider, mode_eff, subject, scopes = resolve_auth_requirements(plugin, rec.params or {})
-                if provider:
-                    auth = AuthCapability(plugin_name=str(rec.plugin_name), user_id=str(rec.user_id))
-                    mode_str = (mode_eff or "").strip().lower()
-                    sc = scopes or []
-                    if mode_str == "user":
-                        # Subscription enforcement
-                        try:
-                            from .services.host_auth_service import HostAuthService
-
-                            subs = await HostAuthService.list_subscriptions(session, str(rec.user_id), provider, None)
-                            if subs:
-                                subscribed_names = {s.plugin_name for s in subs}
-                                if str(rec.plugin_name) not in subscribed_names:
-                                    logger.warning(
-                                        "subscription.enforced | user=%s provider=%s plugin=%s path=worker",
-                                        str(rec.user_id),
-                                        provider,
-                                        str(rec.plugin_name),
-                                    )
-                                    await _fail("subscription_required")
-                                    return
-                        except Exception:
-                            logger.exception(
-                                "Subscription enforcement check failed, failing closed | user=%s provider=%s plugin=%s",
-                                str(rec.user_id),
-                                provider,
-                                str(rec.plugin_name),
-                            )
-                            await _fail("subscription_check_error")
-                            return
-                        tok = await auth.provider_user_token(provider, required_scopes=sc or None)
-                        if not tok:
-                            await _fail("identity_required")
-                            return
-                    elif mode_str == "domain_delegate":
-                        subj = (subject or "").strip()
-                        if not subj:
-                            await _fail("identity_required")
-                            return
-                        resp = await auth.provider_delegation_check(provider, scopes=sc, subject=subj)
-                        if not (isinstance(resp, dict) and resp.get("ready") is True):
-                            await _fail("identity_required")
-                            return
-                    elif mode_str == "service_account":
-                        try:
-                            _ = await auth.provider_service_account_token(provider, scopes=sc, subject=None)
-                        except Exception:
-                            await _fail("identity_required")
-                            return
-            except Exception:
-                # Resolution/setup failure defaults to allow — inner checks
-                # (subscription, token, delegation) handle fail-closed decisions.
-                logger.warning(
-                    "Auth preflight resolution failed, defaulting to allow | exec_id=%s plugin=%s",
-                    rec.id,
-                    rec.plugin_name,
-                    exc_info=True,
-                )
-
-            # Secrets preflight
-            try:
-                await ensure_secrets_for_plugin(plugin, str(rec.plugin_name), str(rec.user_id), rec.params or {})
-            except PluginIdentityError:
-                await _fail("missing_secrets")
-                return
-            except Exception as e:
-                logger.warning(
-                    "Secrets preflight check failed unexpectedly for exec %s plugin %s: %s",
-                    rec.id,
-                    rec.plugin_name,
-                    e,
-                )
-
-            # Inject schedule_id into params so plugins can scope cursors per-feed
-            base_params = rec.params or {}
-            eff_params = dict(base_params) if isinstance(base_params, dict) else {}
-            if rec.schedule_id:
-                eff_params["__schedule_id"] = str(rec.schedule_id)
-
-            # Execute plugin
-            exec_result = await EXECUTOR.execute(
-                plugin=plugin,
-                user_id=str(rec.user_id),
-                user_email=user_email_val,
-                agent_key=rec.agent_key,
-                params=eff_params,
-                limits=per_plugin_limits,
-                provider_identities=providers_map,
-            )
-
-            # Normalize result to dict
-            try:
-                payload = exec_result.model_dump()
-            except Exception:
-                if isinstance(exec_result, dict):
-                    payload = exec_result
-                else:
-                    payload = {
-                        "status": getattr(exec_result, "status", None),
-                        "data": getattr(exec_result, "data", None),
-                        "error": getattr(exec_result, "error", None),
-                    }
-
-            # Enforce output byte cap
-            try:
-                payload_json = json.dumps(payload, separators=(",", ":"), default=str)
-                payload_size = len(payload_json.encode("utf-8"))
-            except Exception:
-                payload_size = 0
-            max_bytes = getattr(settings, "plugin_exec_output_max_bytes", 0) or 0
-            if max_bytes > 0 and payload_size > max_bytes:
-                rec.completed_at = datetime.now(UTC)
-                rec.status = PluginExecutionStatus.FAILED
-                rec.error = f"output exceeds max bytes ({payload_size} > {max_bytes})"
-                rec.result = {"status": "error", "error": "output_too_large"}
-                await session.commit()
-                return
-
-            rec.result = payload
-            rec.completed_at = datetime.now(UTC)
-            rec.status = (
-                PluginExecutionStatus.COMPLETED if payload.get("status") == "success" else PluginExecutionStatus.FAILED
-            )
-            _err_val = payload.get("error") if payload.get("status") != "success" else None
-            if isinstance(_err_val, (dict, list)):
-                rec.error = json.dumps(_err_val, separators=(",", ":"), default=str)
-            else:
-                rec.error = _err_val
-
-            # Diagnostics logging
-            try:
-                from .plugins.utils import log_plugin_diagnostics as _log_diags
-            except Exception:
-                _log_diags = None
-            if _log_diags:
-                _log_diags(payload, plugin_name=str(rec.plugin_name), exec_id=str(rec.id))
-
-            # Clear one-shot params from feed after successful execution
-            # and update last_run_at to reflect actual execution time
-            if rec.schedule_id:
-                try:
-                    feed_res = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
-                    feed = feed_res.scalars().first()
-                    if feed:
-                        # Update last_run_at to actual execution completion time
-                        if rec.status == PluginExecutionStatus.COMPLETED:
-                            feed.last_run_at = datetime.now(UTC)
-                        # Clear one-shot params on success
-                        if rec.status == PluginExecutionStatus.COMPLETED and feed.params:
-                            params_dict = dict(feed.params) if isinstance(feed.params, dict) else {}
-                            modified = False
-                            for key in ONE_SHOT_FEED_PARAMS:
-                                if key in params_dict:
-                                    del params_dict[key]
-                                    modified = True
-                            if modified:
-                                feed.params = params_dict
-                except Exception:
-                    logger.warning(
-                        "Failed to update feed after execution (one-shot params / last_run_at) | exec_id=%s schedule_id=%s",
-                        rec.id,
-                        rec.schedule_id,
-                        exc_info=True,
-                    )
-
+            await execute_plugin_record(session, rec, settings)
             await session.commit()
 
             logger.info(
