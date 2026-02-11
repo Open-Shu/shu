@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     # Admin configuration
     admin_emails: list[str] = Field(default_factory=list, alias="ADMIN_EMAILS")
 
+    # Auto-activate new users on first SSO login (default: false)
+    # When true, new non-admin users are immediately active without admin approval.
+    auto_activate_users: bool = Field(False, alias="SHU_AUTO_ACTIVATE_USERS")
+
     # Embedding configuration
     default_embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", alias="SHU_EMBEDDING_MODEL")
     embedding_device: str = "cpu"
