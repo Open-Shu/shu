@@ -103,7 +103,7 @@ function Dashboard() {
       )}
 
       {/* Debug Information */}
-      {process.env.NODE_ENV !== 'production' && (
+      {import.meta.env.MODE !== 'production' && (
         <Alert severity="info" sx={{ mb: 3 }}>
           <Typography variant="body2">
             <strong>Debug Info:</strong> Knowledge Bases: {knowledgeBases?.length || 0} | Loading:{' '}

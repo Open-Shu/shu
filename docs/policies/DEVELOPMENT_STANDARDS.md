@@ -350,7 +350,7 @@ frontend/
 
 ### **15.9. Frontend Logging**
 - Use the shared logging utility instead of raw console.* calls: `frontend/src/utils/log.js`
-- The utility gates debug/info/warn logs with `REACT_APP_DEBUG==='true'` or non-production `NODE_ENV`
+- The utility gates debug/info/warn logs with `VITE_DEBUG==='true'` or non-production `NODE_ENV`
 - Always use:
   - `log.debug()` for verbose development logs
   - `log.info()` for notable but non-error events

@@ -1,11 +1,11 @@
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { vi } from 'vitest';
 
 import TriggerConfiguration from '../TriggerConfiguration';
 
 // Mock the RecurringScheduleBuilder component
-jest.mock('../RecurringScheduleBuilder', () => {
-  return function MockRecurringScheduleBuilder({ value, onChange }) {
+vi.mock('../RecurringScheduleBuilder', () => ({
+  default: ({ value, onChange }) => {
     return (
       <div data-testid="recurring-schedule-builder">
         <input
@@ -15,19 +15,19 @@ jest.mock('../RecurringScheduleBuilder', () => {
         />
       </div>
     );
-  };
-});
+  },
+}));
 
 // Mock the TimezoneSelector component
-jest.mock('../TimezoneSelector', () => {
-  return function MockTimezoneSelector({ value, onChange }) {
+vi.mock('../TimezoneSelector', () => ({
+  default: ({ value, onChange }) => {
     return (
       <div data-testid="timezone-selector">
         <input data-testid="mock-timezone-input" value={value || ''} onChange={(e) => onChange(e.target.value)} />
       </div>
     );
-  };
-});
+  },
+}));
 
 describe('TriggerConfiguration', () => {
   const defaultProps = {

@@ -4,40 +4,53 @@ import '@testing-library/jest-dom';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { vi } from 'vitest';
 import ExperienceRunDetailDialog from '../ExperienceRunDetailDialog';
 import * as api from '../../services/api';
 
 // Mock dependencies
-jest.mock('../../services/api');
-jest.mock('../../utils/log', () => ({
-  __esModule: true,
+vi.mock('../../services/api', () => ({
+  experiencesAPI: {
+    getRun: vi.fn(),
+  },
+  conversationsAPI: {
+    createFromRun: vi.fn(),
+  },
+  extractDataFromResponse: vi.fn((response) => response.data),
+  formatError: vi.fn((error) => error.message || 'An error occurred'),
+}));
+
+vi.mock('../../utils/log', () => ({
   default: {
-    info: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-    warn: jest.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 
 // Mock MarkdownRenderer to avoid react-markdown import issues
-jest.mock('../shared/MarkdownRenderer', () => {
-  return function MarkdownRenderer({ content }) {
+vi.mock('../shared/MarkdownRenderer', () => ({
+  default: function MarkdownRenderer({ content }) {
     return <div data-testid="markdown-renderer">{content}</div>;
-  };
-});
+  },
+}));
 
 // Mock StepStatusIcon
-jest.mock('../StepStatusIcon', () => {
-  return function StepStatusIcon() {
+vi.mock('../StepStatusIcon', () => ({
+  default: function StepStatusIcon() {
     return <div data-testid="step-status-icon" />;
+  },
+}));
+
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
   };
 });
-
-const mockNavigate = jest.fn();
-jest.mock('react-router-dom', () => ({
-  ...jest.requireActual('react-router-dom'),
-  useNavigate: () => mockNavigate,
-}));
 
 // Test wrapper component
 const TestWrapper = ({ children }) => {
@@ -89,19 +102,12 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
-
-    // Mock extractDataFromResponse
-    api.extractDataFromResponse = jest.fn().mockImplementation((response) => response.data);
-
-    // Mock formatError
-    api.formatError = jest.fn().mockImplementation((error) => error.message || 'An error occurred');
+    vi.clearAllMocks();
+    mockNavigate.mockClear();
   });
 
   test('renders Start Conversation button when run has result content', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     render(
       <TestWrapper>
@@ -119,9 +125,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   });
 
   test('does not render Start Conversation button when run has no result content', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithoutContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithoutContent });
 
     render(
       <TestWrapper>
@@ -140,9 +144,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   });
 
   test('shows loading state during conversation creation', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     // Mock a delayed response
     api.chatAPI = {
@@ -176,9 +178,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   test('navigates to conversation view on successful creation', async () => {
     const mockOnClose = jest.fn();
 
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     api.chatAPI = {
       createConversationFromExperience: jest.fn().mockResolvedValue({ data: mockConversation }),
@@ -208,9 +208,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   });
 
   test('displays error message on conversation creation failure', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     const errorMessage = 'Failed to create conversation';
     api.chatAPI = {
@@ -239,9 +237,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   });
 
   test('button is disabled during conversation creation', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     // Mock a delayed response to test disabled state
     api.chatAPI = {
@@ -273,9 +269,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   });
 
   test('error alert can be dismissed', async () => {
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     const errorMessage = 'Network error';
     api.chatAPI = {
@@ -315,9 +309,7 @@ describe('ExperienceRunDetailDialog - Start Conversation Button', () => {
   test('calls API with correct runId parameter', async () => {
     const testRunId = 'test-run-id-123';
 
-    api.experiencesAPI = {
-      getRun: jest.fn().mockResolvedValue({ data: mockRunWithContent }),
-    };
+    api.experiencesAPI.getRun.mockResolvedValue({ data: mockRunWithContent });
 
     api.chatAPI = {
       createConversationFromExperience: jest.fn().mockResolvedValue({ data: mockConversation }),

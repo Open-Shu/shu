@@ -1,52 +1,46 @@
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import { createTheme } from '@mui/material/styles';
+import { vi } from 'vitest';
 import ExperiencesAdmin from '../ExperiencesAdmin';
 import * as api from '../../services/api';
 
 // Mock the API
-jest.mock('../../services/api', () => ({
+vi.mock('../../services/api', () => ({
   experiencesAPI: {
-    list: jest.fn(),
-    delete: jest.fn(),
+    list: vi.fn(),
+    delete: vi.fn(),
   },
-  extractDataFromResponse: jest.fn(),
-  formatError: jest.fn(),
+  extractDataFromResponse: vi.fn(),
+  formatError: vi.fn(),
 }));
 
 // Mock the ImportExperienceWizard component
-jest.mock('../ImportExperienceWizard', () => {
-  return function MockImportExperienceWizard({ open, onClose, onSuccess }) {
+vi.mock('../ImportExperienceWizard', () => ({
+  default: ({ open, onClose, onSuccess }) => {
     return open ? (
       <div data-testid="import-wizard">
         <button onClick={onClose}>Close Wizard</button>
         <button onClick={() => onSuccess({ id: 'test-id', name: 'Test Experience' })}>Success</button>
       </div>
     ) : null;
-  };
-});
+  },
+}));
 
 // Mock other components
-jest.mock('../ExperienceRunDialog', () => {
-  return function MockExperienceRunDialog() {
-    return <div data-testid="run-dialog" />;
-  };
-});
+vi.mock('../ExperienceRunDialog', () => ({
+  default: () => <div data-testid="run-dialog" />,
+}));
 
-jest.mock('../ExportExperienceButton', () => {
-  return function MockExportExperienceButton() {
-    return <button data-testid="export-button">Export</button>;
-  };
-});
+vi.mock('../ExportExperienceButton', () => ({
+  default: () => <button data-testid="export-button">Export</button>,
+}));
 
-jest.mock('../PageHelpHeader', () => {
-  return function MockPageHelpHeader() {
-    return <div data-testid="page-help-header" />;
-  };
-});
+vi.mock('../PageHelpHeader', () => ({
+  default: () => <div data-testid="page-help-header" />,
+}));
 
 const theme = createTheme();
 
@@ -77,7 +71,7 @@ describe('ExperiencesAdmin', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   test('renders Import Experience button', async () => {
@@ -157,11 +151,11 @@ describe('ExperiencesAdmin', () => {
     renderWithProviders(<ExperiencesAdmin />);
 
     await waitFor(() => {
-      expect(screen.getByText('Import Experience')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /import experience/i })[0]).toBeInTheDocument();
     });
 
-    // Click the Import Experience button
-    fireEvent.click(screen.getByText('Import Experience'));
+    // Click the Import Experience button (first one)
+    fireEvent.click(screen.getAllByRole('button', { name: /import experience/i })[0]);
 
     // Verify the import wizard opens
     expect(screen.getByTestId('import-wizard')).toBeInTheDocument();
@@ -171,11 +165,11 @@ describe('ExperiencesAdmin', () => {
     renderWithProviders(<ExperiencesAdmin />);
 
     await waitFor(() => {
-      expect(screen.getByText('Import Experience')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /import experience/i })[0]).toBeInTheDocument();
     });
 
     // Open the wizard
-    fireEvent.click(screen.getByText('Import Experience'));
+    fireEvent.click(screen.getAllByRole('button', { name: /import experience/i })[0]);
     expect(screen.getByTestId('import-wizard')).toBeInTheDocument();
 
     // Close the wizard
@@ -184,22 +178,25 @@ describe('ExperiencesAdmin', () => {
   });
 
   test('handles import success correctly', async () => {
-    const mockNavigate = jest.fn();
+    const mockNavigate = vi.fn();
 
     // Mock useNavigate
-    jest.doMock('react-router-dom', () => ({
-      ...jest.requireActual('react-router-dom'),
-      useNavigate: () => mockNavigate,
-    }));
+    vi.doMock('react-router-dom', async () => {
+      const actual = await vi.importActual('react-router-dom');
+      return {
+        ...actual,
+        useNavigate: () => mockNavigate,
+      };
+    });
 
     renderWithProviders(<ExperiencesAdmin />);
 
     await waitFor(() => {
-      expect(screen.getByText('Import Experience')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /import experience/i })[0]).toBeInTheDocument();
     });
 
     // Open the wizard
-    fireEvent.click(screen.getByText('Import Experience'));
+    fireEvent.click(screen.getAllByRole('button', { name: /import experience/i })[0]);
     expect(screen.getByTestId('import-wizard')).toBeInTheDocument();
 
     // Trigger success
@@ -213,10 +210,10 @@ describe('ExperiencesAdmin', () => {
     renderWithProviders(<ExperiencesAdmin />);
 
     await waitFor(() => {
-      expect(screen.getByText('Import Experience')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /import experience/i })[0]).toBeInTheDocument();
     });
 
-    const importButton = screen.getByText('Import Experience');
+    const importButton = screen.getAllByRole('button', { name: /import experience/i })[0];
     expect(importButton).toHaveClass('MuiButton-outlined');
   });
 });

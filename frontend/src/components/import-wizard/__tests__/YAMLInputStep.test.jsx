@@ -1,5 +1,5 @@
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { vi } from 'vitest';
 import YAMLInputStep from '../YAMLInputStep';
 
 // Import the mocked services
@@ -7,32 +7,38 @@ import YAMLProcessor from '../../../services/yamlProcessor';
 import { extractImportPlaceholders } from '../../../services/importPlaceholders';
 
 // Mock the services
-jest.mock('../../../services/yamlProcessor', () => ({
-  validateExperienceYAML: jest.fn(),
-}));
-
-jest.mock('../../../services/importPlaceholders', () => ({
-  extractImportPlaceholders: jest.fn(),
-}));
-
-jest.mock('../../../utils/log', () => ({
-  log: {
-    info: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
+vi.mock('../../../services/yamlProcessor', () => ({
+  default: {
+    validateExperienceYAML: vi.fn(),
   },
 }));
+
+vi.mock('../../../services/importPlaceholders', () => ({
+  extractImportPlaceholders: vi.fn(),
+}));
+
+vi.mock('../../../utils/log', () => {
+  const mockLog = {
+    info: vi.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    default: mockLog,
+    log: mockLog,
+  };
+});
 
 describe('YAMLInputStep', () => {
   const defaultProps = {
     yamlContent: '',
-    onYAMLChange: jest.fn(),
-    onValidationChange: jest.fn(),
+    onYAMLChange: vi.fn(),
+    onValidationChange: vi.fn(),
     prePopulatedYAML: null,
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     // Set up default mock implementations
     YAMLProcessor.validateExperienceYAML.mockReturnValue({
       isValid: true,

@@ -7,9 +7,6 @@
     "@emotion/styled": "^11.11.0",
     "@mui/icons-material": "^5.11.16",
     "@mui/material": "^5.13.0",
-    "@testing-library/jest-dom": "^5.16.4",
-    "@testing-library/react": "^13.3.0",
-    "@testing-library/user-event": "^13.5.0",
     "axios": "^1.4.0",
     "cron-parser": "^5.4.0",
     "cronstrue": "^3.9.0",
@@ -24,91 +21,37 @@
     "react-markdown": "^10.1.0",
     "react-query": "^3.39.3",
     "react-router-dom": "^6.11.2",
-    "react-scripts": "5.0.1",
     "remark-gfm": "^4.0.1"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "test:coverage": "react-scripts test --coverage --watchAll=false",
-    "test:coverage:watch": "react-scripts test --coverage",
-    "eject": "react-scripts eject",
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:watch": "vitest --coverage",
     "lint": "eslint src --ext .js,.jsx",
     "lint:fix": "eslint src --ext .js,.jsx --fix",
     "format": "prettier --write \"src/**/*.{js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,json,css,md}\""
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ],
-    "overrides": [
-      {
-        "files": [
-          "src/**/*.{js,jsx,ts,tsx}"
-        ],
-        "excludedFiles": [
-          "src/services/api.js"
-        ],
-        "rules": {
-          "no-restricted-syntax": [
-            "error",
-            {
-              "selector": "MemberExpression[property.name='data'][object.type='MemberExpression'][object.property.name='data']",
-              "message": "Avoid response.data.data. Use extractDataFromResponse from services/api."
-            },
-            {
-              "selector": "MemberExpression[property.name='success'][object.type='MemberExpression'][object.property.name='data']",
-              "message": "Avoid checking response.data.success. Use HTTP status and extractDataFromResponse/formatError."
-            }
-          ]
-        }
-      }
-    ]
-  },
-  "jest": {
-    "transformIgnorePatterns": [
-      "node_modules/(?!(axios|date-fns|date-fns-tz|cron-parser|cronstrue|fast-check)/)"
-    ],
-    "moduleNameMapper": {
-      "\\.(css|less|scss|sass)$": "<rootDir>/src/__mocks__/styleMock.js"
-    },
-    "collectCoverageFrom": [
-      "src/**/*.{js,jsx}",
-      "!src/index.js",
-      "!src/reportWebVitals.js",
-      "!src/**/*.test.{js,jsx}",
-      "!src/**/__tests__/**"
-    ],
-    "coverageReporters": [
-      "text",
-      "text-summary",
-      "html",
-      "lcov"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
-  "proxy": "http://localhost:8000",
   "devDependencies": {
     "@playwright/test": "^1.56.0",
+    "@testing-library/jest-dom": "^6.1.5",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/user-event": "^14.5.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/ui": "^1.6.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
-    "prettier": "^3.1.1"
+    "jsdom": "^23.0.1",
+    "prettier": "^3.1.1",
+    "vite": "^5.4.21",
+    "vitest": "^1.6.0"
   }
 }

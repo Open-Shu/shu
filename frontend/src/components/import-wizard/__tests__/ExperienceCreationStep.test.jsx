@@ -1,34 +1,47 @@
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { BrowserRouter } from 'react-router-dom';
+import { vi } from 'vitest';
 import ExperienceCreationStep from '../ExperienceCreationStep';
+import * as api from '../../../services/api';
+
+// Mock baseUrl first to prevent module resolution issues
+vi.mock('../../../services/baseUrl', () => ({
+  getApiV1Base: vi.fn(() => 'http://localhost:8000/api/v1'),
+  getApiBaseUrl: vi.fn(() => 'http://localhost:8000'),
+  getWsBaseUrl: vi.fn(() => 'ws://localhost:8000'),
+}));
+
+// Mock the logger before other imports
+vi.mock('../../../utils/log', () => {
+  const mockLog = {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    default: mockLog,
+    log: mockLog,
+  };
+});
 
 // Mock the API service
-jest.mock('../../../services/api', () => ({
+vi.mock('../../../services/api', () => ({
   experiencesAPI: {
-    create: jest.fn(),
+    create: vi.fn(),
   },
-  extractDataFromResponse: jest.fn((response) => response.data),
-  formatError: jest.fn((error) => error.message || 'Unknown error'),
+  extractDataFromResponse: vi.fn((response) => response.data),
+  formatError: vi.fn((error) => error.message || 'Unknown error'),
 }));
 
 // Mock the YAML processor
-jest.mock('../../../services/yamlProcessor', () => ({
-  convertToExperiencePayload: jest.fn(() => ({
+vi.mock('../../../services/yamlProcessor', () => ({
+  convertToExperiencePayload: vi.fn(() => ({
     name: 'Test Experience',
     description: 'Test Description',
     steps: [],
   })),
-}));
-
-// Mock the logger
-jest.mock('../../../utils/log', () => ({
-  log: {
-    info: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  },
 }));
 
 const createTestQueryClient = () => {
@@ -53,12 +66,12 @@ describe('ExperienceCreationStep', () => {
   const defaultProps = {
     yamlContent: 'name: Test\ndescription: Test experience',
     resolvedValues: { model_configuration_id: 'config-1' },
-    onCreationComplete: jest.fn(),
-    onRetry: jest.fn(),
+    onCreationComplete: vi.fn(),
+    onRetry: vi.fn(),
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   test('renders creation step title', () => {
@@ -80,8 +93,7 @@ describe('ExperienceCreationStep', () => {
   });
 
   test('handles API error during creation', async () => {
-    const { experiencesAPI } = require('../../../services/api');
-    experiencesAPI.create.mockRejectedValue(new Error('API Error'));
+    api.experiencesAPI.create.mockRejectedValue(new Error('API Error'));
 
     renderWithProviders(<ExperienceCreationStep {...defaultProps} />);
 
@@ -103,8 +115,7 @@ describe('ExperienceCreationStep', () => {
   });
 
   test('displays retry button on error', async () => {
-    const { experiencesAPI } = require('../../../services/api');
-    experiencesAPI.create.mockRejectedValue(new Error('API Error'));
+    api.experiencesAPI.create.mockRejectedValue(new Error('API Error'));
 
     renderWithProviders(<ExperienceCreationStep {...defaultProps} />);
 

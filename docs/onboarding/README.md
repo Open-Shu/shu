@@ -520,7 +520,7 @@ This section introduces the Shu Admin Console (the web UI) and how it talks to t
 
 ### A) Tech stack at a glance
 - React 18 (UI): https://react.dev/
-- Create React App tooling (react-scripts)
+- Vite (build tool): https://vitejs.dev/
 - Material UI (components): https://mui.com/
 - Axios (HTTP client): https://axios-http.com/
 - React Router (navigation): https://reactrouter.com/
@@ -540,9 +540,9 @@ npm start
 Optional: set a specific API URL with a frontend .env file:
 ```bash
 # frontend/.env
-REACT_APP_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000
 ```
-If REACT_APP_API_BASE_URL is not set, the CRA dev proxy is used.
+If VITE_API_BASE_URL is not set, the CRA dev proxy is used.
 
 ### C) How the frontend calls the API
 - Central HTTP client lives in: frontend/src/services/api.js

@@ -1,14 +1,14 @@
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { vi } from 'vitest';
 
 import RecurringScheduleBuilder from '../RecurringScheduleBuilder';
 import { getSchedulePreview } from '../../../utils/schedulePreview';
 
 // Mock the CSS import
-jest.mock('react-js-cron/dist/styles.css', () => ({}));
+vi.mock('react-js-cron/dist/styles.css', () => ({}));
 
 // Mock the cron library to avoid CSS import issues
-jest.mock('react-js-cron', () => ({
+vi.mock('react-js-cron', () => ({
   Cron: ({ value, setValue }) => (
     <div data-testid="cron-component">
       <input
@@ -22,14 +22,14 @@ jest.mock('react-js-cron', () => ({
 }));
 
 // Mock the schedulePreview utility
-jest.mock('../../../utils/schedulePreview', () => ({
-  getSchedulePreview: jest.fn(),
+vi.mock('../../../utils/schedulePreview', () => ({
+  getSchedulePreview: vi.fn(),
 }));
 
 describe('RecurringScheduleBuilder', () => {
   const defaultProps = {
     value: { cron: '0 9 * * *', timezone: 'America/New_York' },
-    onChange: jest.fn(),
+    onChange: vi.fn(),
     validationErrors: {},
   };
 

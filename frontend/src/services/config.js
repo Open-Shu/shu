@@ -7,7 +7,6 @@ import { getApiBaseUrl } from './baseUrl';
 import { log } from '../utils/log';
 
 const API_BASE_URL = getApiBaseUrl();
-const API_KEY = process.env.REACT_APP_API_KEY; // Optional API key
 
 class ConfigService {
   constructor() {
@@ -36,11 +35,6 @@ class ConfigService {
       const headers = {
         'Content-Type': 'application/json',
       };
-
-      // Add API key if configured
-      if (API_KEY) {
-        headers['Authorization'] = `Bearer ${API_KEY}`;
-      }
 
       const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/api/v1/config/public`, {
         headers,

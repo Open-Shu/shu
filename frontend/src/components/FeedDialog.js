@@ -274,7 +274,7 @@ export default function FeedDialog({
       baseParams.__host = overlay;
     }
     // Dev-only diagnostics and reset cursor
-    const isDev = String(process.env.NODE_ENV) === 'development';
+    const isDev = String(import.meta.env.MODE) === 'development';
     if (isDev && devDiagnostics) {
       baseParams.debug = true;
     }
@@ -475,7 +475,7 @@ export default function FeedDialog({
           {renderSchemaForm}
           {/* Developer diagnostics and reset cursor controls */}
           <Box mt={2}>
-            {String(process.env.NODE_ENV) === 'development' && (
+            {String(import.meta.env.MODE) === 'development' && (
               <FormControlLabel
                 control={<Checkbox checked={devDiagnostics} onChange={(e) => setDevDiagnostics(e.target.checked)} />}
                 label="Include diagnostics in execution result (development)"

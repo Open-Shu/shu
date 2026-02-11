@@ -30,7 +30,7 @@ const usePluginFlow = ({ pluginsEnabled }) => {
   }, [chatPluginDescriptors]);
 
   const showPluginInfoBanner =
-    process.env.NODE_ENV !== 'production' && pluginsEnabled && Boolean(chatPluginsSummaryText);
+    import.meta.env.MODE !== 'production' && pluginsEnabled && Boolean(chatPluginsSummaryText);
 
   const [pluginPickerOpen, setPluginPickerOpen] = useState(false);
   const [pluginModalOpen, setPluginModalOpen] = useState(false);

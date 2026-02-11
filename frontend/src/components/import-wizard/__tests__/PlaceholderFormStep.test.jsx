@@ -1,19 +1,26 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from 'react-query';
+import { vi } from 'vitest';
 import PlaceholderFormStep from '../PlaceholderFormStep';
 
+// Mock baseUrl first to prevent module resolution issues
+vi.mock('../../../services/baseUrl', () => ({
+  getApiV1Base: vi.fn(() => 'http://localhost:8000/api/v1'),
+  getApiBaseUrl: vi.fn(() => 'http://localhost:8000'),
+  getWsBaseUrl: vi.fn(() => 'ws://localhost:8000'),
+}));
+
 // Mock the API calls
-jest.mock('../../../services/api', () => ({
+vi.mock('../../../services/api', () => ({
   modelConfigurationsAPI: {
-    list: jest.fn(() => Promise.resolve({ data: { items: [] } })),
+    list: vi.fn(() => Promise.resolve({ data: { items: [] } })),
   },
-  extractDataFromResponse: jest.fn((response) => response.data),
+  extractDataFromResponse: vi.fn((response) => response.data),
 }));
 
 // Mock the shared components to avoid complex dependencies
-jest.mock('../../shared/TriggerConfiguration', () => {
-  return function MockTriggerConfiguration({ triggerType, onTriggerTypeChange, validationErrors, required }) {
+vi.mock('../../shared/TriggerConfiguration', () => ({
+  default: ({ triggerType, onTriggerTypeChange, validationErrors, required }) => {
     return (
       <div data-testid="trigger-configuration">
         <label htmlFor="trigger-type">Trigger Type {required ? '*' : ''}</label>
@@ -25,16 +32,11 @@ jest.mock('../../shared/TriggerConfiguration', () => {
         {validationErrors.trigger_type && <div>{validationErrors.trigger_type}</div>}
       </div>
     );
-  };
-});
+  },
+}));
 
-jest.mock('../../shared/ModelConfigurationSelector', () => {
-  return function MockModelConfigurationSelector({
-    modelConfigurationId,
-    onModelConfigurationChange,
-    label,
-    required,
-  }) {
+vi.mock('../../shared/ModelConfigurationSelector', () => ({
+  default: ({ modelConfigurationId, onModelConfigurationChange, label, required }) => {
     return (
       <div data-testid="model-configuration-selector">
         <label htmlFor="model-configuration">
@@ -51,8 +53,8 @@ jest.mock('../../shared/ModelConfigurationSelector', () => {
         </select>
       </div>
     );
-  };
-});
+  },
+}));
 
 const createWrapper = () => {
   const queryClient = new QueryClient({

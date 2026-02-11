@@ -1,31 +1,27 @@
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from 'react-query';
+import { vi } from 'vitest';
+import { useEffect, createElement } from 'react';
 import ImportExperienceWizard from '../ImportExperienceWizard';
 
 // Mock the step components to prevent infinite loops in tests
-jest.mock('../import-wizard/YAMLInputStep', () => {
-  const mockReact = require('react');
-  return function MockYAMLInputStep({ yamlContent, onYAMLChange, onValidationChange, prePopulatedYAML }) {
+vi.mock('../import-wizard/YAMLInputStep', () => {
+  const MockYAMLInputStep = ({ yamlContent, onYAMLChange, onValidationChange, prePopulatedYAML }) => {
     // Simulate validation change on mount - but only once
-    mockReact.useEffect(() => {
+    useEffect(() => {
       if (onValidationChange) {
         onValidationChange(yamlContent && yamlContent.trim() !== '');
       }
     }, [yamlContent]); // Removed onValidationChange from dependencies
 
-    return mockReact.createElement(
+    return createElement(
       'div',
       null,
-      mockReact.createElement('h6', null, 'YAML Configuration'),
-      mockReact.createElement('p', null, 'Mock YAML Input Step'),
-      mockReact.createElement(
-        'p',
-        null,
-        `Current state: ${yamlContent ? `${yamlContent.length} characters` : 'Empty'}`
-      ),
-      mockReact.createElement('p', null, `Pre-populated: ${prePopulatedYAML ? 'Yes' : 'No'}`),
-      mockReact.createElement(
+      createElement('h6', null, 'YAML Configuration'),
+      createElement('p', null, 'Mock YAML Input Step'),
+      createElement('p', null, `Current state: ${yamlContent ? `${yamlContent.length} characters` : 'Empty'}`),
+      createElement('p', null, `Pre-populated: ${prePopulatedYAML ? 'Yes' : 'No'}`),
+      createElement(
         'button',
         {
           onClick: () => onYAMLChange && onYAMLChange('test yaml content'),
@@ -34,66 +30,76 @@ jest.mock('../import-wizard/YAMLInputStep', () => {
       )
     );
   };
+
+  return {
+    default: MockYAMLInputStep,
+  };
 });
 
-jest.mock('../import-wizard/PlaceholderFormStep', () => {
-  const mockReact = require('react');
-  return function MockPlaceholderFormStep({ placeholders, onValidationChange }) {
-    mockReact.useEffect(() => {
+vi.mock('../import-wizard/PlaceholderFormStep', () => {
+  const MockPlaceholderFormStep = ({ placeholders, onValidationChange }) => {
+    useEffect(() => {
       if (onValidationChange) {
         onValidationChange(true);
       }
     }, []); // Empty dependency array
 
-    return mockReact.createElement(
+    return createElement(
       'div',
       null,
-      mockReact.createElement('h6', null, 'Placeholder Form Step'),
-      mockReact.createElement('p', null, 'Mock Placeholder Form Step'),
-      mockReact.createElement('p', null, `Placeholders found: ${placeholders.length}`)
+      createElement('h6', null, 'Placeholder Form Step'),
+      createElement('p', null, 'Mock Placeholder Form Step'),
+      createElement('p', null, `Placeholders found: ${placeholders.length}`)
     );
+  };
+
+  return {
+    default: MockPlaceholderFormStep,
   };
 });
 
-jest.mock('../import-wizard/ExperienceCreationStep', () => {
-  const mockReact = require('react');
-  return function MockExperienceCreationStep({ isCreating, error, success, experienceId }) {
-    return mockReact.createElement(
+vi.mock('../import-wizard/ExperienceCreationStep', () => ({
+  default: ({ isCreating, error, success, experienceId }) => {
+    return createElement(
       'div',
       null,
-      mockReact.createElement('h6', null, 'Experience Creation Step'),
-      mockReact.createElement('p', null, 'Mock Experience Creation Step'),
-      isCreating && mockReact.createElement('p', null, 'Creating...'),
-      error && mockReact.createElement('p', null, `Error: ${error}`),
-      success && mockReact.createElement('p', null, `Success! Experience ID: ${experienceId}`)
+      createElement('h6', null, 'Experience Creation Step'),
+      createElement('p', null, 'Mock Experience Creation Step'),
+      isCreating && createElement('p', null, 'Creating...'),
+      error && createElement('p', null, `Error: ${error}`),
+      success && createElement('p', null, `Success! Experience ID: ${experienceId}`)
     );
-  };
-});
+  },
+}));
 
 // Mock the services
-jest.mock('../../services/yamlProcessor', () => ({
-  convertToExperiencePayload: jest.fn(() => ({
+vi.mock('../../services/yamlProcessor', () => ({
+  convertToExperiencePayload: vi.fn(() => ({
     name: 'Test Experience',
     description: 'Test',
   })),
-  validateExperienceYAML: jest.fn(() => ({ isValid: true, errors: [] })),
+  validateExperienceYAML: vi.fn(() => ({ isValid: true, errors: [] })),
 }));
 
-jest.mock('../../services/api', () => ({
+vi.mock('../../services/api', () => ({
   experiencesAPI: {
-    create: jest.fn(),
+    create: vi.fn(),
   },
-  formatError: jest.fn((error) => error.message || 'Unknown error'),
+  formatError: vi.fn((error) => error.message || 'Unknown error'),
 }));
 
-jest.mock('../../utils/log', () => ({
-  log: {
-    info: jest.fn(),
-    debug: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  },
-}));
+vi.mock('../../utils/log', () => {
+  const mockLog = {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    default: mockLog,
+    log: mockLog,
+  };
+});
 
 const createTestQueryClient = () =>
   new QueryClient({

@@ -1,23 +1,26 @@
-import React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { vi } from 'vitest';
 import ConversationSidebar from '../ConversationSidebar';
 
 // Mock react-router-dom
-const mockNavigate = jest.fn();
-jest.mock('react-router-dom', () => ({
-  ...jest.requireActual('react-router-dom'),
-  useNavigate: () => mockNavigate,
-}));
-
-// Mock MarkdownRenderer
-jest.mock('../../../shared/MarkdownRenderer', () => {
-  return function MockMarkdownRenderer({ content }) {
-    return <div data-testid="markdown-renderer">{content}</div>;
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
   };
 });
+
+// Mock MarkdownRenderer
+vi.mock('../../../shared/MarkdownRenderer', () => ({
+  default: ({ content }) => {
+    return <div data-testid="markdown-renderer">{content}</div>;
+  },
+}));
 
 // Test wrapper component
 const TestWrapper = ({ children }) => {

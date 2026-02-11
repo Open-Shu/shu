@@ -1,8 +1,8 @@
 import axios from 'axios';
-import { getApiV1Base } from './baseUrl';
-import { log } from '../utils/log';
+import { getApiV1Base } from './baseUrl.js';
+import { log } from '../utils/log.js';
 
-const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.REACT_APP_API_TIMEOUT_MS || '90000', 10);
+const DEFAULT_TIMEOUT_MS = Number.parseInt(import.meta.env.VITE_API_TIMEOUT_MS || '90000', 10);
 
 const api = axios.create({
   baseURL: getApiV1Base(),

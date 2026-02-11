@@ -1,35 +1,39 @@
 /**
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { vi } from 'vitest';
 
 // Import the component AFTER mocking its dependencies
 import ExportExperienceButton from '../ExportExperienceButton';
 import { experiencesAPI } from '../../services/api';
 
 // Mock the API and utils BEFORE importing the component
-jest.mock('../../services/api', () => ({
+vi.mock('../../services/api', () => ({
   experiencesAPI: {
-    export: jest.fn(),
+    export: vi.fn(),
   },
-  formatError: jest.fn((error) => error.message || 'Unknown error'),
+  formatError: vi.fn((error) => error.message || 'Unknown error'),
 }));
 
-jest.mock('../../utils/downloadHelpers', () => ({
-  downloadResponseAsFile: jest.fn(),
-  generateSafeFilename: jest.fn((name) => name.toLowerCase().replace(/\s+/g, '-')),
+vi.mock('../../utils/downloadHelpers', () => ({
+  downloadResponseAsFile: vi.fn(),
+  generateSafeFilename: vi.fn((name) => name.toLowerCase().replace(/\s+/g, '-')),
 }));
 
-jest.mock('../../utils/log', () => ({
-  log: {
-    info: jest.fn(),
-    error: jest.fn(),
-  },
-}));
+vi.mock('../../utils/log', () => {
+  const mockLog = {
+    info: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    default: mockLog,
+    log: mockLog,
+  };
+});
 
 const createTestQueryClient = () =>
   new QueryClient({
@@ -52,7 +56,7 @@ const TestWrapper = ({ children }) => {
 
 describe('ExportExperienceButton', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('renders icon button by default', () => {
