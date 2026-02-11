@@ -206,8 +206,20 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
             rec.plugin_name,
             exc_info=True,
         )
-        # Treat unserializable output as exceeding the cap
-        payload_size = max_bytes + 1 if max_bytes > 0 else 0
+        now = datetime.now(UTC)
+        _apply_to_record(
+            rec,
+            status=PluginExecutionStatus.FAILED,
+            error="failed to serialize output",
+            result={"status": "error", "error": "serialization_failed"},
+            completed_at=now,
+        )
+        return PluginExecutionResult(
+            status=PluginExecutionStatus.FAILED,
+            error="failed to serialize output",
+            result={"status": "error", "error": "serialization_failed"},
+            completed_at=now,
+        )
     if max_bytes > 0 and payload_size > max_bytes:
         now = datetime.now(UTC)
         _apply_to_record(
