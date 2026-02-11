@@ -198,7 +198,7 @@ services:
       dockerfile: deployment/docker/frontend/Dockerfile
       args:
         # Use host-exposed API URL; React runs in the browser, not inside the Docker network
-        REACT_APP_API_BASE_URL: http://localhost:8000
+        VITE_API_BASE_URL: http://localhost:8000
     container_name: shu-frontend
     ports:
       - "3000:80"
@@ -214,7 +214,7 @@ services:
     container_name: shu-frontend-dev
     working_dir: /app
     environment:
-      - REACT_APP_API_BASE_URL=http://localhost:8000
+      - VITE_API_BASE_URL=http://localhost:8000
       - WATCHPACK_POLLING=true
       - CHOKIDAR_USEPOLLING=true
     ports:

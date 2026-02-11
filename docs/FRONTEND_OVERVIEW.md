@@ -24,7 +24,7 @@ This document is the quick reference for the React frontend located at `./fronte
 Always do this at session start (parallel to backend docs):
 1) Open `./frontend/README.md` and capture:
    - Dev commands, build commands
-   - Environment variable usage (e.g., `REACT_APP_API_BASE_URL`)
+   - Environment variable usage (e.g., `VITE_API_BASE_URL`)
    - High‑level features/components
 2) Open `./frontend/package.json` and detect scripts:
    - `start`, `build`, `test` (and any others)
@@ -113,22 +113,22 @@ Update (2025-12-09): Plugin Subscriptions page now includes a Plugin Secrets sec
 - Currently no authorization header override (locked into provider)
 
 ## Environment & Configuration
-- `REACT_APP_API_BASE_URL` (optional): If omitted, app expects same‑origin API
+- `VITE_API_BASE_URL` (optional): If omitted, app expects same‑origin API
 - When running locally:
   - Backend: http://localhost:8000
   - Frontend: http://localhost:3000
-  - Set `REACT_APP_API_BASE_URL=http://localhost:8000` to avoid CORS if not using same‑origin proxy
+  - Set `VITE_API_BASE_URL=http://localhost:8000` to avoid CORS if not using same‑origin proxy
 
 
 - Chat UI (sliding window) environment variables (build-time; consumed via chatConfig.js):
-  - REACT_APP_CHAT_WINDOW_SIZE
-  - REACT_APP_CHAT_OVERSCAN
-  - REACT_APP_CHAT_SCROLL_TOP_THRESHOLD_PX
-  - REACT_APP_CHAT_SCROLL_BOTTOM_THRESHOLD_PX
-  - REACT_APP_CHAT_PAGE_SIZE
-  - REACT_APP_SUMMARY_SEARCH_DEBOUNCE_MS
-  - REACT_APP_SUMMARY_SEARCH_MIN_TERM_LENGTH
-  - REACT_APP_SUMMARY_SEARCH_MAX_TOKENS
+  - VITE_CHAT_WINDOW_SIZE
+  - VITE_CHAT_OVERSCAN
+  - VITE_CHAT_SCROLL_TOP_THRESHOLD_PX
+  - VITE_CHAT_SCROLL_BOTTOM_THRESHOLD_PX
+  - VITE_CHAT_PAGE_SIZE
+  - VITE_SUMMARY_SEARCH_DEBOUNCE_MS
+  - VITE_SUMMARY_SEARCH_MIN_TERM_LENGTH
+  - VITE_SUMMARY_SEARCH_MAX_TOKENS
 - Defaults live in `frontend/src/components/chat/ModernChat/utils/chatConfig.js`. Components import from chatConfig; do not read `process.env` directly.
 
 ## Development Commands (expected)
@@ -148,7 +148,7 @@ Streaming completion contract:
 - Exact scripts (`test`, `lint`, etc.) depend on `package.json` content; always verify on startup
 
 ## Security Considerations
-- Browser‑side config is public; do not put secrets in `REACT_APP_*`
+- Browser‑side config is public; do not put secrets in `VITE_*` environment variables
 - Ensure auth tokens are stored per current auth flow in `useAuth.js` and sent via Axios interceptors (verify before changes)
 - CORS: Keep same‑origin where possible; otherwise configure API CORS as needed for dev
 

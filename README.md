@@ -394,10 +394,10 @@ Add both keys to your `.env` file or environment variables.
 ```bash
 # React Admin Panel
 # Optional: if API host differs from the frontend host; else same-origin is used
-REACT_APP_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000
 
 # Optional: enable verbose console logging
-REACT_APP_DEBUG=true
+VITE_DEBUG=true
 ```
 
 For complete configuration options, see [CONFIGURATION.md](./docs/policies/CONFIGURATION.md).

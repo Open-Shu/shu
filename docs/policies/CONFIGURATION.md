@@ -463,13 +463,13 @@ Source-level settings take precedence over sync-time settings. This allows you t
 ### Frontend Configuration
 
 #### React Admin Panel Configuration
-- `REACT_APP_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: `http://localhost:8000`
-- `REACT_APP_ENVIRONMENT`: Environment mode (`development`, `staging`, `production`)
-- `REACT_APP_VERSION`: Application version for display
+- `VITE_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: `http://localhost:8000`
+- `VITE_ENVIRONMENT`: Environment mode (`development`, `staging`, `production`)
+- `VITE_VERSION`: Application version for display
 
 #### Development Configuration
-- `REACT_APP_DEBUG`: Enable debug mode (`true`/`false`)
-- `REACT_APP_LOG_LEVEL`: Frontend logging level (`debug`, `info`, `warn`, `error`)
+- `VITE_DEBUG`: Enable debug mode (`true`/`false`)
+- `VITE_LOG_LEVEL`: Frontend logging level (`debug`, `info`, `warn`, `error`)
 
 
 
@@ -484,7 +484,7 @@ Purpose:
 Source of truth:
 - File: `frontend/src/components/chat/ModernChat/utils/chatConfig.js`
 - All ModernChat components must import constants from this file; do not read `process.env` directly in components.
-- Environment variables are CRA build-time only (`REACT_APP_*`). Changes require rebuilding the frontend.
+- Environment variables are CRA build-time only (`VITE_*`). Changes require rebuilding the frontend.
 
 How values are resolved:
 - Each constant is defined with an explicit parser and a code default.
@@ -496,11 +496,11 @@ Example (excerpt):
 
 ```javascript
 // chatConfig.js (excerpt)
-export const CHAT_WINDOW_SIZE = parsePositiveInt('REACT_APP_CHAT_WINDOW_SIZE', /* default */ 15);
-export const CHAT_OVERSCAN = parseNonNegativeInt('REACT_APP_CHAT_OVERSCAN', /* default */ 5);
-export const CHAT_SCROLL_TOP_THRESHOLD = parseNonNegativeInt('REACT_APP_CHAT_SCROLL_TOP_THRESHOLD_PX', 120);
-export const CHAT_SCROLL_BOTTOM_THRESHOLD = parseNonNegativeInt('REACT_APP_CHAT_SCROLL_BOTTOM_THRESHOLD_PX', 32);
-export const CHAT_PAGE_SIZE = parsePositiveInt('REACT_APP_CHAT_PAGE_SIZE', 50);
+export const CHAT_WINDOW_SIZE = parsePositiveInt('VITE_CHAT_WINDOW_SIZE', /* default */ 15);
+export const CHAT_OVERSCAN = parseNonNegativeInt('VITE_CHAT_OVERSCAN', /* default */ 5);
+export const CHAT_SCROLL_TOP_THRESHOLD = parseNonNegativeInt('VITE_CHAT_SCROLL_TOP_THRESHOLD_PX', 120);
+export const CHAT_SCROLL_BOTTOM_THRESHOLD = parseNonNegativeInt('VITE_CHAT_SCROLL_BOTTOM_THRESHOLD_PX', 32);
+export const CHAT_PAGE_SIZE = parsePositiveInt('VITE_CHAT_PAGE_SIZE', 50);
 ```
 
 Semantics:
@@ -704,9 +704,9 @@ npm install
 Create a `.env` file in the frontend directory:
 ```bash
 # Optional: set when API host differs from the frontend host; else same-origin is used
-REACT_APP_API_BASE_URL=http://localhost:8000
-REACT_APP_ENVIRONMENT=development
-REACT_APP_DEBUG=true
+VITE_API_BASE_URL=http://localhost:8000
+VITE_ENVIRONMENT=development
+VITE_DEBUG=true
 ```
 
 #### Start the Development Server
@@ -785,7 +785,7 @@ The build artifacts will be in the `frontend/build/` directory and can be served
    - Test database connectivity
 
 3. **Frontend Connection Errors:**
-   - If the API is on a different host, set `REACT_APP_API_BASE_URL` appropriately; otherwise same-origin is used
+   - If the API is on a different host, set `VITE_API_BASE_URL` appropriately; otherwise same-origin is used
    - Check CORS configuration in the API when using cross-origin API hosts
    - Ensure the API server is running
 
@@ -823,7 +823,7 @@ The build artifacts will be in the `frontend/build/` directory and can be served
 
 6. **Frontend Debug Mode:**
    ```bash
-   REACT_APP_DEBUG=true
+   VITE_DEBUG=true
    ```
 
 ### Logging Features

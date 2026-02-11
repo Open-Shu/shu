@@ -540,9 +540,9 @@ npm start
 Optional: set a specific API URL with a frontend .env file:
 ```bash
 # frontend/.env
-REACT_APP_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000
 ```
-If REACT_APP_API_BASE_URL is not set, the CRA dev proxy is used.
+If VITE_API_BASE_URL is not set, the CRA dev proxy is used.
 
 ### C) How the frontend calls the API
 - Central HTTP client lives in: frontend/src/services/api.js

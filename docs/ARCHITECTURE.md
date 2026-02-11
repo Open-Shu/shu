@@ -67,7 +67,7 @@ Use this section to locate live systems quickly and avoid reinventing them. Each
   - Root: ./frontend (see docs/FRONTEND_OVERVIEW.md)
   - Admin pages: /admin/plugins, /admin/feeds, Connected Accounts
   - API client: frontend/src/services/{pluginsApi.js, schedulesApi.js}
-  - Env: REACT_APP_API_BASE_URL (optional)
+  - Env: VITE_API_BASE_URL (optional)
 
 - Chat System
   - Routers: src/shu/api/chat.py (+ chat_plugins gated in main)
