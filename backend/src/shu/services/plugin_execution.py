@@ -121,6 +121,43 @@ def _coerce_params(plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
         return params
 
 
+def _handle_plugin_execution_result_types(plugin_name: str, result: Any):
+    # Handle different result types
+    # Case 1: Already a dict (some plugins return dicts directly)
+    if isinstance(result, dict):
+        return result
+
+    # Case 2: PluginResult/ToolResult object with model_dump method
+    if hasattr(result, "model_dump"):
+        try:
+            return result.model_dump()
+        except Exception as e:
+            logger.warning(
+                "chat.tools.execution.model_dump_failed plugin=%s error=%s, trying mode=python", plugin_name, str(e)
+            )
+            try:
+                return result.model_dump(mode="python")
+            except Exception as e2:
+                logger.warning(
+                    "chat.tools.execution.model_dump_python_failed plugin=%s error=%s, using manual fallback",
+                    plugin_name,
+                    str(e2),
+                )
+
+    # Case 3: Object without model_dump - manually extract attributes
+    logger.warning(
+        "chat.tools.execution.manual_extraction plugin=%s result_type=%s", plugin_name, type(result).__name__
+    )
+    return {
+        "status": result.status if hasattr(result, "status") else None,
+        "data": result.data if hasattr(result, "data") else None,
+        "error": result.error if hasattr(result, "error") else None,
+        "warnings": result.warnings if hasattr(result, "warnings") else None,
+        "citations": result.citations if hasattr(result, "citations") else None,
+        "diagnostics": result.diagnostics if hasattr(result, "diagnostics") else None,
+    }
+
+
 async def execute_plugin(
     db_session: AsyncSession,
     plugin_name: str,
@@ -215,11 +252,5 @@ async def execute_plugin(
         limits=limits,
         provider_identities=providers_map,
     )
-    try:
-        return result.model_dump(mode="json")
-    except Exception:
-        return {
-            "status": getattr(result, "status", None),
-            "data": getattr(result, "data", None),
-            "error": getattr(result, "error", None),
-        }
+
+    return _handle_plugin_execution_result_types(plugin_name, result)

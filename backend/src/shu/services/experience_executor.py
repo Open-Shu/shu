@@ -26,6 +26,7 @@ from ..auth.models import User
 from ..core.config import ConfigurationManager, get_settings_instance
 from ..core.exceptions import ModelConfigurationError
 from ..core.logging import get_logger
+from ..experiences.steps.decision_control import DecisionControlStep
 from ..llm.service import LLMService
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
@@ -352,13 +353,17 @@ class ExperienceExecutor:
 
                 yield ExperienceEvent(
                     ExperienceEventType.STEP_COMPLETED,
-                    {"step_key": step.step_key, "summary": self._build_step_summary(step, output)},
+                    {
+                        "step_key": step.step_key,
+                        "summary": self._build_step_summary(step, output),
+                        "data": output,  # Include the actual step output data
+                    },
                 )
 
             except Exception as e:
                 step_end = datetime.now(UTC)
                 error_msg = str(e)
-                logger.warning(
+                logger.exception(
                     "Experience step failed",
                     extra={
                         "step_key": step.step_key,
@@ -380,20 +385,41 @@ class ExperienceExecutor:
                     "finished_at": step_end.isoformat(),
                 }
 
-                yield ExperienceEvent(ExperienceEventType.STEP_FAILED, {"step_key": step.step_key, "error": error_msg})
-
     def _check_should_run_step(self, step: ExperienceStep, context: dict[str, Any]) -> tuple[bool, str | None]:
-        """Determine if a step should run based on its condition."""
+        """Determine if a step should run based on its condition.
+
+        The condition can be:
+        1. A Jinja2 template that evaluates to a boolean (e.g., "{{ decision.should_execute }}")
+        2. Empty/None - step always runs
+
+        Args:
+            step: The experience step to check
+            context: The current execution context
+
+        Returns:
+            Tuple of (should_run, skip_reason)
+
+        """
         if not step.condition_template:
             return True, None
 
-        required_step_key = step.condition_template.strip()
-        required_step = context.get("steps", {}).get(required_step_key, {})
+        # Render the condition template
+        rendered_condition = self._render_template(step.condition_template, context)
 
-        if required_step.get("status") != "succeeded":
-            return False, f"Required step '{required_step_key}' did not succeed"
+        # Evaluate the rendered condition as a boolean
+        # Handle common boolean representations
+        condition_lower = rendered_condition.strip().lower()
 
-        return True, None
+        if condition_lower in ("true", "1", "yes"):
+            return True, None
+        if condition_lower in ("false", "0", "no", "none", ""):
+            return False, f"Condition '{step.condition_template}' evaluated to false"
+        # If it's not a clear boolean, log a warning and default to False for safety
+        logger.warning(
+            f"Step condition '{step.condition_template}' evaluated to ambiguous value: '{rendered_condition}'. "
+            f"Treating as False. Expected 'true' or 'false'."
+        )
+        return False, f"Condition '{step.condition_template}' evaluated to ambiguous value: '{rendered_condition}'"
 
     def _has_successful_steps(self, step_states: dict[str, Any]) -> bool:
         """Check if at least one step succeeded."""
@@ -539,14 +565,14 @@ class ExperienceExecutor:
             if user_timezone:
                 user_tz_str = user_timezone
         except Exception as e:
-            logger.warning(f"Failed to get user timezone preference: {e}")
+            logger.warning("Failed to get user timezone preference: %s", e)
 
         # Convert to user's timezone
         try:
             user_tz = zoneinfo.ZoneInfo(user_tz_str)
             now_local = now_utc.astimezone(user_tz)
         except Exception as e:
-            logger.warning(f"Invalid timezone '{user_tz_str}', falling back to UTC: {e}")
+            logger.warning("Invalid timezone '%s', falling back to UTC: %s", user_tz_str, e)
             now_local = now_utc
             user_tz_str = "UTC"
 
@@ -602,7 +628,7 @@ class ExperienceExecutor:
             tmpl = self.jinja_env.from_string(template)
             return tmpl.render(**context)
         except (TemplateSyntaxError, UndefinedError) as e:
-            logger.warning(f"Template rendering failed: {e}")
+            logger.warning("Template rendering failed: %s", e)
             return template
 
     def _render_params(self, params_template: dict | None, context: dict) -> dict[str, Any]:
@@ -625,11 +651,13 @@ class ExperienceExecutor:
         user_id: str,
         current_user: User,
     ) -> dict[str, Any]:
-        """Execute a single step (plugin or KB)."""
+        """Execute a single step (plugin, KB, or decision_control)."""
         if step.step_type == "plugin":
             return await self._execute_plugin_step(step, context, user_id)
         if step.step_type == "knowledge_base":
             return await self._execute_kb_step(step, context, current_user)
+        if step.step_type == "decision_control":
+            return await self._execute_decision_control_step(step, context)
         raise ValueError(f"Unknown step type: {step.step_type}")
 
     async def _execute_plugin_step(
@@ -649,6 +677,14 @@ class ExperienceExecutor:
         op = step.plugin_op
 
         exec_result = await execute_plugin(self.db, plugin_name, op, params, user_id)
+
+        logger.info(
+            "Plugin execution result | plugin=%s op=%s status=%s has_data=%s",
+            plugin_name,
+            op,
+            exec_result.get("status"),
+            exec_result.get("data") is not None,
+        )
 
         if exec_result.get("status") != "success":
             error = exec_result.get("error")
@@ -696,6 +732,48 @@ class ExperienceExecutor:
 
         # Return the first response payload (since we only queried one KB)
         return responses[0]["response"]
+
+    async def _execute_decision_control_step(
+        self,
+        step: ExperienceStep,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute decision control step.
+
+        Args:
+            step: Experience step with decision control configuration
+            context: Workflow context with player data
+
+        Returns:
+            Decision result with should_execute, rationale, and metadata
+
+        """
+        # Get decision control configuration from params_template
+        config = {}
+        if step.params_template:
+            config = self._render_params(step.params_template, context)
+
+        # Create decision control step instance
+        decision_step = DecisionControlStep()
+
+        # Execute decision logic
+        # Note: host parameter is optional, we pass None for now
+        # In the future, we could pass a host object with audit capabilities
+        result = await decision_step.execute(step.step_key, config, context, host=None)
+
+        # Guard against None return (should not happen with current implementation, but defensive)
+        if result is None:
+            logger.warning("Decision control step '%s' returned None, using safe default", step.step_key)
+            result = {"should_execute": False, "rationale": "No decision returned", "confidence": 0.0, "metadata": {}}
+
+        logger.info(
+            "Decision control step '%s' executed: should_execute=%s, rationale=%s",
+            step.step_key,
+            result.get("should_execute"),
+            result.get("rationale"),
+        )
+
+        return result
 
     async def _synthesize_with_llm_streaming(
         self,

@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 class _Result:
     """Shim result class for plugin responses."""
-    
+
     def __init__(self, status: str, data: Optional[Dict[str, Any]] = None,
                  error: Optional[Dict[str, Any]] = None):
         self.status = status

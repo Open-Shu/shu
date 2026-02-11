@@ -182,7 +182,7 @@ class TestRequiredStepCheck:
     def test_required_step_succeeded(self, executor):
         """Test when required step succeeded."""
         step = MagicMock()
-        step.condition_template = "emails"
+        step.condition_template = "{{ steps.emails.status == 'succeeded' }}"
         context = {"steps": {"emails": {"data": {"count": 5}, "status": "succeeded"}}}
         result, reason = executor._check_should_run_step(step, context)
         assert result is True
@@ -191,20 +191,20 @@ class TestRequiredStepCheck:
     def test_required_step_failed(self, executor):
         """Test when required step failed."""
         step = MagicMock()
-        step.condition_template = "emails"
+        step.condition_template = "{{ steps.emails.status == 'succeeded' }}"
         context = {"steps": {"emails": {"data": None, "status": "failed"}}}
         result, reason = executor._check_should_run_step(step, context)
         assert result is False
-        assert "did not succeed" in reason
+        assert "evaluated to false" in reason
 
     def test_required_step_not_found(self, executor):
         """Test when required step doesn't exist."""
         step = MagicMock()
-        step.condition_template = "emails"
+        step.condition_template = "{{ steps.emails.status == 'succeeded' }}"
         context = {"steps": {}}
         result, reason = executor._check_should_run_step(step, context)
         assert result is False
-        assert "did not succeed" in reason
+        assert "ambiguous value" in reason
 
 
 class TestStepSummary:

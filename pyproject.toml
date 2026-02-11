@@ -30,6 +30,7 @@ exclude = [
     "backend/src/tests",    # Tests have relaxed rules; excluded from CI lint
     "backend/migrations",   # Auto-generated migrations; excluded from CI lint
     "backend/scripts",      # Dev utilities; excluded from CI lint
+    "plugins",
 ]
 
 [tool.ruff.format]

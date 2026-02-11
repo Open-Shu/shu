@@ -18,11 +18,7 @@ PLUGIN_MANIFEST = {
     "chat_callable_ops": ["list", "digest"],
     # Identity requirements for host-auth UI/flow (user connection enables user_oauth mode)
     "required_identities": [
-        {
-            "provider": "google",
-            "mode": "user",
-            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
-        }
+        {"provider": "google", "mode": "user", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}
     ],
     # Per-op auth (capability-driven)
     "op_auth": {

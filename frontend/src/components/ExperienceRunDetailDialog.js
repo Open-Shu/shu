@@ -19,13 +19,19 @@ import {
   CircularProgress,
   Alert,
   Chip,
+  Collapse,
+  IconButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
-import { Chat as ChatIcon } from '@mui/icons-material';
+import { Chat as ChatIcon, ExpandMore as ExpandMoreIcon, ExpandLess as ExpandLessIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { format } from 'date-fns';
 import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import StepStatusIcon from './StepStatusIcon';
 import MarkdownRenderer from './shared/MarkdownRenderer';
+import DataRenderer from './shared/DataRenderer';
 import { formatDateTimeFull } from '../utils/timezoneFormatter';
 import log from '../utils/log';
 
@@ -37,6 +43,9 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
   // State for conversation creation
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [conversationError, setConversationError] = useState(null);
+
+  // State for expandable step outputs
+  const [expandedSteps, setExpandedSteps] = useState({});
 
   const {
     data: run,
@@ -54,6 +63,8 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
       .map(([key, state]) => ({
         step_key: key,
         ...state,
+        // Merge in the actual output data from step_outputs
+        data: run.step_outputs?.[key],
       }))
       .sort((a, b) => {
         if (!a.started_at) {
@@ -65,6 +76,13 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
         return new Date(a.started_at) - new Date(b.started_at);
       });
   }, [run]);
+
+  const toggleStepExpanded = (stepKey) => {
+    setExpandedSteps((prev) => ({
+      ...prev,
+      [stepKey]: !prev[stepKey],
+    }));
+  };
 
   const handleStartConversation = async () => {
     if (!runId || !run?.result_content) {
@@ -87,10 +105,7 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
 
       // Navigate to chat with conversation ID as query parameter
       const targetUrl = `/chat?conversationId=${conversation.id}`;
-      log.info('Navigating to conversation', {
-        targetUrl,
-        conversationId: conversation.id,
-      });
+      log.info('Navigating to conversation', { targetUrl, conversationId: conversation.id });
 
       // This ensures navigation happens before component unmounts
       navigate(targetUrl);
@@ -108,7 +123,19 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
   }
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{
+        sx: {
+          width: '95vw',
+          height: '95vh',
+          maxWidth: '95vw',
+          maxHeight: '95vh',
+        },
+      }}
+    >
       <DialogTitle>
         Run Details
         {run && run.started_at && !isNaN(new Date(run.started_at).getTime()) && (
@@ -119,7 +146,7 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
           </Typography>
         )}
       </DialogTitle>
-      <DialogContent dividers>
+      <DialogContent dividers sx={{ height: 'calc(95vh - 120px)', display: 'flex', flexDirection: 'column' }}>
         {isLoading && (
           <Box display="flex" justifyContent="center" p={4}>
             <CircularProgress />
@@ -129,7 +156,7 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
         {error && <Alert severity="error">{formatError(error)}</Alert>}
 
         {run && (
-          <Stack spacing={3}>
+          <Stack spacing={3} sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {/* Conversation Error Alert */}
             {conversationError && (
               <Alert severity="error" onClose={() => setConversationError(null)}>
@@ -138,7 +165,7 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
             )}
 
             {/* Status Banner */}
-            <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+            <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50', flex: '0 0 auto' }}>
               <Grid container spacing={2} alignItems="center">
                 <Grid item xs={12} sm={6}>
                   <Stack direction="row" spacing={1} alignItems="center">
@@ -168,51 +195,96 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
             </Paper>
 
             {/* Steps Timeline */}
-            <Box>
+            <Box sx={{ flex: '0 0 auto', maxHeight: '25vh', display: 'flex', flexDirection: 'column' }}>
               <Typography variant="subtitle2" gutterBottom>
                 Steps Execution
               </Typography>
-              <Paper variant="outlined">
+              <Paper variant="outlined" sx={{ flex: 1, overflow: 'auto' }}>
                 <List dense>
                   {steps.length === 0 ? (
                     <ListItem>
                       <ListItemText secondary="No steps recorded" />
                     </ListItem>
                   ) : (
-                    steps.map((step) => (
-                      <ListItem key={step.step_key}>
-                        <ListItemIcon>
-                          <StepStatusIcon state={step} />
-                        </ListItemIcon>
-                        <ListItemText
-                          primary={step.step_key}
-                          secondary={
-                            <React.Fragment>
-                              {step.status === 'failed' && `Error: ${step.error || 'Unknown error'}`}
-                              {step.status === 'skipped' && `Skipped: ${step.reason || 'No reason provided'}`}
-                              {step.status === 'succeeded' &&
-                                // If we have output summary we could show it, but usually not in state.
-                                // We rely on status.
-                                `Duration: ${
-                                  step.finished_at && step.started_at
-                                    ? ((new Date(step.finished_at) - new Date(step.started_at)) / 1000).toFixed(2) + 's'
-                                    : '-'
-                                }`}
-                            </React.Fragment>
-                          }
-                          primaryTypographyProps={{
-                            color: step.status === 'failed' ? 'error' : 'textPrimary',
-                          }}
-                        />
-                      </ListItem>
-                    ))
+                    steps.map((step) => {
+                      const isExpanded = expandedSteps[step.step_key];
+                      const hasData = step.data !== undefined && step.data !== null;
+
+                      return (
+                        <React.Fragment key={step.step_key}>
+                          <ListItem>
+                            <ListItemIcon>
+                              <StepStatusIcon state={step} />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={step.step_key}
+                              secondary={
+                                <React.Fragment>
+                                  {step.status === 'failed' && `Error: ${step.error || 'Unknown error'}`}
+                                  {step.status === 'skipped' && `Skipped: ${step.reason || 'No reason provided'}`}
+                                  {step.status === 'succeeded' &&
+                                    (step.summary ||
+                                      `Duration: ${
+                                        step.finished_at && step.started_at
+                                          ? ((new Date(step.finished_at) - new Date(step.started_at)) / 1000).toFixed(
+                                              2
+                                            ) + 's'
+                                          : '-'
+                                      }`)}
+                                </React.Fragment>
+                              }
+                              primaryTypographyProps={{
+                                color: step.status === 'failed' ? 'error' : 'textPrimary',
+                              }}
+                            />
+                            {hasData && (
+                              <IconButton
+                                size="small"
+                                onClick={() => toggleStepExpanded(step.step_key)}
+                                sx={{ ml: 1 }}
+                                aria-label={
+                                  isExpanded ? `Collapse step ${step.step_key}` : `Expand step ${step.step_key}`
+                                }
+                                aria-expanded={isExpanded}
+                              >
+                                {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                              </IconButton>
+                            )}
+                          </ListItem>
+                          {hasData && (
+                            <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                              <Box sx={{ px: 2, pb: 2, pl: 9 }}>
+                                <Paper
+                                  variant="outlined"
+                                  sx={{
+                                    p: 2,
+                                    bgcolor: 'background.default',
+                                    maxHeight: '30vh',
+                                    overflowY: 'auto',
+                                  }}
+                                >
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ display: 'block', mb: 2, fontWeight: 600 }}
+                                  >
+                                    Step Output Data:
+                                  </Typography>
+                                  <DataRenderer data={step.data} />
+                                </Paper>
+                              </Box>
+                            </Collapse>
+                          )}
+                        </React.Fragment>
+                      );
+                    })
                   )}
                 </List>
               </Paper>
             </Box>
 
             {/* LLM Result */}
-            <Box sx={{ minHeight: 200 }}>
+            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <Typography variant="subtitle2" gutterBottom>
                 Result Content
               </Typography>
@@ -221,8 +293,7 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
                 sx={{
                   p: 2,
                   bgcolor: 'grey.50',
-                  minHeight: 200,
-                  maxHeight: 400,
+                  flex: 1,
                   overflowY: 'auto',
                 }}
               >
@@ -236,18 +307,26 @@ export default function ExperienceRunDetailDialog({ open, onClose, runId, timezo
               </Paper>
             </Box>
 
-            {/* Metadata */}
+            {/* Metadata - Accordion */}
             {run.result_metadata && (
-              <Box>
-                <Typography variant="subtitle2" gutterBottom>
-                  Metadata
-                </Typography>
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
-                  <pre style={{ margin: 0, fontSize: '0.8rem', overflowX: 'auto' }}>
-                    {JSON.stringify(run.result_metadata, null, 2)}
-                  </pre>
-                </Paper>
-              </Box>
+              <Accordion sx={{ flex: '0 0 auto' }}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls="metadata-content" id="metadata-header">
+                  <Typography variant="subtitle2">Metadata</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      bgcolor: 'background.default',
+                      maxHeight: '30vh',
+                      overflowY: 'auto',
+                    }}
+                  >
+                    <DataRenderer data={run.result_metadata} />
+                  </Paper>
+                </AccordionDetails>
+              </Accordion>
             )}
           </Stack>
         )}

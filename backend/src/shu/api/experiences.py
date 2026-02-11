@@ -5,6 +5,7 @@ including CRUD operations, run management, and user dashboard data.
 """
 
 import json
+import uuid
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -373,11 +374,38 @@ async def run_experience(
                 input_params=run_request.input_params if run_request and run_request.input_params else {},
                 current_user=current_user,
             ):
-                yield f"data: {json.dumps(event.to_dict())}\n\n"
-        except Exception as e:
-            logger.exception("Experience execution error", extra={"experience_id": experience_id})
-            error_event = {"type": "error", "message": str(e)}
-            yield f"data: {json.dumps(error_event)}\n\n"
+                try:
+                    yield f"data: {json.dumps(event.to_dict())}\n\n"
+                except Exception:
+                    logger.exception("Error serializing event")
+                    continue
+        except GeneratorExit:
+            logger.info("Client disconnected from experience stream")
+        except Exception:
+            # Generate correlation ID for error tracking
+            correlation_id = str(uuid.uuid4())
+            # Log full exception details server-side with correlation ID
+            logger.exception(
+                "Experience execution error", extra={"experience_id": experience_id, "correlation_id": correlation_id}
+            )
+            # Send sanitized error to client without exposing internal details
+            error_event = {
+                "type": "error",
+                "code": "EXPERIENCE_EXECUTION_FAILED",
+                "message": "An internal error occurred during experience execution",
+                "id": correlation_id,
+            }
+            try:
+                yield f"data: {json.dumps(error_event)}\n\n"
+            except Exception as send_exc:
+                # Log with traceback when failing to send error event
+                logger.exception("Failed to send error event to client", exc_info=send_exc)
+        finally:
+            try:
+                yield "data: [DONE]\n\n"
+            except Exception as done_exc:
+                # Log with traceback when failing to send DONE marker
+                logger.exception("Could not send DONE marker - connection likely closed", exc_info=done_exc)
 
     return StreamingResponse(
         event_generator(),
