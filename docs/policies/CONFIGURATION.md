@@ -311,16 +311,17 @@ service = SomeService(db, config_manager)  # Service receives config_manager
 #### Cache Configuration
 - `SHU_REDIS_URL`: Redis connection string for cache backend (optional)
   - **When set and Redis is reachable**: Uses RedisCacheBackend for all caching operations
-  - **When set but Redis is unreachable**: Falls back to InMemoryCacheBackend with warning log
-  - **When not set**: Uses InMemoryCacheBackend for all caching operations
+  - **When set but Redis is unreachable**: Application startup or the first cache access will fail with `CacheConnectionError`. Treat this as a fatal misconfiguration that must be fixed rather than a mode switch.
+  - **When not set**: Uses InMemoryCacheBackend for all caching operations (suitable for single-node and development deployments; no cross-process cache).
   - **Format**: `redis://localhost:6379/0` or `redis://user:password@host:port/db`
   - **Impact**: Affects plugin cache, rate limiting, configuration cache, and quota tracking
-  - **Deployment flexibility**: Same application code works with or without Redis
+  - **Deployment flexibility**: Same application code works with or without Redis; to run without Redis, leave `SHU_REDIS_URL` unset.
 
 #### Queue Configuration
 - `SHU_REDIS_URL`: Redis connection string for queue backend (shared with cache)
   - **When set and Redis is reachable**: Uses RedisQueueBackend for all queue operations
-  - **When not set**: Uses InMemoryQueueBackend for all queue operations
+  - **When set but Redis is unreachable**: Queue backend initialization fails with `QueueConnectionError`. Workers and schedulers will not process jobs until Redis is reachable.
+  - **When not set**: Uses InMemoryQueueBackend for all queue operations (single-process only; no cross-process job queue).
   - **Impact**: Affects background job processing, document profiling, scheduled tasks
   - **Deployment flexibility**: Same application code works with or without Redis
 
@@ -373,7 +374,9 @@ python -m uvicorn shu.main:app --app-dir backend/src
 
 **Scenario 2: Horizontally-Scaled Production**
 ```bash
-# Redis required for cross-process communication
+# Redis required for cross-process communication. If Redis is down or unreachable,
+# the queue/cache factories will raise connection errors rather than silently
+# falling back to in-memory implementations.
 SHU_REDIS_URL=redis://redis:6379/0
 SHU_WORKERS_ENABLED=false  # Disable workers in API process
 

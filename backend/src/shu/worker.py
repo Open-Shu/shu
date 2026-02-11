@@ -402,6 +402,289 @@ async def _handle_embed_job(job) -> None:
             raise
 
 
+async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
+    """Handle an INGESTION plugin feed execution job.
+
+    Loads the PluginExecution record, verifies it is still PENDING (race guard),
+    resolves the plugin, builds host capabilities, runs the plugin via EXECUTOR,
+    and updates execution status.
+
+    Args:
+        job: The job containing execution_id, schedule_id, plugin_name, user_id,
+            agent_key, and params in payload.
+
+    Raises:
+        ValueError: If required fields are missing from payload.
+        Exception: If plugin execution fails (triggers retry).
+
+    """
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from .core.config import get_settings_instance
+    from .core.database import get_async_session_local
+    from .models.plugin_execution import PluginExecution, PluginExecutionStatus
+
+    execution_id = job.payload.get("execution_id")
+    if not execution_id:
+        raise ValueError("Plugin execution job missing execution_id in payload")
+
+    plugin_name = job.payload.get("plugin_name")
+    if not plugin_name:
+        raise ValueError("Plugin execution job missing plugin_name in payload")
+
+    logger.info(
+        "Processing plugin execution job",
+        extra={
+            "job_id": job.id,
+            "execution_id": execution_id,
+            "plugin_name": plugin_name,
+        },
+    )
+
+    settings = get_settings_instance()
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        # Load execution record and check it's still PENDING (race guard)
+        result = await session.execute(
+            select(PluginExecution).where(PluginExecution.id == execution_id).with_for_update(skip_locked=True)
+        )
+        rec = result.scalar_one_or_none()
+
+        if not rec:
+            logger.warning(
+                "Plugin execution record not found, skipping",
+                extra={"job_id": job.id, "execution_id": execution_id},
+            )
+            return
+
+        if rec.status != PluginExecutionStatus.PENDING:
+            logger.info(
+                "Plugin execution no longer PENDING, skipping",
+                extra={
+                    "job_id": job.id,
+                    "execution_id": execution_id,
+                    "current_status": rec.status,
+                },
+            )
+            return
+
+        # Mark as RUNNING
+        from datetime import UTC, datetime
+
+        rec.status = PluginExecutionStatus.RUNNING
+        rec.started_at = datetime.now(UTC)
+        await session.commit()
+
+        try:
+            from .services.plugin_execution_runner import execute_plugin_record
+
+            await execute_plugin_record(session, rec, settings)
+            await session.commit()
+
+            logger.info(
+                "Plugin execution job completed",
+                extra={
+                    "job_id": job.id,
+                    "execution_id": execution_id,
+                    "plugin_name": plugin_name,
+                    "status": rec.status,
+                },
+            )
+
+        except HTTPException as he:
+            code = he.status_code
+            detail = he.detail if isinstance(he.detail, dict) else {}
+            err = str(detail.get("error") or "")
+            if code == 429 and err in (
+                "provider_rate_limited",
+                "provider_concurrency_limited",
+                "rate_limited",
+            ):
+                # Rate limited: set back to PENDING and raise so the queue backend
+                # re-enqueues the job with its retry/visibility timeout mechanism.
+                logger.info(
+                    "Deferred plugin execution due to 429 (%s) | plugin=%s exec_id=%s",
+                    err,
+                    rec.plugin_name,
+                    rec.id,
+                )
+                rec.status = PluginExecutionStatus.PENDING
+                rec.started_at = None
+                rec.error = f"deferred:{err}"
+                await session.commit()
+                raise
+
+            # Other HTTP errors: mark failed
+            logger.exception(
+                "Plugin execution HTTPException | plugin=%s exec_id=%s",
+                rec.plugin_name,
+                rec.id,
+            )
+            rec.status = PluginExecutionStatus.FAILED
+            rec.error = str(he.detail)
+            rec.completed_at = datetime.now(UTC)
+            await session.commit()
+
+        except Exception as e:
+            logger.exception(
+                "Plugin execution failed | plugin=%s exec_id=%s",
+                rec.plugin_name,
+                rec.id,
+            )
+            # If retries remain, reset to PENDING so the requeued job can
+            # pick up the record again (the race guard checks for PENDING).
+            # Only mark FAILED on the final attempt.
+            if job.attempts < job.max_attempts:
+                rec.status = PluginExecutionStatus.PENDING
+                rec.started_at = None
+                rec.error = str(e)
+            else:
+                rec.status = PluginExecutionStatus.FAILED
+                rec.error = str(e)
+                rec.completed_at = datetime.now(UTC)
+            await session.commit()
+            raise
+
+
+async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
+    """Mark a pre-created queued ExperienceRun as failed when the worker skips execution."""
+    if not run_id:
+        return
+    try:
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+
+        from .models.experience import ExperienceRun
+
+        result = await session.execute(select(ExperienceRun).where(ExperienceRun.id == run_id))
+        run = result.scalar_one_or_none()
+        if run and run.status == "queued":
+            run.status = "failed"
+            run.error_message = error
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _handle_experience_execution_job(job) -> None:
+    """Handle an LLM_WORKFLOW experience execution job.
+
+    Loads the Experience and User, instantiates ExperienceExecutor, and
+    runs the experience in non-streaming mode. Creates an ExperienceRun
+    record via the executor.
+
+    Args:
+        job: The job containing experience_id, user_id, and input_params
+            in payload.
+
+    Raises:
+        ValueError: If required fields are missing from payload.
+        Exception: If execution fails (triggers retry).
+
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .auth.models import User
+    from .core.config import get_config_manager
+    from .core.database import get_async_session_local
+    from .models.experience import Experience
+    from .services.experience_executor import ExperienceExecutor
+
+    experience_id = job.payload.get("experience_id")
+    if not experience_id:
+        raise ValueError("Experience execution job missing experience_id in payload")
+
+    user_id = job.payload.get("user_id")
+    if not user_id:
+        raise ValueError("Experience execution job missing user_id in payload")
+
+    input_params = job.payload.get("input_params", {})
+    run_id = job.payload.get("run_id")
+
+    logger.info(
+        "Processing experience execution job",
+        extra={
+            "job_id": job.id,
+            "experience_id": experience_id,
+            "user_id": user_id,
+            "run_id": run_id,
+        },
+    )
+
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        # Load experience with steps eagerly loaded
+        exp_result = await session.execute(
+            select(Experience).options(selectinload(Experience.steps)).where(Experience.id == experience_id)
+        )
+        experience = exp_result.scalar_one_or_none()
+
+        if not experience:
+            logger.warning(
+                "Experience not found, skipping",
+                extra={"job_id": job.id, "experience_id": experience_id},
+            )
+            await _fail_queued_run(session, run_id, "experience_not_found")
+            return
+
+        # Load user
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+
+        if not user:
+            logger.warning(
+                "User not found, skipping",
+                extra={"job_id": job.id, "user_id": user_id},
+            )
+            await _fail_queued_run(session, run_id, "user_not_found")
+            return
+
+        if not user.is_active:
+            logger.debug(
+                "User inactive, skipping experience execution",
+                extra={"job_id": job.id, "user_id": user_id},
+            )
+            await _fail_queued_run(session, run_id, "user_inactive")
+            return
+
+        try:
+            config_manager = get_config_manager()
+            executor = ExperienceExecutor(session, config_manager)
+            run = await executor.execute(
+                experience=experience,
+                user_id=user_id,
+                input_params=input_params,
+                current_user=user,
+                run_id=run_id,
+            )
+
+            logger.info(
+                "Experience execution completed",
+                extra={
+                    "job_id": job.id,
+                    "experience_id": experience_id,
+                    "user_id": user_id,
+                    "run_id": run.id if run else None,
+                    "status": run.status if run else "unknown",
+                },
+            )
+
+        except Exception:
+            logger.exception(
+                "Experience execution failed | experience=%s user=%s",
+                experience_id,
+                user_id,
+            )
+            # Let the queue retry mechanism handle transient failures
+            raise
+
+
 async def _handle_profiling_job(job) -> None:
     """Handle a PROFILING workload job.
 
@@ -534,11 +817,7 @@ async def process_job(job):
         await _handle_embed_job(job)
 
     elif workload_type == WorkloadType.MAINTENANCE:
-        # TODO: Implement in task 11.2 (scheduler migration)
-        # IMPORTANT: When implementing, the handler MUST check PluginExecution.status
-        # before processing. There is a race condition where run_pending() can claim
-        # the same PENDING execution that was already enqueued here. The handler
-        # should skip executions that are no longer PENDING.
+        # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)
         logger.warning(
             "MAINTENANCE workload handler not yet implemented",
             extra={
@@ -546,27 +825,22 @@ async def process_job(job):
                 "queue": job.queue_name,
             },
         )
-        # For now, just acknowledge to avoid blocking
 
     elif workload_type == WorkloadType.INGESTION:
-        # Placeholder for future ingestion jobs
-        logger.warning(
-            "INGESTION workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
+        # Route based on action in payload
+        action = (job.payload or {}).get("action", "")
+        if action == "plugin_feed_execution":
+            await _handle_plugin_execution_job(job)
+        else:
+            raise ValueError(f"INGESTION job {job.id} has unknown action: {action!r}")
 
     elif workload_type == WorkloadType.LLM_WORKFLOW:
-        # Placeholder for future LLM workflow jobs
-        logger.warning(
-            "LLM_WORKFLOW workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
+        # Route based on action in payload
+        action = (job.payload or {}).get("action", "")
+        if action == "experience_execution":
+            await _handle_experience_execution_job(job)
+        else:
+            raise ValueError(f"LLM_WORKFLOW job {job.id} has unknown action: {action!r}")
 
     else:
         raise ValueError(f"Unsupported workload type: {workload_type}")
@@ -672,11 +946,11 @@ Examples:
   python -m shu.worker --workload-types=LLM_WORKFLOW --poll-interval=0.5
 
 Valid workload types:
-  INGESTION       - Document ingestion and indexing
+  INGESTION       - Plugin feed ingestion (Gmail, Drive, Outlook, etc.)
   INGESTION_OCR   - OCR/text extraction stage of document pipeline
   INGESTION_EMBED - Embedding stage of document pipeline
-  LLM_WORKFLOW    - LLM-based workflows and chat
-  MAINTENANCE     - Scheduled tasks and cleanup
+  LLM_WORKFLOW    - Scheduled experience execution and LLM workflows
+  MAINTENANCE     - Cleanup and scheduled maintenance tasks
   PROFILING       - Document profiling with LLM calls
         """,
     )

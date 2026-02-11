@@ -23,7 +23,7 @@ DEFAULT_STAGING_TTL = 3600
 class FileStagingError(ShuException):
     """Raised when file staging operations fail."""
 
-    def __init__(self, message: str, details: dict[str, Any] | None = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         super().__init__(
             message=message,
             error_code="FILE_STAGING_ERROR",
@@ -41,14 +41,16 @@ class FileStagingService:
     Args:
         cache: The CacheBackend instance to use for storage and retrieval.
         staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
+
     """
 
-    def __init__(self, cache: CacheBackend, staging_ttl: int = DEFAULT_STAGING_TTL):
+    def __init__(self, cache: CacheBackend, staging_ttl: int = DEFAULT_STAGING_TTL) -> None:
         """Initialize the file staging service.
 
         Args:
             cache: The CacheBackend instance to use for storage and retrieval.
             staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
+
         """
         self._cache = cache
         self._staging_ttl = staging_ttl
@@ -69,6 +71,7 @@ class FileStagingService:
 
         Raises:
             FileStagingError: If staging fails.
+
         """
         staging_key = f"file_staging:{document_id}"
 
@@ -120,6 +123,7 @@ class FileStagingService:
 
         Raises:
             FileStagingError: If staged file not found or retrieval fails.
+
         """
         try:
             file_bytes = await self._cache.get_bytes(staging_key)
@@ -166,6 +170,7 @@ class FileStagingService:
 
         Args:
             staging_key: The cache key to delete.
+
         """
         try:
             await self._cache.delete(staging_key)

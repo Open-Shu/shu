@@ -42,11 +42,15 @@ class Settings(BaseSettings):
     database_pool_recycle: int = 3600
 
     # Redis configuration
-    redis_url: str = Field("redis://localhost:6379", alias="SHU_REDIS_URL")
+    # Set SHU_REDIS_URL to enable Redis-backed caching/queues; omit for in-memory.
+    redis_url: str | None = Field(None, alias="SHU_REDIS_URL")
     redis_connection_timeout: int = Field(5, alias="SHU_REDIS_CONNECTION_TIMEOUT")
     redis_socket_timeout: int = Field(5, alias="SHU_REDIS_SOCKET_TIMEOUT")
-    redis_fallback_enabled: bool = Field(True, alias="SHU_REDIS_FALLBACK_ENABLED")
-    redis_required: bool = Field(False, alias="SHU_REDIS_REQUIRED")
+
+    @property
+    def redis_enabled(self) -> bool:
+        """Whether Redis should be used, based on SHU_REDIS_URL being set."""
+        return bool(self.redis_url)
 
     # Google Drive configuration
     google_service_account_json: str | None = Field(None, alias="GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -79,6 +83,10 @@ class Settings(BaseSettings):
 
     # Admin configuration
     admin_emails: list[str] = Field(default_factory=list, alias="ADMIN_EMAILS")
+
+    # Auto-activate new users on first SSO login (default: false)
+    # When true, new non-admin users are immediately active without admin approval.
+    auto_activate_users: bool = Field(False, alias="SHU_AUTO_ACTIVATE_USERS")
 
     # Embedding configuration
     default_embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", alias="SHU_EMBEDDING_MODEL")

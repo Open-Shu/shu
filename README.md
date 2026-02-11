@@ -580,17 +580,32 @@ frontend/
 
 ## Deployment
 
-### Docker Deployment
+For comprehensive deployment documentation including worker modes, scaling patterns, and production configurations,
+see **[DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md)**.
+
+### Quick Start - Docker Deployment
 
 ```bash
-# Backend only (API + Postgres + Redis)
+# Backend only (API + Postgres + Redis, inline workers)
 docker compose -f deployment/compose/docker-compose.yml up -d
 
 # Full stack (API + Postgres + Redis + frontend)
 docker compose -f deployment/compose/docker-compose.yml --profile frontend up -d
 
+# Add dedicated workers (production pattern)
+docker compose -f deployment/compose/docker-compose.yml --profile worker up -d
+
 # Scale the API service
 docker compose -f deployment/compose/docker-compose.yml up -d --scale shu-api=3
+```
+
+**Using Makefile shortcuts:**
+
+```bash
+make up              # Backend only
+make up-full         # Full stack with frontend
+make up-worker       # Add dedicated workers
+make down            # Stop all services
 ```
 
 ### Kubernetes Deployment
@@ -599,7 +614,10 @@ Shu is designed for Kubernetes deployment with:
 
 - Health checks for liveness and readiness probes
 - Configurable scaling and resource limits
+- Independent scaling of API servers and worker pools
 - Monitoring and logging integration
+
+See [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md) for Kubernetes manifests and scaling strategies.
 
 ## License
 
@@ -652,6 +670,7 @@ make test-cov
 - **API Documentation**: <http://localhost:8000/docs>
 - **Health Checks**: <http://localhost:8000/api/v1/health/liveness>
 - **React Admin Panel**: <http://localhost:3000>
+- **Deployment Guide**: [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md)
 - **Configuration Guide**: [CONFIGURATION.md](./docs/policies/CONFIGURATION.md)
 - **Testing Guide**: [TESTING.md](./docs/policies/TESTING.md)
 - **Linting Guide**: [LINTING_GUIDE.md](./docs/LINTING_GUIDE.md)

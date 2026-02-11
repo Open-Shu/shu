@@ -1974,7 +1974,7 @@ class TestBackendSelectionLogic:
 
     @pytest.mark.asyncio
     async def test_factory_returns_inmemory_when_no_redis_url(self):
-        """Unit test: Factory returns InMemoryQueueBackend when no Redis URL configured."""
+        """Unit test: Factory returns InMemoryQueueBackend when SHU_REDIS_URL is not set."""
         from unittest.mock import MagicMock, patch
 
         from shu.core.queue_backend import (
@@ -1985,11 +1985,9 @@ class TestBackendSelectionLogic:
 
         reset_queue_backend()
 
-        # Mock settings with no Redis URL
         mock_settings = MagicMock()
-        mock_settings.redis_url = ""
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_url = None
+        mock_settings.redis_enabled = False
 
         try:
             with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
@@ -1999,45 +1997,8 @@ class TestBackendSelectionLogic:
             reset_queue_backend()
 
     @pytest.mark.asyncio
-    async def test_factory_returns_inmemory_when_redis_unreachable_and_fallback_enabled(self):
-        """Unit test: Factory returns InMemoryQueueBackend when Redis unreachable and fallback enabled."""
-        from unittest.mock import MagicMock, patch
-
-        from shu.core.queue_backend import (
-            InMemoryQueueBackend,
-            QueueConnectionError,
-            get_queue_backend,
-            reset_queue_backend,
-        )
-
-        reset_queue_backend()
-
-        # Mock settings with Redis URL but unreachable
-        mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://unreachable:6379"
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = True
-        mock_settings.redis_connection_timeout = 1
-        mock_settings.redis_socket_timeout = 1
-
-        # Mock shared Redis client to fail
-        async def mock_get_shared_redis_client_error():
-            raise QueueConnectionError("Connection refused")
-
-        try:
-            with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
-                with patch(
-                    "shu.core.queue_backend._get_shared_redis_client",
-                    mock_get_shared_redis_client_error,
-                ):
-                    backend = await get_queue_backend()
-                    assert isinstance(backend, InMemoryQueueBackend)
-        finally:
-            reset_queue_backend()
-
-    @pytest.mark.asyncio
-    async def test_factory_raises_error_when_redis_required_but_unreachable(self):
-        """Unit test: Factory raises error when Redis required but unreachable."""
+    async def test_factory_raises_error_when_redis_enabled_but_unreachable(self):
+        """Unit test: Factory raises error when SHU_REDIS_URL is set but Redis is unreachable."""
         from unittest.mock import MagicMock, patch
 
         from shu.core.queue_backend import (
@@ -2048,51 +2009,12 @@ class TestBackendSelectionLogic:
 
         reset_queue_backend()
 
-        # Mock settings with Redis required
         mock_settings = MagicMock()
         mock_settings.redis_url = "redis://unreachable:6379"
-        mock_settings.redis_required = True
-        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_enabled = True
         mock_settings.redis_connection_timeout = 1
         mock_settings.redis_socket_timeout = 1
 
-        # Mock shared Redis client to fail
-        async def mock_get_shared_redis_client_error():
-            raise QueueConnectionError("Connection refused")
-
-        try:
-            with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
-                with patch(
-                    "shu.core.queue_backend._get_shared_redis_client",
-                    mock_get_shared_redis_client_error,
-                ):
-                    with pytest.raises(QueueConnectionError):
-                        await get_queue_backend()
-        finally:
-            reset_queue_backend()
-
-    @pytest.mark.asyncio
-    async def test_factory_raises_error_when_fallback_disabled_and_redis_unreachable(self):
-        """Unit test: Factory raises error when fallback disabled and Redis unreachable."""
-        from unittest.mock import MagicMock, patch
-
-        from shu.core.queue_backend import (
-            QueueConnectionError,
-            get_queue_backend,
-            reset_queue_backend,
-        )
-
-        reset_queue_backend()
-
-        # Mock settings with fallback disabled
-        mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://unreachable:6379"
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = False
-        mock_settings.redis_connection_timeout = 1
-        mock_settings.redis_socket_timeout = 1
-
-        # Mock shared Redis client to fail
         async def mock_get_shared_redis_client_error():
             raise QueueConnectionError("Connection refused")
 
@@ -2109,22 +2031,19 @@ class TestBackendSelectionLogic:
 
     @pytest.mark.asyncio
     async def test_factory_returns_redis_backend_when_redis_available(self):
-        """Unit test: Factory returns RedisQueueBackend when Redis is available."""
+        """Unit test: Factory returns RedisQueueBackend when SHU_REDIS_URL is set and Redis is reachable."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from shu.core.queue_backend import RedisQueueBackend, get_queue_backend, reset_queue_backend
 
         reset_queue_backend()
 
-        # Mock settings with a non-default Redis URL (to avoid the default URL check)
         mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://production-redis:6379"
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_enabled = True
         mock_settings.redis_connection_timeout = 5
         mock_settings.redis_socket_timeout = 5
 
-        # Mock shared Redis client that works
         mock_redis_client = MagicMock()
         mock_redis_client.ping = AsyncMock(return_value=True)
 

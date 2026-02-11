@@ -232,29 +232,14 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Failed to start attachment cleanup scheduler: {e}")
 
-    # Start Plugin Feeds scheduler (in-process)
+    # Start unified scheduler (plugin feeds + experiences)
     try:
-        if getattr(settings, "plugins_scheduler_enabled", True):
-            from .services.plugins_scheduler_service import start_plugins_scheduler
+        from .services.scheduler_service import start_scheduler
 
-            app.state.plugins_scheduler_task = await start_plugins_scheduler()
-            logger.info("Plugin Feeds scheduler started")
-        else:
-            logger.info("Plugin Feeds scheduler disabled by configuration")
+        app.state.scheduler_task = await start_scheduler()
+        logger.info("Unified scheduler started")
     except Exception as e:
-        logger.warning(f"Failed to start Plugin Feeds scheduler: {e}")
-
-    # Start Experiences scheduler (in-process)
-    try:
-        if getattr(settings, "experiences_scheduler_enabled", True):
-            from .services.experiences_scheduler_service import start_experiences_scheduler
-
-            app.state.experiences_scheduler_task = await start_experiences_scheduler()
-            logger.info("Experiences scheduler started")
-        else:
-            logger.info("Experiences scheduler disabled by configuration")
-    except Exception as e:
-        logger.warning(f"Failed to start Experiences scheduler: {e}")
+        logger.warning(f"Failed to start unified scheduler: {e}")
 
     # Start inline workers if workers are enabled
     try:
@@ -323,8 +308,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     # Cancel and await background schedulers for clean shutdown
     task_attrs = [
         ("attachments_cleanup", "attachments_cleanup_task"),
-        ("plugins_scheduler", "plugins_scheduler_task"),
-        ("experiences_scheduler", "experiences_scheduler_task"),
+        ("scheduler", "scheduler_task"),
     ]
     tasks_to_cancel = []
     for name, attr in task_attrs:

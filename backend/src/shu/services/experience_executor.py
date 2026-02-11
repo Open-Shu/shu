@@ -144,6 +144,7 @@ class ExperienceExecutor:
         user_id: str,
         input_params: dict[str, Any],
         current_user: User,
+        run_id: str | None = None,
     ) -> AsyncGenerator[ExperienceEvent, None]:
         """Execute an experience with streaming events for SSE.
 
@@ -151,6 +152,12 @@ class ExperienceExecutor:
         - run_started, step_started, step_completed/failed/skipped
         - synthesis_started, content_delta (LLM tokens)
         - run_completed or error
+
+        Args:
+            run_id: Optional pre-created ExperienceRun ID (e.g., from queue scheduler).
+                If provided, the existing run is transitioned to "running" instead of
+                creating a new one.
+
         """
         # Load model configuration if specified
         model_config: ModelConfiguration | None = None
@@ -163,7 +170,7 @@ class ExperienceExecutor:
                     f"Model configuration validation failed for config_id={experience.model_configuration_id}"
                 )
 
-                run = await self._create_run(experience, user_id, input_params)
+                run = await self._create_or_resume_run(experience, user_id, input_params, run_id=run_id)
                 await self._finalize_run(run, "failed", {}, {}, error_message=error_message, model_config=None)
                 yield ExperienceEvent(
                     ExperienceEventType.ERROR,
@@ -175,7 +182,7 @@ class ExperienceExecutor:
                 )
                 return
 
-        run = await self._create_run(experience, user_id, input_params)
+        run = await self._create_or_resume_run(experience, user_id, input_params, run_id=run_id)
         yield ExperienceEvent(ExperienceEventType.RUN_STARTED, {"run_id": run.id, "experience_id": experience.id})
 
         # Runtime state
@@ -272,12 +279,18 @@ class ExperienceExecutor:
         user_id: str,
         input_params: dict[str, Any],
         current_user: User,
+        run_id: str | None = None,
     ) -> ExperienceRun:
-        """Execute an experience without streaming (for scheduled execution)."""
+        """Execute an experience without streaming (for scheduled execution).
+
+        Args:
+            run_id: Optional pre-created ExperienceRun ID (e.g., from queue scheduler).
+
+        """
         run: ExperienceRun | None = None
 
         # Consume events - timeout is enforced within execute_streaming
-        async for event in self.execute_streaming(experience, user_id, input_params, current_user):
+        async for event in self.execute_streaming(experience, user_id, input_params, current_user, run_id=run_id):
             if event.type == ExperienceEventType.RUN_STARTED:
                 run_id = event.data.get("run_id")
                 if run_id:
@@ -412,13 +425,55 @@ class ExperienceExecutor:
         """Check if at least one step succeeded."""
         return any(state.get("status") == "succeeded" for state in step_states.values())
 
-    async def _create_run(
+    async def _create_or_resume_run(
         self,
         experience: Experience,
         user_id: str,
         input_params: dict[str, Any],
+        run_id: str | None = None,
     ) -> ExperienceRun:
-        """Create a new ExperienceRun record in pending status."""
+        """Create a new ExperienceRun or resume a pre-created queued run.
+
+        If run_id is provided, loads the existing run and transitions it to
+        "running" only if the current status allows it (queued or pending).
+        Otherwise creates a new run (for on-demand execution).
+
+        Raises:
+            ValueError: If the run exists but is in a terminal or already-running
+                state that cannot transition to "running".
+
+        """
+        if run_id:
+            result = await self.db.execute(select(ExperienceRun).where(ExperienceRun.id == run_id))
+            run = result.scalar_one_or_none()
+            if run:
+                # Ownership validation: ensure the run belongs to this experience and user
+                if run.experience_id != str(experience.id):
+                    raise ValueError(f"Run {run_id} belongs to experience '{run.experience_id}', not '{experience.id}'")
+                if run.user_id != str(user_id):
+                    raise PermissionError(f"Run {run_id} belongs to a different user")
+
+                # Only allow transition from queued/pending → running
+                allowed_statuses = {"queued", "pending"}
+                if run.status not in allowed_statuses:
+                    raise ValueError(
+                        f"Cannot resume run {run_id}: status is '{run.status}', expected one of {allowed_statuses}"
+                    )
+
+                # Refresh from authoritative source so stale queue-time values are overwritten
+                run.input_params = input_params
+                run.model_configuration_id = experience.model_configuration_id
+                run.status = "running"
+                run.started_at = datetime.now(UTC)
+                await self.db.commit()
+                await self.db.refresh(run)
+                return run
+            # If run not found, fall through and create a new one
+            logger.warning(
+                "Pre-created run not found, creating new run",
+                extra={"run_id": run_id, "experience_id": experience.id},
+            )
+
         run = ExperienceRun(
             experience_id=experience.id,
             user_id=user_id,
@@ -428,7 +483,7 @@ class ExperienceExecutor:
             input_params=input_params,
             step_states={},
             step_outputs={},
-            result_metadata={},  # Will be populated during finalization
+            result_metadata={},
         )
         self.db.add(run)
         await self.db.commit()

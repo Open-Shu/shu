@@ -163,7 +163,7 @@ class TestInMemoryQueueSynchronousProcessing:
             f"Dequeued job ID mismatch: expected {job.id}, got {dequeued_job.id}"
         )
         assert dequeued_job.payload == job.payload, (
-            f"Dequeued job payload mismatch"
+            "Dequeued job payload mismatch"
         )
 
     @pytest.mark.asyncio
@@ -268,6 +268,6 @@ class TestInMemoryQueueSynchronousProcessing:
         )
 
         # Verify all queues are empty
-        for queue_name in handlers.keys():
+        for queue_name in handlers:
             length = await backend.queue_length(queue_name)
             assert length == 0, f"Queue {queue_name} should be empty"

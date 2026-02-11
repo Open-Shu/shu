@@ -809,7 +809,7 @@ class MyCustomQueue:  # NEVER DO THIS
 - **Available WorkloadTypes**: INGESTION, INGESTION_OCR, INGESTION_EMBED, LLM_WORKFLOW, MAINTENANCE, PROFILING
 
 ```python
-from shu.core.workload_routing import WorkloadType, enqueue_job, get_queue_name
+from shu.core.workload_routing import WorkloadType, enqueue_job
 
 # CORRECT: Use WorkloadType routing
 await enqueue_job(
@@ -819,7 +819,7 @@ await enqueue_job(
 )
 
 # CORRECT: Get queue name for a workload type
-queue_name = get_queue_name(WorkloadType.INGESTION)
+queue_name = WorkloadType.INGESTION.queue_name
 
 # WRONG: Hardcoded queue names
 await queue.enqueue(Job(queue_name="my_queue", payload=data))  # NEVER DO THIS

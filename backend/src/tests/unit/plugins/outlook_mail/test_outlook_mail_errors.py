@@ -13,7 +13,7 @@ from conftest import HttpRequestFailed, wrap_graph_response
 
 def _executor_error_handler(e: HttpRequestFailed):
     """Simulate executor's HttpRequestFailed handling (from executor.py lines 642-661).
-    
+
     This mirrors the actual executor behavior so we can test the full error flow.
     """
     from plugins.shu_outlook_mail.plugin import _Result
@@ -43,7 +43,7 @@ async def execute_with_error_handling(plugin, params, context, host):
 
 class TestHttpErrors:
     """Test HTTP error handling.
-    
+
     The plugin lets HttpRequestFailed bubble up to the executor, which converts
     it to structured errors using error_category. These tests use execute_with_error_handling
     to simulate the full execution flow.
@@ -146,7 +146,7 @@ class TestHttpErrors:
 
 class TestNetworkErrors:
     """Test network error handling.
-    
+
     Generic exceptions (not HttpRequestFailed) bubble up to the executor which
     converts them to plugin_execute_error. These tests verify that behavior.
     """
@@ -320,7 +320,7 @@ class TestSkipsArray:
             # Delta query to get initial token
             wrap_graph_response({"value": [], "@odata.deltaLink": "https://graph.microsoft.com/delta?token=abc"})
         ]
-        
+
         # Make ingestion fail to trigger skip
         mock_host.kb.ingest_email.side_effect = Exception("Message not found in mailbox")
 

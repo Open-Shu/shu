@@ -1049,7 +1049,7 @@ class TestBackendSelectionLogic:
 
     @pytest.mark.asyncio
     async def test_returns_inmemory_when_no_redis_url(self):
-        """Unit test: Factory returns InMemoryCacheBackend when no Redis URL configured."""
+        """Unit test: Factory returns InMemoryCacheBackend when SHU_REDIS_URL is not set."""
         from unittest.mock import MagicMock, patch
 
         from shu.core.cache_backend import (
@@ -1060,11 +1060,9 @@ class TestBackendSelectionLogic:
 
         reset_cache_backend()
 
-        # Mock settings to have no Redis URL and redis_required=False
         mock_settings = MagicMock()
-        mock_settings.redis_url = ""
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_url = None
+        mock_settings.redis_enabled = False
 
         with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
             backend = await get_cache_backend()
@@ -1073,92 +1071,24 @@ class TestBackendSelectionLogic:
         reset_cache_backend()
 
     @pytest.mark.asyncio
-    async def test_returns_inmemory_when_redis_unreachable_with_fallback(self):
-        """Unit test: Factory returns InMemoryCacheBackend when Redis unreachable and fallback enabled."""
+    async def test_raises_error_when_redis_enabled_but_unreachable(self):
+        """Unit test: Factory raises CacheConnectionError when SHU_REDIS_URL is set but Redis is unreachable."""
         from unittest.mock import MagicMock, patch
 
         from shu.core.cache_backend import (
             CacheConnectionError,
-            InMemoryCacheBackend,
             get_cache_backend,
             reset_cache_backend,
         )
 
         reset_cache_backend()
 
-        # Mock settings with Redis URL but fallback enabled
         mock_settings = MagicMock()
         mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_enabled = True
         mock_settings.redis_socket_timeout = 5
         mock_settings.redis_connection_timeout = 5
 
-        # Mock _get_redis_client to raise CacheConnectionError
-        async def mock_get_redis_client_error():
-            raise CacheConnectionError("Connection refused")
-
-        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
-            with patch("shu.core.cache_backend._get_redis_client", mock_get_redis_client_error):
-                backend = await get_cache_backend()
-                assert isinstance(backend, InMemoryCacheBackend)
-
-        reset_cache_backend()
-
-    @pytest.mark.asyncio
-    async def test_raises_error_when_redis_required_but_unreachable(self):
-        """Unit test: Factory raises error when Redis required but unreachable."""
-        from unittest.mock import MagicMock, patch
-
-        from shu.core.cache_backend import (
-            CacheConnectionError,
-            get_cache_backend,
-            reset_cache_backend,
-        )
-
-        reset_cache_backend()
-
-        # Mock settings with Redis required
-        mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_required = True
-        mock_settings.redis_fallback_enabled = False
-        mock_settings.redis_socket_timeout = 5
-        mock_settings.redis_connection_timeout = 5
-
-        # Mock _get_redis_client to raise CacheConnectionError
-        async def mock_get_redis_client_error():
-            raise CacheConnectionError("Connection refused")
-
-        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
-            with patch("shu.core.cache_backend._get_redis_client", mock_get_redis_client_error):
-                with pytest.raises(CacheConnectionError):
-                    await get_cache_backend()
-
-        reset_cache_backend()
-
-    @pytest.mark.asyncio
-    async def test_raises_error_when_fallback_disabled_and_redis_unreachable(self):
-        """Unit test: Factory raises error when fallback disabled and Redis unreachable."""
-        from unittest.mock import MagicMock, patch
-
-        from shu.core.cache_backend import (
-            CacheConnectionError,
-            get_cache_backend,
-            reset_cache_backend,
-        )
-
-        reset_cache_backend()
-
-        # Mock settings with fallback disabled and a non-default Redis URL
-        mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://custom-redis:6379"  # Non-default URL
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = False
-        mock_settings.redis_socket_timeout = 5
-        mock_settings.redis_connection_timeout = 5
-
-        # Mock _get_redis_client to raise CacheConnectionError
         async def mock_get_redis_client_error():
             raise CacheConnectionError("Connection refused")
 
@@ -1171,22 +1101,19 @@ class TestBackendSelectionLogic:
 
     @pytest.mark.asyncio
     async def test_returns_redis_backend_when_redis_available(self):
-        """Unit test: Factory returns RedisCacheBackend when Redis is available."""
+        """Unit test: Factory returns RedisCacheBackend when SHU_REDIS_URL is set and Redis is reachable."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from shu.core.cache_backend import RedisCacheBackend, get_cache_backend, reset_cache_backend
 
         reset_cache_backend()
 
-        # Mock settings with a non-default Redis URL
         mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://custom-redis:6379"  # Non-default URL
-        mock_settings.redis_required = False
-        mock_settings.redis_fallback_enabled = True
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_enabled = True
         mock_settings.redis_socket_timeout = 5
         mock_settings.redis_connection_timeout = 5
 
-        # Mock Redis client
         mock_redis_client = MagicMock()
         mock_redis_client.ping = AsyncMock(return_value=True)
 
@@ -1429,12 +1356,12 @@ class TestBinaryBackendSubstitutability:
         """Parametrized fixture providing both backends with binary support."""
         if request.param == "inmemory":
             return InMemoryCacheBackend(cleanup_interval_seconds=0)
-        else:  # redis (shared storage models real Redis)
-            shared_data: dict[str, Any] = {}
-            shared_expiry: dict[str, float] = {}
-            mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
-            mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
-            return RedisCacheBackend(mock_string_client, mock_binary_client)
+        # redis (shared storage models real Redis)
+        shared_data: dict[str, Any] = {}
+        shared_expiry: dict[str, float] = {}
+        mock_string_client = MockRedisClient(decode_responses=True, data=shared_data, expiry=shared_expiry)
+        mock_binary_client = MockRedisClient(decode_responses=False, data=shared_data, expiry=shared_expiry)
+        return RedisCacheBackend(mock_string_client, mock_binary_client)
 
     @pytest.mark.asyncio
     @settings(max_examples=100)

@@ -391,7 +391,7 @@ class TestRunManagement:
         executor.db.commit = AsyncMock()
         executor.db.refresh = AsyncMock()
 
-        run = await executor._create_run(experience, "user-123", {"query": "test"})
+        run = await executor._create_or_resume_run(experience, "user-123", {"query": "test"})
 
         executor.db.add.assert_called_once()
         executor.db.commit.assert_called_once()
@@ -668,7 +668,7 @@ class TestModelConfigurationValidation:
         mock_experience.steps = []
 
         with (
-            patch.object(executor, "_create_run") as mock_create_run,
+            patch.object(executor, "_create_or_resume_run") as mock_create_run,
             patch.object(executor, "_build_initial_context") as mock_build_context,
             patch.object(executor, "_execute_steps_loop") as mock_execute_steps,
             patch.object(executor, "_synthesize_with_llm_streaming") as mock_synthesize,
@@ -716,7 +716,7 @@ class TestModelConfigurationValidation:
         mock_experience.model_configuration_id = "config-123"
 
         with (
-            patch.object(executor, "_create_run") as mock_create_run,
+            patch.object(executor, "_create_or_resume_run") as mock_create_run,
             patch.object(executor, "_finalize_run") as mock_finalize,
         ):
             mock_run = MagicMock()
@@ -747,7 +747,7 @@ class TestModelConfigurationValidation:
         mock_experience.model_configuration_id = "config-123"
 
         with (
-            patch.object(executor, "_create_run") as mock_create_run,
+            patch.object(executor, "_create_or_resume_run") as mock_create_run,
             patch.object(executor, "_finalize_run") as mock_finalize,
         ):
             mock_run = MagicMock()
@@ -778,7 +778,7 @@ class TestModelConfigurationValidation:
         mock_experience.model_configuration_id = "config-123"
 
         with (
-            patch.object(executor, "_create_run") as mock_create_run,
+            patch.object(executor, "_create_or_resume_run") as mock_create_run,
             patch.object(executor, "_finalize_run") as mock_finalize,
         ):
             mock_run = MagicMock()

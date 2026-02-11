@@ -8,7 +8,6 @@ and that DocumentChunks are created.
 
 import asyncio
 import logging
-import sys
 import uuid
 from collections.abc import Callable
 
@@ -109,22 +108,22 @@ async def test_full_pipeline_success(client, db, auth_headers):
     # Create test file content (simple text file)
     test_content = f"""
     Test Document for Pipeline Integration
-    
+
     This is a test document created for integration testing.
     It contains enough text to generate multiple chunks.
-    
+
     Section 1: Introduction
     This section introduces the test document and its purpose.
     The document is designed to test the full ingestion pipeline.
-    
+
     Section 2: Content
     This section contains the main content of the document.
     It includes multiple paragraphs to ensure chunking works correctly.
-    
+
     Section 3: Conclusion
     This section concludes the test document.
     The pipeline should process this document successfully.
-    
+
     Unique identifier: {unique}
     """
     file_bytes = test_content.encode("utf-8")
@@ -239,7 +238,7 @@ async def test_ocr_failure_sets_failed_status(client, db, auth_headers):
     await cache.delete(staging_key)
     logger.info(f"Deleted staged file with key: {staging_key}")
 
-    logger.info(f"Waiting for pipeline to fail due to missing staged file...")
+    logger.info("Waiting for pipeline to fail due to missing staged file...")
 
     # Wait for pipeline to complete (expecting failure)
     try:
@@ -307,13 +306,13 @@ async def test_text_ingestion_skips_ocr(client, db, auth_headers):
     # Create text content
     content = f"""
     Text Ingestion Test Document
-    
+
     This document is ingested directly as text, bypassing OCR.
     It should go directly to the embedding stage.
-    
+
     The pipeline should process this efficiently since no
     text extraction is needed.
-    
+
     Unique identifier: {unique}
     """
     title = f"Test Text Document {unique}"

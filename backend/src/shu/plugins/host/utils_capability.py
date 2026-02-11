@@ -23,21 +23,21 @@ R = TypeVar("R")
 
 class UtilsCapability(ImmutableCapabilityMixin):
     """Plugin utility functions for common patterns.
-    
+
     Provides helper functions that reduce boilerplate in plugins, particularly
     for batch operations where individual failures should not stop the whole
     operation.
-    
+
     This capability is always available to plugins (no declaration required).
-    
+
     Security: This class is immutable (via ImmutableCapabilityMixin) to prevent
     plugins from mutating internal state.
-    
+
     Example:
         # In a plugin - process messages with error handling
         async def fetch_message(mid):
             return await host.http.fetch("GET", f"{api}/messages/{mid}")
-        
+
         messages, errors = await host.utils.map_safe(message_ids, fetch_message)
         if errors:
             host.log.warning(f"Failed to fetch {len(errors)} messages")
@@ -51,9 +51,9 @@ class UtilsCapability(ImmutableCapabilityMixin):
     _plugin_name: str
     _user_id: str
 
-    def __init__(self, *, plugin_name: str, user_id: str):
+    def __init__(self, *, plugin_name: str, user_id: str) -> None:
         """Initialize the utils capability.
-        
+
         Args:
             plugin_name: The name of the plugin using this capability.
             user_id: The ID of the user the plugin is running for.
@@ -70,11 +70,11 @@ class UtilsCapability(ImmutableCapabilityMixin):
         max_errors: int | None = None,
     ) -> tuple[list[R], list[tuple[T, Exception]]]:
         """Process items with a function, collecting errors instead of failing.
-        
+
         This is useful for batch operations where individual failures should
         not stop the whole operation. Instead of try/except in a loop, use
         this to get all results and errors in one call.
-        
+
         Args:
             items: List of items to process.
             async_fn: Async function to apply to each item.
@@ -82,20 +82,20 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 Must be None (unlimited) or a positive integer >= 1.
                 If None (default), all items are processed regardless of errors.
                 If set, processing stops after this many errors.
-        
+
         Returns:
             A tuple of (results, errors) where:
             - results: List of successful results (in order of success)
             - errors: List of (item, exception) tuples for failed items
-        
+
         Raises:
             ValueError: If max_errors is not None and less than 1.
-        
+
         Example:
             async def fetch_user(user_id):
                 resp = await host.http.fetch("GET", f"{api}/users/{user_id}")
                 return resp["body"]
-            
+
             users, errors = await host.utils.map_safe(user_ids, fetch_user)
             if errors:
                 host.log.warning(f"Failed to fetch {len(errors)} users")
@@ -127,24 +127,24 @@ class UtilsCapability(ImmutableCapabilityMixin):
         async_predicate: Callable[[T], Awaitable[bool]],
     ) -> tuple[list[T], list[tuple[T, Exception]]]:
         """Filter items with a predicate, collecting errors instead of failing.
-        
+
         This is useful for filtering operations where individual failures
         should not stop the whole operation.
-        
+
         Args:
             items: List of items to filter.
             async_predicate: Async function that returns True to keep an item.
-        
+
         Returns:
             A tuple of (kept_items, errors) where:
             - kept_items: List of items where predicate returned True
             - errors: List of (item, exception) tuples for failed predicates
-        
+
         Example:
             async def is_valid(item):
                 resp = await host.http.fetch("GET", f"{api}/validate/{item['id']}")
                 return resp["body"]["valid"]
-            
+
             valid_items, errors = await host.utils.filter_safe(items, is_valid)
 
         """
@@ -159,4 +159,3 @@ class UtilsCapability(ImmutableCapabilityMixin):
                 errors.append((item, e))
 
         return kept, errors
-
