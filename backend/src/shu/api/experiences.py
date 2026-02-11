@@ -4,10 +4,6 @@ This module provides REST API endpoints for managing experiences,
 including CRUD operations, run management, and user dashboard data.
 """
 
-import json
-import uuid
-from collections.abc import AsyncGenerator
-
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select
@@ -20,6 +16,7 @@ from ..core.config import get_config_manager
 from ..core.exceptions import ConflictError, NotFoundError, ShuException, ValidationError
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
+from ..core.streaming import create_sse_stream_generator
 from ..models.experience import Experience
 from ..schemas.experience import (
     ExperienceCreate,
@@ -362,53 +359,24 @@ async def run_experience(
             status_code=404,
         )
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        """Generate SSE events from executor."""
-        config_manager = get_config_manager()
-        executor = ExperienceExecutor(db, config_manager)
-
-        try:
-            async for event in executor.execute_streaming(
-                experience=experience_model,
-                user_id=str(current_user.id),
-                input_params=run_request.input_params if run_request and run_request.input_params else {},
-                current_user=current_user,
-            ):
-                try:
-                    yield f"data: {json.dumps(event.to_dict())}\n\n"
-                except Exception:
-                    logger.exception("Error serializing event")
-                    continue
-        except GeneratorExit:
-            logger.info("Client disconnected from experience stream")
-        except Exception:
-            # Generate correlation ID for error tracking
-            correlation_id = str(uuid.uuid4())
-            # Log full exception details server-side with correlation ID
-            logger.exception(
-                "Experience execution error", extra={"experience_id": experience_id, "correlation_id": correlation_id}
-            )
-            # Send sanitized error to client without exposing internal details
-            error_event = {
-                "type": "error",
-                "code": "EXPERIENCE_EXECUTION_FAILED",
-                "message": "An internal error occurred during experience execution",
-                "id": correlation_id,
-            }
-            try:
-                yield f"data: {json.dumps(error_event)}\n\n"
-            except Exception as send_exc:
-                # Log with traceback when failing to send error event
-                logger.exception("Failed to send error event to client", exc_info=send_exc)
-        finally:
-            try:
-                yield "data: [DONE]\n\n"
-            except Exception as done_exc:
-                # Log with traceback when failing to send DONE marker
-                logger.exception("Could not send DONE marker - connection likely closed", exc_info=done_exc)
+    config_manager = get_config_manager()
+    executor = ExperienceExecutor(db, config_manager)
+    event_gen = executor.execute_streaming(
+        experience=experience_model,
+        user_id=str(current_user.id),
+        input_params=run_request.input_params if run_request and run_request.input_params else {},
+        current_user=current_user,
+    )
+    sse_generator = create_sse_stream_generator(
+        event_gen,
+        error_context="experience_execution",
+        error_sanitizer=None,
+        include_correlation_id=True,
+        error_code="EXPERIENCE_EXECUTION_FAILED",
+    )
 
     return StreamingResponse(
-        event_generator(),
+        sse_generator,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
