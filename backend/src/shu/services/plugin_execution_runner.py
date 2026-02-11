@@ -52,7 +52,7 @@ class PluginExecutionResult:
     feed_updates: dict[str, Any] = field(default_factory=dict)
 
 
-async def execute_plugin_record(
+async def execute_plugin_record(  # noqa: PLR0912, PLR0915
     session: AsyncSession,
     rec: PluginExecution,
     settings: Any,
@@ -93,24 +93,25 @@ async def execute_plugin_record(
     Raises:
         HTTPException: Propagated from EXECUTOR (e.g. 429 rate limiting).
         Exception: Any unhandled plugin execution failure.
+
     """
-    # Step 1: Check if schedule is disabled
+    # Load the associated PluginFeed once (reused in steps 1, 2, 14-15)
+    feed: PluginFeed | None = None
     if rec.schedule_id:
         srow = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
         feed = srow.scalars().first()
-        if feed and not feed.enabled:
-            return _preflight_failure(rec, "schedule_disabled")
+
+    # Step 1: Check if schedule is disabled
+    if feed and not feed.enabled:
+        return _preflight_failure(rec, "schedule_disabled")
 
     # Step 2: Resolve plugin
     plugin = await REGISTRY.resolve(rec.plugin_name, session)
     if not plugin:
         # Auto-disable the feed to prevent repeated failures
-        if rec.schedule_id:
+        if feed and feed.enabled:
             try:
-                srow = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
-                feed = srow.scalars().first()
-                if feed and feed.enabled:
-                    feed.enabled = False
+                feed.enabled = False
             except Exception:
                 pass
         return _preflight_failure(rec, "plugin_not_found")
@@ -194,12 +195,19 @@ async def execute_plugin_record(
             }
 
     # Step 11: Enforce output byte cap
+    max_bytes = getattr(settings, "plugin_exec_output_max_bytes", 0) or 0
     try:
         payload_json = json.dumps(payload, separators=(",", ":"), default=str)
         payload_size = len(payload_json.encode("utf-8"))
     except Exception:
-        payload_size = 0
-    max_bytes = getattr(settings, "plugin_exec_output_max_bytes", 0) or 0
+        logger.warning(
+            "Failed to serialize plugin output for size check | exec_id=%s plugin=%s",
+            rec.id,
+            rec.plugin_name,
+            exc_info=True,
+        )
+        # Treat unserializable output as exceeding the cap
+        payload_size = max_bytes + 1 if max_bytes > 0 else 0
     if max_bytes > 0 and payload_size > max_bytes:
         now = datetime.now(UTC)
         _apply_to_record(
@@ -239,25 +247,21 @@ async def execute_plugin_record(
 
     # Steps 14-15: Feed updates on success (one-shot params + last_run_at)
     feed_updates: dict[str, Any] = {}
-    if rec.schedule_id:
+    if feed and status == PluginExecutionStatus.COMPLETED:
         try:
-            feed_res = await session.execute(select(PluginFeed).where(PluginFeed.id == rec.schedule_id))
-            feed = feed_res.scalars().first()
-            if feed:
-                if status == PluginExecutionStatus.COMPLETED:
-                    feed.last_run_at = now
-                    feed_updates["last_run_at"] = now
-                    # Clear one-shot params
-                    if feed.params:
-                        params_dict = dict(feed.params) if isinstance(feed.params, dict) else {}
-                        modified = False
-                        for key in ONE_SHOT_FEED_PARAMS:
-                            if key in params_dict:
-                                del params_dict[key]
-                                modified = True
-                        if modified:
-                            feed.params = params_dict
-                            feed_updates["one_shot_cleared"] = True
+            feed.last_run_at = now
+            feed_updates["last_run_at"] = now
+            # Clear one-shot params
+            if feed.params:
+                params_dict = dict(feed.params) if isinstance(feed.params, dict) else {}
+                modified = False
+                for key in ONE_SHOT_FEED_PARAMS:
+                    if key in params_dict:
+                        del params_dict[key]
+                        modified = True
+                if modified:
+                    feed.params = params_dict
+                    feed_updates["one_shot_cleared"] = True
         except Exception:
             logger.warning(
                 "Failed to update feed after execution | exec_id=%s schedule_id=%s",

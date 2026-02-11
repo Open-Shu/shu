@@ -402,7 +402,7 @@ async def _handle_embed_job(job) -> None:
             raise
 
 
-async def _handle_plugin_execution_job(job) -> None:
+async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
     """Handle an INGESTION plugin feed execution job.
 
     Loads the PluginExecution record, verifies it is still PENDING (race guard),
@@ -480,7 +480,7 @@ async def _handle_plugin_execution_job(job) -> None:
         try:
             from .services.plugin_execution_runner import execute_plugin_record
 
-            exec_result = await execute_plugin_record(session, rec, settings)
+            await execute_plugin_record(session, rec, settings)
             await session.commit()
 
             logger.info(

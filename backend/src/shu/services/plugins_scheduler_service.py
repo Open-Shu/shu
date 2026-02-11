@@ -26,14 +26,8 @@ from ..core.config import get_settings_instance
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..plugins.registry import REGISTRY
-
-# In-memory per-process tick history for observability.
-# Re-exported from scheduler_service for backward compatibility with API endpoints.
-from .scheduler_service import TICK_HISTORY  # noqa: F401
-
-# Re-export ONE_SHOT_FEED_PARAMS from the shared runner for backward compatibility
-# (worker.py imports it from this module).
 from .plugin_execution_runner import ONE_SHOT_FEED_PARAMS  # noqa: F401
+from .scheduler_service import TICK_HISTORY  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
