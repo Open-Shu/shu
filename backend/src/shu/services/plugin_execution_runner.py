@@ -226,9 +226,7 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
 
     # Step 12: Set execution status
     now = datetime.now(UTC)
-    status = (
-        PluginExecutionStatus.COMPLETED if payload.get("status") == "success" else PluginExecutionStatus.FAILED
-    )
+    status = PluginExecutionStatus.COMPLETED if payload.get("status") == "success" else PluginExecutionStatus.FAILED
     _err_val = payload.get("error") if payload.get("status") != "success" else None
     if isinstance(_err_val, (dict, list)):
         error_str = json.dumps(_err_val, separators=(",", ":"), default=str)
