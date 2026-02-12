@@ -108,9 +108,7 @@ class XAIAdapter(ResponsesAdapter):
             "max_output_tokens": IntegerParameter(
                 min=1,
                 label="Max output tokens",
-                description=(
-                    "Maximum number of tokens Grok-4 can generate for this completion " "(output tokens only)."
-                ),
+                description=("Maximum number of tokens Grok-4 can generate for this completion (output tokens only)."),
             ),
             "reasoning": ObjectParameter(
                 label="Reasoning",
@@ -179,8 +177,7 @@ class XAIAdapter(ResponsesAdapter):
                                 "filters": ObjectParameter(
                                     label="Filters",
                                     description=(
-                                        "Optional provider-specific filters for web search "
-                                        "(e.g. domains, date ranges)."
+                                        "Optional provider-specific filters for web search (e.g. domains, date ranges)."
                                     ),
                                 ),
                                 "search_context_size": EnumParameter(
