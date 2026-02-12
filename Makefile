@@ -107,7 +107,7 @@ ps:
 	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev --profile workers ps
 
 # Linting and formatting targets
-.PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix lint-changed lint-staged lint-uncommitted
+.PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix lint-changed lint-staged lint-uncommitted lint-pr
 
 # Run all linters
 lint: lint-python lint-frontend
@@ -215,6 +215,19 @@ lint-staged:
 	else \
 		echo "No frontend files staged"; \
 	fi
+
+# Run pre-commit hooks on changed files (same as GHA/PR checks)
+# This runs ALL the hooks that run in CI: ruff, ruff-format, bandit, detect-secrets, etc.
+lint-pr:
+	@echo "Running pre-commit hooks on changed files (same as PR checks)..."
+	@if ! command -v pre-commit >/dev/null 2>&1; then \
+		echo "Error: pre-commit not found. Run 'make setup-hooks' first."; \
+		exit 1; \
+	fi
+	@BASE=$${GITHUB_BASE_REF:-$$(git show-ref --verify --quiet refs/heads/main && echo main || echo master)}; \
+	BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	echo "Comparing against base branch: $$BASE"; \
+	pre-commit run --from-ref $$BASE --to-ref $$BRANCH
 
 # Pre-commit setup
 .PHONY: setup-hooks install-hooks

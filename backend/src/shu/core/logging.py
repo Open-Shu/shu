@@ -251,10 +251,17 @@ class ManagedFileHandler(logging.FileHandler):
         _cleanup_old_log_archives(self._log_dir, self._hostname, self._retention_days)
 
     def _do_midnight_rotate(self) -> None:
-        """Archive the current log file with a date suffix and open a fresh one."""
+        """Archive the current log file with a date suffix and open a fresh one.
+
+        Must be called while holding ``_lock_rotate``.  We additionally acquire
+        the handler lock (the same lock ``emit()`` uses) so that no concurrent
+        ``emit()`` call can write to a closed stream during the
+        close/rename/reopen sequence.
+        """
         # Use yesterday's date as the suffix since midnight just passed
         yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
         archive_path = f"{self.baseFilename}.{yesterday}"
+        self.acquire()
         try:
             self.stream.close()
             base_path = Path(self.baseFilename)
@@ -271,6 +278,8 @@ class ManagedFileHandler(logging.FileHandler):
             except Exception:
                 pass
             logging.getLogger(__name__).warning("Midnight log rotation failed: %s", e)
+        finally:
+            self.release()
 
 
 # Module-level reference so the scheduler source can call rotate_if_needed()
