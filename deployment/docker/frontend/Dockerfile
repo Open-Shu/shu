@@ -8,17 +8,8 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Install deps (from repo root context)
-COPY frontend/package.json frontend/package-lock.json* frontend/yarn.lock* frontend/pnpm-lock.yaml* ./
-# Cache package manager data for faster rebuilds
-RUN if [ -f yarn.lock ]; then \
-      yarn install --frozen-lockfile; \
-    elif [ -f package-lock.json ]; then \
-      npm ci; \
-    elif [ -f pnpm-lock.yaml ]; then \
-      npm i -g pnpm && pnpm i --frozen-lockfile; \
-    else \
-      npm i; \
-    fi
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 
 # Copy source
 COPY frontend/index.html ./

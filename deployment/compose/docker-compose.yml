@@ -20,7 +20,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - shu-plugins:/app/plugins
+      - shu-data:/app/data
     networks:
       - shu-network
     restart: unless-stopped
@@ -60,7 +60,8 @@ services:
       - ../../backend/alembic:/app/alembic
       - ../../backend/alembic.ini:/app/alembic.ini
       - ../../backend/scripts:/app/scripts
-      - ../../plugins:/app/plugins
+      - ../../data:/app/data
+      - ../../plugins:/app/data/plugins
     networks:
       - shu-network
     restart: unless-stopped
@@ -146,7 +147,7 @@ services:
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
     volumes:
-      - shu-plugins:/app/plugins
+      - shu-data:/app/data
     networks:
       - shu-network
     restart: unless-stopped
@@ -178,7 +179,8 @@ services:
       - PYTHONPATH=/app/src
     volumes:
       - ../../backend/src:/app/src
-      - ../../plugins:/app/plugins
+      - ../../data:/app/data
+      - ../../plugins:/app/data/plugins
     networks:
       - shu-network
     restart: unless-stopped
@@ -215,7 +217,7 @@ services:
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
     volumes:
-      - shu-plugins:/app/plugins
+      - shu-data:/app/data
     networks:
       - shu-network
     restart: unless-stopped
@@ -246,7 +248,7 @@ services:
       - SHU_WORKER_SHUTDOWN_TIMEOUT=60.0
       - PYTHONPATH=/app/src
     volumes:
-      - shu-plugins:/app/plugins
+      - shu-data:/app/data
     networks:
       - shu-network
     restart: unless-stopped
@@ -277,7 +279,7 @@ services:
       - SHU_WORKER_SHUTDOWN_TIMEOUT=60.0
       - PYTHONPATH=/app/src
     volumes:
-      - shu-plugins:/app/plugins
+      - shu-data:/app/data
     networks:
       - shu-network
     restart: unless-stopped
@@ -356,5 +358,5 @@ networks:
 volumes:
   redis_data:
   shu-postgres-data:
-  shu-plugins:
+  shu-data:
   frontend-node-modules:

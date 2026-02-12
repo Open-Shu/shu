@@ -35,8 +35,8 @@ COPY backend/migrations/ ./migrations/
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/scripts/ ./scripts/
 
-# Create plugin directory and non-root user to run the application
-RUN mkdir -p /app/plugins \
+# Create plugin and data directories, and non-root user to run the application
+RUN mkdir -p /app/data/plugins /app/data/branding /app/data/attachments /app/data/logs \
     && adduser --disabled-password --gecos "" appuser \
     && chown -R appuser:appuser /app
 USER appuser
