@@ -144,8 +144,9 @@ class JSONFormatter(logging.Formatter):
 
         # Add exception info if present; otherwise include stack for warnings/errors
         if record.exc_info:
+            exc_type = record.exc_info[0]
             log_data["exception"] = {
-                "type": record.exc_info[0].__name__,
+                "type": exc_type.__name__ if exc_type is not None else "Unknown",
                 "message": str(record.exc_info[1]),
                 "traceback": traceback.format_exception(*record.exc_info),
             }
@@ -256,11 +257,12 @@ class ManagedFileHandler(logging.FileHandler):
         archive_path = f"{self.baseFilename}.{yesterday}"
         try:
             self.stream.close()
-            if os.path.exists(self.baseFilename) and os.path.getsize(self.baseFilename) > 0:
+            base_path = Path(self.baseFilename)
+            if base_path.exists() and base_path.stat().st_size > 0:
                 # Avoid clobbering if a startup archive already used this date
                 if os.path.exists(archive_path):
                     archive_path = f"{self.baseFilename}.{yesterday}_midnight"
-                os.rename(self.baseFilename, archive_path)
+                base_path.rename(archive_path)
             self.stream = self._open()
         except OSError as e:
             # Re-open even on failure so logging doesn't break
@@ -317,11 +319,12 @@ def setup_logging() -> None:  # noqa: PLR0915
     # Archive the previous run's log file before the handler opens it.
     # Each restart gets a unique timestamp suffix so same-day restarts
     # never collide.
-    if os.path.exists(log_file_path) and os.path.getsize(log_file_path) > 0:
+    log_path = Path(log_file_path)
+    if log_path.exists() and log_path.stat().st_size > 0:
         ts = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
         archive_path = f"{log_file_path}.{ts}"
         try:
-            os.rename(log_file_path, archive_path)
+            log_path.rename(archive_path)
         except OSError:
             pass  # worst case we append; not worth crashing over
 
@@ -467,10 +470,10 @@ class LoggerMixin:
         return get_logger(self.__class__.__name__)
 
 
-def log_function_call(func):
+def log_function_call(func):  # type: ignore[no-untyped-def]
     """Log function calls at DEBUG level decorator."""
 
-    def wrapper(*args: Any, **kwargs: Any):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling {func.__name__}",
@@ -498,10 +501,10 @@ def log_function_call(func):
     return wrapper
 
 
-def log_async_function_call(func):
+def log_async_function_call(func):  # type: ignore[no-untyped-def]
     """Log async function calls at DEBUG level decorator."""
 
-    async def wrapper(*args: Any, **kwargs: Any):
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling async {func.__name__}",

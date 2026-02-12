@@ -561,7 +561,7 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    return Settings()  # type: ignore[call-arg]
 
 
 # Global settings instance - will be created when first accessed
@@ -1031,7 +1031,7 @@ class ConfigurationManager:
         """
         # Future: Could allow KB-level timeout overrides
         if kb_config and "text_extraction_timeout" in kb_config:
-            return kb_config["text_extraction_timeout"]
+            return int(kb_config["text_extraction_timeout"])
 
         # Use OCR timeout for OCR processing, fast timeout for text extraction
         if use_ocr:
