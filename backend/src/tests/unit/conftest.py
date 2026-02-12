@@ -26,7 +26,6 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 # Add backend/migrations to sys.path so versions.* imports work for migration tests.
-# The test files import `versions.r006_0004...` directly.
 MIGRATIONS_ROOT = BACKEND_ROOT / "migrations"
 if str(MIGRATIONS_ROOT) not in sys.path:
     sys.path.insert(0, str(MIGRATIONS_ROOT))

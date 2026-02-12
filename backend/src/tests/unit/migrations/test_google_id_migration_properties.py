@@ -1,9 +1,11 @@
 """
-Property-based tests for google_id to ProviderIdentity migration.
+Property-based tests for google_id to ProviderIdentity migration
+(Part 12 of the 006 squash).
 
-These tests use Hypothesis to verify universal properties across all valid inputs.
+Uses Hypothesis to verify universal properties across all valid inputs.
 """
 
+import importlib
 import sys
 from collections import namedtuple
 from unittest.mock import MagicMock, patch
@@ -12,147 +14,108 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-# Mock user row returned from database
 UserRow = namedtuple("UserRow", ["id", "google_id", "email", "name", "picture_url"])
 IdentityRow = namedtuple("IdentityRow", ["id"])
 
-
-# Create mock helpers module before any migration imports
-_mock_helpers = MagicMock()
-_mock_helpers.column_exists = MagicMock(return_value=True)
-_mock_helpers.index_exists = MagicMock(return_value=True)
+MODULE_NAME = "versions.006_sixth_release_squash"
 
 
-@pytest.fixture(autouse=True)
-def mock_migration_dependencies():
-    """Mock alembic and migrations.helpers modules before importing migration."""
-    with patch.dict(
-        "sys.modules",
-        {
-            "alembic": MagicMock(),
-            "alembic.op": MagicMock(),
-            "migrations": MagicMock(),
-            "migrations.helpers": _mock_helpers,
-        },
-    ):
-        # Clear any cached import of the migration module
-        if "versions.r006_0004_migrate_google_id_to_provider_identity" in sys.modules:
-            del sys.modules["versions.r006_0004_migrate_google_id_to_provider_identity"]
-        yield
+def _fresh_import():
+    """Import the 006 squash migration module fresh."""
+    for key in list(sys.modules.keys()):
+        if "006_sixth_release_squash" in key:
+            del sys.modules[key]
+    return importlib.import_module(MODULE_NAME)
 
 
-@pytest.mark.usefixtures("mock_migration_dependencies")
+def _make_helpers(*, google_id_column_exists=True):
+    """Helper mocks that make Parts 1-11 no-ops, isolating Part 12."""
+    def _column_exists(inspector, table, column):
+        if table == "users" and column == "google_id":
+            return google_id_column_exists
+        return True
+
+    return {
+        "column_exists": _column_exists,
+        "index_exists": lambda insp, t, i: True,
+        "table_exists": lambda insp, t: True,
+        "add_column_if_not_exists": lambda *a, **kw: None,
+        "drop_column_if_exists": lambda *a, **kw: None,
+        "drop_table_if_exists": lambda *a, **kw: None,
+    }
+
+
+
 class TestMigrationIdempotenceProperty:
     """
-    Property 4: Migration is idempotent.
+    Property: Migration is idempotent.
 
-    For any database state, running the google_id migration N times (where N >= 1)
-    SHALL produce the same final state as running it exactly once. Specifically,
-    the count of ProviderIdentity rows with provider_key="google" SHALL be equal
-    to the count of users with non-null google_id values, regardless of how many
-    times the migration is executed.
-
-    **Validates: Requirements 2.4, 4.6**
+    For any database state, running the google_id migration N times
+    produces the same final state as running it exactly once.
     """
 
-    @given(num_users=st.integers(min_value=0, max_value=10), num_runs=st.integers(min_value=1, max_value=5))
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        num_users=st.integers(min_value=0, max_value=10),
+        num_runs=st.integers(min_value=1, max_value=5),
+    )
+    @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_migration_idempotence(self, num_users: int, num_runs: int):
         """
-        Feature: sso-adapter-refactor
-        Property 4: Migration is idempotent
+        Feature: sso-adapter-refactor, Property: idempotence
 
-        **Validates: Requirements 2.4, 4.6**
-
-        This property verifies that running the migration N times produces
-        the same result as running it once. The number of ProviderIdentity
-        rows created should equal the number of users with google_id.
+        Running the migration N times creates exactly num_users identities.
         """
-        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        migration = _fresh_import()
 
-        # Generate test users with google_ids
         users = [
-            UserRow(
-                id=f"user-{i}",
-                google_id=f"google-sub-{i}",
-                email=f"user{i}@example.com",
-                name=f"User {i}",
-                picture_url=None,
-            )
+            UserRow(f"user-{i}", f"google-sub-{i}", f"u{i}@example.com", f"User {i}", None)
             for i in range(num_users)
         ]
 
-        # Track created identities to simulate database state
         created_identities = set()
 
-        def mock_execute(query):
-            """Simulate database execution."""
-            query_str = str(query)
-            result = MagicMock()
-
-            if "SELECT" in query_str and "users" in query_str:
-                # Return users with google_id
-                result.fetchall.return_value = users
-            elif "SELECT" in query_str and "provider_identities" in query_str:
-                # Check if identity exists
-                # Extract user_id from the query parameters
-                result.fetchone.return_value = None  # Will be set per-call
-            elif "INSERT" in query_str:
-                # Track the insert
-                pass
-            elif "DELETE" in query_str:
-                pass
-
-            return result
-
-        # Simulate running migration multiple times
         for run in range(num_runs):
-            mock_conn = MagicMock()
-            mock_inspector = MagicMock()
+            column_exists_this_run = run == 0
 
             def execute_with_tracking(query, params=None):
-                """Execute with identity tracking."""
                 query_str = str(query)
                 result = MagicMock()
-
-                if "SELECT" in query_str and "FROM users" in query_str:
+                if "pg_extension" in query_str:
+                    result.scalar.return_value = False
+                elif "FROM users" in query_str:
                     result.fetchall.return_value = users
-                elif "SELECT" in query_str and "provider_identities" in query_str:
-                    # Check if this identity was already created
+                elif "provider_identities" in query_str and "SELECT" in query_str:
                     if params and "user_id" in params:
-                        user_id = params["user_id"]
-                        if user_id in created_identities:
-                            result.fetchone.return_value = IdentityRow(id=f"identity-{user_id}")
+                        uid = params["user_id"]
+                        if uid in created_identities:
+                            result.fetchone.return_value = IdentityRow(f"id-{uid}")
                         else:
                             result.fetchone.return_value = None
                     else:
                         result.fetchone.return_value = None
-                elif "INSERT" in query_str and params:
-                    # Track the created identity
-                    if "user_id" in params:
-                        created_identities.add(params["user_id"])
-
+                elif "INSERT" in query_str and params and "user_id" in params:
+                    created_identities.add(params["user_id"])
                 return result
 
+            mock_conn = MagicMock()
             mock_conn.execute.side_effect = execute_with_tracking
 
-            # First run: column exists
-            # Subsequent runs: column doesn't exist (already dropped)
-            column_exists = run == 0
+            helpers = _make_helpers(google_id_column_exists=column_exists_this_run)
 
             with (
-                patch.object(migration_module, "op") as mock_op,
-                patch.object(migration_module, "sa") as mock_sa,
-                patch.object(migration_module, "column_exists", return_value=column_exists),
-                patch.object(migration_module, "index_exists", return_value=column_exists),
+                patch.object(migration, "op") as mock_op,
+                patch.object(migration, "sa") as mock_sa,
+                patch.object(migration, "column_exists", side_effect=helpers["column_exists"]),
+                patch.object(migration, "index_exists", side_effect=helpers["index_exists"]),
+                patch.object(migration, "table_exists", side_effect=helpers["table_exists"]),
+                patch.object(migration, "add_column_if_not_exists", side_effect=helpers["add_column_if_not_exists"]),
+                patch.object(migration, "drop_column_if_exists", side_effect=helpers["drop_column_if_exists"]),
             ):
                 mock_op.get_bind.return_value = mock_conn
-                mock_sa.inspect.return_value = mock_inspector
+                mock_sa.inspect.return_value = MagicMock()
+                migration.upgrade()
 
-                migration_module.upgrade()
-
-        # Property assertion: number of created identities equals number of users
-        assert len(created_identities) == num_users, f"Expected {num_users} identities, got {len(created_identities)}"
+        assert len(created_identities) == num_users
 
     @given(
         user_ids=st.lists(
@@ -162,157 +125,126 @@ class TestMigrationIdempotenceProperty:
             unique=True,
         )
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_no_duplicate_identities_created(self, user_ids: list):
         """
-        Feature: sso-adapter-refactor
-        Property 4: Migration is idempotent
+        Feature: sso-adapter-refactor, Property: no duplicates
 
-        **Validates: Requirements 2.4, 4.6**
-
-        This property verifies that running the migration never creates
-        duplicate ProviderIdentity rows for the same user.
+        The migration never creates duplicate ProviderIdentity rows.
         """
-        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        migration = _fresh_import()
 
-        # Generate test users
         users = [
-            UserRow(id=uid, google_id=f"google-{uid}", email=f"{uid}@example.com", name=f"User {uid}", picture_url=None)
+            UserRow(uid, f"google-{uid}", f"{uid}@example.com", f"User {uid}", None)
             for uid in user_ids
         ]
 
-        # Track all INSERT operations
         insert_operations = []
         existing_identities = set()
 
         def execute_with_tracking(query, params=None):
-            """Execute with duplicate tracking."""
             query_str = str(query)
             result = MagicMock()
-
-            if "SELECT" in query_str and "FROM users" in query_str:
+            if "pg_extension" in query_str:
+                result.scalar.return_value = False
+            elif "FROM users" in query_str:
                 result.fetchall.return_value = users
-            elif "SELECT" in query_str and "provider_identities" in query_str:
+            elif "provider_identities" in query_str and "SELECT" in query_str:
                 if params and "user_id" in params:
-                    user_id = params["user_id"]
-                    if user_id in existing_identities:
-                        result.fetchone.return_value = IdentityRow(id=f"identity-{user_id}")
+                    uid = params["user_id"]
+                    if uid in existing_identities:
+                        result.fetchone.return_value = IdentityRow(f"id-{uid}")
                     else:
                         result.fetchone.return_value = None
                 else:
                     result.fetchone.return_value = None
-            elif "INSERT" in query_str and params:
-                if "user_id" in params:
-                    insert_operations.append(params["user_id"])
-                    existing_identities.add(params["user_id"])
-
+            elif "INSERT" in query_str and params and "user_id" in params:
+                insert_operations.append(params["user_id"])
+                existing_identities.add(params["user_id"])
             return result
 
         mock_conn = MagicMock()
         mock_conn.execute.side_effect = execute_with_tracking
-        mock_inspector = MagicMock()
+
+        helpers = _make_helpers(google_id_column_exists=True)
 
         with (
-            patch.object(migration_module, "op") as mock_op,
-            patch.object(migration_module, "sa") as mock_sa,
-            patch.object(migration_module, "column_exists", return_value=True),
-            patch.object(migration_module, "index_exists", return_value=True),
+            patch.object(migration, "op") as mock_op,
+            patch.object(migration, "sa") as mock_sa,
+            patch.object(migration, "column_exists", side_effect=helpers["column_exists"]),
+            patch.object(migration, "index_exists", side_effect=helpers["index_exists"]),
+            patch.object(migration, "table_exists", side_effect=helpers["table_exists"]),
+            patch.object(migration, "add_column_if_not_exists", side_effect=helpers["add_column_if_not_exists"]),
+            patch.object(migration, "drop_column_if_exists", side_effect=helpers["drop_column_if_exists"]),
         ):
             mock_op.get_bind.return_value = mock_conn
-            mock_sa.inspect.return_value = mock_inspector
+            mock_sa.inspect.return_value = MagicMock()
+            migration.upgrade()
 
-            # Run migration
-            migration_module.upgrade()
-
-        # Property assertion: no duplicate inserts
-        assert len(insert_operations) == len(set(insert_operations)), f"Duplicate inserts detected: {insert_operations}"
-
-        # Property assertion: exactly one insert per user
-        assert len(insert_operations) == len(
-            user_ids
-        ), f"Expected {len(user_ids)} inserts, got {len(insert_operations)}"
+        assert len(insert_operations) == len(set(insert_operations))
+        assert len(insert_operations) == len(user_ids)
 
     @given(
         existing_identity_ratio=st.floats(min_value=0.0, max_value=1.0),
         num_users=st.integers(min_value=1, max_value=10),
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_property_skips_existing_identities(self, existing_identity_ratio: float, num_users: int):
         """
-        Feature: sso-adapter-refactor
-        Property 4: Migration is idempotent
+        Feature: sso-adapter-refactor, Property: skip existing
 
-        **Validates: Requirements 2.4, 4.6**
-
-        This property verifies that the migration skips users who already
-        have ProviderIdentity rows, ensuring idempotent behavior.
+        The migration skips users who already have ProviderIdentity rows.
         """
-        import versions.r006_0004_migrate_google_id_to_provider_identity as migration_module
+        migration = _fresh_import()
 
-        # Generate test users
         users = [
-            UserRow(
-                id=f"user-{i}",
-                google_id=f"google-sub-{i}",
-                email=f"user{i}@example.com",
-                name=f"User {i}",
-                picture_url=None,
-            )
+            UserRow(f"user-{i}", f"google-sub-{i}", f"u{i}@example.com", f"User {i}", None)
             for i in range(num_users)
         ]
 
-        # Determine which users already have identities
         num_existing = int(num_users * existing_identity_ratio)
-        users_with_existing_identity = set(f"user-{i}" for i in range(num_existing))
-
-        # Track INSERT operations
+        users_with_existing = set(f"user-{i}" for i in range(num_existing))
         insert_operations = []
 
         def execute_with_tracking(query, params=None):
-            """Execute with existing identity simulation."""
             query_str = str(query)
             result = MagicMock()
-
-            if "SELECT" in query_str and "FROM users" in query_str:
+            if "pg_extension" in query_str:
+                result.scalar.return_value = False
+            elif "FROM users" in query_str:
                 result.fetchall.return_value = users
-            elif "SELECT" in query_str and "provider_identities" in query_str:
+            elif "provider_identities" in query_str and "SELECT" in query_str:
                 if params and "user_id" in params:
-                    user_id = params["user_id"]
-                    if user_id in users_with_existing_identity:
-                        result.fetchone.return_value = IdentityRow(id=f"identity-{user_id}")
+                    uid = params["user_id"]
+                    if uid in users_with_existing:
+                        result.fetchone.return_value = IdentityRow(f"id-{uid}")
                     else:
                         result.fetchone.return_value = None
                 else:
                     result.fetchone.return_value = None
-            elif "INSERT" in query_str and params:
-                if "user_id" in params:
-                    insert_operations.append(params["user_id"])
-
+            elif "INSERT" in query_str and params and "user_id" in params:
+                insert_operations.append(params["user_id"])
             return result
 
         mock_conn = MagicMock()
         mock_conn.execute.side_effect = execute_with_tracking
-        mock_inspector = MagicMock()
+
+        helpers = _make_helpers(google_id_column_exists=True)
 
         with (
-            patch.object(migration_module, "op") as mock_op,
-            patch.object(migration_module, "sa") as mock_sa,
-            patch.object(migration_module, "column_exists", return_value=True),
-            patch.object(migration_module, "index_exists", return_value=True),
+            patch.object(migration, "op") as mock_op,
+            patch.object(migration, "sa") as mock_sa,
+            patch.object(migration, "column_exists", side_effect=helpers["column_exists"]),
+            patch.object(migration, "index_exists", side_effect=helpers["index_exists"]),
+            patch.object(migration, "table_exists", side_effect=helpers["table_exists"]),
+            patch.object(migration, "add_column_if_not_exists", side_effect=helpers["add_column_if_not_exists"]),
+            patch.object(migration, "drop_column_if_exists", side_effect=helpers["drop_column_if_exists"]),
         ):
             mock_op.get_bind.return_value = mock_conn
-            mock_sa.inspect.return_value = mock_inspector
+            mock_sa.inspect.return_value = MagicMock()
+            migration.upgrade()
 
-            migration_module.upgrade()
-
-        # Property assertion: only users without existing identity get INSERT
         expected_inserts = num_users - num_existing
-        assert (
-            len(insert_operations) == expected_inserts
-        ), f"Expected {expected_inserts} inserts, got {len(insert_operations)}"
-
-        # Property assertion: no INSERT for users with existing identity
-        for user_id in insert_operations:
-            assert (
-                user_id not in users_with_existing_identity
-            ), f"Should not insert for user with existing identity: {user_id}"
+        assert len(insert_operations) == expected_inserts
+        for uid in insert_operations:
+            assert uid not in users_with_existing
