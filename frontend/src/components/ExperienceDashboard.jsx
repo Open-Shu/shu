@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   alpha,
@@ -112,6 +113,7 @@ const CardTimestamp = ({ relativeTime, theme }) => (
  */
 const ExperienceResultCard = ({ experience, onClick, onRun }) => {
   const theme = useTheme();
+  const navigate = useNavigate();
   const hasResult = !!experience.latest_run_id;
   const promptPreview = experience.prompt_template ? experience.prompt_template.substring(0, 100) : '';
   const dataPreview = experience.result_preview ? experience.result_preview.substring(0, 200) : '';
@@ -195,8 +197,25 @@ const ExperienceResultCard = ({ experience, onClick, onRun }) => {
             </Link>
           </Box>
 
-          {!experience.can_run && experience.missing_identities?.length > 0 && (
-            <Alert severity="warning" sx={{ mt: 2 }}>
+          {experience.missing_identities?.length > 0 && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 2 }}
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(
+                      `/settings/connected-accounts?highlight=${encodeURIComponent(experience.missing_identities.join(','))}`
+                    );
+                  }}
+                >
+                  Activate Now
+                </Button>
+              }
+            >
               Missing required connections: {experience.missing_identities.join(', ')}
             </Alert>
           )}
@@ -291,7 +310,7 @@ export default function ExperienceDashboard({ onCreateConversation, createConver
     error,
     refetch,
   } = useQuery(['my-experience-results'], () => experiencesAPI.getMyResults().then(extractDataFromResponse), {
-    staleTime: 30000,
+    staleTime: 0,
     refetchInterval: 60000, // Auto-refresh every minute
   });
 

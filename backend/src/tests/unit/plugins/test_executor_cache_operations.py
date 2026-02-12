@@ -119,7 +119,10 @@ class TestExecutorCacheBackendIntegration:
     @pytest.mark.asyncio
     async def test_cache_backend_factory_integration(self):
         """Test that get_cache_backend factory works correctly."""
-        from shu.core.cache_backend import get_cache_backend
+        from shu.core.cache_backend import get_cache_backend, reset_cache_backend
+
+        # Reset singleton to avoid stale client from a prior test's event loop
+        reset_cache_backend()
 
         # Test that we can get a cache backend
         backend = await get_cache_backend()

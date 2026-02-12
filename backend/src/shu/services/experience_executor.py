@@ -385,6 +385,11 @@ class ExperienceExecutor:
                     "finished_at": step_end.isoformat(),
                 }
 
+                yield ExperienceEvent(
+                    ExperienceEventType.STEP_FAILED,
+                    {"step_key": step.step_key, "error": error_msg},
+                )
+
     def _check_should_run_step(self, step: ExperienceStep, context: dict[str, Any]) -> tuple[bool, str | None]:
         """Determine if a step should run based on its condition.
 

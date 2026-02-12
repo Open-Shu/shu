@@ -98,20 +98,7 @@ async def has_provider_identity(db: AsyncSession, user_id: str, provider_key: st
     except Exception:
         pass
     # Fallback: check for an active credential even if identity row is missing
-    try:
-        from ..models.provider_credential import ProviderCredential
-
-        cred_res = await db.execute(
-            select(ProviderCredential).where(
-                (ProviderCredential.user_id == str(user_id))
-                & (ProviderCredential.provider_key == str(provider_key))
-                & (ProviderCredential.is_active == True)  # noqa: E712
-            )
-        )
-        cred = cred_res.scalars().first()
-        return bool(cred)
-    except Exception:
-        return False
+    return bool(await _get_active_credentials(db, user_id, provider_key))
 
 
 # TODO: Refactor this function. It's too complex (number of branches and statements).
@@ -300,6 +287,87 @@ class PluginIdentityError(Exception):
         self.details = details or {}
 
 
+async def _is_plugin_subscribed(db: AsyncSession, user_id: str, plugin_name: str, provider_key: str) -> bool | None:
+    """Check if plugin is subscribed for the given provider.
+
+    Returns True if subscribed, False if subscriptions exist but plugin is not among them,
+    or None if no subscriptions exist (i.e. no restriction applies).
+    """
+    try:
+        from ..services.host_auth_service import HostAuthService
+
+        subs = await HostAuthService.list_subscriptions(db, str(user_id), provider_key, None)
+        if subs:
+            return str(plugin_name) in {s.plugin_name for s in subs}
+        return None
+    except Exception:
+        return None
+
+
+async def _get_active_credentials(db: AsyncSession, user_id: str, provider_key: str) -> list:
+    """Return active ProviderCredentials for user + provider."""
+    try:
+        from sqlalchemy import and_
+
+        from ..models.provider_credential import ProviderCredential
+
+        result = await db.execute(
+            select(ProviderCredential).where(
+                and_(
+                    ProviderCredential.user_id == str(user_id),
+                    ProviderCredential.provider_key == str(provider_key),
+                    ProviderCredential.is_active == True,  # noqa: E712
+                )
+            )
+        )
+        return list(result.scalars().all())
+    except Exception:
+        return []
+
+
+async def check_plugin_user_auth(
+    db: AsyncSession,
+    plugin_name: str,
+    user_id: str,
+    provider_key: str,
+    required_scopes: list[str] | None = None,
+) -> tuple[bool, str | None]:
+    """Read-only check if user can execute this plugin for the given provider.
+
+    Checks subscription and scopes against ProviderCredential (same source
+    as the auth adapters and execution path).
+
+    Returns (ok, error_code). error_code is one of:
+      None                    - all checks passed
+      "subscription_required" - user has subscriptions for provider but not this plugin
+      "no_credential"         - no active ProviderCredential for provider
+      "insufficient_scopes"   - credential exists but missing required scopes
+    """
+    prov = (provider_key or "").strip().lower()
+    uid = str(user_id)
+
+    # 1. Subscription check
+    subscribed = await _is_plugin_subscribed(db, uid, plugin_name, prov)
+    if subscribed is False:
+        return (False, "subscription_required")
+
+    # 2. Credential + scope check
+    creds = await _get_active_credentials(db, uid, prov)
+    if not creds:
+        return (False, "no_credential")
+
+    if required_scopes:
+        scopes_union: set[str] = set()
+        for c in creds:
+            for s in c.scopes or []:
+                scopes_union.add(str(s))
+        missing = [s for s in required_scopes if s not in scopes_union]
+        if missing:
+            return (False, "insufficient_scopes")
+
+    return (True, None)
+
+
 async def ensure_user_identity_for_plugin(
     db: AsyncSession,
     plugin: Any,
@@ -316,23 +384,13 @@ async def ensure_user_identity_for_plugin(
 
     provider_key = str(provider).strip().lower()
     # Subscription enforcement (if subscriptions exist for provider)
-    try:
-        from ..services.host_auth_service import HostAuthService  # local import
-
-        subs = await HostAuthService.list_subscriptions(db, str(user_id), provider_key, None)
-        if subs:
-            subscribed_names = {s.plugin_name for s in subs}
-            if str(plugin_name) not in subscribed_names:
-                raise PluginIdentityError(
-                    "subscription_required",
-                    f"Plugin '{plugin_name}' is not subscribed for provider '{provider_key}'. Manage in Connected Accounts.",
-                    {"provider": provider_key, "plugin": plugin_name},
-                )
-    except PluginIdentityError:
-        raise
-    except Exception:
-        # Non-blocking if subscription lookup fails; caller logs as needed
-        pass
+    subscribed = await _is_plugin_subscribed(db, str(user_id), plugin_name, provider_key)
+    if subscribed is False:
+        raise PluginIdentityError(
+            "subscription_required",
+            f"Plugin '{plugin_name}' is not subscribed for provider '{provider_key}'. Manage in Connected Accounts.",
+            {"provider": provider_key, "plugin": plugin_name},
+        )
 
     # Identity/scopes enforcement
     try:

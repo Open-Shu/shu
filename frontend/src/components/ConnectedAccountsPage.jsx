@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -11,14 +11,44 @@ import {
   Button,
   Snackbar,
   Alert,
+  alpha,
+  useTheme,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient, useQueries } from 'react-query';
+import { useSearchParams } from 'react-router-dom';
 import api, { extractDataFromResponse, hostAuthAPI, formatError } from '../services/api';
-import HelpTooltip from './HelpTooltip.jsx';
+import { Link as LinkIcon } from '@mui/icons-material';
+import PageHelpHeader from './PageHelpHeader';
 import IdentityStatus from './IdentityStatus';
 import PluginSecretsSection from './PluginSecretsSection';
 
 export default function ConnectedAccountsPage() {
+  const theme = useTheme();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const highlightPlugins = useMemo(() => {
+    const raw = searchParams.get('highlight');
+    return raw
+      ? new Set(
+          raw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        )
+      : new Set();
+  }, [searchParams]);
+  const highlightRef = useRef(null);
+
+  // Scroll to highlighted plugins and clear the param after a delay
+  useEffect(() => {
+    if (highlightPlugins.size > 0 && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const timer = setTimeout(() => {
+        searchParams.delete('highlight');
+        setSearchParams(searchParams, { replace: true });
+      }, 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightPlugins, searchParams, setSearchParams]);
   // Load all plugins to compute a provider-wide superset of requested scopes (union across plugins)
   const pluginsQ = useQuery(['plugins', 'list'], () => api.get('/plugins').then(extractDataFromResponse));
 
@@ -264,19 +294,70 @@ export default function ConnectedAccountsPage() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-        <Typography variant="h5" sx={{ fontWeight: 700, mr: 1 }}>
-          Plugin Subscriptions
-        </Typography>
-        <HelpTooltip
-          title="Connect accounts, subscribe to plugins, and configure secrets. We request the union of scopes across subscribed plugins per provider."
-          ariaLabel="help about plugin subscriptions"
-        />
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Manage provider connections, plugin subscriptions, and secrets. The server requests consent for the union of
-        scopes across your subscribed plugins.
-      </Typography>
+      <PageHelpHeader
+        title="Plugin Subscriptions"
+        description="Manage provider connections, plugin subscriptions, and secrets. The server requests consent for the union of scopes across your subscribed plugins."
+        icon={<LinkIcon />}
+        tips={[
+          'Subscribe to plugins to grant them access to your connected accounts',
+          'Click Authorize in the Accounts section to connect a new provider',
+          'Use the Plugin Secrets section to store API keys required by specific plugins',
+        ]}
+      />
+
+      {highlightPlugins.size > 0 &&
+        (() => {
+          // Resolve highlighted plugin names to display labels
+          const allPlugins = Object.values(pluginsByProvider).flat();
+          const highlightLabels = [...highlightPlugins].map((name) => {
+            // Check if it's a plugin name
+            const found = allPlugins.find((pl) => pl.name === name);
+            if (found) {
+              return found.label;
+            }
+            // Check if it's a provider key — list all plugins under that provider
+            const provPlugins = pluginsByProvider[name];
+            if (provPlugins?.length) {
+              return `all ${name} plugins`;
+            }
+            return name;
+          });
+          return (
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                mb: 2,
+                backgroundColor: alpha(theme.palette.warning.main, 0.08),
+                border: `2px solid ${alpha(theme.palette.warning.main, 0.3)}`,
+                borderRadius: 2,
+              }}
+            >
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1.5 }}>
+                Action required to run your experience
+              </Typography>
+              <Stack spacing={1}>
+                <Typography variant="body2">
+                  <strong>Step 1:</strong> Scroll down to <strong>Plugin Subscriptions</strong> and check the box next
+                  to:{' '}
+                  {highlightLabels.map((label, i) => (
+                    <strong key={i}>
+                      {label}
+                      {i < highlightLabels.length - 1 ? ', ' : ''}
+                    </strong>
+                  ))}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Step 2:</strong> If you haven't connected the provider account yet, click{' '}
+                  <strong>Authorize</strong> in the <strong>Accounts</strong> section above the subscriptions.
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Step 3:</strong> Go back to your experience and run it again.
+                </Typography>
+              </Stack>
+            </Paper>
+          );
+        })()}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Box
@@ -344,6 +425,7 @@ export default function ConnectedAccountsPage() {
                     <Stack>
                       {items.map((pl) => {
                         const checked = subscribed.has(pl.name);
+                        const isHighlighted = highlightPlugins.has(pl.name) || highlightPlugins.has(prov);
                         const pluginScopes = pluginsByProviderScopes?.[prov]?.[pl.name] || [];
                         const labelNode = (
                           <Tooltip title={pluginScopes.length ? pluginScopes.join('\n') : ''}>
@@ -352,7 +434,22 @@ export default function ConnectedAccountsPage() {
                         );
                         return (
                           <FormControlLabel
+                            ref={isHighlighted ? highlightRef : undefined}
                             key={`${prov}:${pl.name}`}
+                            sx={
+                              isHighlighted
+                                ? {
+                                    bgcolor: 'warning.light',
+                                    borderRadius: 1,
+                                    px: 1,
+                                    animation: 'highlight-pulse 2s ease-in-out 3',
+                                    '@keyframes highlight-pulse': {
+                                      '0%, 100%': { bgcolor: 'warning.light' },
+                                      '50%': { bgcolor: 'warning.main' },
+                                    },
+                                  }
+                                : undefined
+                            }
                             control={
                               <Checkbox
                                 size="small"
