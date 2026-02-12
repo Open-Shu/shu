@@ -200,7 +200,10 @@ def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int)
         return
 
     prefix = f"shu_{hostname}.log."
-    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    # Compare on date boundaries, not exact timestamps, because archive
+    # filenames only carry date precision.  retention_days=1 means "keep
+    # yesterday's archives, delete anything older".
+    cutoff_date = (datetime.now(UTC) - timedelta(days=retention_days)).date()
     try:
         for entry in os.scandir(log_dir):
             if not entry.name.startswith(prefix) or not entry.is_file():
@@ -209,8 +212,8 @@ def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int)
             suffix = entry.name[len(prefix) :]  # pragma: allowlist secret
             date_part = suffix[:10]
             try:
-                file_date = datetime.strptime(date_part, "%Y-%m-%d").replace(tzinfo=UTC)
-                if file_date < cutoff:
+                file_date = datetime.strptime(date_part, "%Y-%m-%d").date()  # noqa: DTZ007 # tz irrelevant, only need date
+                if file_date < cutoff_date:
                     os.unlink(entry.path)
             except ValueError:
                 continue  # not a date-suffixed file we manage
