@@ -199,7 +199,7 @@ def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int)
             if not entry.name.startswith(prefix) or not entry.is_file():
                 continue
             # Extract the date portion (first 10 chars of the suffix: YYYY-MM-DD)
-            suffix = entry.name[len(prefix):]
+            suffix = entry.name[len(prefix):]  # pragma: allowlist secret
             date_part = suffix[:10]
             try:
                 file_date = datetime.strptime(date_part, "%Y-%m-%d").replace(tzinfo=UTC)
