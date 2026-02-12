@@ -191,7 +191,14 @@ def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int)
 
     Handles both date-suffixed files (e.g., shu_host.log.2026-02-10)
     and startup-archived files (e.g., shu_host.log.2026-02-10_14-30-00).
+
+    If *retention_days* is <= 0, cleanup is skipped to avoid accidental
+    mass-deletion (a non-positive value would place the cutoff at or
+    after the current time, matching every archive).
     """
+    if retention_days <= 0:
+        return
+
     prefix = f"shu_{hostname}.log."
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     try:
