@@ -846,6 +846,28 @@ async def process_job(job):
         raise ValueError(f"Unsupported workload type: {workload_type}")
 
 
+async def _run_log_maintenance() -> None:
+    """Periodically call ManagedFileHandler.rotate_if_needed().
+
+    Worker processes are long-lived but don't run the unified scheduler
+    (that's the API process's job). This lightweight loop ensures their
+    log files still get midnight rotation and retention cleanup.
+    """
+    from .core.logging import get_managed_file_handler
+
+    while True:
+        try:
+            handler = get_managed_file_handler()
+            if handler is not None:
+                handler.rotate_if_needed()
+        except Exception as e:
+            logger.debug("Log maintenance tick failed (non-fatal): %s", e)
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            break
+
+
 async def run_worker(
     workload_types: set[WorkloadType],
     poll_interval: float = 1.0,
@@ -876,6 +898,11 @@ async def run_worker(
     except Exception as e:
         logger.error(f"Failed to initialize queue backend: {e}", exc_info=True)
         sys.exit(1)
+
+    # Start a lightweight log-maintenance loop so that worker processes
+    # (which are long-lived but don't run the full unified scheduler)
+    # still get midnight rotation and retention cleanup on their log files.
+    log_maintenance_task = asyncio.create_task(_run_log_maintenance(), name="worker:log-maintenance")
 
     # Create worker configuration
     config = WorkerConfig(
@@ -925,6 +952,8 @@ async def run_worker(
         logger.error(f"Worker orchestration error: {e}", exc_info=True)
         sys.exit(1)
     finally:
+        if not log_maintenance_task.done():
+            log_maintenance_task.cancel()
         logger.info("Workers shutdown complete")
 
 

@@ -133,8 +133,7 @@ class OpenAIAdapter(ResponsesAdapter):
                                 "filters": ObjectParameter(
                                     label="Filters",
                                     description=(
-                                        "Optional provider-specific filters for web search "
-                                        "(e.g. domains, date ranges)."
+                                        "Optional provider-specific filters for web search (e.g. domains, date ranges)."
                                     ),
                                 ),
                                 "search_context_size": EnumParameter(

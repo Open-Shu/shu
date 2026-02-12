@@ -154,7 +154,7 @@ class ConfigCache:
             # we'll need to track keys or implement a different approach
             # For now, we'll log that this operation is not fully supported
             logger.warning(
-                "clear_all() is not fully supported with CacheBackend - " "individual keys must be deleted explicitly"
+                "clear_all() is not fully supported with CacheBackend - individual keys must be deleted explicitly"
             )
 
         except Exception as e:

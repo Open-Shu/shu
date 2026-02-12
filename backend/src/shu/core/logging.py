@@ -2,16 +2,23 @@
 
 This module sets up structured logging with better readability, color coding,
 proper alignment, and appropriate log levels for different environments.
+
+Log file management:
+- Each process startup archives the previous log file with a timestamp suffix.
+- A plain FileHandler writes to a fresh file (no TimedRotatingFileHandler).
+- The unified scheduler's LogMaintenanceSource handles midnight rotation and
+  retention cleanup on every tick, so old archives are pruned continuously
+  rather than only at startup.
 """
 
 import json
 import logging
-import logging.config
 import os
-import shutil
+import socket
 import sys
+import threading
 import traceback
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -22,71 +29,6 @@ logger = logging.getLogger(__name__)
 # Internal guard to prevent double configuration when setup_logging() is called
 # both at import-time and again during lifespan startup
 _LOGGING_CONFIGURED = False
-
-
-def rotate_log_file(log_file_path: str, max_archives: int = 10) -> None:
-    """Rotate the log file by archiving the current one and starting fresh.
-
-    Args:
-        log_file_path: Path to the log file to rotate
-        max_archives: Maximum number of archived log files to keep
-
-    """
-    log_path = Path(log_file_path)
-
-    # If the log file doesn't exist, nothing to rotate
-    if not log_path.exists():
-        return
-
-    # Create archive filename with timestamp
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    archive_name = f"{log_path.stem}_{timestamp}{log_path.suffix}"
-    archive_path = log_path.parent / archive_name
-
-    try:
-        # Move current log file to archive
-        shutil.move(str(log_path), str(archive_path))
-
-        # Clean up old archives if we have too many
-        cleanup_old_log_archives(log_path.parent, log_path.stem, max_archives)
-
-        # Log the rotation (this will go to console since file handler isn't set up yet)
-        logger.info("Log file rotated: %s -> %s", log_path.name, archive_name)
-
-    except Exception as e:
-        # If rotation fails, just log the error but don't fail startup
-        logger.error("Failed to rotate log file %s: %s", log_path.name, e)
-
-
-def cleanup_old_log_archives(log_dir: Path, log_stem: str, max_archives: int) -> None:
-    """Clean up old log archives, keeping only the most recent ones.
-
-    Args:
-        log_dir: Directory containing log files
-        log_stem: Stem of the log file name (e.g., 'shu')
-        max_archives: Maximum number of archived log files to keep
-
-    """
-    try:
-        # Find all archived log files for this log stem
-        archive_pattern = f"{log_stem}_*.log"
-        archive_files = list(log_dir.glob(archive_pattern))
-
-        # Sort by modification time (oldest first)
-        archive_files.sort(key=lambda x: x.stat().st_mtime)
-
-        # Remove oldest files if we have too many
-        if len(archive_files) > max_archives:
-            files_to_remove = archive_files[:-max_archives]
-            for file_path in files_to_remove:
-                try:
-                    file_path.unlink()
-                    logger.info("Removed old log archive: %s", file_path.name)
-                except Exception as e:
-                    logger.error("Failed to remove old log archive %s: %s", file_path.name, e)
-
-    except Exception as e:
-        logger.error("Failed to cleanup old log archives: %s", e)
 
 
 class ColoredFormatter(logging.Formatter):
@@ -202,8 +144,9 @@ class JSONFormatter(logging.Formatter):
 
         # Add exception info if present; otherwise include stack for warnings/errors
         if record.exc_info:
+            exc_type = record.exc_info[0]
             log_data["exception"] = {
-                "type": record.exc_info[0].__name__,
+                "type": exc_type.__name__ if exc_type is not None else "Unknown",
                 "message": str(record.exc_info[1]),
                 "traceback": traceback.format_exception(*record.exc_info),
             }
@@ -243,6 +186,121 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
+def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int) -> None:
+    """Remove archived log files older than the retention window.
+
+    Handles both date-suffixed files (e.g., shu_host.log.2026-02-10)
+    and startup-archived files (e.g., shu_host.log.2026-02-10_14-30-00).
+
+    If *retention_days* is <= 0, cleanup is skipped to avoid accidental
+    mass-deletion (a non-positive value would place the cutoff at or
+    after the current time, matching every archive).
+    """
+    if retention_days <= 0:
+        return
+
+    prefix = f"shu_{hostname}.log."
+    # Compare on date boundaries, not exact timestamps, because archive
+    # filenames only carry date precision.  retention_days=1 means "keep
+    # yesterday's archives, delete anything older".
+    cutoff_date = (datetime.now(UTC) - timedelta(days=retention_days)).date()
+    try:
+        for entry in os.scandir(log_dir):
+            if not entry.name.startswith(prefix) or not entry.is_file():
+                continue
+            # Extract the date portion (first 10 chars of the suffix: YYYY-MM-DD)
+            suffix = entry.name[len(prefix) :]  # pragma: allowlist secret
+            date_part = suffix[:10]
+            try:
+                file_date = datetime.strptime(date_part, "%Y-%m-%d").date()  # noqa: DTZ007 # tz irrelevant, only need date
+                if file_date < cutoff_date:
+                    os.unlink(entry.path)
+            except ValueError:
+                continue  # not a date-suffixed file we manage
+    except OSError:
+        pass  # directory listing failed; not worth crashing over
+
+
+class ManagedFileHandler(logging.FileHandler):
+    """FileHandler with built-in rotation and retention support.
+
+    Replaces TimedRotatingFileHandler with a simpler approach that we fully
+    control. Rotation happens in two scenarios:
+
+    1. At process startup: setup_logging() renames the existing log file
+       before creating this handler, so each app cycle starts fresh.
+    2. At midnight: the scheduler calls rotate_if_needed() every tick.
+       If the UTC date has changed since the file was opened, the current
+       file is archived with a date suffix and a new file is opened.
+
+    Retention cleanup also runs via rotate_if_needed(), pruning archived
+    files older than the configured retention window.
+    """
+
+    def __init__(self, filename: str, hostname: str, retention_days: int) -> None:
+        super().__init__(filename, mode="a", encoding="utf-8")
+        self._hostname = hostname
+        self._retention_days = retention_days
+        self._log_dir = Path(filename).parent
+        self._current_date = datetime.now(UTC).date()
+        self._lock_rotate = threading.Lock()
+
+    def rotate_if_needed(self) -> None:
+        """Check if midnight has passed and rotate if so, then prune old archives.
+
+        Called by the unified scheduler on every tick. Thread-safe.
+        """
+        today = datetime.now(UTC).date()
+        if today != self._current_date:
+            with self._lock_rotate:
+                # Double-check after acquiring lock
+                if today != self._current_date:
+                    self._do_midnight_rotate()
+                    self._current_date = today
+        # Always prune old archives (cheap filesystem scan)
+        _cleanup_old_log_archives(self._log_dir, self._hostname, self._retention_days)
+
+    def _do_midnight_rotate(self) -> None:
+        """Archive the current log file with a date suffix and open a fresh one.
+
+        Must be called while holding ``_lock_rotate``.  We additionally acquire
+        the handler lock (the same lock ``emit()`` uses) so that no concurrent
+        ``emit()`` call can write to a closed stream during the
+        close/rename/reopen sequence.
+        """
+        # Use yesterday's date as the suffix since midnight just passed
+        yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+        archive_path = f"{self.baseFilename}.{yesterday}"
+        self.acquire()
+        try:
+            self.stream.close()
+            base_path = Path(self.baseFilename)
+            if base_path.exists() and base_path.stat().st_size > 0:
+                # Avoid clobbering if a startup archive already used this date
+                if os.path.exists(archive_path):
+                    archive_path = f"{self.baseFilename}.{yesterday}_midnight"
+                base_path.rename(archive_path)
+            self.stream = self._open()
+        except OSError as e:
+            # Re-open even on failure so logging doesn't break
+            try:
+                self.stream = self._open()
+            except Exception:
+                pass
+            logging.getLogger(__name__).warning("Midnight log rotation failed: %s", e)
+        finally:
+            self.release()
+
+
+# Module-level reference so the scheduler source can call rotate_if_needed()
+_managed_file_handler: ManagedFileHandler | None = None
+
+
+def get_managed_file_handler() -> ManagedFileHandler | None:
+    """Return the active ManagedFileHandler, if logging has been configured."""
+    return _managed_file_handler
+
+
 # TODO: Refactor this function. It's too complex (number of branches and statements).
 def setup_logging() -> None:  # noqa: PLR0915
     """Set up logging configuration with improved readability."""
@@ -266,20 +324,39 @@ def setup_logging() -> None:  # noqa: PLR0915
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
 
-    # Create file handler for logs anchored at repo root so tests work no matter the CWD
-    try:
-        repo_root = settings.__class__._repo_root_from_this_file()
-    except Exception:
-        repo_root = Path().resolve()
-    log_dir = repo_root / "logs"
+    # Create file handler using configurable log directory and our ManagedFileHandler.
+    # Startup archiving gives each app cycle a clean file. Midnight rotation and
+    # retention cleanup are handled by the scheduler's LogMaintenanceSource.
+    global _managed_file_handler  # noqa: PLW0603
+    log_dir = Path(settings.log_dir)
     os.makedirs(log_dir, exist_ok=True)
 
-    # Rotate log file before creating new one
-    log_file_path = os.path.join(log_dir, "shu.log")
-    rotate_log_file(log_file_path)
+    # Include hostname in filename so horizontally scaled replicas don't clobber each other
+    hostname = socket.gethostname()
+    log_file_path = os.path.join(log_dir, f"shu_{hostname}.log")
 
-    file_handler = logging.FileHandler(log_file_path)
+    # Archive the previous run's log file before the handler opens it.
+    # Each restart gets a unique timestamp suffix so same-day restarts
+    # never collide.
+    log_path = Path(log_file_path)
+    if log_path.exists() and log_path.stat().st_size > 0:
+        ts = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
+        archive_path = f"{log_file_path}.{ts}"
+        try:
+            log_path.rename(archive_path)
+        except OSError:
+            pass  # worst case we append; not worth crashing over
+
+    file_handler = ManagedFileHandler(
+        log_file_path,
+        hostname=hostname,
+        retention_days=settings.log_retention_days,
+    )
     file_handler.setFormatter(formatter)
+    _managed_file_handler = file_handler
+
+    # Run an initial cleanup of old archives at startup
+    _cleanup_old_log_archives(log_dir, hostname, settings.log_retention_days)
 
     # Immediately configure SQLAlchemy loggers to use our formatter
     # This prevents SQLAlchemy from setting up its own logging
@@ -412,10 +489,10 @@ class LoggerMixin:
         return get_logger(self.__class__.__name__)
 
 
-def log_function_call(func):
+def log_function_call(func):  # type: ignore[no-untyped-def]
     """Log function calls at DEBUG level decorator."""
 
-    def wrapper(*args: Any, **kwargs: Any):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling {func.__name__}",
@@ -443,10 +520,10 @@ def log_function_call(func):
     return wrapper
 
 
-def log_async_function_call(func):
+def log_async_function_call(func):  # type: ignore[no-untyped-def]
     """Log async function calls at DEBUG level decorator."""
 
-    async def wrapper(*args: Any, **kwargs: Any):
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         logger = get_logger(func.__module__)
         logger.debug(
             f"Calling async {func.__name__}",
