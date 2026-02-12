@@ -16,7 +16,7 @@ from .logging import get_logger
 logger = get_logger(__name__)
 
 
-def sanitize_stream_error_message(error_content: str) -> str:
+def sanitize_stream_error_message(error_content: str | None) -> str:
     """Sanitize error messages for SSE streams while preserving actionable errors.
 
     Provides selective error sanitization so that user-actionable errors
@@ -54,7 +54,7 @@ def sanitize_stream_error_message(error_content: str) -> str:
 async def create_sse_stream_generator(
     event_generator: AsyncGenerator[Any, None],
     error_context: str = "streaming",
-    error_sanitizer: Callable[[str], str] | None = sanitize_stream_error_message,
+    error_sanitizer: Callable[[str | None], str] | None = sanitize_stream_error_message,
     include_correlation_id: bool = False,
     error_code: str = "STREAM_ERROR",
 ) -> AsyncGenerator[str, None]:
@@ -102,7 +102,7 @@ async def create_sse_stream_generator(
             try:
                 # Apply error sanitizer to error-type events if provided
                 if error_sanitizer is not None and getattr(event, "type", None) == "error":
-                    event.content = error_sanitizer(event.content or "")
+                    event.content = error_sanitizer(event.content)
 
                 payload = event.to_dict()
                 yield f"data: {json.dumps(payload)}\n\n"

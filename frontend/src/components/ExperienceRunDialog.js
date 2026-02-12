@@ -101,7 +101,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                   setDiscoveredStepKeys((prev) => (prev.includes(event.step_key) ? prev : [...prev, event.step_key]));
                   setStepStates((prev) => ({
                     ...prev,
-                    [event.step_key]: { status: 'running', step_type: event.step_type, ...prev[event.step_key] },
+                    [event.step_key]: { ...prev[event.step_key], status: 'running', step_type: event.step_type },
                   }));
                 } else if (event.type === 'step_completed') {
                   setStepStates((prev) => ({
