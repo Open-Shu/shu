@@ -98,7 +98,6 @@ class ChatService:
             query_service=self.query_service,
             context_window_manager=self.context_window_manager,
             context_preferences_resolver=self.context_preferences_resolver,
-            conversation_message_fetcher=self.get_conversation_messages,
             diagnostics_target=self,
         )
         self.streaming_helper = EnsembleStreamingHelper(
@@ -127,7 +126,7 @@ class ChatService:
         # share the exact same context when rendered.
         conversation_messages = await self.get_conversation_messages(
             conversation_id=conversation.id,
-            limit=None,
+            limit=500,
         )
 
         return PreparedTurnContext(
@@ -839,7 +838,7 @@ class ChatService:
     async def get_conversation_messages(
         self,
         conversation_id: str,
-        limit: int | None = 100,
+        limit: int = 100,
         offset: int = 0,
         order_desc: bool = False,
     ) -> list[Message]:
@@ -851,9 +850,6 @@ class ChatService:
         message's parent_message_id to its own id and variant_index to 0. This keeps
         frontend grouping consistent after page reloads.
         """
-        if limit is None and offset:
-            raise ValueError("offset without limit is not supported")
-
         order_clause = desc(Message.created_at) if order_desc else asc(Message.created_at)
 
         stmt = (
@@ -861,10 +857,9 @@ class ChatService:
             .where(Message.conversation_id == conversation_id)
             .options(selectinload(Message.model), selectinload(Message.attachments))
             .order_by(order_clause)
+            .limit(limit)
+            .offset(offset)
         )
-
-        if limit is not None:
-            stmt = stmt.limit(limit).offset(offset)
 
         result = await self.db_session.execute(stmt)
         messages = result.scalars().all()
@@ -1130,7 +1125,7 @@ class ChatService:
         conversation = result.scalar_one()
 
         # Fetch messages to find preceding user turn and reconstruct trimmed history
-        all_msgs = await self.get_conversation_messages(conversation_id=conversation.id, limit=None)
+        all_msgs = await self.get_conversation_messages(conversation_id=conversation.id, limit=500)
 
         target_idx, root_turn_idx = self._locate_regeneration_indices(
             all_msgs,
