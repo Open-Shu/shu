@@ -58,7 +58,7 @@ Google auth endpoints are public via middleware, even though no explicit depende
 - `GET /settings/branding`, `/settings/branding/` – **Public** branding settings.
 - `GET /settings/branding/assets/{filename}` – **Public** branding assets (prefix-based).
 - `PATCH /settings/branding` – **Admin-only** (`require_admin`).
-- `POST /settings/branding/logo`, `/settings/branding/favicon` – **Admin-only**.
+- `POST /settings/branding/favicon` – **Admin-only**.
 
 ---
 

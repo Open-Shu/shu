@@ -20,7 +20,7 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
   const { login } = useAuth();
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
-  const logoUrl = branding?.logoUrl;
+  const faviconUrl = branding?.faviconUrl;
 
   useEffect(() => {
     const initializeComponent = async () => {
@@ -263,7 +263,7 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
         <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
           <Box sx={{ textAlign: 'center', mb: 3 }}>
             <img
-              src={logoUrl}
+              src={faviconUrl}
               alt={appDisplayName}
               style={{
                 height: '60px', // Fixed height for normal proportions

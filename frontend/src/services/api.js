@@ -274,17 +274,10 @@ export const systemAPI = {
 export const brandingAPI = {
   getBranding: () => api.get('/settings/branding'),
   updateBranding: (payload) => api.patch('/settings/branding', payload),
-  uploadLogo: (file) => {
+  uploadFavicon: (file, theme = 'light') => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/settings/branding/logo', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  uploadFavicon: (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    return api.post('/settings/branding/favicon', formData, {
+    return api.post(`/settings/branding/favicon?theme=${theme}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },

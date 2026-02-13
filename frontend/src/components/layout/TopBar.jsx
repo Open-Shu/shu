@@ -4,7 +4,7 @@ import { Logout as LogoutIcon, Person as PersonIcon, AdminPanelSettings as Admin
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
-import { getBrandingAppName, getBrandingFaviconUrl } from '../../utils/constants';
+import { getBrandingAppName, getBrandingFaviconUrlForTheme, getTopbarTextColor } from '../../utils/constants';
 import UserMenuCommonItems from '../UserMenuCommonItems.jsx';
 import UserAvatar from '../shared/UserAvatar.jsx';
 import useVersion from '../../hooks/useVersion';
@@ -31,9 +31,10 @@ const TopBar = ({
 }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { branding } = useAppTheme();
+  const { branding, resolvedMode } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
-  const faviconUrl = getBrandingFaviconUrl(branding);
+  const faviconUrl = getBrandingFaviconUrlForTheme(branding, resolvedMode);
+  const textColor = getTopbarTextColor(branding, resolvedMode);
   const { displayVersion } = useVersion();
 
   const [anchorEl, setAnchorEl] = React.useState(null);
@@ -85,7 +86,7 @@ const TopBar = ({
             variant="h2"
             sx={{
               fontWeight: 600,
-              color: '#000000ff',
+              color: textColor,
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
