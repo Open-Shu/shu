@@ -122,6 +122,8 @@ class Settings(BaseSettings):
     # Logging configuration
     log_level: str = Field("INFO", alias="SHU_LOG_LEVEL")
     log_format: str = Field("text", alias="SHU_LOG_FORMAT")  # text or json - text is more readable for development
+    log_dir: str = Field("./data/logs", alias="SHU_LOG_DIR")
+    log_retention_days: int = Field(14, alias="SHU_LOG_RETENTION_DAYS")  # keep 14 days of rotated logs
 
     # Branding configuration
     branding_assets_dir: str = Field("./data/branding", alias="SHU_BRANDING_ASSETS_DIR")
@@ -190,7 +192,7 @@ class Settings(BaseSettings):
     # Plugins
     plugins_auto_sync: bool = Field(False, alias="SHU_PLUGINS_AUTO_SYNC")
     # Root directory where plugins are discovered/installed (relative paths are resolved from repo root)
-    plugins_root: str = Field("./plugins", alias="SHU_PLUGINS_ROOT")
+    plugins_root: str = Field("./data/plugins", alias="SHU_PLUGINS_ROOT")
 
     # HTTP Egress Policy for HostCapabilities.http
     # Comma-separated domain suffixes or exact hosts; empty = allow all (development default)
@@ -280,6 +282,30 @@ class Settings(BaseSettings):
     @field_validator("chat_attachment_storage_dir", mode="before")
     @classmethod
     def _resolve_attachments_dir(cls, v: str) -> str:
+        try:
+            p = Path(v)
+            if p.is_absolute():
+                return str(p)
+            root = cls._repo_root_from_this_file()
+            return str((root / p).resolve())
+        except Exception:
+            return v
+
+    @field_validator("log_dir", mode="before")
+    @classmethod
+    def _resolve_log_dir(cls, v: str) -> str:
+        try:
+            p = Path(v)
+            if p.is_absolute():
+                return str(p)
+            root = cls._repo_root_from_this_file()
+            return str((root / p).resolve())
+        except Exception:
+            return v
+
+    @field_validator("plugins_root", mode="before")
+    @classmethod
+    def _resolve_plugins_root(cls, v: str) -> str:
         try:
             p = Path(v)
             if p.is_absolute():
@@ -535,7 +561,7 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    return Settings()  # type: ignore[call-arg]
 
 
 # Global settings instance - will be created when first accessed
@@ -1005,7 +1031,7 @@ class ConfigurationManager:
         """
         # Future: Could allow KB-level timeout overrides
         if kb_config and "text_extraction_timeout" in kb_config:
-            return kb_config["text_extraction_timeout"]
+            return int(kb_config["text_extraction_timeout"])
 
         # Use OCR timeout for OCR processing, fast timeout for text extraction
         if use_ocr:

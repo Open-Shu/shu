@@ -8,17 +8,8 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Install deps (from repo root context)
-COPY frontend/package.json frontend/package-lock.json* frontend/yarn.lock* frontend/pnpm-lock.yaml* ./
-# Cache package manager data for faster rebuilds
-RUN if [ -f yarn.lock ]; then \
-      yarn install --frozen-lockfile; \
-    elif [ -f package-lock.json ]; then \
-      npm ci; \
-    elif [ -f pnpm-lock.yaml ]; then \
-      npm i -g pnpm && pnpm i --frozen-lockfile; \
-    else \
-      npm i; \
-    fi
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 
 # Copy source
 COPY frontend/index.html ./
@@ -27,7 +18,10 @@ COPY frontend/public ./public
 COPY frontend/src ./src
 COPY frontend/nginx-default.conf ./nginx-default.conf
 
-# Optional: pass explicit backend base URL at build time (else same-origin is used)
+# Browser-accessible API URL, baked into the JS bundle at build time.
+# If unset, the frontend uses same-origin (requires a reverse proxy serving
+# both frontend and API on the same domain). Required when frontend and API
+# are on different hosts or ports.
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 

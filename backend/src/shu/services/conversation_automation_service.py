@@ -53,8 +53,17 @@ class ConversationAutomationService:
         previous_last_id = meta.get("summary_last_message_id")
         previous_summary = conversation.summary_text or ""
 
-        messages = await self.chat_service.get_conversation_messages(conversation_id=conversation.id, limit=1000)
-        messages = collapse_assistant_variants(list(messages), previous_last_id)
+        summary_settings = self._get_summary_settings()
+        system_prompt = summary_settings["system_prompt"]
+        default_timeout = summary_settings["timeout_ms"]
+        max_recent = summary_settings["max_recent_messages"]
+
+        # Get the last N messages. They are reversed so we move them into chronological order again.
+        messages = await self.chat_service.get_conversation_messages(
+            conversation_id=conversation.id, limit=max_recent, order_desc=True
+        )
+        messages = list(reversed(messages))
+        messages = collapse_assistant_variants(messages, previous_last_id)
         last_message_id = messages[-1].id if messages else None
 
         # If nothing new, skip expensive call
@@ -71,11 +80,6 @@ class ConversationAutomationService:
                 "response_time_ms": None,
                 "model_config_id": None,
             }
-
-        summary_settings = self._get_summary_settings()
-        system_prompt = summary_settings["system_prompt"]
-        default_timeout = summary_settings["timeout_ms"]
-        max_recent = summary_settings["max_recent_messages"]
 
         # Determine which messages to send (limit size). Always include at least recent ones.
         message_sequence, newest_message_id = self._prepare_summary_messages(
@@ -163,9 +167,9 @@ class ConversationAutomationService:
                 "model_config_id": None,
             }
 
-        messages = await self.chat_service.get_conversation_messages(conversation_id=conversation.id, limit=500)
-        messages = collapse_assistant_variants(list(messages))
-        last_message_id = messages[-1].id if messages else None
+        # Get the last message in the line (skip backfill to avoid corrupting variant_index)
+        last_message = await self.chat_service.get_last_conversation_message(conversation.id)
+        last_message_id = last_message.id if last_message else None
 
         rename_settings = self._get_rename_settings()
         system_prompt = rename_settings["system_prompt"]
@@ -173,8 +177,8 @@ class ConversationAutomationService:
 
         summary_source: str | None = getattr(conversation, "summary_text", None)
         if not summary_source:
-            if messages:
-                summary_source = messages[-1].content
+            if last_message:
+                summary_source = last_message.content
             elif fallback_user_message:
                 summary_source = fallback_user_message
         if not summary_source:

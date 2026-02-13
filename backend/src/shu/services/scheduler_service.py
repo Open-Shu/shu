@@ -248,6 +248,34 @@ class ExperienceSource:
         }
 
 
+class LogMaintenanceSource:
+    """Schedulable source for log file maintenance.
+
+    Runs on every scheduler tick (typically every 60s). Handles:
+    - Midnight rotation: archives the current log file when the UTC date changes.
+    - Retention cleanup: prunes archived log files older than the configured window.
+
+    This is a filesystem-only operation — no DB or queue interaction needed.
+    Each replica manages its own hostname-prefixed log files independently.
+    """
+
+    @property
+    def name(self) -> str:
+        return "log_maintenance"
+
+    async def cleanup_stale(self, db: AsyncSession) -> int:
+        from ..core.logging import get_managed_file_handler
+
+        handler = get_managed_file_handler()
+        if handler is not None:
+            handler.rotate_if_needed()
+        return 0
+
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
+        # Nothing to enqueue — all work happens in cleanup_stale
+        return {"enqueued": 0}
+
+
 class UnifiedSchedulerService:
     """Unified scheduler that iterates over registered sources per tick."""
 
@@ -349,6 +377,9 @@ async def start_scheduler() -> asyncio.Task:
         sources.append(ExperienceSource())
     else:
         logger.info("Experiences source disabled by configuration")
+
+    # Log maintenance source: midnight rotation + retention cleanup (always enabled)
+    sources.append(LogMaintenanceSource())
 
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",
