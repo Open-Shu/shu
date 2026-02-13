@@ -239,8 +239,11 @@ const BrandingSettings = () => {
       if (theme === 'dark' && darkFaviconInputRef.current) {
         darkFaviconInputRef.current.value = '';
       }
-      setUploadingLightFavicon(false);
-      setUploadingDarkFavicon(false);
+      if (theme === 'light') {
+        setUploadingLightFavicon(false);
+      } else {
+        setUploadingDarkFavicon(false);
+      }
     }
   };
 
