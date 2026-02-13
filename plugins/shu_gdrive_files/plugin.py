@@ -412,20 +412,20 @@ class GoogleDriveFilesPlugin:
                         "modified_at": f.get("modifiedTime"),
                     },
                 )
-                if (res_ing or {}).get("word_count", 0) > 0:
-                    ingested_count += 1
-                else:
+                # ingest_document returns immediately with status=PENDING (async processing)
+                # Only count as skipped if explicitly marked as skipped (hash match)
+                # word_count is not available until async processing completes
+                if (res_ing or {}).get("skipped"):
                     skipped_count += 1
+                    skip_reason = (res_ing or {}).get("skip_reason") or "unknown"
                     try:
-                        ex = (res_ing or {}).get("extraction") or {}
-                        det = ex.get("details") or {}
-                        reason = det.get("error") or "empty_extraction"
-                        file_ext = det.get("file_extension") or ""
                         user_warnings.append(
-                            f"skip:{reason} id={f.get('id')} name={name} mime={mt} ct={content_type} ext={file_ext}"
+                            f"skip:{skip_reason} id={f.get('id')} name={name} mime={mt} ct={content_type}"
                         )
                     except Exception:
                         pass
+                else:
+                    ingested_count += 1
                 processed_count += 1
             # Persist new start token if provided
             try:
@@ -495,20 +495,20 @@ class GoogleDriveFilesPlugin:
                     "modified_at": f.get("modifiedTime"),
                 },
             )
-            if (res_ing or {}).get("word_count", 0) > 0:
-                ingested_count += 1
-            else:
+            # ingest_document returns immediately with status=PENDING (async processing)
+            # Only count as skipped if explicitly marked as skipped (hash match)
+            # word_count is not available until async processing completes
+            if (res_ing or {}).get("skipped"):
                 skipped_count += 1
+                skip_reason = (res_ing or {}).get("skip_reason") or "unknown"
                 try:
-                    ex = (res_ing or {}).get("extraction") or {}
-                    det = ex.get("details") or {}
-                    reason = det.get("error") or "empty_extraction"
-                    file_ext = det.get("file_extension") or ""
                     user_warnings.append(
-                        f"skip:{reason} id={f.get('id')} name={name} mime={mt} ct={content_type} ext={file_ext}"
+                        f"skip:{skip_reason} id={f.get('id')} name={name} mime={mt} ct={content_type}"
                     )
                 except Exception:
                     pass
+            else:
+                ingested_count += 1
             processed_count += 1
 
         # Initial full discovery path (no token yet)
