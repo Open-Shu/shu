@@ -5,7 +5,12 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '');
-  const apiTarget = env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+  // Proxy target for Vite dev server (server-side only, NOT exposed to browser)
+  // - Shell env DEV_SERVER_API_PROXY_TARGET (from docker-compose) takes precedence
+  // - Falls back to VITE_API_BASE_URL from .env files (for local dev)
+  // - Final fallback: localhost:8000
+  const proxyTarget = process.env.DEV_SERVER_API_PROXY_TARGET || env.VITE_API_BASE_URL || 'http://localhost:8000';
 
   return {
     plugins: [
@@ -30,7 +35,11 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       proxy: {
         '/api': {
-          target: apiTarget,
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        '/auth': {
+          target: proxyTarget,
           changeOrigin: true,
         },
       },

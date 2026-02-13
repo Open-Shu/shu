@@ -51,8 +51,10 @@ services:
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=development
       - SHU_APP_VERSION=0.0.6-dev
+      - SHU_PLUGINS_ROOT=/app/plugins
       - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
       - PYTHONPATH=/app/src
+      - OAUTH_REDIRECT_URI=http://localhost:3000/auth/callback
     ports:
       - "8000:8000"
     volumes:
@@ -61,7 +63,7 @@ services:
       - ../../backend/alembic.ini:/app/alembic.ini
       - ../../backend/scripts:/app/scripts
       - ../../data:/app/data
-      - ../../plugins:/app/data/plugins  # overlay: repo-root plugins/ lives outside data/
+      - ../../plugins:/app/plugins
     networks:
       - shu-network
     restart: unless-stopped
@@ -173,6 +175,7 @@ services:
       - SHU_LOG_LEVEL=DEBUG
       - SHU_LOG_FORMAT=text
       - SHU_ENVIRONMENT=development
+      - SHU_PLUGINS_ROOT=/app/plugins
       - SHU_WORKER_CONCURRENCY=10
       - SHU_WORKER_POLL_INTERVAL=0.5
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
@@ -180,7 +183,7 @@ services:
     volumes:
       - ../../backend/src:/app/src
       - ../../data:/app/data
-      - ../../plugins:/app/data/plugins  # overlay: repo-root plugins/ lives outside data/
+      - ../../plugins:/app/plugins
     networks:
       - shu-network
     restart: unless-stopped
@@ -315,7 +318,7 @@ services:
     container_name: shu-frontend-dev
     working_dir: /app
     environment:
-      - VITE_API_BASE_URL=http://localhost:8000
+      - DEV_SERVER_API_PROXY_TARGET=http://shu-api-dev:8000
       - WATCHPACK_POLLING=true
       - CHOKIDAR_USEPOLLING=true
     ports:
@@ -325,13 +328,15 @@ services:
       - ../../frontend/public:/app/public
       - ../../frontend/package.json:/app/package.json
       - ../../frontend/package-lock.json:/app/package-lock.json
+      - ../../frontend/index.html:/app/index.html
+      - ../../frontend/vite.config.js:/app/vite.config.js
       - frontend-node-modules:/app/node_modules
     networks:
       - shu-network
     restart: unless-stopped
     profiles:
       - dev
-    command: sh -c "npm install && npm start"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
   # Nginx reverse proxy (optional)
   nginx:

@@ -412,20 +412,11 @@ class GoogleDriveFilesPlugin:
                         "modified_at": f.get("modifiedTime"),
                     },
                 )
-                if (res_ing or {}).get("word_count", 0) > 0:
-                    ingested_count += 1
-                else:
-                    skipped_count += 1
-                    try:
-                        ex = (res_ing or {}).get("extraction") or {}
-                        det = ex.get("details") or {}
-                        reason = det.get("error") or "empty_extraction"
-                        file_ext = det.get("file_extension") or ""
-                        user_warnings.append(
-                            f"skip:{reason} id={f.get('id')} name={name} mime={mt} ct={content_type} ext={file_ext}"
-                        )
-                    except Exception:
-                        pass
+                # ingest_document returns immediately with status=PENDING (async processing)
+                # Only count as skipped if explicitly marked as skipped (hash match)
+                ing, skp = self._tally_ingest_result(res_ing, f, name, mt, content_type, user_warnings)
+                ingested_count += ing
+                skipped_count += skp
                 processed_count += 1
             # Persist new start token if provided
             try:
@@ -495,20 +486,11 @@ class GoogleDriveFilesPlugin:
                     "modified_at": f.get("modifiedTime"),
                 },
             )
-            if (res_ing or {}).get("word_count", 0) > 0:
-                ingested_count += 1
-            else:
-                skipped_count += 1
-                try:
-                    ex = (res_ing or {}).get("extraction") or {}
-                    det = ex.get("details") or {}
-                    reason = det.get("error") or "empty_extraction"
-                    file_ext = det.get("file_extension") or ""
-                    user_warnings.append(
-                        f"skip:{reason} id={f.get('id')} name={name} mime={mt} ct={content_type} ext={file_ext}"
-                    )
-                except Exception:
-                    pass
+            # ingest_document returns immediately with status=PENDING (async processing)
+            # Only count as skipped if explicitly marked as skipped (hash match)
+            ing, skp = self._tally_ingest_result(res_ing, f, name, mt, content_type, user_warnings)
+            ingested_count += ing
+            skipped_count += skp
             processed_count += 1
 
         # Initial full discovery path (no token yet)
@@ -538,6 +520,20 @@ class GoogleDriveFilesPlugin:
                 "diagnostics": warnings_out[:20],
             }
         )
+
+    @staticmethod
+    def _tally_ingest_result(res_ing, f, name, mt, content_type, user_warnings):
+        """Classify an ingest_document result as ingested or skipped and append warnings."""
+        if (res_ing or {}).get("skipped"):
+            skip_reason = (res_ing or {}).get("skip_reason") or "unknown"
+            try:
+                user_warnings.append(
+                    f"skip:{skip_reason} id={f.get('id')} name={name} mime={mt} ct={content_type}"
+                )
+            except Exception:
+                pass
+            return 0, 1  # ingested, skipped
+        return 1, 0
 
     async def _is_shared_drive(self, host: Any, headers: dict[str, str], drive_id: str) -> bool:
         try:
