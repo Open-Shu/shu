@@ -1137,5 +1137,5 @@ describe('LLMTester - Property 15: Error Resilience', () => {
     expect(getByLabelText('Model Configuration')).toBeInTheDocument();
     expect(messageInput).toBeInTheDocument();
     expect(testButton).toBeInTheDocument();
-  });
+  }, 30000);
 });

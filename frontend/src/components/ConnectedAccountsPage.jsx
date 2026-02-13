@@ -38,10 +38,9 @@ export default function ConnectedAccountsPage() {
   }, [searchParams]);
   const highlightRef = useRef(null);
 
-  // Scroll to highlighted plugins and clear the param after a delay
+  // Clear the highlight query param after a delay (independent of element rendering)
   useEffect(() => {
-    if (highlightPlugins.size > 0 && highlightRef.current) {
-      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (highlightPlugins.size > 0) {
       const timer = setTimeout(() => {
         searchParams.delete('highlight');
         setSearchParams(searchParams, { replace: true });
@@ -49,6 +48,14 @@ export default function ConnectedAccountsPage() {
       return () => clearTimeout(timer);
     }
   }, [highlightPlugins, searchParams, setSearchParams]);
+
+  // Scroll to the highlighted element once it's mounted (depends on plugin data loading)
+  useEffect(() => {
+    if (highlightPlugins.size > 0 && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightPlugins, pluginsQ.data]);
+
   // Load all plugins to compute a provider-wide superset of requested scopes (union across plugins)
   const pluginsQ = useQuery(['plugins', 'list'], () => api.get('/plugins').then(extractDataFromResponse));
 

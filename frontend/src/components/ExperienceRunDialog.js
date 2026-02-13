@@ -107,15 +107,17 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
+                      ...prev[event.step_key],
                       status: 'succeeded',
                       summary: event.summary,
-                      data: event.data, // Store the actual data returned by the step
+                      data: event.data,
                     },
                   }));
                 } else if (event.type === 'step_failed') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
+                      ...prev[event.step_key],
                       status: 'failed',
                       error: event.error,
                     },
@@ -124,6 +126,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
+                      ...prev[event.step_key],
                       status: 'skipped',
                       reason: event.reason,
                     },
@@ -232,7 +235,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                 {displaySteps.map((step) => {
                   const state = stepStates[step.step_key];
                   const isExpanded = expandedSteps[step.step_key];
-                  const hasData = steps.length > 0 && state?.data !== undefined && state?.data !== null;
+                  const hasData = state?.data !== undefined && state?.data !== null;
 
                   return (
                     <React.Fragment key={step.step_key}>

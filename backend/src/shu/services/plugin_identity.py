@@ -292,6 +292,7 @@ async def _is_plugin_subscribed(db: AsyncSession, user_id: str, plugin_name: str
 
     Returns True if subscribed, False if subscriptions exist but plugin is not among them,
     or None if no subscriptions exist (i.e. no restriction applies).
+    On errors, returns False (fail-closed) to avoid bypassing subscription enforcement.
     """
     try:
         from ..services.host_auth_service import HostAuthService
@@ -301,7 +302,13 @@ async def _is_plugin_subscribed(db: AsyncSession, user_id: str, plugin_name: str
             return str(plugin_name) in {s.plugin_name for s in subs}
         return None
     except Exception:
-        return None
+        logger.warning(
+            "Subscription check failed for plugin '%s' provider '%s', failing closed",
+            plugin_name,
+            provider_key,
+            exc_info=True,
+        )
+        return False
 
 
 async def _get_active_credentials(db: AsyncSession, user_id: str, provider_key: str) -> list:

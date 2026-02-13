@@ -370,7 +370,6 @@ async def run_experience(
     sse_generator = create_sse_stream_generator(
         event_gen,
         error_context="experience_execution",
-        error_sanitizer=None,
         include_correlation_id=True,
         error_code="EXPERIENCE_EXECUTION_FAILED",
     )

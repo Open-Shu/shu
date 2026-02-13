@@ -144,6 +144,7 @@ describe('ExperienceDashboard', () => {
     // Click the actual IconButton (find via the PlayArrow icon and navigate to parent button)
     const playIcon = screen.getByTestId('PlayArrowIcon');
     const playButton = playIcon.closest('button');
+    expect(playButton).not.toBeNull();
     fireEvent.click(playButton);
 
     // The dialog mock should appear with correct props

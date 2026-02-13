@@ -387,7 +387,7 @@ class ExperienceExecutor:
 
                 yield ExperienceEvent(
                     ExperienceEventType.STEP_FAILED,
-                    {"step_key": step.step_key, "error": error_msg},
+                    {"step_key": step.step_key, "error": f"Step '{step.step_key}' failed during execution."},
                 )
 
     def _check_should_run_step(self, step: ExperienceStep, context: dict[str, Any]) -> tuple[bool, str | None]:

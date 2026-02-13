@@ -835,13 +835,16 @@ class ExperienceService:
         """
         from ..services.plugin_identity import check_plugin_user_auth
 
-        # Collect steps that require user-mode provider auth
+        # Collect steps that require user-mode provider auth and track non-auth steps
         auth_steps: list[tuple[str, str, list[str]]] = []  # (provider_key, plugin_name, required_scopes)
+        has_non_auth_step = False
         for step in steps:
             if step.step_type != StepType.PLUGIN.value or not step.plugin_name:
+                has_non_auth_step = True
                 continue
             record = plugin_records.get(step.plugin_name)
             if not record or not record.op_auth:
+                has_non_auth_step = True
                 continue
             op_key = (step.plugin_op or "").lower()
             op_spec = record.op_auth.get(op_key) or {}
@@ -850,11 +853,13 @@ class ExperienceService:
             if provider and mode == "user":
                 scopes = op_spec.get("scopes") or []
                 auth_steps.append((str(provider).strip().lower(), step.plugin_name, scopes))
+            else:
+                has_non_auth_step = True
 
         if not auth_steps:
             return (True, [])
 
-        any_step_can_run = False
+        any_step_can_run = has_non_auth_step
         missing: list[str] = []
         for provider_key, plugin_name, required_scopes in auth_steps:
             ok, error_code = await check_plugin_user_auth(
