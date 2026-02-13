@@ -38,6 +38,9 @@ export default function ConnectedAccountsPage() {
   }, [searchParams]);
   const highlightRef = useRef(null);
 
+  // Load all plugins to compute a provider-wide superset of requested scopes (union across plugins)
+  const pluginsQ = useQuery(['plugins', 'list'], () => api.get('/plugins').then(extractDataFromResponse));
+
   // Clear the highlight query param after a delay (independent of element rendering)
   useEffect(() => {
     if (highlightPlugins.size > 0) {
@@ -55,9 +58,6 @@ export default function ConnectedAccountsPage() {
       highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [highlightPlugins, pluginsQ.data]);
-
-  // Load all plugins to compute a provider-wide superset of requested scopes (union across plugins)
-  const pluginsQ = useQuery(['plugins', 'list'], () => api.get('/plugins').then(extractDataFromResponse));
 
   const { requiredIdentities, scopeMapByProvider } = useMemo(() => {
     const plugins = Array.isArray(pluginsQ.data) ? pluginsQ.data : [];

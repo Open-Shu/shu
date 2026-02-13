@@ -66,8 +66,11 @@ async def create_sse_stream_generator(
 
     **Point A -- in-stream error events:**
     If an individual event has ``type == "error"`` and an ``error_sanitizer``
-    callable is provided, the sanitizer is applied to the event's ``content``
-    attribute *before* serialisation.  Serialisation failures for individual
+    callable is provided, the sanitizer is applied to the serialised payload's
+    ``content`` and ``message`` fields (when present).  This operates on
+    the dict returned by ``to_dict()`` rather than mutating event internals,
+    so it works for any event type (chat events with ``content``, experience
+    events with ``message``, etc.).  Serialisation failures for individual
     events are logged and skipped so the stream can continue.
 
     **Point B -- catch-all exception handler:**
@@ -100,11 +103,15 @@ async def create_sse_stream_generator(
         # Point A: iterate events and serialize
         async for event in event_generator:
             try:
-                # Apply error sanitizer to error-type events if provided
-                if error_sanitizer is not None and getattr(event, "type", None) == "error":
-                    event.content = error_sanitizer(event.content)
-
                 payload = event.to_dict()
+
+                # Apply error sanitizer to error-type events if provided
+                if error_sanitizer is not None and payload.get("type") == "error":
+                    if "content" in payload:
+                        payload["content"] = error_sanitizer(payload.get("content"))
+                    elif "message" in payload:
+                        payload["message"] = error_sanitizer(payload.get("message"))
+
                 yield f"data: {json.dumps(payload)}\n\n"
             except Exception:
                 logger.exception(f"Error serializing event during {error_context}")
