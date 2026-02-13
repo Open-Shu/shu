@@ -1,5 +1,7 @@
 """Branding configuration API endpoints."""
 
+import mimetypes
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -57,9 +59,12 @@ async def upload_favicon(
     file_bytes = await _read_upload(file, service.settings.branding_max_asset_size_bytes)
     asset_type = "dark_favicon" if theme == "dark" else "favicon"
 
+    ext = mimetypes.guess_extension(file.content_type or "") or ".png"
+    filename = file.filename or f"favicon_{theme}{ext}"
+
     try:
         branding = await service.save_asset(
-            filename=file.filename or f"favicon_{theme}",
+            filename=filename,
             file_bytes=file_bytes,
             asset_type=asset_type,
             user_id=current_user.id,
