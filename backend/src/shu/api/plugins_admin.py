@@ -29,12 +29,18 @@ router = APIRouter()
 
 
 def _resolve_plugins_root(settings) -> Path:
-    """Resolve plugins_root relative to the repository root when configured as a relative path."""
-    plugins_root = Path(settings.plugins_root)
-    if plugins_root.is_absolute():
-        return plugins_root
-    repo_root = settings.__class__._repo_root_from_this_file()
-    return (repo_root / plugins_root).resolve()
+    """Return the ``plugins/`` directory derived from ``settings.plugins_root``.
+
+    ``plugins_root`` is the *parent* directory; we always append ``plugins/``
+    so the directory name is guaranteed to match manifest import paths.
+    The config validator already resolves relative paths to absolute, but we
+    handle the relative case defensively.
+    """
+    parent = Path(settings.plugins_root)
+    if not parent.is_absolute():
+        repo_root = settings.__class__._repo_root_from_this_file()
+        parent = (repo_root / parent).resolve()
+    return parent / "plugins"
 
 
 class PluginEnableRequest(BaseModel):

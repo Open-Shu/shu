@@ -38,34 +38,42 @@ class PluginRecord:
 
 class PluginLoader:
     def __init__(self, *, plugins_dir: Path | None = None) -> None:
-        # Resolve repo root from this file. Our layout is: <repo>/backend/src/shu/plugins/loader.py
-        # So parents are: [0]=plugins, [1]=shu, [2]=src, [3]=backend, [4]=<repo>
+        # ``plugins_dir`` is the direct path to the directory containing plugin
+        # sub-packages (each with a manifest.py).  When not supplied we derive
+        # it from ``settings.plugins_root`` which points to the *parent*
+        # directory; we always append ``plugins/`` ourselves so the directory
+        # name is guaranteed to match the ``plugins.`` prefix in manifests.
+        if plugins_dir is None:
+            plugins_dir = self._resolve_plugins_dir()
+        self.plugins_dir = plugins_dir
+        # Add plugins_dir's parent to sys.path so ``import plugins.*`` works.
+        plugins_parent = str(self.plugins_dir.parent)
+        if plugins_parent not in sys.path:
+            sys.path.insert(0, plugins_parent)
+        logger.info("Plugins loader using plugins_dir=%s", self.plugins_dir)
+
+    @staticmethod
+    def _resolve_plugins_dir() -> Path:
+        """Derive the ``plugins/`` directory from settings or repo layout."""
+        # Resolve repo root from this file's location.
+        # Layout: <repo>/backend/src/shu/plugins/loader.py  (local dev)
+        #         /app/src/shu/plugins/loader.py             (container)
         loader_path = Path(__file__).resolve()
-        # Typical layouts:
-        #  - Local dev: <repo>/backend/src/shu/plugins/loader.py
-        #    -> parents[2] = <repo>/backend/src; candidate_parent = <repo>/backend
-        #    -> repo_root = <repo>
-        #  - In container: /app/src/shu/plugins/loader.py
-        #    -> parents[2] = /app/src; candidate_parent = /app
-        #    -> repo_root = /app
         src_dir = loader_path.parents[2]
         candidate_parent = src_dir.parent
         repo_root = candidate_parent.parent if candidate_parent.name == "backend" else candidate_parent
-        # Prefer settings.PLUGINS_ROOT if provided
-        if plugins_dir is None:
-            try:
-                settings = get_settings_instance()
-                configured = Path(settings.plugins_root)
-                # Resolve relative paths against repo root
-                if not configured.is_absolute():
-                    configured = (repo_root / configured).resolve()
-                plugins_dir = configured
-            except Exception:
-                plugins_dir = None
-        self.plugins_dir = plugins_dir or (repo_root / "plugins")
-        if str(repo_root) not in sys.path:
-            sys.path.insert(0, str(repo_root))
-        logger.info("Plugins loader using plugins_dir=%s", self.plugins_dir)
+
+        try:
+            settings = get_settings_instance()
+            configured = Path(settings.plugins_root)
+            # settings.plugins_root is already resolved to an absolute path by
+            # the field validator in config.py.  If it's still relative (e.g.
+            # settings failed to resolve), resolve against repo_root.
+            if not configured.is_absolute():
+                configured = (repo_root / configured).resolve()
+            return configured / "plugins"
+        except Exception:
+            return repo_root / "plugins"
 
     def _static_scan_for_violations(self, plugin_dir: Path) -> list[str]:
         violations: list[str] = []
