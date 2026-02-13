@@ -51,6 +51,7 @@ services:
       - SHU_API_PORT=8000
       - SHU_ENVIRONMENT=development
       - SHU_APP_VERSION=0.0.6-dev
+      - SHU_PLUGINS_ROOT=/app/plugins
       - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
       - PYTHONPATH=/app/src
       - OAUTH_REDIRECT_URI=http://localhost:3000/auth/callback
@@ -174,6 +175,7 @@ services:
       - SHU_LOG_LEVEL=DEBUG
       - SHU_LOG_FORMAT=text
       - SHU_ENVIRONMENT=development
+      - SHU_PLUGINS_ROOT=/app/plugins
       - SHU_WORKER_CONCURRENCY=10
       - SHU_WORKER_POLL_INTERVAL=0.5
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0

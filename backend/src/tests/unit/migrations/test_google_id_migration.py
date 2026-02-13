@@ -13,8 +13,6 @@ import sys
 from collections import namedtuple
 from unittest.mock import MagicMock, call, patch
 
-import pytest
-
 # Mock user row returned from database
 UserRow = namedtuple("UserRow", ["id", "google_id", "email", "name", "picture_url"])
 IdentityRow = namedtuple("IdentityRow", ["id"])
@@ -222,11 +220,22 @@ class TestGoogleIdMigrationDowngrade:
 
             migration.downgrade()
 
-            # google_id column recreated
-            mock_op.add_column.assert_any_call(
-                "users",
-                pytest.approx(mock_op.add_column.call_args_list[0][0][1], abs=0),
+            # google_id column recreated — verify add_column was called
+            # with "users" and the Column object produced by mock_sa.Column(...)
+            add_col_calls = [
+                c for c in mock_op.add_column.call_args_list
+                if c[0][0] == "users"
+            ]
+            assert len(add_col_calls) == 1, (
+                f"Expected exactly 1 add_column('users', ...) call, got {len(add_col_calls)}"
             )
+            # The Column arg is whatever mock_sa.Column(...) returned;
+            # verify mock_sa.Column was called with the right definition
+            mock_sa.Column.assert_any_call("google_id", mock_sa.String(), nullable=True)
+            # And that the return value of that call is what was passed to add_column
+            col_arg = add_col_calls[0][0][1]
+            assert col_arg == mock_sa.Column.return_value
+
             # index recreated
             mock_op.create_index.assert_any_call(
                 "ix_users_google_id", "users", ["google_id"], unique=True

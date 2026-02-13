@@ -72,7 +72,7 @@ def upgrade() -> None:
     add_column_if_not_exists(
         inspector,
         "documents",
-        sa.Column("profiling_status", sa.String(20), nullable=True, server_default="'pending'"),
+        sa.Column("profiling_status", sa.String(20), nullable=True, server_default="pending"),
     )
     add_column_if_not_exists(inspector, "documents", sa.Column("profiling_error", sa.Text(), nullable=True))
     add_column_if_not_exists(inspector, "documents", sa.Column("relational_context", JSONB(), nullable=True))
