@@ -4,9 +4,7 @@ This module provides REST API endpoints for managing chat conversations,
 messages, and LLM interactions.
 """
 
-import json
 import traceback
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path as PathlibPath
 from typing import Any, Literal
@@ -23,6 +21,7 @@ from ..core.config import ConfigurationManager, get_config_manager_dependency, g
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse, create_error_response, create_success_response
+from ..core.streaming import create_sse_stream_generator
 from ..models.attachment import Attachment
 from ..models.llm_provider import Conversation, Message
 from ..schemas.chat import ConversationFromExperienceRequest
@@ -36,88 +35,6 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 settings = get_settings_instance()
-
-
-def _sanitize_chat_error_message(error_content: str) -> str:
-    """Sanitize error messages for chat endpoints while preserving important backend errors.
-
-    This function provides selective error sanitization:
-    - Rate limit errors are preserved so users understand throttling
-    - Timeout errors are preserved so users know the request took too long
-    - Service unavailable errors are preserved so users know the backend is down
-    - All other errors (API keys, auth, config, DB, etc.) are replaced with generic messages
-
-    Args:
-        error_content: The original error message from the provider or backend
-
-    Returns:
-        Either the original error message (for allowed errors) or a sanitized generic message
-
-    """
-    if not error_content:
-        return "The request failed. You may want to try another model."
-
-    error_lower = error_content.lower()
-
-    # Only preserve these specific error types
-    if "rate limit" in error_lower or "too many requests" in error_lower:
-        return error_content
-
-    if "timeout" in error_lower or "timed out" in error_lower:
-        return error_content
-
-    if "service unavailable" in error_lower or "temporarily unavailable" in error_lower:
-        return error_content
-
-    # Sanitize all other errors (API keys, auth, config, DB, malformed requests, etc.)
-    return "The request failed. You may want to try another model."
-
-
-async def create_sse_stream_generator(
-    event_generator: AsyncGenerator[Any, None], error_context: str = "streaming"
-) -> AsyncGenerator[str, None]:
-    """Wrap an async event generator with robust error handling for SSE streaming.
-
-    Args:
-        event_generator: Async generator that yields events with to_dict() method
-        error_context: Context string for error messages (e.g., "send_message", "regenerate_message")
-
-    Yields:
-        SSE-formatted data strings
-
-    """
-    try:
-        async for event in event_generator:
-            try:
-                # Sanitize error messages for regular chat users
-                if getattr(event, "type", None) == "error":
-                    event.content = _sanitize_chat_error_message(event.content or "")
-
-                payload = event.to_dict()
-                yield f"data: {json.dumps(payload)}\n\n"
-            except Exception:
-                logger.exception(f"Error serializing event during {error_context}")
-                # Continue to next event rather than breaking the stream
-                continue
-    except GeneratorExit:
-        # Client disconnected - log but don't treat as error
-        logger.info(f"Client disconnected from {error_context} stream")
-    except Exception:
-        # Log full exception details server-side for debugging
-        logger.exception(f"Streaming error during {error_context}")
-        # Send sanitized error to client without exposing internal details
-        error_payload = {"type": "error", "code": "STREAM_ERROR", "message": "An internal streaming error occurred"}
-        try:
-            yield f"data: {json.dumps(error_payload)}\n\n"
-        except Exception:
-            # Log with traceback when failing to send error event
-            logger.exception(f"Failed to send error event to client during {error_context}")
-    finally:
-        # Always send DONE marker to properly close the stream
-        try:
-            yield "data: [DONE]\n\n"
-        except Exception:
-            logger.debug(f"Could not send DONE marker during {error_context} - connection likely closed")
 
 
 # Pydantic models for API requests/responses

@@ -33,10 +33,17 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
   const [status, setStatus] = useState('pending'); // pending, running, completed, failed
   const [stepStates, setStepStates] = useState({}); // { step_key: { status, summary, error, data } }
   const [expandedSteps, setExpandedSteps] = useState({}); // { step_key: boolean }
+  const [discoveredStepKeys, setDiscoveredStepKeys] = useState([]); // step keys discovered from SSE events
   const [llmContent, setLlmContent] = useState('');
   const [error, setError] = useState(null);
   const abortControllerRef = useRef(null);
   const executionStartedRef = useRef(false); // Track if execution has started
+
+  // Use provided steps if available, otherwise use dynamically discovered steps from SSE events
+  const displaySteps =
+    steps.length > 0
+      ? steps
+      : discoveredStepKeys.map((key) => ({ step_key: key, step_type: stepStates[key]?.step_type || 'plugin' }));
 
   const toggleStepExpanded = (stepKey) => {
     setExpandedSteps((prev) => ({
@@ -91,23 +98,26 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                 if (event.type === 'run_started') {
                   setStatus('running');
                 } else if (event.type === 'step_started') {
+                  setDiscoveredStepKeys((prev) => (prev.includes(event.step_key) ? prev : [...prev, event.step_key]));
                   setStepStates((prev) => ({
                     ...prev,
-                    [event.step_key]: { status: 'running', ...prev[event.step_key] },
+                    [event.step_key]: { ...prev[event.step_key], status: 'running', step_type: event.step_type },
                   }));
                 } else if (event.type === 'step_completed') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
+                      ...prev[event.step_key],
                       status: 'succeeded',
                       summary: event.summary,
-                      data: event.data, // Store the actual data returned by the step
+                      data: event.data,
                     },
                   }));
                 } else if (event.type === 'step_failed') {
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
+                      ...prev[event.step_key],
                       status: 'failed',
                       error: event.error,
                     },
@@ -116,6 +126,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                   setStepStates((prev) => ({
                     ...prev,
                     [event.step_key]: {
+                      ...prev[event.step_key],
                       status: 'skipped',
                       reason: event.reason,
                     },
@@ -163,6 +174,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
       setStatus('running');
       setStepStates({});
       setExpandedSteps({});
+      setDiscoveredStepKeys([]);
       setLlmContent('');
       setError(null);
 
@@ -220,7 +232,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
             </Typography>
             <Paper variant="outlined" sx={{ flex: 1, overflow: 'auto' }}>
               <List dense>
-                {steps.map((step) => {
+                {displaySteps.map((step) => {
                   const state = stepStates[step.step_key];
                   const isExpanded = expandedSteps[step.step_key];
                   const hasData = state?.data !== undefined && state?.data !== null;
@@ -319,8 +331,8 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
                       ? (() => {
                           // Check if all steps are complete (succeeded, failed, or skipped)
                           const allStepsComplete =
-                            steps.length > 0 &&
-                            steps.every((step) => {
+                            displaySteps.length > 0 &&
+                            displaySteps.every((step) => {
                               const state = stepStates[step.step_key];
                               return state && ['succeeded', 'failed', 'skipped'].includes(state.status);
                             });

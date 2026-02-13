@@ -1,10 +1,11 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from 'react-query';
+import { useQuery, useQueryClient } from 'react-query';
 import { useState } from 'react';
 import { Alert, Box, Button, CircularProgress, IconButton, Paper, Snackbar, Typography } from '@mui/material';
-import { ArrowBack as ArrowBackIcon, Chat as ChatIcon } from '@mui/icons-material';
+import { ArrowBack as ArrowBackIcon, Chat as ChatIcon, PlayArrow as PlayArrowIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import ExperienceRunDialog from '../components/ExperienceRunDialog';
 import MarkdownRenderer from '../components/shared/MarkdownRenderer';
 import { formatDateTimeFull } from '../utils/timezoneFormatter';
 import log from '../utils/log';
@@ -17,9 +18,11 @@ const ExperienceDetailPage = () => {
   const { experienceId } = useParams();
   const navigate = useNavigate();
   const theme = useTheme();
+  const queryClient = useQueryClient();
 
   // State for conversation creation
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [errorSnackbar, setErrorSnackbar] = useState({
     open: false,
     message: '',
@@ -34,7 +37,7 @@ const ExperienceDetailPage = () => {
     isLoading,
     error,
   } = useQuery(['my-experience-results'], () => experiencesAPI.getMyResults().then(extractDataFromResponse), {
-    staleTime: 30000,
+    staleTime: 0,
   });
 
   const handleBack = () => {
@@ -112,14 +115,24 @@ const ExperienceDetailPage = () => {
           {experience?.experience_name || 'Experience Details'}
         </Typography>
         {experience && (
-          <Button
-            variant="outlined"
-            startIcon={<ChatIcon />}
-            onClick={handleStartConversation}
-            disabled={isCreatingConversation || !experience.latest_run_id || !experience.result_preview}
-          >
-            {isCreatingConversation ? 'Starting...' : 'Start Conversation'}
-          </Button>
+          <>
+            <Button
+              variant="outlined"
+              startIcon={<PlayArrowIcon />}
+              disabled={!experience.can_run}
+              onClick={() => setRunDialogOpen(true)}
+            >
+              Run
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<ChatIcon />}
+              onClick={handleStartConversation}
+              disabled={isCreatingConversation || !experience.latest_run_id || !experience.result_preview}
+            >
+              {isCreatingConversation ? 'Starting...' : 'Start Conversation'}
+            </Button>
+          </>
         )}
       </Paper>
 
@@ -139,6 +152,28 @@ const ExperienceDetailPage = () => {
 
         {!isLoading && !error && !experience && (
           <Alert severity="warning">Experience not found or no results available.</Alert>
+        )}
+
+        {!isLoading && !error && experience && experience.missing_identities?.length > 0 && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 2 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() =>
+                  navigate(
+                    `/settings/connected-accounts?highlight=${encodeURIComponent(experience.missing_identities.join(','))}`
+                  )
+                }
+              >
+                Activate Now
+              </Button>
+            }
+          >
+            Missing required connections: {experience.missing_identities.join(', ')}
+          </Alert>
         )}
 
         {!isLoading && !error && experience && (
@@ -165,6 +200,21 @@ const ExperienceDetailPage = () => {
           </Box>
         )}
       </Box>
+
+      {/* Run Dialog */}
+      {runDialogOpen && (
+        <ExperienceRunDialog
+          key={experienceId}
+          open={runDialogOpen}
+          onClose={() => {
+            setRunDialogOpen(false);
+            queryClient.invalidateQueries(['my-experience-results']);
+          }}
+          experienceId={experienceId}
+          experienceName={experience?.experience_name}
+          steps={[]}
+        />
+      )}
 
       {/* Error Snackbar */}
       <Snackbar

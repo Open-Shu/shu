@@ -50,6 +50,7 @@ from ..schemas.experience import (
     TriggerType,
     UserExperienceResults,
 )
+from ..services.plugin_identity import check_plugin_user_auth
 
 logger = get_logger(__name__)
 
@@ -782,19 +783,14 @@ class ExperienceService:
         # Build a map of experience_id -> latest_run
         runs_by_experience: dict[str, ExperienceRun] = {run.experience_id: run for run in latest_runs}
 
+        # Load plugin records once for provider resolution
+        plugin_records = self._get_plugin_loader().discover()
+
         summaries = []
         for exp in experiences:
             latest_run = runs_by_experience.get(exp.id)
 
-            # Compute required identities and check if user can run
-            can_run = True
-            missing_identities: list[str] = []
-
-            # TODO: Check user's connected ProviderIdentity records against
-            # required_scopes from experience steps. This requires:
-            # 1. Aggregating all required_scopes from exp.steps
-            # 2. Querying ProviderIdentity for user_id
-            # 3. Comparing scopes
+            can_run, missing_identities = await self._check_can_run(exp.steps, user_id, plugin_records)
 
             result_preview = None
             if latest_run and latest_run.result_content:
@@ -815,6 +811,71 @@ class ExperienceService:
             summaries.append(summary)
 
         return UserExperienceResults(experiences=summaries, total=total)
+
+    async def _check_can_run(
+        self,
+        steps: list[ExperienceStep],
+        user_id: str,
+        plugin_records: dict[str, Any],
+    ) -> tuple[bool, list[str]]:
+        """Check whether a user can run an experience based on plugin subscriptions
+        and granted scopes on ProviderCredential.
+
+        Delegates per-step checks to ``check_plugin_user_auth`` which reads from
+        ProviderCredential — the same source used by the auth adapters and the
+        actual plugin execution path.
+
+        The experience is runnable (``can_run=True``) as long as at least one step
+        can execute, since the executor uses graceful degradation for failed steps.
+
+        Returns:
+            Tuple of (can_run, missing_identities). ``missing_identities`` contains
+            provider keys for missing credentials, or plugin names for missing
+            subscriptions or insufficient scopes.
+
+        """
+        # Collect steps that require user-mode provider auth and track non-auth steps
+        auth_steps: list[tuple[str, str, list[str]]] = []  # (provider_key, plugin_name, required_scopes)
+        has_non_auth_step = False
+        for step in steps:
+            if step.step_type != StepType.PLUGIN.value or not step.plugin_name:
+                has_non_auth_step = True
+                continue
+            record = plugin_records.get(step.plugin_name)
+            if not record or not record.op_auth:
+                has_non_auth_step = True
+                continue
+            op_key = (step.plugin_op or "").lower()
+            op_spec = record.op_auth.get(op_key) or {}
+            provider = op_spec.get("provider")
+            mode = (op_spec.get("mode") or "").lower()
+            if provider and mode == "user":
+                scopes = op_spec.get("scopes") or []
+                auth_steps.append((str(provider).strip().lower(), step.plugin_name, scopes))
+            else:
+                has_non_auth_step = True
+
+        if not auth_steps:
+            return (True, [])
+
+        any_step_can_run = has_non_auth_step
+        missing: list[str] = []
+        for provider_key, plugin_name, required_scopes in auth_steps:
+            ok, error_code = await check_plugin_user_auth(
+                self.db,
+                plugin_name,
+                user_id,
+                provider_key,
+                required_scopes or None,
+            )
+            if ok:
+                any_step_can_run = True
+            else:
+                label = provider_key if error_code == "no_credential" else plugin_name
+                if label not in missing:
+                    missing.append(label)
+
+        return (any_step_can_run, missing)
 
     # =========================================================================
     # Export Functionality

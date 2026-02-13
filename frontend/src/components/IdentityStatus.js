@@ -129,7 +129,7 @@ export default function IdentityStatus({
 
   return (
     <Box sx={{ mt: 2 }}>
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+      <Stack spacing={1}>
         {providers.map((p) => {
           const connected = !!status[p]?.user_connected;
           const granted = Array.isArray(status[p]?.granted_scopes) ? status[p].granted_scopes : [];
