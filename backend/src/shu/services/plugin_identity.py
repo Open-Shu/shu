@@ -329,6 +329,12 @@ async def _get_active_credentials(db: AsyncSession, user_id: str, provider_key: 
         )
         return list(result.scalars().all())
     except Exception:
+        logger.warning(
+            "Credential lookup failed for user '%s' provider '%s', returning empty",
+            user_id,
+            provider_key,
+            exc_info=True,
+        )
         return []
 
 
@@ -391,6 +397,9 @@ async def ensure_user_identity_for_plugin(
 
     provider_key = str(provider).strip().lower()
     # Subscription enforcement (if subscriptions exist for provider)
+    # TODO: Consider using check_plugin_user_auth() here for more precise error codes
+    #   (e.g. "no_credential" vs generic "insufficient_scopes").
+    #   See: https://github.com/Open-Shu/shu/pull/61/changes/BASE..070f9bac3642d08e07a6dea087b0a5b22f639393#r2805473469
     subscribed = await _is_plugin_subscribed(db, str(user_id), plugin_name, provider_key)
     if subscribed is False:
         raise PluginIdentityError(

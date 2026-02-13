@@ -50,6 +50,7 @@ from ..schemas.experience import (
     TriggerType,
     UserExperienceResults,
 )
+from ..services.plugin_identity import check_plugin_user_auth
 
 logger = get_logger(__name__)
 
@@ -833,8 +834,6 @@ class ExperienceService:
             subscriptions or insufficient scopes.
 
         """
-        from ..services.plugin_identity import check_plugin_user_auth
-
         # Collect steps that require user-mode provider auth and track non-auth steps
         auth_steps: list[tuple[str, str, list[str]]] = []  # (provider_key, plugin_name, required_scopes)
         has_non_auth_step = False
