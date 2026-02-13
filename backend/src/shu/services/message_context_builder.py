@@ -1,5 +1,4 @@
 import logging
-from collections.abc import Callable
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +38,6 @@ class MessageContextBuilder:
         query_service: QueryService,
         context_window_manager: ContextWindowManager,
         context_preferences_resolver: ContextPreferencesResolver,
-        conversation_message_fetcher: Callable[[str, int], Any],
         diagnostics_target: Any,
     ) -> None:
         self.db_session = db_session
@@ -49,7 +47,6 @@ class MessageContextBuilder:
         self.query_service = query_service
         self.context_window_manager = context_window_manager
         self.context_preferences_resolver = context_preferences_resolver
-        self.fetch_conversation_messages = conversation_message_fetcher
         self.diagnostics_target = diagnostics_target
 
     @classmethod
@@ -72,7 +69,6 @@ class MessageContextBuilder:
                 db_session=db_session,
                 config_manager=config_manager,
             ),
-            conversation_message_fetcher=None,
             diagnostics_target=diagnostics_target,
         )
 
@@ -85,7 +81,7 @@ class MessageContextBuilder:
         model: LLMModel,
         knowledge_base_id: str | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
-        conversation_messages: list[Message] | None = None,
+        conversation_messages: list[Message],
         model_configuration_override: ModelConfiguration | None = None,
         recent_messages_limit: int | None = None,
     ) -> tuple[ChatContext, list[dict]]:
@@ -97,14 +93,7 @@ class MessageContextBuilder:
         if base_prompt:
             system_sections.append(base_prompt)
 
-        if conversation_messages is not None:
-            recent_messages_raw = list(conversation_messages)
-        else:
-            recent_messages_raw = await self.fetch_conversation_messages(
-                conversation_id=conversation.id,
-                limit=50,
-            )
-        recent_messages = collapse_assistant_variants(recent_messages_raw)
+        recent_messages = collapse_assistant_variants(list(conversation_messages))
 
         # Check if vision is enabled (Adapter Capability AND Model Config Override)
         vision_enabled = await self._is_vision_enabled(model, active_model_config)
