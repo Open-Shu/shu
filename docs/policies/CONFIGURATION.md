@@ -467,12 +467,21 @@ Source-level settings take precedence over sync-time settings. This allows you t
 
 #### React Admin Panel Configuration
 - `VITE_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: `http://localhost:8000`
+  - **Docker dev**: Do NOT set this in docker-compose; use `DEV_SERVER_API_PROXY_TARGET` instead
+  - **Local dev**: Can be set to `http://localhost:8000` or omitted to use Vite proxy
 - `VITE_ENVIRONMENT`: Environment mode (`development`, `staging`, `production`)
 - `VITE_VERSION`: Application version for display
 
 #### Development Configuration
 - `VITE_DEBUG`: Enable debug mode (`true`/`false`)
 - `VITE_LOG_LEVEL`: Frontend logging level (`debug`, `info`, `warn`, `error`)
+
+#### Vite Dev Server Configuration (Docker Development Only)
+- `DEV_SERVER_API_PROXY_TARGET`: Server-side proxy target for Vite dev server (NOT exposed to browser)
+  - Example: `http://shu-api-dev:8000` (Docker internal hostname)
+  - Only used in Docker dev environment
+  - Read by `vite.config.js` via `process.env` (server-side only)
+  - See [DOCKER_FRONTEND_NETWORKING.md](../deployment/DOCKER_FRONTEND_NETWORKING.md) for details
 
 
 

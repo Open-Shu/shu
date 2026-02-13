@@ -130,6 +130,15 @@ docker compose -f deployment/compose/docker-compose.yml --profile frontend up -d
 Adds:
 - `shu-frontend` - React admin console on port 3000
 
+**Frontend API resolution**: The frontend is a static JavaScript
+bundle that runs in the user's browser. It needs to know where the
+backend API is. Set `VITE_API_BASE_URL` at **build time** to the
+browser-accessible API URL (e.g., `https://shu.example.com`). If
+unset, the frontend assumes same-origin — which only works if a
+reverse proxy serves both frontend and API on the same host:port.
+
+See [Frontend Deployment](#frontend-deployment) below for details.
+
 ### Dedicated Workers (Production Pattern)
 
 Start dedicated worker processes:
@@ -193,7 +202,7 @@ shu-worker-ingestion:
   command: ["python", "-m", "shu.worker", "--workload-types=INGESTION"]
   environment:
     - SHU_REDIS_URL=redis://redis:6379
-    - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+    - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu  # pragma: allowlist secret
   depends_on:
     - redis
     - shu-db-migrate
@@ -206,7 +215,7 @@ shu-worker-llm:
   command: ["python", "-m", "shu.worker", "--workload-types=LLM_WORKFLOW,PROFILING"]
   environment:
     - SHU_REDIS_URL=redis://redis:6379
-    - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+    - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu  # pragma: allowlist secret
   depends_on:
     - redis
     - shu-db-migrate
@@ -463,6 +472,77 @@ kubectl apply -k deployment/kubernetes/production
 | **Concurrent Jobs** | < 10 | 10-100 | 100+ |
 | **Availability** | Best effort | High | HA with replicas |
 | **Complexity** | Low | Medium | High |
+
+---
+
+## Frontend Deployment
+
+The Shu frontend is a React single-page application. In production it
+is built into static files and served by nginx (or any static file
+server). The frontend runs entirely in the user's browser, so it must
+be able to reach the backend API over the network from the browser's
+perspective.
+
+### How the frontend finds the backend
+
+The frontend uses `VITE_API_BASE_URL` to determine where to send API
+requests. This value is baked into the JavaScript bundle at **build
+time** — it cannot be changed after the build without rebuilding.
+
+- **If set** (e.g., `https://api.example.com`): the browser sends
+  API requests directly to that URL.
+- **If unset**: the frontend uses same-origin, meaning it assumes the
+  API is reachable at the same host:port the frontend was loaded from.
+  This only works when a reverse proxy (nginx, Traefik, cloud LB)
+  serves both the frontend and API on the same domain.
+
+### When you need to set `VITE_API_BASE_URL`
+
+| Scenario | Set `VITE_API_BASE_URL`? | Value |
+| --- | --- | --- |
+| Reverse proxy serves frontend + API on same domain | No (same-origin) | Leave unset |
+| Frontend and API on different hosts or ports | Yes | Browser-accessible API URL |
+| Local Docker Compose (`make up-full`) | Optional | Defaults to `http://localhost:8000` in docker-compose |
+| Docker dev (`make up-full-dev`) | No | Vite proxy handles routing |
+
+### Building with a custom API URL
+
+**Docker Compose** (build arg in docker-compose.yml):
+
+```yaml
+shu-frontend:
+  build:
+    args:
+      VITE_API_BASE_URL: https://api.example.com
+```
+
+**Manual Docker build**:
+
+```bash
+docker build \
+  --build-arg VITE_API_BASE_URL=https://api.example.com \
+  -f deployment/docker/frontend/Dockerfile .
+```
+
+**Local build** (for non-Docker deployments):
+
+```bash
+cd frontend
+VITE_API_BASE_URL=https://api.example.com npm run build
+# Output in frontend/dist/ — deploy to any static file server
+```
+
+### OAuth redirect URI
+
+When deploying to a non-localhost environment, update
+`OAUTH_REDIRECT_URI` on the backend to match the public URL where
+the frontend is served (e.g.,
+`https://shu.example.com/auth/callback`), and register that URI with
+your OAuth provider(s) (Google Cloud Console, Azure Portal).
+
+See [DOCKER_FRONTEND_NETWORKING.md](./DOCKER_FRONTEND_NETWORKING.md)
+for Docker-specific networking details including dev mode proxy
+configuration.
 
 ---
 

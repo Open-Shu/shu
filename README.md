@@ -204,53 +204,53 @@ redis-cli ping  # Should return "PONG"
 
 - **(macOS/Linux):**
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+  ```bash
+  python -m venv venv
+  source venv/bin/activate
+  pip install -r requirements.txt
+  ```
 
 - **(Windows):**
 
-   ```powershell
-   python -m venv venv
-   venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+  ```powershell
+  python -m venv venv
+  venv\Scripts\activate
+  pip install -r requirements.txt
+  ```
 
 2. **Create and set up the PostgreSQL database:**
 
-    First, create the database:
+   First, create the database:
 
-    ```bash
-    createdb shu
-    ```
+   ```bash
+   createdb shu
+   ```
 
-    Then run the database setup script:
+   Then run the database setup script:
 
-    ```bash
-    # Set your database URL for the setup script. database.py accepts either
-    # `postgresql://` or `postgresql+asyncpg://` here and normalizes it for
-    # psycopg2/Alembic.
-    export SHU_DATABASE_URL="postgresql+asyncpg://user:password@localhost:5432/shu"
+   ```bash
+   # Set your database URL for the setup script. database.py accepts either
+   # `postgresql://` or `postgresql+asyncpg://` here and normalizes it for
+   # psycopg2/Alembic.
+   export SHU_DATABASE_URL="postgresql+asyncpg://user:password@localhost:5432/shu"
 
-    # Run full setup (init-db.sql + migrations + requirements check)
-    python backend/scripts/database.py setup
+   # Run full setup (init-db.sql + migrations + requirements check)
+   python backend/scripts/database.py setup
 
-    # Or provide database URL directly
-    python backend/scripts/database.py setup --database-url postgresql+asyncpg://user:password@localhost:5432/shu
-    ```
+   # Or provide database URL directly
+   python backend/scripts/database.py setup --database-url postgresql+asyncpg://user:password@localhost:5432/shu
+   ```
 
-    This script will:
+   This script will:
    - Execute `init-db.sql` to create required PostgreSQL extensions (pgvector, uuid-ossp, etc.)
    - Configure database settings for optimal performance
    - Run Alembic migrations to create all tables
    - Verify the setup meets all requirements
 
-    Note: `backend/scripts/database.py` accepts both `postgresql://` and
-    `postgresql+asyncpg://` URLs for setup, but when running the Shu API
-    itself you should keep `SHU_DATABASE_URL` using the async
-    `postgresql+asyncpg://` scheme as shown in the next step.
+   Note: `backend/scripts/database.py` accepts both `postgresql://` and
+   `postgresql+asyncpg://` URLs for setup, but when running the Shu API
+   itself you should keep `SHU_DATABASE_URL` using the async
+   `postgresql+asyncpg://` scheme as shown in the next step.
 
    Other useful database commands:
 
@@ -272,15 +272,15 @@ redis-cli ping  # Should return "PONG"
 
 - Option 1 — Dev helper script (recommended):
 
-    ```bash
-    python backend/scripts/run_dev.py
-    ```
+  ```bash
+  python backend/scripts/run_dev.py
+  ```
 
 - Option 2 — Run Uvicorn directly from repo root:
 
-    ```bash
-    uvicorn shu.main:app --app-dir backend/src --reload --host 0.0.0.0 --port 8000
-    ```
+  ```bash
+  uvicorn shu.main:app --app-dir backend/src --reload --host 0.0.0.0 --port 8000
+  ```
 
 5. **Start the frontend (in a new terminal):**
 
@@ -398,7 +398,12 @@ VITE_API_BASE_URL=http://localhost:8000
 
 # Optional: enable verbose console logging
 VITE_DEBUG=true
+
+# Docker dev only: server-side proxy target (NOT exposed to browser)
+# DEV_SERVER_API_PROXY_TARGET=http://shu-api-dev:8000
 ```
+
+**Docker Deployment**: For Docker networking (dev and production), see [DOCKER_FRONTEND_NETWORKING.md](./docs/deployment/DOCKER_FRONTEND_NETWORKING.md).
 
 For complete configuration options, see [CONFIGURATION.md](./docs/policies/CONFIGURATION.md).
 
@@ -417,7 +422,7 @@ curl -X POST http://localhost:8000/api/v1/llm/providers \
     "name": "OpenAI Production",
     "provider_type": "openai",
     "api_endpoint": "https://api.openai.com/v1",
-    "api_key": "sk-your_key_here",
+    "api_key": "sk-your_key_here",  # pragma: allowlist secret
     "supports_streaming": true,
     "rate_limit_rpm": 60
   }'
@@ -432,7 +437,7 @@ curl -X POST http://localhost:8000/api/v1/llm/providers \
     "name": "Anthropic Claude",
     "provider_type": "anthropic",
     "api_endpoint": "https://api.anthropic.com/v1",
-    "api_key": "sk-ant-your_key_here"
+    "api_key": "sk-ant-your_key_here"  # pragma: allowlist secret
   }'
 ```
 
@@ -458,7 +463,7 @@ curl -X POST http://localhost:8000/api/v1/llm/providers \
     "name": "Azure OpenAI",
     "provider_type": "azure",
     "api_endpoint": "https://your-resource.openai.azure.com/openai/deployments/your-deployment",
-    "api_key": "your_azure_key_here"
+    "api_key": "your_azure_key_here"  # pragma: allowlist secret
   }'
 ```
 
@@ -483,7 +488,7 @@ curl -X POST http://localhost:8000/api/v1/llm/providers/{provider_id}/models \
 
 Shu stores OAuth tokens encrypted at rest.
 
-If you have an existing database that contains *plaintext* OAuth tokens from earlier
+If you have an existing database that contains _plaintext_ OAuth tokens from earlier
 development versions, those rows will not decrypt once `SHU_OAUTH_ENCRYPTION_KEY` is enabled.
 
 Currently there is no bundled bulk migration script. The recommended approach is to

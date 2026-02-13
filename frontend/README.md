@@ -31,7 +31,8 @@ A React-based interface for the Shu Backend API.
 
    ```bash
    VITE_API_BASE_URL=http://localhost:8000
-   # If not set, the frontend will use same-origin behind your ingress
+   # If not set, the frontend will use same-origin (recommended for Docker dev)
+   # For Docker dev, use DEV_SERVER_API_PROXY_TARGET in docker-compose instead
    ```
 
 3. **Start Development Server**:
@@ -40,6 +41,25 @@ A React-based interface for the Shu Backend API.
    ```
 
 The application will be available at `http://localhost:3000`.
+
+## Docker Development
+
+For Docker-based development with hot-reload:
+
+```bash
+# From repository root
+make up-full-dev
+```
+
+This starts the frontend in a Docker container with:
+
+- Vite dev server with hot-reload
+- Proxy configuration for API and OAuth routes
+- Volume mounts for live code updates
+
+**Important**: In Docker dev, do NOT set `VITE_API_BASE_URL` in docker-compose. Instead, use `DEV_SERVER_API_PROXY_TARGET` to configure the server-side proxy target.
+
+See [DOCKER_FRONTEND_NETWORKING.md](../docs/deployment/DOCKER_FRONTEND_NETWORKING.md) for details on Docker networking for both dev and production.
 
 ## Usage
 
@@ -140,7 +160,7 @@ frontend/
 
 ### Environment Variables
 
-- `VITE_API_BASE_URL` (optional): Shu API base URL. If unset, the frontend uses same-origin. Example: http://localhost:8000
+- `VITE_API_BASE_URL`: The browser-accessible URL of the Shu API. If unset, the frontend uses same-origin (assumes the API is served from the same host:port). **Required when the frontend and backend are on different hosts or ports** (e.g., frontend on `https://app.example.com`, API on `https://api.example.com`). This value is baked in at build time and cannot be changed without rebuilding. Example: `http://localhost:8000`
 
 ### API Endpoints
 
