@@ -4,6 +4,7 @@ import { Alert, Box, Button, CircularProgress, Grid, Paper, Stack, TextField, Ty
 import PaletteIcon from '@mui/icons-material/Palette';
 import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
+import { resolveBranding } from '../../utils/brandingUtils';
 import { getThemeConfig } from '../../utils/constants';
 import log from '../../utils/log';
 import PageHelpHeader from '../PageHelpHeader';
@@ -170,30 +171,31 @@ const BrandingSettings = () => {
         dark_theme_overrides: null,
       });
       const data = extractDataFromResponse(response);
-      setBranding(data);
+      const resolved = resolveBranding(data);
+      setBranding(resolved);
 
       // Resolve themes with the reset data
-      const newLightTheme = getThemeConfig('light', data);
-      const newDarkTheme = getThemeConfig('dark', data);
+      const newLightTheme = getThemeConfig('light', resolved);
+      const newDarkTheme = getThemeConfig('dark', resolved);
 
       // Update form state with the reset values
       setFormState({
-        appName: data.appName || '',
-        faviconUrl: data.faviconUrl || '',
-        darkFaviconUrl: data.darkFaviconUrl || '',
-        lightTopbarTextColor: data.lightTopbarTextColor || '#FFFFFF',
-        darkTopbarTextColor: data.darkTopbarTextColor || '#FFFFFF',
+        appName: resolved.appName || '',
+        faviconUrl: resolved.faviconUrl || '',
+        darkFaviconUrl: resolved.darkFaviconUrl || '',
+        lightTopbarTextColor: resolved.lightTopbarTextColor || '#FFFFFF',
+        darkTopbarTextColor: resolved.darkTopbarTextColor || '#FFFFFF',
         light: {
-          primaryMain: data.lightThemeOverrides?.palette?.primary?.main || newLightTheme.palette.primary.main,
-          secondaryMain: data.lightThemeOverrides?.palette?.secondary?.main || newLightTheme.palette.secondary.main,
+          primaryMain: resolved.lightThemeOverrides?.palette?.primary?.main || newLightTheme.palette.primary.main,
+          secondaryMain: resolved.lightThemeOverrides?.palette?.secondary?.main || newLightTheme.palette.secondary.main,
           backgroundDefault:
-            data.lightThemeOverrides?.palette?.background?.default || newLightTheme.palette.background.default,
+            resolved.lightThemeOverrides?.palette?.background?.default || newLightTheme.palette.background.default,
         },
         dark: {
-          primaryMain: data.darkThemeOverrides?.palette?.primary?.main || newDarkTheme.palette.primary.main,
-          secondaryMain: data.darkThemeOverrides?.palette?.secondary?.main || newDarkTheme.palette.secondary.main,
+          primaryMain: resolved.darkThemeOverrides?.palette?.primary?.main || newDarkTheme.palette.primary.main,
+          secondaryMain: resolved.darkThemeOverrides?.palette?.secondary?.main || newDarkTheme.palette.secondary.main,
           backgroundDefault:
-            data.darkThemeOverrides?.palette?.background?.default || newDarkTheme.palette.background.default,
+            resolved.darkThemeOverrides?.palette?.background?.default || newDarkTheme.palette.background.default,
         },
       });
 
