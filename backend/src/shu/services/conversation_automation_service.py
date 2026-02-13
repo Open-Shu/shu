@@ -167,11 +167,8 @@ class ConversationAutomationService:
                 "model_config_id": None,
             }
 
-        # Get the last message in the line
-        messages = await self.chat_service.get_conversation_messages(
-            conversation_id=conversation.id, limit=1, order_desc=True
-        )
-        last_message = messages[0] if messages else None
+        # Get the last message in the line (skip backfill to avoid corrupting variant_index)
+        last_message = await self.chat_service.get_last_conversation_message(conversation.id)
         last_message_id = last_message.id if last_message else None
 
         rename_settings = self._get_rename_settings()

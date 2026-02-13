@@ -896,6 +896,18 @@ class ChatService:
 
         return messages
 
+    async def get_last_conversation_message(self, conversation_id: str) -> Message | None:
+        """Return the most recent message in a conversation without lineage backfill."""
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .options(selectinload(Message.model), selectinload(Message.attachments))
+            .order_by(desc(Message.created_at))
+            .limit(1)
+        )
+        result = await self.db_session.execute(stmt)
+        return result.scalars().first()
+
     async def count_conversation_messages(self, conversation_id: str) -> int:
         """Return total number of persisted messages for a conversation."""
         stmt = select(func.count(Message.id)).where(Message.conversation_id == conversation_id)
