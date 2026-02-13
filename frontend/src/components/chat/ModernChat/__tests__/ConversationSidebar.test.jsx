@@ -35,7 +35,7 @@ const TestWrapper = ({ children }) => {
 // Mock branding and chat styles
 const mockBranding = {
   appDisplayName: 'Test App',
-  logoUrl: '/test-logo.png',
+  faviconUrl: '/test-favicon.png',
   primaryMain: '#1976d2',
 };
 

@@ -7,8 +7,7 @@ import {
   resolveBranding,
   getThemeConfig,
   getPrimaryColor,
-  getBrandingFaviconUrl,
-  getBrandingLogoUrl,
+  getBrandingFaviconUrlForTheme,
   getBrandingAppName,
 } from '../utils/constants';
 import log from '../utils/log';
@@ -102,8 +101,7 @@ export const ThemeProvider = ({ children }) => {
     }
 
     const resolved = resolveBranding(branding);
-    const faviconUrl = getBrandingFaviconUrl(resolved);
-    const logoUrl = getBrandingLogoUrl(resolved);
+    const faviconUrl = getBrandingFaviconUrlForTheme(resolved, resolvedMode);
     const appName = getBrandingAppName(resolved);
 
     const upsertLink = (selector, rel, href) => {
@@ -123,7 +121,7 @@ export const ThemeProvider = ({ children }) => {
 
     upsertLink('link[rel="icon"]', 'icon', faviconUrl);
     upsertLink('link[rel="shortcut icon"]', 'shortcut icon', faviconUrl);
-    upsertLink('link[rel="apple-touch-icon"]', 'apple-touch-icon', logoUrl);
+    upsertLink('link[rel="apple-touch-icon"]', 'apple-touch-icon', faviconUrl);
 
     const themeMeta = document.querySelector('meta[name="theme-color"]');
     if (themeMeta) {

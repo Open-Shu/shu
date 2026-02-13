@@ -18,7 +18,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useMobileSidebar } from '../contexts/MobileSidebarContext';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import useAutomationSettings from '../hooks/useAutomationSettings';
-import { getBrandingAppName, getBrandingLogoUrl, RAG_REWRITE_OPTIONS } from '../utils/constants';
+import { getBrandingAppName, RAG_REWRITE_OPTIONS } from '../utils/constants';
 import { createChatStyles, attachmentChipStyles } from './chat/ModernChat/styles';
 import { buildRenamePayloadBase, getLatestUserMessageContent } from './chat/ModernChat/utils/renamePayload';
 import useChatComposer from './chat/ModernChat/hooks/useChatComposer';
@@ -56,10 +56,8 @@ const ModernChat = () => {
   const theme = useMuiTheme();
   const chatStyles = useMemo(() => createChatStyles(theme), [theme]);
   const attachmentChipSx = attachmentChipStyles;
-  const { branding, theme: appTheme } = useAppTheme();
+  const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
-  const logoUrl = getBrandingLogoUrl(branding);
-  const primaryMain = appTheme.palette.primary.main;
 
   const pluginsEnabled = CHAT_PLUGINS_ENABLED;
 
@@ -1099,7 +1097,6 @@ const ModernChat = () => {
     onRenameConversation: handleOpenRenameDialog,
     onDeleteConversation: handleOpenDeleteDialog,
     onToggleFavorite: handleToggleFavorite,
-    branding: { appDisplayName, logoUrl, primaryMain },
     chatStyles,
     searchValue: summarySearchInput,
     onSearchChange: handleSummarySearchChange,

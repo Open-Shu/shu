@@ -10,8 +10,10 @@ import PageHelpHeader from '../PageHelpHeader';
 
 const emptyForm = {
   appName: '',
-  logoUrl: '',
   faviconUrl: '',
+  darkFaviconUrl: '',
+  lightTopbarTextColor: '#FFFFFF',
+  darkTopbarTextColor: '#FFFFFF',
   light: {
     primaryMain: '',
     secondaryMain: '',
@@ -53,15 +55,16 @@ const BrandingSettings = () => {
   const [formState, setFormState] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [uploadingFavicon, setUploadingFavicon] = useState(false);
+  const [uploadingLightFavicon, setUploadingLightFavicon] = useState(false);
+  const [uploadingDarkFavicon, setUploadingDarkFavicon] = useState(false);
 
-  const logoInputRef = useRef(null);
-  const faviconInputRef = useRef(null);
+  const lightFaviconInputRef = useRef(null);
+  const darkFaviconInputRef = useRef(null);
 
   const resolvedLightTheme = useMemo(() => getThemeConfig('light', branding), [branding]);
   const resolvedDarkTheme = useMemo(() => getThemeConfig('dark', branding), [branding]);
 
+  // Initialize form state only once when branding is first loaded
   useEffect(() => {
     if (!brandingLoaded) {
       return;
@@ -69,8 +72,10 @@ const BrandingSettings = () => {
 
     setFormState({
       appName: branding.appName || '',
-      logoUrl: branding.logoUrl || '',
       faviconUrl: branding.faviconUrl || '',
+      darkFaviconUrl: branding.darkFaviconUrl || '',
+      lightTopbarTextColor: branding.lightTopbarTextColor || '#FFFFFF',
+      darkTopbarTextColor: branding.darkTopbarTextColor || '#FFFFFF',
       light: {
         primaryMain: branding.lightThemeOverrides?.palette?.primary?.main || resolvedLightTheme.palette.primary.main,
         secondaryMain:
@@ -86,7 +91,22 @@ const BrandingSettings = () => {
           branding.darkThemeOverrides?.palette?.background?.default || resolvedDarkTheme.palette.background.default,
       },
     });
-  }, [branding, brandingLoaded, resolvedDarkTheme, resolvedLightTheme]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandingLoaded]); // Only run when brandingLoaded changes from false to true
+
+  // Update form state when branding changes from uploads (but not from user typing)
+  useEffect(() => {
+    if (!brandingLoaded) {
+      return;
+    }
+
+    // Only update the asset URLs that come from uploads, not the text fields or colors
+    setFormState((prev) => ({
+      ...prev,
+      faviconUrl: branding.faviconUrl || prev.faviconUrl,
+      darkFaviconUrl: branding.darkFaviconUrl || prev.darkFaviconUrl,
+    }));
+  }, [branding.faviconUrl, branding.darkFaviconUrl, brandingLoaded]);
 
   const handleTextChange = (field) => (event) => {
     const { value } = event.target;
@@ -114,8 +134,10 @@ const BrandingSettings = () => {
 
     const payload = {
       app_name: toNullable(formState.appName),
-      logo_url: toNullable(formState.logoUrl),
       favicon_url: toNullable(formState.faviconUrl),
+      dark_favicon_url: toNullable(formState.darkFaviconUrl),
+      light_topbar_text_color: toNullable(formState.lightTopbarTextColor),
+      dark_topbar_text_color: toNullable(formState.darkTopbarTextColor),
       light_theme_overrides: buildPaletteOverrides(formState.light),
       dark_theme_overrides: buildPaletteOverrides(formState.dark),
     };
@@ -140,13 +162,41 @@ const BrandingSettings = () => {
     try {
       const response = await brandingAPI.updateBranding({
         app_name: null,
-        logo_url: null,
         favicon_url: null,
+        dark_favicon_url: null,
+        light_topbar_text_color: null,
+        dark_topbar_text_color: null,
         light_theme_overrides: null,
         dark_theme_overrides: null,
       });
       const data = extractDataFromResponse(response);
       setBranding(data);
+
+      // Resolve themes with the reset data
+      const newLightTheme = getThemeConfig('light', data);
+      const newDarkTheme = getThemeConfig('dark', data);
+
+      // Update form state with the reset values
+      setFormState({
+        appName: data.appName || '',
+        faviconUrl: data.faviconUrl || '',
+        darkFaviconUrl: data.darkFaviconUrl || '',
+        lightTopbarTextColor: data.lightTopbarTextColor || '#FFFFFF',
+        darkTopbarTextColor: data.darkTopbarTextColor || '#FFFFFF',
+        light: {
+          primaryMain: data.lightThemeOverrides?.palette?.primary?.main || newLightTheme.palette.primary.main,
+          secondaryMain: data.lightThemeOverrides?.palette?.secondary?.main || newLightTheme.palette.secondary.main,
+          backgroundDefault:
+            data.lightThemeOverrides?.palette?.background?.default || newLightTheme.palette.background.default,
+        },
+        dark: {
+          primaryMain: data.darkThemeOverrides?.palette?.primary?.main || newDarkTheme.palette.primary.main,
+          secondaryMain: data.darkThemeOverrides?.palette?.secondary?.main || newDarkTheme.palette.secondary.main,
+          backgroundDefault:
+            data.darkThemeOverrides?.palette?.background?.default || newDarkTheme.palette.background.default,
+        },
+      });
+
       setStatus({ type: 'success', message: 'Branding reset to defaults.' });
     } catch (error) {
       const message = formatError(error);
@@ -157,39 +207,40 @@ const BrandingSettings = () => {
     }
   };
 
-  const uploadAsset = async (type, file) => {
+  const uploadFavicon = async (theme, file) => {
     if (!file) {
       return;
     }
 
     setStatus(null);
-    if (type === 'logo') {
-      setUploadingLogo(true);
+
+    if (theme === 'light') {
+      setUploadingLightFavicon(true);
     } else {
-      setUploadingFavicon(true);
+      setUploadingDarkFavicon(true);
     }
 
     try {
-      const response = type === 'logo' ? await brandingAPI.uploadLogo(file) : await brandingAPI.uploadFavicon(file);
+      const response = await brandingAPI.uploadFavicon(file, theme);
       const data = extractDataFromResponse(response);
       setBranding(data);
       setStatus({
         type: 'success',
-        message: `${type === 'logo' ? 'Logo' : 'Favicon'} updated.`,
+        message: `${theme === 'light' ? 'Light' : 'Dark'} mode favicon updated.`,
       });
     } catch (error) {
       const message = formatError(error);
-      log.error('Asset upload failed', error);
+      log.error('Favicon upload failed', error);
       setStatus({ type: 'error', message });
     } finally {
-      if (type === 'logo' && logoInputRef.current) {
-        logoInputRef.current.value = '';
+      if (theme === 'light' && lightFaviconInputRef.current) {
+        lightFaviconInputRef.current.value = '';
       }
-      if (type === 'favicon' && faviconInputRef.current) {
-        faviconInputRef.current.value = '';
+      if (theme === 'dark' && darkFaviconInputRef.current) {
+        darkFaviconInputRef.current.value = '';
       }
-      setUploadingLogo(false);
-      setUploadingFavicon(false);
+      setUploadingLightFavicon(false);
+      setUploadingDarkFavicon(false);
     }
   };
 
@@ -206,11 +257,10 @@ const BrandingSettings = () => {
       <Stack spacing={3}>
         <PageHelpHeader
           title="Branding Settings"
-          description="Customize the look and feel of your application. Upload your logo, set a favicon, and configure color themes for both light and dark modes."
+          description="Customize the look and feel of your application. Set a favicon, and configure color themes for both light and dark modes."
           icon={<PaletteIcon />}
           tips={[
-            'Upload a logo image to replace the default branding throughout the app',
-            'The favicon appears in browser tabs—upload a small square image',
+            'The favicon appears in browser tabs and the topbar—upload a small square image',
             'Set primary colors to match your brand identity',
             'Configure both light and dark mode themes for users who prefer either',
             'Changes take effect immediately after saving',
@@ -242,54 +292,33 @@ const BrandingSettings = () => {
             <Stack spacing={2}>
               <Stack spacing={1.5}>
                 <Typography variant="subtitle1" fontWeight={600}>
-                  Logo
+                  Light Mode Favicon
                 </Typography>
-                <img
-                  src={branding.logoUrl}
-                  alt="Logo preview"
-                  style={{ height: 80, objectFit: 'contain', maxWidth: '100%' }}
-                />
-                <Stack spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={() => logoInputRef.current?.click()}
-                    disabled={uploadingLogo}
-                    fullWidth
-                  >
-                    {uploadingLogo ? 'Uploading…' : 'Upload Logo'}
-                  </Button>
-                  <input
-                    value={formState.logoUrl}
-                    onChange={handleTextChange('logoUrl')}
-                    placeholder="https://example.com/logo.png"
-                    type="hidden"
+                <Box
+                  sx={{
+                    backgroundColor: resolvedLightTheme.palette.primary.main,
+                    padding: 2,
+                    borderRadius: 1,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    minHeight: 100,
+                  }}
+                >
+                  <img
+                    src={branding.faviconUrl}
+                    alt="Light mode favicon preview"
+                    style={{ height: 80, objectFit: 'contain' }}
                   />
-                </Stack>
-                <input
-                  ref={logoInputRef}
-                  type="file"
-                  accept=".png,.jpg,.jpeg,.svg,.webp"
-                  style={{ display: 'none' }}
-                  onChange={(event) => uploadAsset('logo', event.target.files?.[0])}
-                />
-              </Stack>
-            </Stack>
-          </Paper>
-          <Paper sx={{ p: 3, flex: 1 }}>
-            <Stack spacing={2}>
-              <Stack spacing={1.5}>
-                <Typography variant="subtitle1" fontWeight={600}>
-                  Favicon
-                </Typography>
-                <img src={branding.faviconUrl} alt="Favicon preview" style={{ height: 80, objectFit: 'contain' }} />
+                </Box>
                 <Stack spacing={1}>
                   <Button
                     variant="outlined"
-                    onClick={() => faviconInputRef.current?.click()}
-                    disabled={uploadingFavicon}
+                    onClick={() => lightFaviconInputRef.current?.click()}
+                    disabled={uploadingLightFavicon}
                     fullWidth
                   >
-                    {uploadingFavicon ? 'Uploading…' : 'Upload Favicon'}
+                    {uploadingLightFavicon ? 'Uploading…' : 'Upload Light Favicon'}
                   </Button>
                   <input
                     value={formState.faviconUrl}
@@ -299,16 +328,102 @@ const BrandingSettings = () => {
                   />
                 </Stack>
                 <input
-                  ref={faviconInputRef}
+                  ref={lightFaviconInputRef}
                   type="file"
                   accept=".svg,.png,.ico,.webp"
                   style={{ display: 'none' }}
-                  onChange={(event) => uploadAsset('favicon', event.target.files?.[0])}
+                  onChange={(event) => uploadFavicon('light', event.target.files?.[0])}
+                />
+              </Stack>
+            </Stack>
+          </Paper>
+          <Paper sx={{ p: 3, flex: 1 }}>
+            <Stack spacing={2}>
+              <Stack spacing={1.5}>
+                <Typography variant="subtitle1" fontWeight={600}>
+                  Dark Mode Favicon
+                </Typography>
+                <Box
+                  sx={{
+                    backgroundColor: resolvedDarkTheme.palette.primary.main,
+                    padding: 2,
+                    borderRadius: 1,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    minHeight: 100,
+                  }}
+                >
+                  <img
+                    src={branding.darkFaviconUrl || branding.faviconUrl}
+                    alt="Dark mode favicon preview"
+                    style={{ height: 80, objectFit: 'contain' }}
+                  />
+                </Box>
+                {!branding.darkFaviconUrl && (
+                  <Typography variant="caption" color="text.secondary">
+                    Using light mode favicon as fallback
+                  </Typography>
+                )}
+                <Stack spacing={1}>
+                  <Button
+                    variant="outlined"
+                    onClick={() => darkFaviconInputRef.current?.click()}
+                    disabled={uploadingDarkFavicon}
+                    fullWidth
+                  >
+                    {uploadingDarkFavicon ? 'Uploading…' : 'Upload Dark Favicon'}
+                  </Button>
+                  <input
+                    value={formState.darkFaviconUrl}
+                    onChange={handleTextChange('darkFaviconUrl')}
+                    placeholder="https://example.com/dark-favicon.png"
+                    type="hidden"
+                  />
+                </Stack>
+                <input
+                  ref={darkFaviconInputRef}
+                  type="file"
+                  accept=".svg,.png,.ico,.webp"
+                  style={{ display: 'none' }}
+                  onChange={(event) => uploadFavicon('dark', event.target.files?.[0])}
                 />
               </Stack>
             </Stack>
           </Paper>
         </Stack>
+
+        <Paper sx={{ p: 3 }}>
+          <Stack spacing={2}>
+            <Typography variant="h6" fontWeight={600}>
+              Topbar Text Colors
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Light Theme Topbar Text Color"
+                  type="color"
+                  value={formState.lightTopbarTextColor}
+                  onChange={handleTextChange('lightTopbarTextColor')}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  helperText="Text color for topbar in light theme (default: white)"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Dark Theme Topbar Text Color"
+                  type="color"
+                  value={formState.darkTopbarTextColor}
+                  onChange={handleTextChange('darkTopbarTextColor')}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  helperText="Text color for topbar in dark theme (default: white)"
+                />
+              </Grid>
+            </Grid>
+          </Stack>
+        </Paper>
 
         <Paper sx={{ p: 3 }}>
           <Stack spacing={2}>

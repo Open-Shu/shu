@@ -40,7 +40,6 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
   onRenameConversation,
   onDeleteConversation,
   onToggleFavorite,
-  branding,
   chatStyles,
   searchValue,
   onSearchChange,
@@ -341,28 +340,6 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
             ))}
           </List>
         )}
-      </Box>
-
-      <Box
-        sx={{
-          mt: 'auto',
-          p: 2,
-          backgroundColor: alpha(branding.primaryMain, 0.0),
-          borderTop: `1px solid ${alpha(branding.primaryMain, 0.0)}`,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-      >
-        <img
-          src={branding.logoUrl}
-          alt={branding.appDisplayName}
-          style={{
-            height: '60px',
-            width: 'auto',
-            maxWidth: '100%',
-          }}
-        />
       </Box>
     </Paper>
   );

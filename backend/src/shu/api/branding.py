@@ -5,6 +5,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -44,41 +45,23 @@ async def patch_branding(
     return SuccessResponse(data=branding)
 
 
-@router.post("/logo", response_model=SuccessResponse[BrandingSettings])
-async def upload_logo(
-    file: UploadFile = File(...),
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Upload and apply a new logo asset."""
-    service = BrandingService(db)
-    file_bytes = await _read_upload(file, service.settings.branding_max_asset_size_bytes)
-    try:
-        branding = await service.save_asset(
-            filename=file.filename or "logo",
-            file_bytes=file_bytes,
-            asset_type="logo",
-            user_id=current_user.id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return SuccessResponse(data=branding)
-
-
 @router.post("/favicon", response_model=SuccessResponse[BrandingSettings])
 async def upload_favicon(
     file: UploadFile = File(...),
+    theme: str = Query("light", pattern="^(light|dark)$"),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload and apply a new favicon asset."""
+    """Upload and apply a new favicon asset for the specified theme."""
     service = BrandingService(db)
     file_bytes = await _read_upload(file, service.settings.branding_max_asset_size_bytes)
+    asset_type = "dark_favicon" if theme == "dark" else "favicon"
+
     try:
         branding = await service.save_asset(
-            filename=file.filename or "favicon",
+            filename=file.filename or f"favicon_{theme}",
             file_bytes=file_bytes,
-            asset_type="favicon",
+            asset_type=asset_type,
             user_id=current_user.id,
         )
     except ValueError as exc:
@@ -88,7 +71,7 @@ async def upload_favicon(
 
 @router.get("/assets/{filename}")
 async def get_branding_asset(filename: str, db: AsyncSession = Depends(get_db)):
-    """Serve stored branding assets like logos and favicons."""
+    """Serve stored branding assets like favicons."""
     service = BrandingService(db)
     try:
         path = service.resolve_asset_path(filename)

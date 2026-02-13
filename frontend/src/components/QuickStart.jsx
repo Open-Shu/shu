@@ -237,7 +237,7 @@ const QuickStart = () => {
     },
     {
       title: 'Branding',
-      description: 'Customize the look and feel of your application. Set logos, colors, and display names.',
+      description: 'Customize the look and feel of your application. Set favicons, colors, and display names.',
       icon: <BrandingIcon />,
       path: '/admin/branding',
     },

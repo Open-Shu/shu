@@ -1,13 +1,11 @@
 import { mergeDeep } from './objectUtils';
+import { resolveBranding } from './brandingUtils';
 
 const primaryMain = '#2E5A87';
 const primaryLight = '#4A7BA7';
 const primaryDark = '#1E3A5F';
 const accentRed = '#E53E3E';
 const neutralGray = '#6B7280';
-
-const defaultLogoUrl = '/logo-wide.png';
-const defaultFaviconUrl = '/favicon.png';
 
 export const lightThemeBase = {
   palette: {
@@ -288,10 +286,10 @@ export const darkThemeBase = {
   palette: {
     mode: 'dark',
     primary: {
-      main: '#58a6ff',
-      light: '#79c0ff',
-      dark: '#388bfd',
-      contrastText: '#0d1117',
+      main: '#2E5A87',
+      light: '#4A7BA7',
+      dark: '#1E3A5F',
+      contrastText: '#ffffff',
     },
     secondary: {
       main: '#f85149',
@@ -434,23 +432,23 @@ export const darkThemeBase = {
           margin: '4px 8px',
           color: '#f0f6fc',
           '&.Mui-selected': {
-            backgroundColor: '#58a6ff',
-            color: '#0d1117',
+            backgroundColor: '#2E5A87',
+            color: '#ffffff',
             '&:hover': {
-              backgroundColor: '#388bfd',
+              backgroundColor: '#1E3A5F',
             },
             '& .MuiListItemIcon-root': {
-              color: '#0d1117',
+              color: '#ffffff',
             },
             '& .MuiListItemText-primary': {
-              color: '#0d1117',
+              color: '#ffffff',
             },
           },
           '&:hover': {
             backgroundColor: '#21262d',
           },
           '& .MuiListItemIcon-root': {
-            color: '#79c0ff',
+            color: '#4A7BA7',
           },
         },
       },
@@ -474,7 +472,7 @@ export const darkThemeBase = {
             color: '#8b949e',
             fontWeight: 500,
             '&.Mui-focused': {
-              color: '#58a6ff',
+              color: '#2E5A87',
             },
             '&.MuiInputLabel-shrink': {
               fontSize: '0.75rem',
@@ -512,7 +510,7 @@ export const darkThemeBase = {
             paddingLeft: '4px',
             paddingRight: '4px',
             '&.Mui-focused': {
-              color: '#58a6ff',
+              color: '#2E5A87',
               backgroundColor: '#161b22',
             },
             '&.MuiInputLabel-shrink': {
@@ -548,7 +546,7 @@ export const darkThemeBase = {
           paddingLeft: '4px',
           paddingRight: '4px',
           '&.Mui-focused': {
-            color: '#58a6ff',
+            color: '#2E5A87',
             backgroundColor: '#161b22',
           },
           '&.MuiInputLabel-shrink': {
@@ -578,36 +576,15 @@ export const darkThemeBase = {
   },
 };
 
-const toPlainObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
-
-export const defaultBranding = {
-  // Use backend default app name to match server when branding not yet loaded
-  appName: 'Shu',
-  logoUrl: defaultLogoUrl,
-  faviconUrl: defaultFaviconUrl,
-  lightThemeOverrides: {},
-  darkThemeOverrides: {},
-  updatedAt: null,
-  updatedBy: null,
-};
-
-export const resolveBranding = (branding) => {
-  const raw = branding || {};
-  const resolved = {
-    appName: raw.appName ?? raw.app_name ?? defaultBranding.appName,
-    logoUrl: raw.logoUrl ?? raw.logo_url ?? defaultLogoUrl,
-    faviconUrl: raw.faviconUrl ?? raw.favicon_url ?? defaultFaviconUrl,
-    lightThemeOverrides: toPlainObject(raw.lightThemeOverrides ?? raw.light_theme_overrides) || {},
-    darkThemeOverrides: toPlainObject(raw.darkThemeOverrides ?? raw.dark_theme_overrides) || {},
-    updatedAt: raw.updatedAt ?? raw.updated_at ?? defaultBranding.updatedAt,
-    updatedBy: raw.updatedBy ?? raw.updated_by ?? defaultBranding.updatedBy,
-  };
-
-  return {
-    ...defaultBranding,
-    ...resolved,
-  };
-};
+// Re-export branding utilities from dedicated module for backward compatibility
+export {
+  defaultBranding,
+  resolveBranding,
+  getBrandingFaviconUrl,
+  getBrandingAppName,
+  getBrandingFaviconUrlForTheme,
+  getTopbarTextColor,
+} from './brandingUtils';
 
 export const getThemeConfig = (mode = 'light', branding) => {
   const resolved = resolveBranding(branding);
@@ -621,9 +598,6 @@ export const getPrimaryColor = (mode = 'light', branding) => {
   return theme?.palette?.primary?.main ?? primaryMain;
 };
 
-export const getBrandingLogoUrl = (branding) => resolveBranding(branding).logoUrl;
-export const getBrandingFaviconUrl = (branding) => resolveBranding(branding).faviconUrl;
-export const getBrandingAppName = (branding) => resolveBranding(branding).appName;
 export const DEFAULT_THEME_COLOR = lightThemeBase.palette.primary.main;
 
 export const RAG_REWRITE_OPTIONS = [

@@ -13,7 +13,7 @@ import {
   IconButton,
   useMediaQuery,
 } from '@mui/material';
-import { alpha, useTheme } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
 import {
   RocketLaunch as QuickStartIcon,
   Storage as KnowledgeBasesIcon,
@@ -35,8 +35,6 @@ import {
 } from '@mui/icons-material';
 
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useTheme as useAppTheme } from '../contexts/ThemeContext';
-import { getBrandingAppName, getBrandingLogoUrl } from '../utils/constants';
 import TopBar from '../components/layout/TopBar.jsx';
 
 const DRAWER_WIDTH = 280;
@@ -47,11 +45,6 @@ const AdminLayout = ({ children }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  const { branding, theme: appTheme } = useAppTheme();
-  const appDisplayName = getBrandingAppName(branding);
-  const logoUrl = getBrandingLogoUrl(branding);
-  const primaryMain = appTheme.palette.primary.main;
 
   const handleDrawerToggle = () => {
     setMobileOpen((prev) => !prev);
@@ -189,29 +182,6 @@ const AdminLayout = ({ children }) => {
             </ListItemButton>
           ))}
         </List>
-      </Box>
-
-      {/* Branding Logo at Bottom - Full Width */}
-      <Box
-        sx={{
-          mt: 'auto',
-          p: 2,
-          backgroundColor: alpha(primaryMain, 0.0),
-          borderTop: `1px solid ${alpha(primaryMain, 0.1)}`,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-      >
-        <img
-          src={logoUrl}
-          alt={appDisplayName}
-          style={{
-            height: '60px',
-            width: 'auto',
-            maxWidth: '100%',
-          }}
-        />
       </Box>
     </>
   );

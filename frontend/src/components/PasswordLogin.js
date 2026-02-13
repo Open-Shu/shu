@@ -28,7 +28,7 @@ const PasswordLogin = ({
   const [successMessage, setSuccessMessage] = useState(null);
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
-  const logoUrl = branding?.logoUrl;
+  const faviconUrl = branding?.faviconUrl;
 
   // Microsoft OAuth hook
   const { startLogin: startMicrosoftLogin, loading: microsoftLoading } = useMicrosoftOAuth({
@@ -133,7 +133,7 @@ const PasswordLogin = ({
         <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
           <Box sx={{ textAlign: 'center', mb: 3 }}>
             <img
-              src={logoUrl}
+              src={faviconUrl}
               alt={appDisplayName}
               style={{
                 height: '60px',
