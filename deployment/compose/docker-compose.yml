@@ -62,7 +62,7 @@ services:
       - ../../backend/alembic.ini:/app/alembic.ini
       - ../../backend/scripts:/app/scripts
       - ../../data:/app/data
-      - ../../plugins:/app/plugins  # overlay: repo-root plugins/ lives outside data/
+      - ../../plugins:/app/plugins
     networks:
       - shu-network
     restart: unless-stopped
@@ -181,7 +181,7 @@ services:
     volumes:
       - ../../backend/src:/app/src
       - ../../data:/app/data
-      - ../../plugins:/app/data/plugins  # overlay: repo-root plugins/ lives outside data/
+      - ../../plugins:/app/plugins
     networks:
       - shu-network
     restart: unless-stopped

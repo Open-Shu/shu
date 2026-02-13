@@ -42,7 +42,7 @@ from migrations.helpers import (
 try:
     from pgvector.sqlalchemy import Vector  # type: ignore
 except Exception:  # pragma: no cover
-    Vector = lambda dim: sa.Text  # fallback for environments without pgvector
+    Vector = lambda dim: sa.Text()  # fallback for environments without pgvector
 
 # revision identifiers, used by Alembic.
 revision = "006"

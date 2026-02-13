@@ -31,15 +31,9 @@ def _fresh_import():
     return importlib.import_module(MODULE_NAME)
 
 
-def _make_inspector(*, google_id_exists=True, google_id_index_exists=True):
-    """Build a mock inspector that reports table/column/index state.
-
-    Parts 1-11 of upgrade() use table_exists / column_exists / index_exists
-    to decide whether to create schema objects.  We tell them everything
-    already exists so those parts become no-ops, isolating Part 12.
-    """
-    inspector = MagicMock()
-    return inspector
+def _make_inspector():
+    """Build a mock inspector that reports table/column/index state."""
+    return MagicMock()
 
 
 def _make_helpers(*, google_id_column_exists=True, google_id_index_exists=True):
