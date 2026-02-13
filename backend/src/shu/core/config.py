@@ -191,7 +191,10 @@ class Settings(BaseSettings):
 
     # Plugins
     plugins_auto_sync: bool = Field(False, alias="SHU_PLUGINS_AUTO_SYNC")
-    # Root directory where plugins are discovered/installed (relative paths are resolved from repo root)
+    # Root directory where plugins are discovered/installed.
+    # The system ensures the final directory is named "plugins/" — if the value
+    # ends in "plugins", the trailing component is stripped and re-appended.
+    # Relative paths are resolved from the repository root.
     plugins_root: str = Field("./data/plugins", alias="SHU_PLUGINS_ROOT")
 
     # HTTP Egress Policy for HostCapabilities.http
@@ -306,8 +309,17 @@ class Settings(BaseSettings):
     @field_validator("plugins_root", mode="before")
     @classmethod
     def _resolve_plugins_root(cls, v: str) -> str:
+        """Normalize plugins_root to the *parent* of the ``plugins/`` directory.
+
+        If the caller passes a path ending in ``plugins`` (legacy convention),
+        strip that trailing component so the stored value is always the parent.
+        Relative paths are resolved against the repository root.
+        """
         try:
             p = Path(v)
+            # Strip trailing "plugins" component if present (backward compat)
+            if p.name == "plugins":
+                p = p.parent
             if p.is_absolute():
                 return str(p)
             root = cls._repo_root_from_this_file()

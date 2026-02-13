@@ -274,9 +274,12 @@ service = SomeService(db, config_manager)  # Service receives config_manager
 
 ### Plugins / Plugins Upload & Discovery
 
-- Environment Variable: `SHU_PLUGINS_ROOT` (default: `./plugins`)
-  - Root directory where plugin packages are installed and discovered
+- Environment Variable: `SHU_PLUGINS_ROOT` (default: `./data/plugins`)
+  - Directory where plugin packages are installed and discovered
+  - The system always ensures the final directory is named `plugins/`.
+    If the value ends in `plugins`, the trailing component is stripped and re-appended internally.
   - Relative paths are resolved from the repository root
+  - Examples: `./data/plugins` → `<repo>/data/plugins`, `./plugins` → `<repo>/plugins`, `/app/plugins` → `/app/plugins`
   - Hot-reload: The Plugins Registry will refresh after successful upload; if refresh fails, the API will return `restart_required: true`
 
 

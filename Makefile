@@ -94,8 +94,8 @@ up-dev-split:
 	SHU_WORKERS_ENABLED=false docker compose -f $(COMPOSE_FILE) --profile dev --profile workers up -d shu-api-dev shu-postgres shu-db-migrate redis shu-worker-ingestion shu-worker-llm shu-worker-maintenance
 
 down:
-	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev --profile workers down --remove-orphans || true
-	-docker rm -f shu-frontend shu-api-dev shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
+	docker compose -f $(COMPOSE_FILE) --profile dev --profile frontend --profile worker --profile worker-dev --profile workers down --remove-orphans || true
+	-docker rm -f shu-frontend shu-frontend-dev shu-api-dev shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
 
 logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
