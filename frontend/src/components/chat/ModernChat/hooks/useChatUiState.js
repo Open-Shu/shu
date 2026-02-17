@@ -19,6 +19,8 @@ const useChatUiState = () => {
   const [renameDialog, setRenameDialog] = useState(initialRenameState);
   const [renameError, setRenameError] = useState('');
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [longConversationDialogOpen, setLongConversationDialogOpen] = useState(false);
+  const [longConversationDismissedIds, setLongConversationDismissedIds] = useState(new Set());
   const [documentPreview, setDocumentPreview] = useState(initialDocumentPreview);
 
   const openSummaryMenu = useCallback((anchorEl) => {
@@ -80,6 +82,26 @@ const useChatUiState = () => {
     setSettingsDialogOpen(false);
   }, []);
 
+  const openLongConversationDialog = useCallback(() => {
+    setLongConversationDialogOpen(true);
+  }, []);
+
+  const closeLongConversationDialog = useCallback(() => {
+    setLongConversationDialogOpen(false);
+  }, []);
+
+  const dismissLongConversationDialog = useCallback((conversationId) => {
+    setLongConversationDialogOpen(false);
+    if (conversationId) {
+      setLongConversationDismissedIds((prev) => new Set(prev).add(conversationId));
+    }
+  }, []);
+
+  const isLongConversationDismissed = useCallback(
+    (conversationId) => longConversationDismissedIds.has(conversationId),
+    [longConversationDismissedIds]
+  );
+
   const openDocumentPreview = useCallback(({ kbId, documentId }) => {
     if (!kbId || !documentId) {
       return;
@@ -117,6 +139,11 @@ const useChatUiState = () => {
     documentPreview,
     openDocumentPreview,
     closeDocumentPreview,
+    longConversationDialogOpen,
+    openLongConversationDialog,
+    closeLongConversationDialog,
+    dismissLongConversationDialog,
+    isLongConversationDismissed,
   };
 };
 

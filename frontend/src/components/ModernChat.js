@@ -47,6 +47,7 @@ import {
   STORAGE_KEY_RAG_REWRITE_MODE,
   DEFAULT_NEW_CHAT_TITLE,
   CHAT_PLUGINS_ENABLED,
+  LONG_CONVERSATION_THRESHOLD,
 } from './chat/ModernChat/utils/chatConfig';
 
 const SIDE_CALL_NOT_CONFIGURED_TOOLTIP =
@@ -99,6 +100,11 @@ const ModernChat = () => {
     documentPreview,
     openDocumentPreview,
     closeDocumentPreview,
+    longConversationDialogOpen,
+    openLongConversationDialog,
+    closeLongConversationDialog,
+    dismissLongConversationDialog,
+    isLongConversationDismissed,
   } = useChatUiState();
 
   // Mobile sidebar state from context (shared with TopBar in UserLayout)
@@ -553,15 +559,16 @@ const ModernChat = () => {
     [scrollToBottom]
   );
 
-  const { messages, loadingMessages, hasMoreMessages, loadingOlderMessages, loadOlderMessages } = useMessageStream({
-    selectedConversation,
-    queryClient,
-    setError,
-    scheduleScrollToBottom,
-    setIsPinnedToBottom,
-    clearFreshConversation,
-    markFreshConversation,
-  });
+  const { messages, loadingMessages, hasMoreMessages, loadingOlderMessages, loadOlderMessages, totalMessageCount } =
+    useMessageStream({
+      selectedConversation,
+      queryClient,
+      setError,
+      scheduleScrollToBottom,
+      setIsPinnedToBottom,
+      clearFreshConversation,
+      markFreshConversation,
+    });
 
   const {
     flattenedMessages,
@@ -819,6 +826,30 @@ const ModernChat = () => {
     buildRenamePayload,
     isConversationFresh,
   });
+
+  // Close long conversation dialog when switching conversations
+  useEffect(() => {
+    closeLongConversationDialog();
+  }, [selectedConversation?.id, closeLongConversationDialog]);
+
+  // Show long conversation dialog when message count crosses threshold
+  useEffect(() => {
+    if (!messagesMatchSelectedConversation) {
+      return;
+    }
+    const count = totalMessageCount ?? flattenedMessages.length;
+    const convoId = selectedConversation?.id;
+    if (count >= LONG_CONVERSATION_THRESHOLD && convoId && !isLongConversationDismissed(convoId)) {
+      openLongConversationDialog();
+    }
+  }, [
+    messagesMatchSelectedConversation,
+    totalMessageCount,
+    flattenedMessages.length,
+    selectedConversation?.id,
+    isLongConversationDismissed,
+    openLongConversationDialog,
+  ]);
 
   useEffect(() => {
     isPinnedToBottomRef.current = isPinnedToBottom;
@@ -1250,6 +1281,16 @@ const ModernChat = () => {
     isDeleting: deleteConversationMutation.isLoading,
   };
 
+  const longConversationDialogProps = {
+    open: longConversationDialogOpen,
+    messageCount: totalMessageCount ?? flattenedMessages.length,
+    onStartNew: () => {
+      dismissLongConversationDialog(selectedConversation?.id);
+      handleCreateConversation();
+    },
+    onDismiss: () => dismissLongConversationDialog(selectedConversation?.id),
+  };
+
   const settingsDialogProps = {
     open: settingsDialogOpen,
     onClose: closeSettingsDialog,
@@ -1290,6 +1331,7 @@ const ModernChat = () => {
       renameDialogProps={renameDialogProps}
       deleteDialogProps={deleteDialogProps}
       settingsDialogProps={settingsDialogProps}
+      longConversationDialogProps={longConversationDialogProps}
       pluginsEnabled={pluginsEnabled}
       getSelectedConfig={getSelectedConfig}
       handleCreateConversation={handleCreateConversation}

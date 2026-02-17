@@ -348,9 +348,7 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={status === 'running'}>
-          Close
-        </Button>
+        <Button onClick={onClose}>Close</Button>
       </DialogActions>
     </Dialog>
   );
