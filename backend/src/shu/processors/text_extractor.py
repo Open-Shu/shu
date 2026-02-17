@@ -324,8 +324,10 @@ class TextExtractor:
             extraction_engine = "direct"
             extraction_confidence = None
 
-            # Determine extraction method and engine based on actual processing
-            if use_ocr:
+            # Determine extraction method and engine based on actual processing.
+            # OCR only applies to PDFs — non-PDF types always use their native extractor
+            # regardless of the use_ocr flag.
+            if use_ocr and file_ext == ".pdf":
                 extraction_method = "ocr"
                 extraction_engine = "easyocr"  # Primary OCR engine (EasyOCR → Tesseract fallback)
                 extraction_confidence = 0.8  # Default confidence for OCR
@@ -886,7 +888,7 @@ class TextExtractor:
             ocr_error = None
             ocr_complete = threading.Event()
 
-            def run_ocr(current_page_num: int = page_num) -> None:
+            def run_ocr(current_page_num: int = page_num, _img: "np.ndarray" = img_array) -> None:
                 """Run OCR in a separate thread so we can monitor progress."""
                 nonlocal ocr_result, ocr_error
                 try:
@@ -900,7 +902,7 @@ class TextExtractor:
 
                     # Use EasyOCR (Tesseract fallback handled in get_ocr_instance)
                     if hasattr(ocr, "readtext"):  # EasyOCR
-                        ocr_result = ocr.readtext(img_array)  # noqa: B023
+                        ocr_result = ocr.readtext(_img)
                         logger.info(f"EasyOCR completed for page {current_page_num + 1}")
                     else:
                         logger.error(f"Unknown OCR instance type on page {current_page_num + 1}")
@@ -909,12 +911,18 @@ class TextExtractor:
                     ocr_error = e
                     logger.error(f"OCR failed on page {current_page_num + 1}: {e}", extra={"file_path": file_path})
                 finally:
-                    ocr_complete.set()  # noqa: B023
+                    ocr_complete.set()
 
             # Start OCR in background thread
             ocr_thread = threading.Thread(target=run_ocr)
             ocr_thread.daemon = False  # Changed to False so we can properly track and wait for completion
             ocr_thread.start()
+            # Release our references to the page image data immediately.  The thread
+            # captured img_array by value via the default-arg binding above, so GC can
+            # reclaim this memory as soon as the thread finishes — even if the thread
+            # is orphaned by a timeout.
+            del img_array
+            pix = None
 
             # Register thread for tracking if we have a job ID
             if self._current_sync_job_id:
