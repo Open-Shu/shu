@@ -82,8 +82,6 @@ class TextExtractor:
             ".js",
         }
 
-        # Initialize OCR process tracking
-        self._active_ocr_processes = {}
         # Ensure job tracking attribute always exists to avoid AttributeError in logs
         self._current_sync_job_id = None
 
@@ -133,7 +131,8 @@ class TextExtractor:
 
             import certifi
 
-            os.environ["SSL_CERT_FILE"] = certifi.where()
+            if not os.environ.get("SSL_CERT_FILE"):
+                os.environ["SSL_CERT_FILE"] = certifi.where()
 
             try:
                 logger.info("Initializing EasyOCR singleton Reader")
@@ -732,59 +731,11 @@ class TextExtractor:
         """Try OCR as fallback when regular PDF extraction fails."""
         logger.info("OCR fallback needed for scanned PDF", extra={"file_path": file_path})
 
-        # Check OCR execution mode
-        if getattr(self.config_manager.settings, "ocr_execution_mode", "thread").lower() == "process":
-            logger.info("Using isolated process for OCR fallback", extra={"file_path": file_path})
-
-            try:
-                # Create a temporary progress context for the isolated process
-                temp_progress_context = {
-                    "sync_job_id": "direct_extraction_fallback",
-                    "document_id": file_path,
-                    "enhanced_tracker": None,  # No progress tracking for fallback
-                }
-
-                # Call the isolated extraction method properly
-                result = asyncio.run(
-                    self._extract_text_isolated(
-                        file_path=file_path,
-                        file_content=file_content,
-                        use_ocr=True,
-                        kb_config=None,
-                        progress_context=temp_progress_context,
-                    )
-                )
-
-                if result and isinstance(result, dict) and result.get("text"):
-                    extraction_method = result.get("extraction_method", "unknown")
-                    processing_time = result.get("processing_time", 0)
-                    confidence = result.get("confidence_metrics", {}).get("average_confidence", 0)
-
-                    logger.info(
-                        f"Isolated OCR fallback successful with {extraction_method}",
-                        extra={
-                            "file_path": file_path,
-                            "processing_time": processing_time,
-                            "confidence": confidence,
-                        },
-                    )
-                    return result["text"]
-                logger.error("Isolated OCR fallback returned empty result", extra={"file_path": file_path})
-                return ""
-
-            except Exception as e:
-                logger.error(f"Isolated OCR fallback failed: {e}", extra={"file_path": file_path})
-                return ""
-
-        else:
-            logger.info("Using direct in-process OCR fallback", extra={"file_path": file_path})
-
-            # Direct in-process OCR (no isolation)
-            try:
-                return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
-            except Exception as e:
-                logger.error(f"Direct OCR fallback failed: {e}", extra={"file_path": file_path})
-                return ""
+        try:
+            return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
+        except Exception as e:
+            logger.error(f"OCR fallback failed: {e}", extra={"file_path": file_path})
+            return ""
 
     async def _extract_pdf_ocr_direct(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None

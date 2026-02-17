@@ -100,9 +100,6 @@ class Settings(BaseSettings):
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")
     max_chunk_size: int = 2000
-    # OCR/Text extraction execution mode: "thread" (default) or "process"
-    ocr_execution_mode: str = Field("thread", alias="SHU_OCR_EXECUTION_MODE")
-
     # Text extraction timeout configuration (system-level, not user-configurable)
     text_extraction_timeout_default: int = Field(1800, alias="SHU_TEXT_EXTRACTION_TIMEOUT")  # 30 minutes for OCR
     text_extraction_fast_timeout_default: int = Field(
@@ -1066,7 +1063,7 @@ class ConfigurationManager:
         """
         return {
             "timeout": self.get_text_extraction_timeout(use_ocr, kb_config),
-            "ocr_execution_mode": self.settings.ocr_execution_mode,
+
             "max_file_size": self.settings.max_file_size,
             "processing_method": "ocr" if use_ocr else "fast_extraction",
         }

@@ -24,8 +24,10 @@ export const useTheme = () => {
 
 export const ThemeProvider = ({ children }) => {
   const { user, isAuthenticated } = useAuth();
-  const [themeMode, setThemeMode] = useState('light'); // 'light', 'dark', 'auto'
-  const [resolvedMode, setResolvedMode] = useState('light'); // actual mode after resolving 'auto'
+  const [themeMode, setThemeMode] = useState('auto'); // 'light', 'dark', 'auto'
+  const [resolvedMode, setResolvedMode] = useState(() =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  ); // actual mode after resolving 'auto'
   const [branding, setBrandingState] = useState(() => resolveBranding(defaultBranding));
   const [brandingLoaded, setBrandingLoaded] = useState(false);
 
