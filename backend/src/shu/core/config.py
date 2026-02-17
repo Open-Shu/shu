@@ -449,6 +449,11 @@ class Settings(BaseSettings):
     ocr_primary_engine: str = Field(default="easyocr", description="Primary OCR engine: easyocr, tesseract")
     ocr_use_gpu: bool = Field(default=False, description="Use GPU acceleration for OCR (if available)")
     ocr_confidence_threshold: float = Field(default=0.6, description="Minimum confidence threshold for OCR results")
+    ocr_max_concurrent_jobs: int = Field(
+        default=1,
+        alias="SHU_OCR_MAX_CONCURRENT_JOBS",
+        description="Max concurrent OCR jobs. OCR is CPU/memory-intensive; limit to avoid OOM.",
+    )
     # Note: No page limits - OCR processes all pages in document
 
     @field_validator("database_url")

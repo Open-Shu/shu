@@ -28,9 +28,17 @@ class UnsupportedFileFormatError(Exception):
 class TextExtractor:
     """Text extraction processor for various file types."""
 
-    # Class-level tracking for OCR instance management
+    # --- EasyOCR singleton management ---
+    # The Reader loads ~1.5-2.5 GiB of models; creating one per call causes OOM
+    # under concurrency.  We cache a single instance and guard init with an async lock.
+    _ocr_instance: ClassVar[easyocr.Reader | None] = None
+    _ocr_init_lock: ClassVar[asyncio.Lock | None] = None
+    _ocr_init_failed: ClassVar[bool] = False
 
-    # OCR instance management (EasyOCR → Tesseract fallback chain)
+    # --- OCR concurrency semaphore ---
+    # Limits how many OCR jobs run simultaneously (CPU/memory bound).
+    # Lazily created from SHU_OCR_MAX_CONCURRENT_JOBS.
+    _ocr_semaphore: ClassVar[asyncio.Semaphore | None] = None
 
     # Thread tracking for proper cleanup
     _active_ocr_threads: ClassVar[dict[str, list]] = {}  # job_id -> list of threads
@@ -80,28 +88,73 @@ class TextExtractor:
         self._current_sync_job_id = None
 
     @classmethod
+    def _get_ocr_lock(cls) -> asyncio.Lock:
+        """Return the singleton init lock, creating it lazily."""
+        if cls._ocr_init_lock is None:
+            cls._ocr_init_lock = asyncio.Lock()
+        return cls._ocr_init_lock
+
+    @classmethod
+    def get_ocr_semaphore(cls) -> asyncio.Semaphore:
+        """Return the OCR concurrency semaphore, creating it lazily from config."""
+        if cls._ocr_semaphore is None:
+            from ..core.config import get_settings_instance
+
+            settings = get_settings_instance()
+            max_concurrent = getattr(settings, "ocr_max_concurrent_jobs", 1)
+            cls._ocr_semaphore = asyncio.Semaphore(max(1, max_concurrent))
+            logger.info(f"OCR concurrency semaphore created with limit={max(1, max_concurrent)}")
+        return cls._ocr_semaphore
+
+    @classmethod
     async def get_ocr_instance(cls) -> easyocr.Reader | None:
-        """Get OCR instance with fallback chain: EasyOCR → Tesseract."""
-        # Set SSL certificate path to fix EasyOCR download issues
-        import os
+        """Get or create the singleton EasyOCR Reader.
 
-        import certifi
+        Uses double-checked locking: fast path returns the cached instance without
+        acquiring the lock.  The Reader constructor is CPU-heavy (~1.5-2.5 GiB of
+        models) and is run in an executor to avoid blocking the event loop.
 
-        os.environ["SSL_CERT_FILE"] = certifi.where()
+        Returns None (Tesseract fallback signal) if EasyOCR init fails.
+        """
+        # Fast path - already initialised
+        if cls._ocr_instance is not None:
+            return cls._ocr_instance
 
-        try:
-            # Try EasyOCR first (better quality than Tesseract)
-            logger.info("Initializing EasyOCR")
-            return easyocr.Reader(["en"])
-        except Exception as e:
-            logger.warning(f"EasyOCR failed: {e}")
-            # Fallback to Tesseract
-            logger.info("Falling back to Tesseract")
+        # Already tried and failed - don't retry every call
+        if cls._ocr_init_failed:
             return None
+
+        async with cls._get_ocr_lock():
+            # Double-check after acquiring lock
+            if cls._ocr_instance is not None:
+                return cls._ocr_instance
+            if cls._ocr_init_failed:
+                return None
+
+            import certifi
+
+            os.environ["SSL_CERT_FILE"] = certifi.where()
+
+            try:
+                logger.info("Initializing EasyOCR singleton Reader")
+                loop = asyncio.get_running_loop()
+                instance = await loop.run_in_executor(None, lambda: easyocr.Reader(["en"]))
+                cls._ocr_instance = instance
+                logger.info("EasyOCR singleton Reader initialized successfully")
+                return cls._ocr_instance
+            except Exception as e:
+                logger.warning(f"EasyOCR initialization failed: {e}")
+                cls._ocr_init_failed = True
+                logger.info("Falling back to Tesseract for future OCR calls")
+                return None
 
     @classmethod
     def cleanup_ocr_instance(cls) -> None:
-        """Clean up OCR instances to free memory."""
+        """Release the singleton EasyOCR Reader to free memory."""
+        if cls._ocr_instance is not None:
+            logger.info("Releasing EasyOCR singleton Reader")
+            cls._ocr_instance = None
+        cls._ocr_init_failed = False
         logger.info("OCR instance cleanup completed")
 
     @classmethod
@@ -736,7 +789,23 @@ class TextExtractor:
     async def _extract_pdf_ocr_direct(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
     ) -> str:
-        """Extract PDF text using direct in-process OCR with proper metadata tracking."""
+        """Extract PDF text using direct in-process OCR with proper metadata tracking.
+
+        Acquires the class-level OCR semaphore so that at most
+        ``SHU_OCR_MAX_CONCURRENT_JOBS`` OCR jobs run in parallel.
+        """
+        sem = self.get_ocr_semaphore()
+        logger.debug(
+            "Waiting for OCR semaphore",
+            extra={"file_path": file_path},
+        )
+        async with sem:
+            return await self._extract_pdf_ocr_direct_inner(file_path, file_content, progress_callback)
+
+    async def _extract_pdf_ocr_direct_inner(
+        self, file_path: str, file_content: bytes | None = None, progress_callback=None
+    ) -> str:
+        """Inner OCR processing (called under semaphore)."""
         start_time = time.time()
 
         try:
