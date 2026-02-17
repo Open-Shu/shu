@@ -922,7 +922,7 @@ class TextExtractor:
 
             # Monitor progress while OCR is running (ASYNC VERSION with timeout)
             progress_counter = 0
-            max_wait_time = 60  # 1 minute timeout per page (reduced for faster cancellation)
+            max_wait_time = self.config_manager.settings.ocr_page_timeout
             start_time = time.time()
 
             while not ocr_complete.is_set():

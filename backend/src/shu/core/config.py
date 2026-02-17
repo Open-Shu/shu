@@ -100,11 +100,8 @@ class Settings(BaseSettings):
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")
     max_chunk_size: int = 2000
-    # Text extraction timeout configuration (system-level, not user-configurable)
-    text_extraction_timeout_default: int = Field(1800, alias="SHU_TEXT_EXTRACTION_TIMEOUT")  # 30 minutes for OCR
-    text_extraction_fast_timeout_default: int = Field(
-        300, alias="SHU_TEXT_EXTRACTION_FAST_TIMEOUT"
-    )  # 5 minutes for fast extraction
+    # OCR per-page timeout (seconds)
+    ocr_page_timeout: int = Field(180, alias="SHU_OCR_PAGE_TIMEOUT")
 
     # Vector database configuration
     vector_index_type: str = Field("ivfflat", alias="SHU_VECTOR_INDEX_TYPE")
@@ -1027,45 +1024,7 @@ class ConfigurationManager:
             return int(model_config["full_doc_token_cap"])
         return self.settings.rag_full_doc_token_cap_default
 
-    # Text Extraction Configuration (System-level, not user-configurable)
-    def get_text_extraction_timeout(self, use_ocr: bool = True, kb_config: dict[str, Any] | None = None) -> int:
-        """Get text extraction timeout based on processing method.
 
-        Args:
-            use_ocr: Whether OCR processing is being used
-            kb_config: Knowledge base configuration (for future per-KB timeout overrides)
-
-        Returns:
-            Timeout in seconds
-
-        """
-        # Future: Could allow KB-level timeout overrides
-        if kb_config and "text_extraction_timeout" in kb_config:
-            return int(kb_config["text_extraction_timeout"])
-
-        # Use OCR timeout for OCR processing, fast timeout for text extraction
-        if use_ocr:
-            return self.settings.text_extraction_timeout_default
-        return self.settings.text_extraction_fast_timeout_default
-
-    def get_text_extraction_configuration(
-        self, use_ocr: bool = True, kb_config: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Get complete text extraction configuration.
-
-        Args:
-            use_ocr: Whether OCR processing is being used
-            kb_config: Knowledge base configuration
-
-        Returns:
-            Dictionary with text extraction configuration
-
-        """
-        return {
-            "timeout": self.get_text_extraction_timeout(use_ocr, kb_config),
-            "max_file_size": self.settings.max_file_size,
-            "processing_method": "ocr" if use_ocr else "fast_extraction",
-        }
 
 
 # Global configuration manager instance (for backward compatibility)
