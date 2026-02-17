@@ -122,7 +122,18 @@ export const getTopbarTextColor = (branding, resolvedMode) => {
 export const derivePrimaryVariants = (hex) => {
   const LIGHTEN = 40;
   const DARKEN = 30;
-  const parsed = parseInt(hex.replace('#', ''), 16);
+  const raw = (hex || '').replace('#', '');
+  const normalized =
+    raw.length === 3
+      ? raw
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : raw;
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return { lighter: hex, darker: hex };
+  }
+  const parsed = parseInt(normalized, 16);
   const r = (parsed >> 16) & 0xff;
   const g = (parsed >> 8) & 0xff;
   const b = parsed & 0xff;

@@ -150,9 +150,9 @@ export default function ExperienceRunDialog({ open, onClose, experienceId, exper
       }
     } catch (err) {
       if (err.name === 'AbortError') {
-        console.log('Execution aborted');
+        log.info('Execution aborted');
       } else {
-        console.error('Execution error:', err);
+        log.error('Execution error:', err);
         setError(err.message || 'Failed to execute experience');
         setStatus('failed');
       }

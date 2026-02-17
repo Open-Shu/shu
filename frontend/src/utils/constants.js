@@ -595,18 +595,27 @@ export const getThemeConfig = (mode = 'light', branding) => {
 
   // When branding overrides primary.main, the light/dark variants still hold
   // the base-theme defaults. Regenerate them so the full palette stays consistent.
-  const pm = config.palette.primary.main;
-  const { lighter, darker } = derivePrimaryVariants(pm);
-  config.palette.primary.light = lighter;
-  config.palette.primary.dark = darker;
+  const pm = config?.palette?.primary?.main;
+  const overridePrimary = overrides?.palette?.primary ?? {};
+  const hasOverrideMain = typeof overridePrimary.main === 'string';
+  const derived = hasOverrideMain && pm ? derivePrimaryVariants(pm) : null;
+  if (derived) {
+    if (!overridePrimary.light) {
+      config.palette.primary.light = derived.lighter;
+    }
+    if (!overridePrimary.dark) {
+      config.palette.primary.dark = derived.darker;
+    }
+  }
 
   // Sync MuiListItemButton overrides with the resolved primary palette.
   const listBtn = config.components?.MuiListItemButton?.styleOverrides?.root;
-  if (listBtn) {
+  const overrideListBtn = overrides?.components?.MuiListItemButton?.styleOverrides?.root;
+  if (listBtn && derived && !overrideListBtn) {
     if (listBtn['&.Mui-selected']) {
       listBtn['&.Mui-selected'].backgroundColor = pm;
       if (listBtn['&.Mui-selected']['&:hover']) {
-        listBtn['&.Mui-selected']['&:hover'].backgroundColor = darker;
+        listBtn['&.Mui-selected']['&:hover'].backgroundColor = derived.darker;
       }
     }
     if (listBtn['& .MuiListItemIcon-root']) {
