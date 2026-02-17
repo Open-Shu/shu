@@ -46,10 +46,28 @@ Standardize how we manage database schema changes so that:
 1. List dev revisions to squash (from last release head to current head).
 2. Generate a new migration: `alembic revision -m "rX_Y_Z squashed"` and add `replaces` with the listed revs.
 3. Implement `upgrade()` as the net schema; `downgrade()` should revert to pre-release state if feasible.
-4. Verify:
+4. **Verify no `replaces` collisions**: No entry in any migration's `replaces` tuple may match another migration file's `revision` ID. Alembic treats `replaces` entries as aliases for the replacing migration, which shadows the real migration and breaks the chain. Run the verification script:
+   ```bash
+   cd backend && PYTHONPATH=. python3 -c "
+   from alembic.config import Config
+   from alembic.script import ScriptDirectory
+   cfg = Config('alembic.ini')
+   cfg.set_main_option('script_location', 'migrations')
+   sd = ScriptDirectory.from_config(cfg)
+   revs = {s.revision for s in sd.walk_revisions()}
+   for s in sd.walk_revisions():
+       for r in getattr(s.module, 'replaces', ()):
+           if r in revs and r != s.revision:
+               print(f'COLLISION: {s.revision}.replaces contains \"{r}\" which is a real migration')
+   print('No collisions found' if True else '')
+   "
+   ```
+5. Verify migration paths:
    - Clean DB → `alembic upgrade head` passes
    - DB at last dev head → `alembic upgrade head` passes
-5. After validation, archive/remove replaced revisions if desired.
+   - `alembic heads` shows exactly one head (the new squash revision)
+6. After validation, archive/remove replaced revisions if desired.
+7. **Cleanup stale `replaces`**: Once all deployed environments have been upgraded past a squash migration's replaced revisions, clear its `replaces` tuple to `()`. Stale entries are a latent collision risk as new release squash IDs are allocated.
 
 ## Verification & CI
 - Include a CI job that provisions a clean ephemeral DB and runs `alembic upgrade head`.

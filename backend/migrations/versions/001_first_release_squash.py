@@ -30,7 +30,11 @@ revision = "001"
 down_revision = None
 branch_labels = None
 depends_on = None
-replaces = ("001", "002", "003", "004", "005")
+# The original dev migrations (001_initial_tables .. 005_nullable_full_doc_fields)
+# used bare numeric IDs "001"-"005" which now collide with the release squash
+# revision IDs.  No database is at those old dev revisions, so clear replaces
+# to avoid shadowing 002-005 release squash migrations.
+replaces = ()
 
 
 def upgrade() -> None:
