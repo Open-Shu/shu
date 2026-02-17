@@ -59,15 +59,15 @@ export const ThemeProvider = ({ children }) => {
         .getPreferences()
         .then((response) => {
           const prefs = extractDataFromResponse(response);
-          setThemeMode(prefs.theme || 'light');
+          setThemeMode(prefs.theme || 'auto');
         })
         .catch((err) => {
           log.warn('Failed to load theme preference, using default:', err);
-          setThemeMode('light');
+          setThemeMode('auto');
         });
     } else {
       // Use localStorage for non-authenticated users
-      const savedTheme = localStorage.getItem('shu-theme') || 'light';
+      const savedTheme = localStorage.getItem('shu-theme') || 'auto';
       setThemeMode(savedTheme);
     }
   }, [isAuthenticated, user]);

@@ -436,7 +436,7 @@ class Settings(BaseSettings):
     # User Preferences Defaults (what users can actually configure)
     user_memory_depth_default: int = Field(5, alias="SHU_USER_MEMORY_DEPTH_DEFAULT")
     user_memory_similarity_threshold_default: float = Field(0.6, alias="SHU_USER_MEMORY_SIMILARITY_THRESHOLD_DEFAULT")
-    user_theme_default: str = Field("system", alias="SHU_USER_THEME_DEFAULT")
+    user_theme_default: str = Field("auto", alias="SHU_USER_THEME_DEFAULT")
     user_language_default: str = Field("en", alias="SHU_USER_LANGUAGE_DEFAULT")
     user_timezone_default: str = Field("UTC", alias="SHU_USER_TIMEZONE_DEFAULT")
 
