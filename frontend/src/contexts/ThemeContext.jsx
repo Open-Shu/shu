@@ -24,8 +24,10 @@ export const useTheme = () => {
 
 export const ThemeProvider = ({ children }) => {
   const { user, isAuthenticated } = useAuth();
-  const [themeMode, setThemeMode] = useState('light'); // 'light', 'dark', 'auto'
-  const [resolvedMode, setResolvedMode] = useState('light'); // actual mode after resolving 'auto'
+  const [themeMode, setThemeMode] = useState('auto'); // 'light', 'dark', 'auto'
+  const [resolvedMode, setResolvedMode] = useState(() =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  ); // actual mode after resolving 'auto'
   const [branding, setBrandingState] = useState(() => resolveBranding(defaultBranding));
   const [brandingLoaded, setBrandingLoaded] = useState(false);
 
@@ -59,15 +61,15 @@ export const ThemeProvider = ({ children }) => {
         .getPreferences()
         .then((response) => {
           const prefs = extractDataFromResponse(response);
-          setThemeMode(prefs.theme || 'light');
+          setThemeMode(prefs.theme || 'auto');
         })
         .catch((err) => {
           log.warn('Failed to load theme preference, using default:', err);
-          setThemeMode('light');
+          setThemeMode('auto');
         });
     } else {
       // Use localStorage for non-authenticated users
-      const savedTheme = localStorage.getItem('shu-theme') || 'light';
+      const savedTheme = localStorage.getItem('shu-theme') || 'auto';
       setThemeMode(savedTheme);
     }
   }, [isAuthenticated, user]);

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user
-from ..core.config import get_settings_instance
+from ..core.config import ConfigurationManager, get_config_manager_dependency, get_settings_instance
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
 from ..models.user_preferences import UserPreferences
@@ -54,14 +54,15 @@ def _build_preferences_response(
             "advanced_settings": preferences.advanced_settings or {},
         }
     else:
-        source = defaults if defaults is not None else UserPreferences.get_default_preferences()
+        if defaults is None:
+            raise ValueError("defaults dict is required when preferences ORM model is absent")
         base = {
-            "memory_depth": source.get("memory_depth", 5),
-            "memory_similarity_threshold": source.get("memory_similarity_threshold", 0.6),
-            "theme": source.get("theme", "light"),
-            "language": source.get("language", "en"),
-            "timezone": source.get("timezone", "UTC"),
-            "advanced_settings": source.get("advanced_settings") or {},
+            "memory_depth": defaults.get("memory_depth", 5),
+            "memory_similarity_threshold": defaults.get("memory_similarity_threshold", 0.6),
+            "theme": defaults["theme"],
+            "language": defaults["language"],
+            "timezone": defaults["timezone"],
+            "advanced_settings": defaults.get("advanced_settings") or {},
         }
 
     base.update(
@@ -74,7 +75,11 @@ def _build_preferences_response(
 
 
 @router.get("/user/preferences", response_model=SuccessResponse[UserPreferencesResponse])
-async def get_user_preferences(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_user_preferences(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
+):
     """Get current user's preferences."""
     try:
         # Try to get existing preferences
@@ -83,7 +88,7 @@ async def get_user_preferences(current_user: User = Depends(get_current_user), d
         preferences = result.scalar_one_or_none()
 
         if not preferences:
-            default_prefs = UserPreferences.get_default_preferences()
+            default_prefs = config_manager.get_user_preferences_dict()
             logger.info(f"Retrieved default preferences for user {current_user.id}")
             return ShuResponse.success(_build_preferences_response(defaults=default_prefs))
 
@@ -140,6 +145,7 @@ async def update_user_preferences_partial(
     preferences_data: UserPreferencesUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
     """Update user preferences, partially."""
     try:
@@ -149,8 +155,8 @@ async def update_user_preferences_partial(
         preferences = result.scalar_one_or_none()
 
         if not preferences:
-            # Create new preferences with defaults, then apply updates
-            preferences = UserPreferences(user_id=current_user.id, **UserPreferences.get_default_preferences())
+            # Create new preferences with ConfigurationManager defaults, then apply updates
+            preferences = UserPreferences(user_id=current_user.id, **config_manager.get_user_preferences_dict())
             db.add(preferences)
 
         # Apply partial updates

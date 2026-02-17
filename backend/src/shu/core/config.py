@@ -100,9 +100,6 @@ class Settings(BaseSettings):
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")
     max_chunk_size: int = 2000
-    # OCR/Text extraction execution mode: "thread" (default) or "process"
-    ocr_execution_mode: str = Field("thread", alias="SHU_OCR_EXECUTION_MODE")
-
     # Text extraction timeout configuration (system-level, not user-configurable)
     text_extraction_timeout_default: int = Field(1800, alias="SHU_TEXT_EXTRACTION_TIMEOUT")  # 30 minutes for OCR
     text_extraction_fast_timeout_default: int = Field(
@@ -436,7 +433,7 @@ class Settings(BaseSettings):
     # User Preferences Defaults (what users can actually configure)
     user_memory_depth_default: int = Field(5, alias="SHU_USER_MEMORY_DEPTH_DEFAULT")
     user_memory_similarity_threshold_default: float = Field(0.6, alias="SHU_USER_MEMORY_SIMILARITY_THRESHOLD_DEFAULT")
-    user_theme_default: str = Field("system", alias="SHU_USER_THEME_DEFAULT")
+    user_theme_default: str = Field("auto", alias="SHU_USER_THEME_DEFAULT")
     user_language_default: str = Field("en", alias="SHU_USER_LANGUAGE_DEFAULT")
     user_timezone_default: str = Field("UTC", alias="SHU_USER_TIMEZONE_DEFAULT")
 
@@ -449,6 +446,11 @@ class Settings(BaseSettings):
     ocr_primary_engine: str = Field(default="easyocr", description="Primary OCR engine: easyocr, tesseract")
     ocr_use_gpu: bool = Field(default=False, description="Use GPU acceleration for OCR (if available)")
     ocr_confidence_threshold: float = Field(default=0.6, description="Minimum confidence threshold for OCR results")
+    ocr_max_concurrent_jobs: int = Field(
+        default=1,
+        alias="SHU_OCR_MAX_CONCURRENT_JOBS",
+        description="Max concurrent OCR jobs. OCR is CPU/memory-intensive; limit to avoid OOM.",
+    )
     # Note: No page limits - OCR processes all pages in document
 
     @field_validator("database_url")
@@ -1061,7 +1063,6 @@ class ConfigurationManager:
         """
         return {
             "timeout": self.get_text_extraction_timeout(use_ocr, kb_config),
-            "ocr_execution_mode": self.settings.ocr_execution_mode,
             "max_file_size": self.settings.max_file_size,
             "processing_method": "ocr" if use_ocr else "fast_extraction",
         }

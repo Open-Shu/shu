@@ -46,9 +46,10 @@ Standardize how we manage database schema changes so that:
 1. List dev revisions to squash (from last release head to current head).
 2. Generate a new migration: `alembic revision -m "rX_Y_Z squashed"` and add `replaces` with the listed revs.
 3. Implement `upgrade()` as the net schema; `downgrade()` should revert to pre-release state if feasible.
-4. Verify:
+4. Verify migration paths:
    - Clean DB → `alembic upgrade head` passes
    - DB at last dev head → `alembic upgrade head` passes
+   - `alembic heads` shows exactly one head (the new squash revision)
 5. After validation, archive/remove replaced revisions if desired.
 
 ## Verification & CI
