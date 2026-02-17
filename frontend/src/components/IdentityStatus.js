@@ -4,6 +4,7 @@ import { Box, Chip, Button, Stack, Tooltip, CircularProgress } from '@mui/materi
 import { useNavigate } from 'react-router-dom';
 import { hostAuthAPI, extractDataFromResponse } from '../services/api';
 import useOAuthAuthorize from '../hooks/useOAuthAuthorize';
+import OAuthGuideDialog from './OAuthGuideDialog';
 
 /**
  * IdentityStatus
@@ -101,6 +102,9 @@ export default function IdentityStatus({
 
   const navigate = useNavigate();
 
+  // Guide dialog state for unverified-app warning (Google-specific)
+  const [guideDialog, setGuideDialog] = useState({ open: false, provider: null, scopes: [] });
+
   const { startAuthorize } = useOAuthAuthorize();
   const handleConnect = useCallback(
     async (provider, desiredScopes) => {
@@ -129,6 +133,31 @@ export default function IdentityStatus({
 
   return (
     <Box sx={{ mt: 2 }}>
+      <OAuthGuideDialog
+        open={guideDialog.open}
+        onClose={() => setGuideDialog({ open: false, provider: null, scopes: [] })}
+        provider={guideDialog.provider}
+        scopes={guideDialog.scopes}
+        authorizing={!!authorizing[guideDialog.provider]}
+        onAuthorize={() => {
+          const { provider: p, scopes: s } = guideDialog;
+          const closeGuide = () => setGuideDialog({ open: false, provider: null, scopes: [] });
+          startAuthorize({
+            provider: p,
+            scopes: s,
+            onStart: () => setAuthorizing((m) => ({ ...m, [p]: true })),
+            onDone: () => {
+              setAuthorizing((m) => ({ ...m, [p]: false }));
+              closeGuide();
+            },
+          }).catch((e) => {
+            // eslint-disable-next-line no-console
+            console.error('OAuth authorization failed', e);
+            setAuthorizing((m) => ({ ...m, [p]: false }));
+            closeGuide();
+          });
+        }}
+      />
       <Stack spacing={1}>
         {providers.map((p) => {
           const connected = !!status[p]?.user_connected;
@@ -166,7 +195,13 @@ export default function IdentityStatus({
                       size="small"
                       variant="outlined"
                       disabled={!!authorizing[p] || desired.length === 0}
-                      onClick={() => handleConnect(p, desired)}
+                      onClick={() => {
+                        if (p === 'google') {
+                          setGuideDialog({ open: true, provider: p, scopes: desired });
+                        } else {
+                          handleConnect(p, desired);
+                        }
+                      }}
                     >
                       {authorizing[p] ? <CircularProgress size={14} /> : 'Authorize Selected Scopes'}
                     </Button>
