@@ -1063,7 +1063,6 @@ class ConfigurationManager:
         """
         return {
             "timeout": self.get_text_extraction_timeout(use_ocr, kb_config),
-
             "max_file_size": self.settings.max_file_size,
             "processing_method": "ocr" if use_ocr else "fast_extraction",
         }
