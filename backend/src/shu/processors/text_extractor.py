@@ -888,7 +888,11 @@ class TextExtractor:
             ocr_error = None
             ocr_complete = threading.Event()
 
-            def run_ocr(current_page_num: int = page_num, _img: "np.ndarray" = img_array) -> None:
+            def run_ocr(
+                current_page_num: int = page_num,
+                _img: "np.ndarray" = img_array,
+                _done: threading.Event = ocr_complete,
+            ) -> None:
                 """Run OCR in a separate thread so we can monitor progress."""
                 nonlocal ocr_result, ocr_error
                 try:
@@ -911,7 +915,7 @@ class TextExtractor:
                     ocr_error = e
                     logger.error(f"OCR failed on page {current_page_num + 1}: {e}", extra={"file_path": file_path})
                 finally:
-                    ocr_complete.set()
+                    _done.set()
 
             # Start OCR in background thread
             ocr_thread = threading.Thread(target=run_ocr)
