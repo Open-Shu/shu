@@ -6,7 +6,7 @@ import { authAPI, extractDataFromResponse } from '../services/api';
 import configService from '../services/config';
 import { log } from '../utils/log';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
-import { getBrandingAppName } from '../utils/constants';
+import { getBrandingAppName, getBrandingFaviconUrlForTheme } from '../utils/constants';
 import { getApiV1Base } from '../services/baseUrl';
 
 const GoogleLogin = ({ onSwitchToPassword }) => {
@@ -18,9 +18,9 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
   const [showRedirect, setShowRedirect] = useState(false);
 
   const { login } = useAuth();
-  const { branding } = useAppTheme();
+  const { branding, resolvedMode } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
-  const faviconUrl = branding?.faviconUrl;
+  const faviconUrl = getBrandingFaviconUrlForTheme(branding, resolvedMode);
 
   useEffect(() => {
     const initializeComponent = async () => {
@@ -260,19 +260,21 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
           alignItems: 'center',
         }}
       >
-        <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
-          <Box sx={{ textAlign: 'center', mb: 3 }}>
-            <img
-              src={faviconUrl}
-              alt={appDisplayName}
-              style={{
-                height: '60px', // Fixed height for normal proportions
-                width: 'auto', // Maintain aspect ratio
-                maxWidth: '100%', // Don't exceed container width
-                marginBottom: '1rem',
-              }}
-            />
-            <Typography component="h1" variant="h4" gutterBottom>
+        <Paper elevation={3} sx={{ overflow: 'hidden', width: '100%', border: 2, borderColor: 'primary.main' }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'primary.main',
+              px: 3,
+              py: 2,
+            }}
+          >
+            <img src={faviconUrl} alt={appDisplayName} style={{ height: 48, width: 'auto' }} />
+          </Box>
+          <Box sx={{ textAlign: 'center', p: 4, pt: 3 }}>
+            <Typography component="h1" variant="h5" gutterBottom>
               Sign in to {appDisplayName}
             </Typography>
             <Typography variant="body1" color="text.secondary">
@@ -280,70 +282,72 @@ const GoogleLogin = ({ onSwitchToPassword }) => {
             </Typography>
           </Box>
 
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
-            </Alert>
-          )}
+          <Box sx={{ px: 4, pb: 4 }}>
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
 
-          {successMessage && (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              {successMessage}
-            </Alert>
-          )}
+            {successMessage && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                {successMessage}
+              </Alert>
+            )}
 
-          {(!configLoaded || !googleLoaded) && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              {!configLoaded ? 'Loading configuration...' : 'Loading Google OAuth library...'}
-            </Alert>
-          )}
+            {(!configLoaded || !googleLoaded) && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {!configLoaded ? 'Loading configuration...' : 'Loading Google OAuth library...'}
+              </Alert>
+            )}
 
-          {/* Primary Google button (GIS FedCM). Renders when library is available */}
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-            <div ref={gsiBtnRef} />
-          </Box>
+            {/* Primary Google button (GIS FedCM). Renders when library is available */}
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+              <div ref={gsiBtnRef} />
+            </Box>
 
-          {/* Help + optional redirect fallback (hidden by default) */}
-          <Box sx={{ textAlign: 'center', mt: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              Having trouble signing in?
-              <Button
-                variant="text"
-                size="small"
-                sx={{ ml: 1 }}
-                onClick={() => setShowRedirect((v) => !v)}
-                disabled={!configLoaded}
-              >
-                {showRedirect ? 'Hide redirect' : 'Try redirect'}
-              </Button>
-            </Typography>
-
-            {showRedirect && (
-              <Box sx={{ mt: 1 }}>
+            {/* Help + optional redirect fallback (hidden by default) */}
+            <Box sx={{ textAlign: 'center', mt: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                Having trouble signing in?
                 <Button
-                  variant="outlined"
-                  size="medium"
-                  onClick={handleRedirectLogin}
-                  disabled={loading || !configLoaded}
-                  startIcon={loading ? <CircularProgress size={16} /> : <GoogleIcon fontSize="small" />}
+                  variant="text"
+                  size="small"
+                  sx={{ ml: 1 }}
+                  onClick={() => setShowRedirect((v) => !v)}
+                  disabled={!configLoaded}
                 >
-                  {loading ? 'Starting...' : 'Sign in with Google (redirect)'}
+                  {showRedirect ? 'Hide redirect' : 'Try redirect'}
+                </Button>
+              </Typography>
+
+              {showRedirect && (
+                <Box sx={{ mt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="medium"
+                    onClick={handleRedirectLogin}
+                    disabled={loading || !configLoaded}
+                    startIcon={loading ? <CircularProgress size={16} /> : <GoogleIcon fontSize="small" />}
+                  >
+                    {loading ? 'Starting...' : 'Sign in with Google (redirect)'}
+                  </Button>
+                </Box>
+              )}
+            </Box>
+
+            {onSwitchToPassword && (
+              <Box sx={{ textAlign: 'center', mt: 2 }}>
+                <Button variant="text" onClick={onSwitchToPassword} disabled={loading}>
+                  Sign in with email and password instead
                 </Button>
               </Box>
             )}
+
+            <Typography variant="caption" display="block" sx={{ textAlign: 'center', mt: 2 }}>
+              Only authorized {appDisplayName} accounts can access this system
+            </Typography>
           </Box>
-
-          {onSwitchToPassword && (
-            <Box sx={{ textAlign: 'center', mt: 2 }}>
-              <Button variant="text" onClick={onSwitchToPassword} disabled={loading}>
-                Sign in with email and password instead
-              </Button>
-            </Box>
-          )}
-
-          <Typography variant="caption" display="block" sx={{ textAlign: 'center', mt: 2 }}>
-            Only authorized {appDisplayName} accounts can access this system
-          </Typography>
         </Paper>
       </Box>
     </Container>
