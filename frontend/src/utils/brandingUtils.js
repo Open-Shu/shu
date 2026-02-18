@@ -109,3 +109,37 @@ export const getTopbarTextColor = (branding, resolvedMode) => {
   }
   return resolved.lightTopbarTextColor || '#FFFFFF';
 };
+
+/* eslint-disable no-magic-numbers */
+/**
+ * Derive lighter and darker variants from a hex color string.
+ * Used to regenerate primary.light / primary.dark when branding
+ * overrides only primary.main.
+ *
+ * @param {string} hex - A 6-digit hex color (e.g. '#2E5A87')
+ * @returns {{ lighter: string, darker: string }}
+ */
+export const derivePrimaryVariants = (hex) => {
+  const LIGHTEN = 40;
+  const DARKEN = 30;
+  const raw = (hex || '').replace('#', '');
+  const normalized =
+    raw.length === 3
+      ? raw
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : raw;
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return { lighter: hex, darker: hex };
+  }
+  const parsed = parseInt(normalized, 16);
+  const r = (parsed >> 16) & 0xff;
+  const g = (parsed >> 8) & 0xff;
+  const b = parsed & 0xff;
+  const toHex = (n) => n.toString(16).padStart(2, '0');
+  const lighter = `#${toHex(Math.min(255, r + LIGHTEN))}${toHex(Math.min(255, g + LIGHTEN))}${toHex(Math.min(255, b + LIGHTEN))}`;
+  const darker = `#${toHex(Math.max(0, r - DARKEN))}${toHex(Math.max(0, g - DARKEN))}${toHex(Math.max(0, b - DARKEN))}`;
+  return { lighter, darker };
+};
+/* eslint-enable no-magic-numbers */

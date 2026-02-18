@@ -17,6 +17,7 @@ import EnsembleModeDialog from './EnsembleModeDialog';
 import RenameConversationDialog from './RenameConversationDialog';
 import DeleteConversationDialog from './DeleteConversationDialog';
 import ChatSettingsDialog from './ChatSettingsDialog';
+import LongConversationDialog from './LongConversationDialog';
 
 const SIDEBAR_WIDTH = 300;
 
@@ -41,6 +42,7 @@ const ModernChatView = ({
   renameDialogProps,
   deleteDialogProps,
   settingsDialogProps,
+  longConversationDialogProps,
   pluginsEnabled,
   getSelectedConfig,
   handleCreateConversation,
@@ -121,7 +123,11 @@ const ModernChatView = ({
                   </Alert>
                 )}
 
-                <InputBar {...inputBarProps} isMobile={isMobile} />
+                {longConversationDialogProps.open ? (
+                  <LongConversationDialog {...longConversationDialogProps} />
+                ) : (
+                  <InputBar {...inputBarProps} isMobile={isMobile} />
+                )}
               </Paper>
 
               {pluginsEnabled && <PluginPickerDialog {...pluginPickerDialogProps} />}

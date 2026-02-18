@@ -54,6 +54,9 @@ export const SUMMARY_SEARCH_DEBOUNCE_MS = parsePositiveInt('VITE_SUMMARY_SEARCH_
 export const DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH = parsePositiveInt('VITE_SUMMARY_SEARCH_MIN_TERM_LENGTH', 3);
 export const DEFAULT_SUMMARY_SEARCH_MAX_TOKENS = parsePositiveInt('VITE_SUMMARY_SEARCH_MAX_TOKENS', 10);
 
+// Long conversation warning
+export const LONG_CONVERSATION_THRESHOLD = parsePositiveInt('VITE_LONG_CONVERSATION_THRESHOLD', 50);
+
 // UI Strings / Storage keys
 export const STORAGE_KEY_RAG_REWRITE_MODE = 'shu.chat.ragRewriteMode';
 export const PLACEHOLDER_THINKING = 'Thinking…';

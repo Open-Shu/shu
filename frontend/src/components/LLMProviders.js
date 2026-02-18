@@ -26,7 +26,6 @@ import {
   PlayArrow as TestIcon,
   Settings as SettingsIcon,
   Search as DiscoverIcon,
-  Sync as SyncIcon,
   CheckBox as CheckBoxIcon,
   CheckBoxOutlineBlank as CheckBoxOutlineBlankIcon,
   Close as RemoveIcon,
@@ -73,6 +72,9 @@ const LLMProviders = () => {
   // Manual model entry state
   const [manualModelId, setManualModelId] = useState('');
   const [manualModels, setManualModels] = useState([]);
+
+  // No-models confirmation dialog state
+  const [noModelsConfirmOpen, setNoModelsConfirmOpen] = useState(false);
 
   const [newProvider, setNewProvider] = useState(() => ({
     name: '',
@@ -293,11 +295,13 @@ const LLMProviders = () => {
 
   // Create provider mutation
   const createProviderMutation = useMutation((providerData) => llmAPI.createProvider(providerData), {
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const createdProvider = extractDataFromResponse(response);
       queryClient.invalidateQueries('llm-providers');
       setCreateDialogOpen(false);
       resetNewProvider();
       setError(null);
+      handleManageModels(createdProvider);
     },
     onError: (err) => {
       setError(formatError(err).message);
@@ -306,11 +310,15 @@ const LLMProviders = () => {
 
   // Update provider mutation
   const updateProviderMutation = useMutation(({ id, data }) => llmAPI.updateProvider(id, data), {
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      const provider = variables.provider;
       queryClient.invalidateQueries('llm-providers');
       setEditDialogOpen(false);
       setEditProvider(null);
       setError(null);
+      if (provider) {
+        handleManageModels(provider);
+      }
     },
     onError: (err) => {
       setError(formatError(err).message);
@@ -460,7 +468,7 @@ const LLMProviders = () => {
         endpoints: stripLabels(endpointsOverrideEdit),
         provider_capabilities: stripLabels(pickCapabilities(editProvider.provider_capabilities, providerCapabilities)),
       };
-      updateProviderMutation.mutate({ id: editProvider.id, data: payload });
+      updateProviderMutation.mutate({ id: editProvider.id, data: payload, provider: editProvider });
     }
   };
 
@@ -536,6 +544,7 @@ const LLMProviders = () => {
       const selectedManualModels = selectedModelsList.filter((modelId) => manualModelIds.includes(modelId));
 
       // Create manual models first
+      const failedManualModels = [];
       for (const modelId of selectedManualModels) {
         const manualModel = manualModels.find((model) => model.id === modelId);
         if (manualModel) {
@@ -548,9 +557,14 @@ const LLMProviders = () => {
             });
           } catch (err) {
             log.warn(`Failed to create manual model ${modelId}:`, err);
-            // Continue with other models even if one fails
+            failedManualModels.push(modelId);
           }
         }
+      }
+
+      if (failedManualModels.length > 0) {
+        setError(`Failed to create manual model(s): ${failedManualModels.join(', ')}`);
+        return false;
       }
 
       // Then sync discovered models (if any)
@@ -563,21 +577,39 @@ const LLMProviders = () => {
       queryClient.invalidateQueries('llm-providers');
       queryClient.invalidateQueries('all-llm-models');
 
-      setModelDialogOpen(false);
       setError(null);
-
-      // Show success message
-      setTestResults({
-        ...testResults,
-        [selectedProvider.id]: {
-          success: true,
-          message: `Successfully synced ${selectedModels.size} models`,
-        },
-      });
+      setSelectedModels(new Set());
+      setDiscoveredModels([]);
+      setManualModels([]);
+      return true;
     } catch (err) {
       setError(formatError(err).message);
+      return false;
     } finally {
       setModelSyncLoading(false);
+    }
+  };
+
+  const handleFinishModelManagement = async () => {
+    // Sync any selected models first, then close
+    if (selectedModels.size > 0) {
+      const synced = await handleSyncModels();
+      if (!synced) {
+        return; // Sync failed, stay on dialog
+      }
+      setModelDialogOpen(false);
+      return;
+    }
+
+    // No models selected - use shared dismiss logic
+    handleDismissModelManagement();
+  };
+
+  const handleDismissModelManagement = () => {
+    if (selectedProvider && getProviderModelCount(selectedProvider.id) === 0) {
+      setNoModelsConfirmOpen(true);
+    } else {
+      setModelDialogOpen(false);
     }
   };
 
@@ -869,7 +901,7 @@ const LLMProviders = () => {
             variant="contained"
             disabled={createProviderMutation.isLoading || !newProvider.name || !newProvider.api_endpoint}
           >
-            {createProviderMutation.isLoading ? 'Creating...' : 'Create Provider'}
+            {createProviderMutation.isLoading ? 'Saving...' : 'Next'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -913,7 +945,7 @@ const LLMProviders = () => {
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleSaveProvider} variant="contained" disabled={updateProviderMutation.isLoading}>
-            {updateProviderMutation.isLoading ? 'Saving...' : 'Save Changes'}
+            {updateProviderMutation.isLoading ? 'Saving...' : 'Next'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -954,7 +986,7 @@ const LLMProviders = () => {
       </Dialog>
 
       {/* Model Management Dialog */}
-      <Dialog open={modelDialogOpen} onClose={() => setModelDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={modelDialogOpen} onClose={handleDismissModelManagement} maxWidth="md" fullWidth>
         <DialogTitle>Manage Models - {selectedProvider?.name}</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
@@ -1209,39 +1241,36 @@ const LLMProviders = () => {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setModelDialogOpen(false)}>Cancel</Button>
-          {discoveredModels.length === 0 && manualModels.length === 0 ? (
-            <Button
-              variant="contained"
-              startIcon={<DiscoverIcon />}
-              onClick={handleDiscoverModels}
-              disabled={modelDiscoveryLoading}
-            >
-              {modelDiscoveryLoading ? 'Discovering...' : 'Discover Models'}
-            </Button>
-          ) : (
-            <>
-              {discoveredModels.length === 0 && (
-                <Button
-                  variant="outlined"
-                  startIcon={<DiscoverIcon />}
-                  onClick={handleDiscoverModels}
-                  disabled={modelDiscoveryLoading}
-                  sx={{ mr: 1 }}
-                >
-                  {modelDiscoveryLoading ? 'Discovering...' : 'Discover More'}
-                </Button>
-              )}
-              <Button
-                variant="contained"
-                startIcon={<SyncIcon />}
-                onClick={handleSyncModels}
-                disabled={modelSyncLoading || selectedModels.size === 0}
-              >
-                {modelSyncLoading ? 'Syncing...' : `Sync ${selectedModels.size} Models`}
-              </Button>
-            </>
-          )}
+          <Button onClick={handleDismissModelManagement}>Cancel</Button>
+          <Button variant="contained" onClick={handleFinishModelManagement} disabled={modelSyncLoading}>
+            {modelSyncLoading ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* No Models Confirmation Dialog */}
+      <Dialog open={noModelsConfirmOpen} onClose={() => setNoModelsConfirmOpen(false)}>
+        <DialogTitle>No Models Added</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mt: 1 }}>
+            You haven&apos;t added any models to this provider. Without models, you won&apos;t be able to create model
+            configurations for this provider.
+          </Alert>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            Are you sure you want to continue without adding models?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setNoModelsConfirmOpen(false)}>Go Back</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setNoModelsConfirmOpen(false);
+              setModelDialogOpen(false);
+            }}
+          >
+            Continue Without Models
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

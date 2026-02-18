@@ -86,6 +86,11 @@ const useMessageStream = ({
     [messagesResponse, selectedConversation?.id]
   );
 
+  const totalMessageCount = useMemo(() => {
+    const tc = messagesResponse?.data?.meta?.total_count;
+    return typeof tc === 'number' ? tc : null;
+  }, [messagesResponse]);
+
   const resetConversationState = useCallback(() => {
     setHasMoreMessages(false);
     setLoadingOlderMessages(false);
@@ -240,6 +245,7 @@ const useMessageStream = ({
     hasMoreMessages,
     loadingOlderMessages,
     loadOlderMessages,
+    totalMessageCount,
   };
 };
 

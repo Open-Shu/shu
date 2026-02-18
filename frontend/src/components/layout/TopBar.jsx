@@ -107,8 +107,10 @@ const TopBar = ({
               height: '100%',
             }}
           >
-            {sectionIcon ? <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>{sectionIcon}</Box> : null}
-            <Typography variant="h6" sx={{ color: '#FFFFFF', fontWeight: 600 }}>
+            {sectionIcon ? (
+              <Box sx={{ mr: 1, display: 'flex', alignItems: 'center', color: textColor }}>{sectionIcon}</Box>
+            ) : null}
+            <Typography variant="h6" sx={{ color: textColor, fontWeight: 600 }}>
               {sectionTitle}
             </Typography>
           </Box>
@@ -123,11 +125,16 @@ const TopBar = ({
           onClick={handleUserMenuOpen}
           className="user-menu"
           sx={{
-            color: '#FFFFFF',
+            color: textColor,
             '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' },
           }}
         >
-          <UserAvatar user={user} size={32} fallbackChar={user?.name?.charAt(0) || 'U'} />
+          <UserAvatar
+            user={user}
+            size={32}
+            fallbackChar={user?.name?.charAt(0) || 'U'}
+            sx={{ color: textColor, backgroundColor: 'rgba(255,255,255,0.15)' }}
+          />
         </IconButton>
 
         <Menu id="user-menu" anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleUserMenuClose}>

@@ -1,5 +1,5 @@
 import { mergeDeep } from './objectUtils';
-import { resolveBranding } from './brandingUtils';
+import { resolveBranding, derivePrimaryVariants } from './brandingUtils';
 
 const primaryMain = '#2E5A87';
 const primaryLight = '#4A7BA7';
@@ -584,13 +584,46 @@ export {
   getBrandingAppName,
   getBrandingFaviconUrlForTheme,
   getTopbarTextColor,
+  derivePrimaryVariants,
 } from './brandingUtils';
 
 export const getThemeConfig = (mode = 'light', branding) => {
   const resolved = resolveBranding(branding);
   const base = mode === 'dark' ? darkThemeBase : lightThemeBase;
   const overrides = mode === 'dark' ? resolved.darkThemeOverrides : resolved.lightThemeOverrides;
-  return mergeDeep(base, overrides);
+  const config = mergeDeep(base, overrides);
+
+  // When branding overrides primary.main, the light/dark variants still hold
+  // the base-theme defaults. Regenerate them so the full palette stays consistent.
+  const pm = config?.palette?.primary?.main;
+  const overridePrimary = overrides?.palette?.primary ?? {};
+  const hasOverrideMain = typeof overridePrimary.main === 'string';
+  const derived = hasOverrideMain && pm ? derivePrimaryVariants(pm) : null;
+  if (derived) {
+    if (!overridePrimary.light) {
+      config.palette.primary.light = derived.lighter;
+    }
+    if (!overridePrimary.dark) {
+      config.palette.primary.dark = derived.darker;
+    }
+  }
+
+  // Sync MuiListItemButton overrides with the resolved primary palette.
+  const listBtn = config.components?.MuiListItemButton?.styleOverrides?.root;
+  const overrideListBtn = overrides?.components?.MuiListItemButton?.styleOverrides?.root;
+  if (listBtn && derived && !overrideListBtn) {
+    if (listBtn['&.Mui-selected']) {
+      listBtn['&.Mui-selected'].backgroundColor = pm;
+      if (listBtn['&.Mui-selected']['&:hover']) {
+        listBtn['&.Mui-selected']['&:hover'].backgroundColor = derived.darker;
+      }
+    }
+    if (listBtn['& .MuiListItemIcon-root']) {
+      listBtn['& .MuiListItemIcon-root'].color = pm;
+    }
+  }
+
+  return config;
 };
 
 export const getPrimaryColor = (mode = 'light', branding) => {
