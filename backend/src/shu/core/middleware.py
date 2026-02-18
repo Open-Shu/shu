@@ -113,6 +113,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Note: This is intentionally narrow; we only enable identity-credentials-get for self.
         response.headers["Permissions-Policy"] = "identity-credentials-get=(self)"
 
+        # Prevent browser caching of API responses to ensure fresh data
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+
         return response
 
 
