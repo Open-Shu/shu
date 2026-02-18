@@ -374,6 +374,23 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
 
     logger.info("Shu shutdown complete")
 
+    # Safety net: PyTorch/SentenceTransformer's CPU thread pool creates non-daemon
+    # threads that have no public shutdown API. These threads block process exit,
+    # preventing uvicorn --reload (dev server) and integration test suite completion.
+    # A daemon watchdog thread sleeps for a grace period, then force-exits. If the
+    # process exits naturally before the timeout, the daemon thread dies with it.
+    import threading
+
+    def _shutdown_watchdog():
+        import os
+        import time
+
+        time.sleep(5)
+        logger.warning("Force-exiting: non-daemon threads blocking process shutdown")
+        os._exit(0)
+
+    threading.Thread(target=_shutdown_watchdog, daemon=True, name="shutdown-watchdog").start()
+
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""

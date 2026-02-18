@@ -24,9 +24,12 @@ import asyncio
 import glob
 import importlib
 import importlib.util
+import logging
 import sys
 
 from integ.base_integration_test import BaseIntegrationTestSuite
+
+logger = logging.getLogger(__name__)
 
 
 class MasterTestRunner:
@@ -35,6 +38,7 @@ class MasterTestRunner:
     def __init__(self):
         self.test_suites: dict[str, BaseIntegrationTestSuite] = {}
         self.first_suite_run = True  # Track if this is the first suite to run
+        self._shared_runner = None  # Shared IntegrationTestRunner (single lifespan across suites)
         self.discover_test_suites()
 
     def discover_test_suites(self):
@@ -102,26 +106,75 @@ class MasterTestRunner:
             print(f"    Tests: {len(suite.get_test_functions())}")
             print()
 
+    async def _ensure_runner(self, enable_file_logging: bool = False, wipe_log_file: bool = False):
+        """Get or create the shared IntegrationTestRunner (single lifespan for all suites).
+
+        Re-entering the app lifespan per suite causes hangs because PyTorch/SentenceTransformer
+        spawns non-daemon threads that persist after teardown, deadlocking on re-initialization.
+        """
+        if self._shared_runner is None:
+            from integ.integration_test_runner import IntegrationTestRunner
+
+            self._shared_runner = IntegrationTestRunner(enable_file_logging=enable_file_logging)
+            await self._shared_runner.setup(wipe_log_file=wipe_log_file)
+        return self._shared_runner
+
+    async def teardown(self):
+        """Teardown the shared runner if it exists."""
+        if self._shared_runner is not None:
+            await self._shared_runner.teardown()
+            self._shared_runner = None
+
     async def run_suite(self, suite_key: str, **kwargs) -> bool:
-        """Run a specific test suite."""
+        """Run a specific test suite using the shared test runner."""
         if suite_key not in self.test_suites:
             print(f"❌ Test suite '{suite_key}' not found!")
             return False
 
         suite = self.test_suites[suite_key]
-
         print(f"🚀 Running {suite.get_suite_name()}")
 
-        # Import the test runner function
-        from integ.integration_test_runner import run_integration_test_suite
+        all_tests = suite.get_test_functions()
 
-        # Only wipe log file for the first suite run
-        if self.first_suite_run and kwargs.get("enable_file_logging", False):
-            kwargs["wipe_log_file"] = True
+        # Handle listing tests (no runner needed)
+        if kwargs.get("list_tests"):
+            print("📋 Available Tests:")
+            for i, test in enumerate(all_tests, 1):
+                print(f"  {i:2d}. {test.__name__}")
+            return True
+
+        # Apply filters
+        from integ.integration_test_runner import filter_tests_by_name, filter_tests_by_pattern
+
+        tests_to_run = all_tests
+        if kwargs.get("test_names"):
+            tests_to_run = filter_tests_by_name(all_tests, kwargs["test_names"])
+        elif kwargs.get("pattern"):
+            tests_to_run = filter_tests_by_pattern(all_tests, kwargs["pattern"])
+
+        if not tests_to_run:
+            logger.error("No tests selected to run!")
+            return False
+
+        logger.info(f"Running {len(tests_to_run)} out of {len(all_tests)} available tests")
+
+        # Get/create shared runner (single lifespan for all suites)
+        enable_file_logging = kwargs.get("enable_file_logging", False)
+        wipe_log_file = self.first_suite_run and enable_file_logging
+        if self.first_suite_run:
             self.first_suite_run = False
 
-        success = await run_integration_test_suite(all_tests=suite.get_test_functions(), **kwargs)
+        runner = await self._ensure_runner(
+            enable_file_logging=enable_file_logging,
+            wipe_log_file=wipe_log_file,
+        )
 
+        # Reset results for this suite
+        runner.test_results = []
+
+        # Run test suite and print results
+        await runner.run_test_suite(tests_to_run)
+        success = runner.print_summary()
         return success
 
     async def run_all_suites(self, **kwargs) -> dict[str, bool]:
@@ -131,10 +184,13 @@ class MasterTestRunner:
         print(f"🎯 Running all {len(self.test_suites)} integration test suites")
         print("=" * 80)
 
-        for suite_key in self.test_suites.keys():
-            print(f"\n{'='*20} {suite_key.upper()} {'='*20}")
-            success = await self.run_suite(suite_key, **kwargs)
-            results[suite_key] = success
+        try:
+            for suite_key in self.test_suites.keys():
+                print(f"\n{'='*20} {suite_key.upper()} {'='*20}")
+                success = await self.run_suite(suite_key, **kwargs)
+                results[suite_key] = success
+        finally:
+            await self.teardown()
 
         return results
 
@@ -235,14 +291,17 @@ Examples:
         print(f"🎯 Running {len(suites_to_run)} test suite(s): {', '.join(suites_to_run)}")
         print("=" * 80)
 
-        for i, suite_name in enumerate(suites_to_run):
-            print(f"\n==================== {suite_name.upper()} ({i+1}/{len(suites_to_run)}) ====================")
-            success = await runner.run_suite(suite_name, **kwargs)
-            if not success:
-                all_success = False
-                print(f"❌ Suite '{suite_name}' failed")
-            else:
-                print(f"✅ Suite '{suite_name}' passed")
+        try:
+            for i, suite_name in enumerate(suites_to_run):
+                print(f"\n==================== {suite_name.upper()} ({i+1}/{len(suites_to_run)}) ====================")
+                success = await runner.run_suite(suite_name, **kwargs)
+                if not success:
+                    all_success = False
+                    print(f"❌ Suite '{suite_name}' failed")
+                else:
+                    print(f"✅ Suite '{suite_name}' passed")
+        finally:
+            await runner.teardown()
 
         # Run cleanup if requested
         if args.cleanup and all_success:
