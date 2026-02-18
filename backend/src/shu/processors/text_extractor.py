@@ -316,18 +316,17 @@ class TextExtractor:
         )
 
         try:
-            text = await self._extract_text_direct(file_path, file_content, progress_context, use_ocr)
+            text, ocr_actually_used = await self._extract_text_direct(file_path, file_content, progress_context, use_ocr)
             duration = time.time() - start_time
 
-            # Determine extraction method and engine based on what actually happened
+            # Determine extraction method and engine based on what actually happened.
+            # Use ocr_actually_used (not the input use_ocr flag) so fallback-mode PDFs
+            # that succeeded via fast text extraction are recorded accurately.
             extraction_method = "text"  # Default for non-OCR
             extraction_engine = "direct"
             extraction_confidence = None
 
-            # Determine extraction method and engine based on actual processing.
-            # OCR only applies to PDFs — non-PDF types always use their native extractor
-            # regardless of the use_ocr flag.
-            if use_ocr and file_ext == ".pdf":
+            if ocr_actually_used:
                 extraction_method = "ocr"
                 extraction_engine = "easyocr"  # Primary OCR engine (EasyOCR → Tesseract fallback)
                 extraction_confidence = 0.8  # Default confidence for OCR
@@ -384,8 +383,13 @@ class TextExtractor:
         file_content: bytes | None = None,
         progress_context: dict[str, Any] | None = None,
         use_ocr: bool = True,
-    ) -> str:
-        """Extract text directly in-memory with progress updates."""
+    ) -> tuple[str, bool]:
+        """Extract text directly in-memory with progress updates.
+
+        Returns:
+            (text, ocr_actually_used) — callers should use the bool for metadata
+            rather than inferring from the input use_ocr flag.
+        """
         try:
             # Set up progress callback if context is provided
             progress_callback = None
@@ -402,10 +406,13 @@ class TextExtractor:
                     ocr_mode = progress_context["ocr_mode"]
                 # Use a no-op progress callback when none provided
                 cb = progress_callback if progress_callback else None
-                raw_text = await self._extract_text_pdf_with_progress(file_path, file_content, cb, use_ocr, ocr_mode)
+                raw_text, ocr_actually_used = await self._extract_text_pdf_with_progress(
+                    file_path, file_content, cb, use_ocr, ocr_mode
+                )
             else:
                 extractor = self.supported_formats[file_ext]
                 raw_text = await extractor(file_path, file_content)
+                ocr_actually_used = False
 
             # Clean the extracted text to remove problematic characters
             cleaned_text = self._clean_text(raw_text)
@@ -420,7 +427,7 @@ class TextExtractor:
                 },
             )
 
-            return cleaned_text
+            return cleaned_text, ocr_actually_used
 
         except Exception as e:
             logger.error("Failed to extract text", extra={"file_path": file_path, "error": str(e)})
@@ -577,8 +584,13 @@ class TextExtractor:
         progress_callback=None,
         use_ocr: bool = True,
         ocr_mode: str = "auto",
-    ) -> str:
-        """Extract text from PDF with page-by-page progress updates."""
+    ) -> tuple[str, bool]:
+        """Extract text from PDF with page-by-page progress updates.
+
+        Returns:
+            (text, ocr_actually_used) — the bool is True only when OCR ran,
+            False when fast text extraction succeeded.
+        """
         logger.debug(
             "Extracting PDF text with progress updates",
             extra={"file_path": file_path, "use_ocr": use_ocr, "ocr_mode": ocr_mode},
@@ -597,7 +609,7 @@ class TextExtractor:
                         "Fast extraction successful, skipping OCR",
                         extra={"file_path": file_path, "text_length": len(fast_text.strip())},
                     )
-                    return fast_text
+                    return fast_text, False
                 logger.info(
                     "Fast extraction yielded insufficient text, falling back to OCR",
                     extra={
@@ -618,10 +630,10 @@ class TextExtractor:
         if use_ocr:
             # OCR is enabled - use OCR directly
             logger.info("OCR enabled for PDF, using OCR processing", extra={"file_path": file_path})
-            return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
+            return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback), True
         # OCR is disabled - try text extraction only
         logger.info("OCR disabled for PDF, using text extraction only", extra={"file_path": file_path})
-        return await self._extract_pdf_text_only(file_path, file_content, progress_callback)
+        return await self._extract_pdf_text_only(file_path, file_content, progress_callback), False
 
     async def _extract_pdf_text_only(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
