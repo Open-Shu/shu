@@ -310,8 +310,8 @@ const LLMProviders = () => {
 
   // Update provider mutation
   const updateProviderMutation = useMutation(({ id, data }) => llmAPI.updateProvider(id, data), {
-    onSuccess: () => {
-      const provider = editProvider;
+    onSuccess: (_data, variables) => {
+      const provider = variables.provider;
       queryClient.invalidateQueries('llm-providers');
       setEditDialogOpen(false);
       setEditProvider(null);
@@ -468,7 +468,7 @@ const LLMProviders = () => {
         endpoints: stripLabels(endpointsOverrideEdit),
         provider_capabilities: stripLabels(pickCapabilities(editProvider.provider_capabilities, providerCapabilities)),
       };
-      updateProviderMutation.mutate({ id: editProvider.id, data: payload });
+      updateProviderMutation.mutate({ id: editProvider.id, data: payload, provider: editProvider });
     }
   };
 
