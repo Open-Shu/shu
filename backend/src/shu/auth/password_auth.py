@@ -101,13 +101,6 @@ class PasswordAuthService:
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
-        # Check if user is active, let them know if not.
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User account is inactive. Please contact an administrator for activation.",
-            )
-
         # Always perform password verification to prevent timing attacks
         # Use dummy hash if user doesn't exist or doesn't have password hash
         password_hash = user.password_hash if user and user.password_hash else self._dummy_hash
@@ -126,6 +119,13 @@ class PasswordAuthService:
         # Check password validity (already computed above)
         if not user.password_hash or not password_valid:
             raise ValueError("Invalid email or password")
+
+        # Check if user is active (after validating credentials to avoid leaking account status)
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User account is inactive. Please contact an administrator for activation.",
+            )
 
         # Update last login
         user.last_login = datetime.now(UTC)
