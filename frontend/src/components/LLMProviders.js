@@ -544,6 +544,7 @@ const LLMProviders = () => {
       const selectedManualModels = selectedModelsList.filter((modelId) => manualModelIds.includes(modelId));
 
       // Create manual models first
+      const failedManualModels = [];
       for (const modelId of selectedManualModels) {
         const manualModel = manualModels.find((model) => model.id === modelId);
         if (manualModel) {
@@ -556,9 +557,14 @@ const LLMProviders = () => {
             });
           } catch (err) {
             log.warn(`Failed to create manual model ${modelId}:`, err);
-            // Continue with other models even if one fails
+            failedManualModels.push(modelId);
           }
         }
+      }
+
+      if (failedManualModels.length > 0) {
+        setError(`Failed to create manual model(s): ${failedManualModels.join(', ')}`);
+        return false;
       }
 
       // Then sync discovered models (if any)
