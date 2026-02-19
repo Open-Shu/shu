@@ -1,5 +1,15 @@
 import React, { useMemo } from 'react';
-import { Avatar, Box, IconButton, Paper, Typography, Tooltip, CircularProgress, Button, useMediaQuery } from '@mui/material';
+import {
+  Avatar,
+  Box,
+  IconButton,
+  Paper,
+  Typography,
+  Tooltip,
+  CircularProgress,
+  Button,
+  useMediaQuery,
+} from '@mui/material';
 import {
   Person as UserIcon,
   SmartToy as BotIcon,
@@ -290,7 +300,9 @@ const MessageItem = React.memo(function MessageItem({
       width: isSideBySide ? { xs: '100%', md: 'auto' } : 'fit-content',
       maxWidth: isSideBySide
         ? { xs: '100%', md: 'min(480px, 100%)', xl: 'min(620px, 100%)' }
-        : isMobile ? '100%' : 'min(85%, calc(100% - 56px))',
+        : isMobile
+          ? '100%'
+          : 'min(85%, calc(100% - 56px))',
       minWidth: isSideBySide ? { xs: '100%', sm: 280, lg: 320 } : 0,
       overflowWrap: 'anywhere',
       wordBreak: 'break-word',
