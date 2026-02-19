@@ -19,7 +19,7 @@ from ..core.logging import get_logger
 logger = get_logger(__name__)
 
 # Common English words used for OCR text quality scoring.
-# Kept at module level per DEVELOPMENT_STANDARDS §7.1 (no large constants in methods).
+# fmt: off
 _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
     "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
     "with", "by", "a", "an", "is", "are", "was", "were", "be", "been",
@@ -28,6 +28,7 @@ _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
     "i", "you", "he", "she", "it", "we", "they", "me", "him", "her",
     "us", "them",
 })
+# fmt: on
 
 
 class UnsupportedFileFormatError(Exception):
