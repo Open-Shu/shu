@@ -204,6 +204,18 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const refreshUser = async () => {
+    try {
+      const response = await api.get('/auth/me');
+      const userData = extractDataFromResponse(response);
+      setUser(normalizeUser(userData));
+      return userData;
+    } catch (error) {
+      log.warn('Failed to refresh user:', error.response?.status);
+      throw error;
+    }
+  };
+
   const handleAuthError = () => {
     log.warn('Authentication error detected - logging out user');
     logout();
@@ -251,6 +263,7 @@ export const AuthProvider = ({ children }) => {
     loginWithPassword,
     register,
     refreshToken,
+    refreshUser,
     logout,
     handleAuthError,
     hasRole,

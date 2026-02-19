@@ -32,10 +32,12 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BlockIcon from '@mui/icons-material/Block';
+import LockResetIcon from '@mui/icons-material/LockReset';
 import PeopleIcon from '@mui/icons-material/People';
 import { authAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import PageHelpHeader from './PageHelpHeader';
+import ResetPasswordDialog from './ResetPasswordDialog';
 
 const resolveUserId = (user) => {
   if (!user) {
@@ -51,6 +53,7 @@ const UserManagement = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
+  const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [newUser, setNewUser] = useState({
     email: '',
     name: '',
@@ -328,6 +331,17 @@ const UserManagement = () => {
                       >
                         <EditIcon />
                       </IconButton>
+                      {user.auth_method === 'password' && (
+                        <IconButton
+                          onClick={() => setResetPasswordUser(user)}
+                          size="small"
+                          color="warning"
+                          title="Reset Password"
+                          disabled={!userId}
+                        >
+                          <LockResetIcon />
+                        </IconButton>
+                      )}
                       <IconButton
                         onClick={() => handleDeleteUser(user)}
                         size="small"
@@ -513,6 +527,14 @@ const UserManagement = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Reset Password Dialog */}
+      <ResetPasswordDialog
+        open={!!resetPasswordUser}
+        onClose={() => setResetPasswordUser(null)}
+        user={resetPasswordUser}
+        onSuccess={() => queryClient.invalidateQueries('users')}
+      />
     </Box>
   );
 };
