@@ -169,8 +169,16 @@ class MasterTestRunner:
             wipe_log_file=wipe_log_file,
         )
 
-        # Reset results for this suite
+        # Reset results and ensure clean transaction state for this suite
         runner.test_results = []
+        try:
+            await runner.db.rollback()
+        except Exception:
+            pass
+        try:
+            await runner._cleanup_test_data(quick=True)
+        except Exception:
+            pass
 
         # Run test suite and print results
         await runner.run_test_suite(tests_to_run)

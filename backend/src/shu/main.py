@@ -4,6 +4,9 @@ This module creates and configures the FastAPI application for Shu.
 """
 
 import asyncio
+import os
+import threading
+import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -379,12 +382,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     # preventing uvicorn --reload (dev server) and integration test suite completion.
     # A daemon watchdog thread sleeps for a grace period, then force-exits. If the
     # process exits naturally before the timeout, the daemon thread dies with it.
-    import threading
-
     def _shutdown_watchdog():
-        import os
-        import time
-
         time.sleep(5)
         logger.warning("Force-exiting: non-daemon threads blocking process shutdown")
         os._exit(0)
