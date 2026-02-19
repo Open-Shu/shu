@@ -158,7 +158,12 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         document = result.scalar_one_or_none()
 
         if not document:
-            raise ValueError(f"Document not found: {document_id}")
+            # Document was deleted after job was enqueued — permanent failure, no retry.
+            logger.error(
+                "Document not found for OCR job, failing permanently",
+                extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
 
         document.update_status(DocumentStatus.EXTRACTING)
         await session.commit()
@@ -233,8 +238,20 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 visibility_timeout=300,
             )
 
-            # Clean up staged file now that extraction succeeded
-            await staging_service.delete_staged_file(staging_key)
+            # Clean up staged file now that extraction succeeded.
+            # Failure here is non-fatal — the file will TTL-expire on its own.
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to delete staged file after successful OCR (non-fatal, will TTL-expire)",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "staging_key": staging_key,
+                        "error": str(cleanup_err),
+                    },
+                )
 
             logger.info(
                 "OCR job completed, enqueued embedding job",
@@ -325,17 +342,42 @@ async def _handle_embed_job(job) -> None:
         document = result.scalar_one_or_none()
 
         if not document:
-            raise ValueError(f"Document not found: {document_id}")
+            # Document was deleted after job was enqueued — permanent failure, no retry.
+            logger.error(
+                "Document not found for embed job, failing permanently",
+                extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
 
         try:
+            # Set EMBEDDING status before processing so a crash mid-embed leaves
+            # the document in a diagnosable state rather than the previous status.
+            document.update_status(DocumentStatus.EMBEDDING)
+            await session.commit()
+
             # Process chunks and embeddings using DocumentService
             doc_service = DocumentService(session)
-            word_count, char_count, chunk_count = await doc_service.process_and_update_chunks(
-                knowledge_base_id,
-                document,
-                document.title,
-                document.content,
-            )
+            try:
+                word_count, char_count, chunk_count = await doc_service.process_and_update_chunks(
+                    knowledge_base_id,
+                    document,
+                    document.title,
+                    document.content,
+                )
+            except ValueError as kb_err:
+                # KB was deleted between OCR and embed stages — permanent failure, no retry.
+                logger.error(
+                    "Knowledge base not found for embed job, failing permanently",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "error": str(kb_err),
+                    },
+                )
+                document.mark_error(f"Knowledge base not found: {kb_err}")
+                await session.commit()
+                return
 
             logger.info(
                 "Embedding generation complete",
@@ -353,10 +395,8 @@ async def _handle_embed_job(job) -> None:
             profiling_enabled = settings.enable_document_profiling
 
             if profiling_enabled:
-                # Update status to PROFILING and enqueue profiling job
-                document.update_status(DocumentStatus.PROFILING)
-                await session.commit()
-
+                # Enqueue profiling job first, then commit PROFILING status.
+                # This prevents the document from being stuck in PROFILING if enqueue fails.
                 queue = await get_queue_backend()
                 await enqueue_job(
                     queue,
@@ -368,6 +408,8 @@ async def _handle_embed_job(job) -> None:
                     max_attempts=5,
                     visibility_timeout=600,
                 )
+                document.update_status(DocumentStatus.PROFILING)
+                await session.commit()
 
                 logger.info(
                     "Embedding job completed, enqueued profiling job",

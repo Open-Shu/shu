@@ -258,6 +258,21 @@ def _check_skip(
             "skip_reason": "hash_match",
         }
 
+    # Also skip ERROR-state documents with matching hash — the error is deterministic
+    # (same content will fail the same way). Prevents an automatic retry loop on every
+    # feed sync. Users can force re-ingestion by re-uploading or setting force_reingest.
+    if hash_matches and existing.has_error:
+        return {
+            "ko_id": ko_id,
+            "document_id": existing.id,
+            "status": existing.processing_status,
+            "word_count": existing.word_count or 0,
+            "character_count": existing.character_count or 0,
+            "chunk_count": existing.chunk_count or 0,
+            "skipped": True,
+            "skip_reason": "hash_match_error_state",
+        }
+
     return None
 
 
@@ -372,6 +387,23 @@ async def _upsert_document_record(
                 extraction=extraction_data,
                 skipped=True,
                 skip_reason="hash_match",
+            )
+        if match and existing.has_error:
+            logger.info(
+                "Skipping ERROR-state document with matching hash (deterministic failure)",
+                extra={
+                    "kb_id": knowledge_base_id,
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "hash": matched_hash,
+                    "document_id": existing.id,
+                },
+            )
+            return UpsertResult(
+                document=existing,
+                extraction=extraction_data,
+                skipped=True,
+                skip_reason="hash_match_error_state",
             )
 
     # Content changed or force_reingest - update the document
@@ -692,14 +724,28 @@ async def ingest_email(
             upsert_result.skip_reason,
         )
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        title,
-        content,
-    )
+    try:
+        word_count, character_count, chunk_count = await svc.process_and_update_chunks(
+            knowledge_base_id,
+            document,
+            title,
+            content,
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to process email document chunks",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        document.mark_error(f"Chunk processing failed: {e}")
+        db.add(document)
+        await db.commit()
+        raise
 
-    # Trigger async profiling if enabled (SHU-344)
+    # Trigger async profiling if enabled
     await _trigger_profiling_if_enabled(document.id)
 
     return {
@@ -820,11 +866,9 @@ async def ingest_text(  # noqa: PLR0915
         await db.commit()
         await db.refresh(document)
 
-    # Set status to EMBEDDING (skip OCR stage)
-    document.update_status(DocumentStatus.EMBEDDING)
-    await db.commit()
-
-    # Enqueue embedding job directly (no file staging needed)
+    # Enqueue embedding job directly (no file staging needed).
+    # Commit EMBEDDING status only after enqueue succeeds to avoid a window
+    # where the document is EMBEDDING with no job in the queue.
     try:
         queue = await get_queue_backend()
         await _enqueue_embed_job(queue, document.id, knowledge_base_id)
@@ -842,6 +886,9 @@ async def ingest_text(  # noqa: PLR0915
         db.add(document)
         await db.commit()
         raise
+
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
 
     logger.info(
         "Text ingestion enqueued (skipping OCR)",
@@ -967,11 +1014,9 @@ async def ingest_thread(  # noqa: PLR0915
         await db.commit()
         await db.refresh(document)
 
-    # Set status to EMBEDDING (skip OCR stage)
-    document.update_status(DocumentStatus.EMBEDDING)
-    await db.commit()
-
-    # Enqueue embedding job directly (no file staging needed)
+    # Enqueue embedding job directly (no file staging needed).
+    # Commit EMBEDDING status only after enqueue succeeds to avoid a window
+    # where the document is EMBEDDING with no job in the queue.
     try:
         queue = await get_queue_backend()
         await _enqueue_embed_job(queue, document.id, knowledge_base_id)
@@ -989,6 +1034,9 @@ async def ingest_thread(  # noqa: PLR0915
         db.add(document)
         await db.commit()
         raise
+
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
 
     logger.info(
         "Thread ingestion enqueued (skipping OCR)",

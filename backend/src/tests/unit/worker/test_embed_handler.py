@@ -31,9 +31,8 @@ class TestEmbedHandlerProfilingBranch:
     @pytest.mark.asyncio
     async def test_profiling_enabled_enqueues_profiling_job(self):
         """
-        Test that when profiling is enabled, the handler enqueues a PROFILING job.
-
-        Validates: Requirements 4.5, 4.6
+        Test that when profiling is enabled, the handler enqueues a PROFILING job
+        and sets status EMBEDDING before processing, then PROFILING after enqueue.
         """
         # Create mock document
         mock_document = MagicMock()
@@ -88,8 +87,12 @@ class TestEmbedHandlerProfilingBranch:
 
             await _handle_embed_job(job)
 
-        # Verify document status was updated to PROFILING
-        mock_document.update_status.assert_called_once_with(DocumentStatus.PROFILING)
+        # Verify document status was updated: first EMBEDDING (before processing),
+        # then PROFILING (after successful enqueue).
+        assert mock_document.update_status.call_count == 2
+        calls = mock_document.update_status.call_args_list
+        assert calls[0][0][0] == DocumentStatus.EMBEDDING
+        assert calls[1][0][0] == DocumentStatus.PROFILING
 
         # Verify profiling job was enqueued
         mock_enqueue_job.assert_called_once()
@@ -101,9 +104,8 @@ class TestEmbedHandlerProfilingBranch:
     @pytest.mark.asyncio
     async def test_profiling_disabled_sets_status_ready(self):
         """
-        Test that when profiling is disabled, the handler sets status to READY directly.
-
-        Validates: Requirements 4.7
+        Test that when profiling is disabled, the handler sets status EMBEDDING
+        before processing, then PROCESSED directly.
         """
         # Create mock document
         mock_document = MagicMock()
@@ -154,8 +156,12 @@ class TestEmbedHandlerProfilingBranch:
 
             await _handle_embed_job(job)
 
-        # Verify document status was updated to READY (not PROFILING)
-        mock_document.update_status.assert_called_once_with(DocumentStatus.PROCESSED)
+        # Verify document status was updated: first EMBEDDING (before processing),
+        # then PROCESSED (profiling disabled).
+        assert mock_document.update_status.call_count == 2
+        calls = mock_document.update_status.call_args_list
+        assert calls[0][0][0] == DocumentStatus.EMBEDDING
+        assert calls[1][0][0] == DocumentStatus.PROCESSED
 
         # Verify NO profiling job was enqueued
         mock_enqueue_job.assert_not_called()
