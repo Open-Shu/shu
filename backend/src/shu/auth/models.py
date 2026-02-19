@@ -33,6 +33,7 @@ class User(BaseModel):
     # Password authentication fields
     password_hash = Column(String(255), nullable=True)  # Nullable for Google OAuth users
     auth_method = Column(String(50), nullable=False, default="google")  # 'google' or 'password'
+    must_change_password = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Relationships
     preferences = relationship("UserPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -99,6 +100,7 @@ class User(BaseModel):
             "picture_url": self.picture_url,
             "is_active": self.is_active,
             "auth_method": self.auth_method,
+            "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at is not None else None,
             "last_login": self.last_login.isoformat() if self.last_login is not None else None,
         }

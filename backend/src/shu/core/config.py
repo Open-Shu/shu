@@ -131,6 +131,8 @@ class Settings(BaseSettings):
 
     # Security configuration
     api_key: str | None = Field(None, alias="SHU_API_KEY")
+    password_policy: str = Field("moderate", alias="SHU_PASSWORD_POLICY")
+    password_min_length: int = Field(8, alias="SHU_PASSWORD_MIN_LENGTH")
     # When using the global API key (Tier 0), map it to this user's identity for RBAC
     api_key_user_email: str | None = Field(None, alias="SHU_API_KEY_USER_EMAIL")
     secret_key: str | None = Field(None, alias="SHU_SECRET_KEY")
@@ -483,6 +485,15 @@ class Settings(BaseSettings):
         valid_environments = ["development", "staging", "production"]
         if v.lower() not in valid_environments:
             raise ValueError(f"Environment must be one of: {valid_environments}")
+        return v.lower()
+
+    @field_validator("password_policy")
+    @classmethod
+    def validate_password_policy(cls, v: str) -> str:
+        """Validate password policy setting."""
+        valid_policies = ["moderate", "strict"]
+        if v.lower() not in valid_policies:
+            raise ValueError(f"Password policy must be one of: {valid_policies}")
         return v.lower()
 
     @field_validator("vector_index_type")
@@ -1023,8 +1034,6 @@ class ConfigurationManager:
         if model_config and model_config.get("full_doc_token_cap") is not None:
             return int(model_config["full_doc_token_cap"])
         return self.settings.rag_full_doc_token_cap_default
-
-
 
 
 # Global configuration manager instance (for backward compatibility)
