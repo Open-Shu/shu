@@ -175,6 +175,7 @@ class FileStagingService:
 # Sync helpers (run in executor to avoid blocking the event loop)
 # ---------------------------------------------------------------------------
 
+
 def _write_file(path: str, data: bytes) -> None:
     with open(path, "wb") as f:
         f.write(data)
