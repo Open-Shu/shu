@@ -115,8 +115,16 @@ class MasterTestRunner:
         if self._shared_runner is None:
             from integ.integration_test_runner import IntegrationTestRunner
 
-            self._shared_runner = IntegrationTestRunner(enable_file_logging=enable_file_logging)
-            await self._shared_runner.setup(wipe_log_file=wipe_log_file)
+            runner = IntegrationTestRunner(enable_file_logging=enable_file_logging)
+            try:
+                await runner.setup(wipe_log_file=wipe_log_file)
+            except Exception:
+                try:
+                    await runner.teardown()
+                except Exception:
+                    pass
+                raise
+            self._shared_runner = runner
         return self._shared_runner
 
     async def teardown(self):
