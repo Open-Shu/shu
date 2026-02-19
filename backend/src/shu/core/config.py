@@ -159,6 +159,10 @@ class Settings(BaseSettings):
         3600, alias="SHU_FILE_STAGING_TTL"
     )  # TTL in seconds for staged files (default: 1 hour)
 
+    # Disk-based ingestion staging directory
+    ingestion_staging_dir: str = Field("./data/ingestion", alias="SHU_INGESTION_STAGING_DIR")
+    ingestion_staging_max_age_hours: int = Field(24, alias="SHU_INGESTION_STAGING_MAX_AGE_HOURS")
+
     # API Rate Limiting (HTTP request throttling, not LLM-specific)
     enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
     api_rate_limit_requests: int = Field(100, alias="SHU_API_RATE_LIMIT_REQUESTS")  # requests per period
@@ -287,6 +291,18 @@ class Settings(BaseSettings):
     @field_validator("log_dir", mode="before")
     @classmethod
     def _resolve_log_dir(cls, v: str) -> str:
+        try:
+            p = Path(v)
+            if p.is_absolute():
+                return str(p)
+            root = cls._repo_root_from_this_file()
+            return str((root / p).resolve())
+        except Exception:
+            return v
+
+    @field_validator("ingestion_staging_dir", mode="before")
+    @classmethod
+    def _resolve_ingestion_staging_dir(cls, v: str) -> str:
         try:
             p = Path(v)
             if p.is_absolute():

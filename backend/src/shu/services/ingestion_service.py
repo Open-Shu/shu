@@ -471,10 +471,10 @@ async def ingest_document(  # noqa: PLR0915
         source_url: Optional source URL.
         attributes: Optional additional attributes.
         ocr_mode: Optional OCR mode override.
-        staging_ttl: Optional TTL for staged files (defaults to settings.file_staging_ttl).
+        staging_ttl: Unused. Retained for call-site compatibility. Disk staging
+            manages its own TTL via IngestionStagingMaintenanceSource.
 
     """
-    from ..core.cache_backend import get_cache_backend
     from ..core.queue_backend import get_queue_backend
     from ..core.workload_routing import WorkloadType, enqueue_job
     from ..models.document import DocumentStatus
@@ -566,10 +566,7 @@ async def ingest_document(  # noqa: PLR0915
     staging_key = None
     staging_service = None
     try:
-        cache = await get_cache_backend()
-        staging_service = (
-            FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
-        )
+        staging_service = FileStagingService()
         staging_key = await staging_service.stage_file(document.id, file_bytes)
 
         # Enqueue OCR job

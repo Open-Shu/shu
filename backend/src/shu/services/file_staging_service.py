@@ -1,23 +1,25 @@
 """File Staging Service for Document Ingestion Pipeline.
 
-This service handles staging file bytes between pipeline stages using the
-CacheBackend interface. It provides a consistent code path for both Redis
-(production) and in-memory (development) backends.
+Stages file bytes to disk between pipeline stages (plugin execution → OCR worker).
+Each staged file is written to ``$SHU_INGESTION_STAGING_DIR/{document_id}_{uuid}.bin``
+and the file path is returned as the staging key.  Workers read from disk, process,
+and delete the file on completion.
 
-All files are staged using native binary storage via set_bytes() and get_bytes()
-methods, keeping job payloads small and avoiding base64 encoding overhead.
+The public interface (stage_file, retrieve_file, delete_staged_file) is unchanged
+from the previous CacheBackend-based implementation — callers require no changes.
 """
 
+import asyncio
+import os
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from ..core.cache_backend import CacheBackend
+from ..core.config import get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 
 logger = get_logger(__name__)
-
-# Default TTL for staged files (1 hour)
-DEFAULT_STAGING_TTL = 3600
 
 
 class FileStagingError(ShuException):
@@ -35,70 +37,60 @@ class FileStagingError(ShuException):
 class FileStagingService:
     """Service for staging file bytes between pipeline stages.
 
-    Uses CacheBackend.set_bytes/get_bytes for native binary storage.
-    Works with both RedisCacheBackend and InMemoryCacheBackend.
+    Writes bytes to disk under ``SHU_INGESTION_STAGING_DIR`` and returns the
+    file path as the staging key.  Reads and deletes on retrieval.
+
+    The staging directory is created on first instantiation if it does not exist.
+    In multi-replica deployments the directory must reside on a shared volume
+    (ReadWriteMany) so that the writing process and the reading worker can both
+    access it regardless of which pod they run on.
 
     Args:
-        cache: The CacheBackend instance to use for storage and retrieval.
-        staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
+        staging_dir: Override the staging directory (defaults to settings value).
+            Primarily used in tests.
 
     """
 
-    def __init__(self, cache: CacheBackend, staging_ttl: int = DEFAULT_STAGING_TTL) -> None:
-        """Initialize the file staging service.
-
-        Args:
-            cache: The CacheBackend instance to use for storage and retrieval.
-            staging_ttl: TTL in seconds for staged files. Defaults to 3600 (1 hour).
-
-        """
-        self._cache = cache
-        self._staging_ttl = staging_ttl
+    def __init__(self, staging_dir: str | None = None) -> None:
+        settings = get_settings_instance()
+        self._staging_dir = staging_dir or settings.ingestion_staging_dir
+        os.makedirs(self._staging_dir, exist_ok=True)
 
     async def stage_file(
         self,
         document_id: str,
         file_bytes: bytes,
     ) -> str:
-        """Stage file bytes for OCR worker.
+        """Stage file bytes to disk.
 
         Args:
-            document_id: The document ID to associate with the staged file.
+            document_id: The document ID — used as a filename prefix for debuggability.
             file_bytes: The raw file bytes to stage.
 
         Returns:
-            staging_key: Cache key reference for retrieval.
+            staging_key: Absolute path to the staged file on disk.
 
         Raises:
-            FileStagingError: If staging fails.
+            FileStagingError: If the write fails.
 
         """
-        staging_key = f"file_staging:{document_id}"
+        filename = f"{document_id}_{uuid4().hex}.bin"
+        staging_path = str(Path(self._staging_dir) / filename)
 
         try:
-            success = await self._cache.set_bytes(
-                staging_key,
-                file_bytes,
-                ttl_seconds=self._staging_ttl,
-            )
-            if not success:
-                raise FileStagingError(
-                    f"Failed to stage file for document {document_id}",
-                    details={"document_id": document_id, "staging_key": staging_key},
-                )
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _write_file, staging_path, file_bytes)
 
             logger.debug(
                 "Staged file for document",
                 extra={
                     "document_id": document_id,
-                    "staging_key": staging_key,
+                    "staging_key": staging_path,
                     "file_size": len(file_bytes),
                 },
             )
-            return staging_key
+            return staging_path
 
-        except FileStagingError:
-            raise
         except Exception as e:
             raise FileStagingError(
                 f"Failed to stage file for document {document_id}: {e}",
@@ -110,41 +102,38 @@ class FileStagingService:
         staging_key: str,
         delete_after_retrieve: bool = True,
     ) -> bytes:
-        """Retrieve file bytes from staging.
+        """Retrieve file bytes from disk staging.
 
         Args:
-            staging_key: The cache key for the staged file.
-            delete_after_retrieve: If True (default), deletes the staging key
-                after retrieval. Set to False when the caller needs retry
-                safety and will call delete_staged_file explicitly on success.
+            staging_key: The file path returned by stage_file.
+            delete_after_retrieve: If True (default), deletes the file after
+                reading.  Set to False for retry-safe callers that will call
+                delete_staged_file explicitly on success.
 
         Returns:
             The raw file bytes.
 
         Raises:
-            FileStagingError: If staged file not found or retrieval fails.
+            FileStagingError: If the file is not found or the read fails.
 
         """
+        if not os.path.exists(staging_key):
+            raise FileStagingError(
+                f"Staged file not found: {staging_key}",
+                details={"staging_key": staging_key},
+            )
+
         try:
-            file_bytes = await self._cache.get_bytes(staging_key)
-            if file_bytes is None:
-                raise FileStagingError(
-                    f"Staged file not found: {staging_key}",
-                    details={"staging_key": staging_key},
-                )
+            loop = asyncio.get_event_loop()
+            file_bytes = await loop.run_in_executor(None, _read_file, staging_key)
 
             if delete_after_retrieve:
-                # Clean up after retrieval
                 try:
-                    await self._cache.delete(staging_key)
+                    os.unlink(staging_key)
                 except Exception as cleanup_error:
-                    # Log but don't fail - file was retrieved successfully
                     logger.warning(
-                        "Failed to clean up staging key after retrieval",
-                        extra={
-                            "staging_key": staging_key,
-                            "error": str(cleanup_error),
-                        },
+                        "Failed to delete staging file after retrieval",
+                        extra={"staging_key": staging_key, "error": str(cleanup_error)},
                     )
 
             logger.debug(
@@ -166,19 +155,31 @@ class FileStagingService:
             ) from e
 
     async def delete_staged_file(self, staging_key: str) -> None:
-        """Delete a staged file from cache.
+        """Delete a staged file from disk.
 
         Args:
-            staging_key: The cache key to delete.
+            staging_key: The file path to delete.
 
         """
         try:
-            await self._cache.delete(staging_key)
+            if os.path.exists(staging_key):
+                os.unlink(staging_key)
         except Exception as e:
             logger.warning(
-                "Failed to delete staging key",
-                extra={
-                    "staging_key": staging_key,
-                    "error": str(e),
-                },
+                "Failed to delete staging file",
+                extra={"staging_key": staging_key, "error": str(e)},
             )
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers (run in executor to avoid blocking the event loop)
+# ---------------------------------------------------------------------------
+
+def _write_file(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def _read_file(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()

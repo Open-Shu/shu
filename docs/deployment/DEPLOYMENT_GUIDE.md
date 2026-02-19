@@ -546,6 +546,61 @@ configuration.
 
 ---
 
+## Persistent Volume Requirements
+
+### Shared Data Volume (`shu-data`)
+
+All API and worker pods share a single persistent volume mounted at `/app/data`. This volume holds:
+
+| Subdirectory | Purpose |
+|---|---|
+| `/app/data/logs/` | Application logs (hostname-prefixed, rotated by scheduler) |
+| `/app/data/branding/` | Uploaded branding assets |
+| `/app/data/attachments/` | Chat attachment uploads |
+| `/app/data/plugins/` | Installed plugin packages |
+| `/app/data/ingestion/` | Temporary staging files for the ingestion pipeline |
+
+### Multi-Replica Access Mode
+
+The ingestion staging directory is written by the process handling the plugin execution job (API or ingestion worker) and read by a **separate** process handling the OCR or embed job (OCR/embed worker). In a multi-replica Kubernetes deployment these processes run in different pods.
+
+**The `shu-data` PVC must be provisioned with `accessModes: ReadWriteMany`.**
+
+A `ReadWriteOnce` volume will silently succeed in single-node dev clusters (where all pods land on the same node) but will cause workers in separate pods to fail with "file not found" when reading staged files written by a different pod.
+
+The same `ReadWriteMany` requirement applies to logs, branding, and attachments — all subdirectories of the same volume.
+
+### Compatible Storage Classes
+
+| Cloud / Platform | Storage Class |
+|---|---|
+| Azure AKS | `azurefile-csi` (SMB) or `azurefile` |
+| AWS EKS | Amazon EFS (`efs-sc`) |
+| GKE | Filestore (`standard-rwx`) |
+| Self-hosted | NFS-backed storage class |
+
+### Example PVC (Kubernetes)
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shu-data-pvc
+spec:
+  accessModes:
+    - ReadWriteMany          # Required for multi-pod access
+  storageClassName: azurefile-csi
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+### Single-Node Exception
+
+`ReadWriteOnce` is only safe when all API and worker replicas are guaranteed to run on the same node — which is not a supported production topology. For single-node Docker Compose deployments the named volume (`shu-data`) provides the shared filesystem automatically.
+
+---
+
 ## Troubleshooting
 
 ### Workers Not Processing Jobs

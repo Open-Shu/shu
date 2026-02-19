@@ -105,7 +105,6 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         Exception: If text extraction fails (triggers retry).
 
     """
-    from .core.cache_backend import get_cache_backend
     from .core.database import get_async_session_local
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
@@ -147,8 +146,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
     )
 
     session_local = get_async_session_local()
-    cache = await get_cache_backend()
-    staging_service = FileStagingService(cache)  # TTL not needed for retrieval
+    staging_service = FileStagingService()
 
     async with session_local() as session:
         # Get document and update status to EXTRACTING
