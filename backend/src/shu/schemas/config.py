@@ -10,6 +10,14 @@ class UploadRestrictions(BaseModel):
     max_size_bytes: int
 
 
+class PasswordPolicy(BaseModel):
+    """Password policy settings exposed to the frontend for client-side validation."""
+
+    policy: str  # "moderate" or "strict"
+    min_length: int
+    special_chars: str
+
+
 class PublicConfig(BaseModel):
     """Public configuration that can be safely exposed to frontend."""
 
@@ -22,6 +30,8 @@ class PublicConfig(BaseModel):
     upload_restrictions: UploadRestrictions
     # KB document upload (no standalone image support - text extraction only)
     kb_upload_restrictions: UploadRestrictions
+    # Password policy for client-side validation
+    password_policy: PasswordPolicy
 
 
 class SetupStatus(BaseModel):

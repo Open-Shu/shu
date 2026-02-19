@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
 from ..auth.models import User
+from ..auth.password_auth import PasswordAuthService
 from ..auth.rbac import get_current_user
 from ..core.config import get_settings_instance
 from ..models import (
@@ -17,7 +18,7 @@ from ..models import (
     PluginDefinition,
     PluginFeed,
 )
-from ..schemas.config import PublicConfig, SetupStatus, UploadRestrictions
+from ..schemas.config import PasswordPolicy, PublicConfig, SetupStatus, UploadRestrictions
 from ..schemas.envelope import SuccessResponse
 
 router = APIRouter(prefix="/config", tags=["configuration"])
@@ -45,6 +46,11 @@ async def get_public_config():
         kb_upload_restrictions=UploadRestrictions(
             allowed_types=[t.lower() for t in settings.kb_upload_allowed_types],
             max_size_bytes=settings.kb_upload_max_size,
+        ),
+        password_policy=PasswordPolicy(
+            policy=settings.password_policy,
+            min_length=settings.password_min_length,
+            special_chars=PasswordAuthService.SPECIAL_CHARS,
         ),
     )
 

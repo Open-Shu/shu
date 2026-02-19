@@ -294,7 +294,11 @@ async def login_with_password(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication failed")
 
 
-@router.put("/change-password", response_model=SuccessResponse[dict[str, str]])
+@router.put(
+    "/change-password",
+    response_model=SuccessResponse[dict[str, str]],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
 async def change_password(
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
@@ -311,11 +315,61 @@ async def change_password(
 
         return SuccessResponse(data={"message": "Password changed successfully"})
 
-    except ValueError as e:
+    except (ValueError, LookupError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Password change error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change failed")
+
+
+@router.post(
+    "/users/{user_id}/reset-password",
+    response_model=SuccessResponse[dict[str, str]],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+async def reset_user_password(
+    user_id: str,
+    _current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset a user's password and generate a temporary password (admin only).
+
+    Generates a random temporary password, hashes and stores it, and sets the
+    ``must_change_password`` flag so the user must choose a new password on
+    next login.
+
+    Parameters
+    ----------
+        user_id: The ID of the user whose password should be reset.
+        _current_user: The authenticated admin user (enforced by ``require_admin``).
+        db: Database session injected via dependency.
+
+    Returns
+    -------
+        SuccessResponse: Contains the generated temporary password and a
+        confirmation message.
+
+    Raises
+    ------
+        HTTPException: 404 if user not found, 400 if user does not use password
+            authentication, 403 if requester is not admin, 429 if rate limited.
+
+    """
+    try:
+        temporary_password = await password_auth_service.reset_password(user_id=user_id, db=db)
+        return SuccessResponse(
+            data={
+                "temporary_password": temporary_password,
+                "message": "Password reset. The user will be required to change their password on next login.",
+            }
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Password reset error: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password reset failed")
 
 
 @router.post("/refresh", response_model=SuccessResponse[TokenResponse])
