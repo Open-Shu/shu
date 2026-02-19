@@ -388,8 +388,10 @@ class Settings(BaseSettings):
     plugins_scheduler_enabled: bool = Field(True, alias="SHU_PLUGINS_SCHEDULER_ENABLED")
     plugins_scheduler_tick_seconds: int = Field(60, alias="SHU_PLUGINS_SCHEDULER_TICK_SECONDS")
     plugins_scheduler_batch_limit: int = Field(10, alias="SHU_PLUGINS_SCHEDULER_BATCH_LIMIT")
-    # Mark RUNNING executions older than this many seconds as stale (0 disables cleanup)
-    plugins_scheduler_running_timeout_seconds: int = Field(3600, alias="SHU_PLUGINS_SCHEDULER_RUNNING_TIMEOUT_SECONDS")
+    # Mark RUNNING executions with no heartbeat for longer than this many seconds as stale (0 disables cleanup).
+    # The stale cutoff is based on updated_at (bumped every 60 s by the worker heartbeat), so a healthy
+    # long-running plugin is never incorrectly marked stale.
+    plugins_scheduler_running_timeout_seconds: int = Field(300, alias="SHU_PLUGINS_SCHEDULER_RUNNING_TIMEOUT_SECONDS")
 
     plugins_scheduler_retry_backoff_seconds: int = Field(5, alias="SHU_PLUGINS_SCHEDULER_RETRY_BACKOFF_SECONDS")
 

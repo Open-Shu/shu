@@ -202,7 +202,10 @@ class PluginsSchedulerService:
         return rows
 
     async def cleanup_stale_executions(self) -> int:
-        """Mark RUNNING executions older than the configured timeout as FAILED.
+        """Mark RUNNING executions with no heartbeat for longer than the configured timeout as FAILED.
+
+        Uses updated_at as the stale cutoff — the worker heartbeat bumps this every 60 s,
+        so a healthy long-running plugin is never incorrectly marked stale.
 
         This must run BEFORE enqueue_due_schedules() so the idempotency guard
         does not skip creating new executions for schedules whose previous
@@ -220,7 +223,7 @@ class PluginsSchedulerService:
                     .where(
                         (PluginExecution.status == PluginExecutionStatus.RUNNING)
                         & (PluginExecution.started_at != None)  # noqa: E711
-                        & (PluginExecution.started_at <= cutoff)
+                        & (PluginExecution.updated_at <= cutoff)
                     )
                     .with_for_update(skip_locked=True)
                 )

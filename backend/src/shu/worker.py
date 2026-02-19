@@ -549,6 +549,45 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
         rec.started_at = datetime.now(UTC)
         await session.commit()
 
+        import asyncio
+
+        async def _heartbeat_loop(execution_id: str, interval: int = 60) -> None:
+            """Touch the PluginExecution row every `interval` seconds so updated_at
+            advances while the plugin is running. cleanup_stale_executions uses
+            updated_at as the stale cutoff, so a healthy worker is never marked stale.
+            Uses a separate session to commit independently of the main execution session.
+            """
+            heartbeat_session_local = get_async_session_local()
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    try:
+                        async with heartbeat_session_local() as hb_session:
+                            hb_result = await hb_session.execute(
+                                select(PluginExecution).where(PluginExecution.id == execution_id)
+                            )
+                            hb_rec = hb_result.scalar_one_or_none()
+                            if hb_rec and hb_rec.status == PluginExecutionStatus.RUNNING:
+                                # Touch updated_at via onupdate trigger
+                                hb_rec.updated_at = datetime.now(UTC)
+                                await hb_session.commit()
+                                logger.debug(
+                                    "Plugin execution heartbeat",
+                                    extra={"execution_id": execution_id},
+                                )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as hb_err:
+                        # Non-fatal: log and keep looping
+                        logger.warning(
+                            "Plugin execution heartbeat failed (non-fatal)",
+                            extra={"execution_id": execution_id, "error": str(hb_err)},
+                        )
+            except asyncio.CancelledError:
+                pass
+
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(execution_id))
+
         try:
             from .services.plugin_execution_runner import execute_plugin_record
 
@@ -618,6 +657,13 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
                 rec.completed_at = datetime.now(UTC)
             await session.commit()
             raise
+
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
