@@ -555,6 +555,8 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
             """Touch the PluginExecution row every `interval` seconds so updated_at
             advances while the plugin is running. cleanup_stale_executions uses
             updated_at as the stale cutoff, so a healthy worker is never marked stale.
+            Also extends the queue job's visibility timeout so a competing consumer
+            cannot re-deliver the job while this worker is still alive.
             Uses a separate session to commit independently of the main execution session.
             """
             heartbeat_session_local = get_async_session_local()
@@ -582,6 +584,27 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
                         logger.warning(
                             "Plugin execution heartbeat failed (non-fatal)",
                             extra={"execution_id": execution_id, "error": str(hb_err)},
+                        )
+
+                    # Extend queue visibility so a competing consumer cannot
+                    # re-deliver this job while we are still running.
+                    try:
+                        from .core.queue_backend import get_queue_backend
+
+                        queue = await get_queue_backend()
+                        extended = await queue.extend_visibility(job, additional_seconds=interval * 2)
+                        if not extended:
+                            logger.warning(
+                                "extend_visibility returned False — job may have been re-delivered",
+                                extra={"execution_id": execution_id, "job_id": job.id},
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ev_err:
+                        # Non-fatal: heartbeat DB touch already succeeded
+                        logger.warning(
+                            "extend_visibility failed (non-fatal)",
+                            extra={"execution_id": execution_id, "job_id": job.id, "error": str(ev_err)},
                         )
             except asyncio.CancelledError:
                 pass

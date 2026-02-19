@@ -507,6 +507,34 @@ class QueueBackend(Protocol):
         """
         ...
 
+    async def extend_visibility(self, job: Job, additional_seconds: int) -> bool:
+        """Extend the visibility timeout of an in-flight job.
+
+        Pushes the expiry timestamp forward so a healthy long-running worker
+        keeps the job hidden from competing consumers. Call this periodically
+        (e.g., from a heartbeat loop) while the job is still being processed.
+
+        Args:
+            job: The in-flight job whose visibility timeout should be extended.
+            additional_seconds: Number of seconds to add to the current expiry.
+
+        Returns:
+            True if the expiry was updated, False if the job is no longer in
+            the processing set (already acknowledged, rejected, or expired and
+            re-delivered to another worker).
+
+        Raises:
+            QueueConnectionError: If the backend is unreachable.
+
+        Example:
+            # Heartbeat loop extending visibility every 60 seconds
+            extended = await backend.extend_visibility(job, additional_seconds=120)
+            if not extended:
+                logger.warning("Job no longer in processing set")
+
+        """
+        ...
+
 
 # =============================================================================
 # InMemoryQueueBackend Implementation
@@ -1007,6 +1035,40 @@ class InMemoryQueueBackend:
             },
         )
         return True
+
+    async def extend_visibility(self, job: Job, additional_seconds: int) -> bool:
+        """Extend the visibility timeout of an in-flight job.
+
+        Updates the expiry timestamp in the processing set so the job stays
+        hidden from competing consumers for an additional period.
+
+        Args:
+            job: The in-flight job to extend.
+            additional_seconds: Seconds to add beyond the current time.
+
+        Returns:
+            True if the expiry was updated, False if the job is no longer
+            in the processing set (already acked, rejected, or expired).
+
+        """
+        with self._lock:
+            if job.id in self._processing[job.queue_name]:
+                _, current_expiry = self._processing[job.queue_name][job.id]
+                new_expiry = max(current_expiry, time.time()) + additional_seconds
+                self._processing[job.queue_name][job.id] = (
+                    self._processing[job.queue_name][job.id][0],
+                    new_expiry,
+                )
+                logger.debug(
+                    "Visibility timeout extended",
+                    extra={
+                        "job_id": job.id,
+                        "queue_name": job.queue_name,
+                        "additional_seconds": additional_seconds,
+                    },
+                )
+                return True
+        return False
 
 
 # =============================================================================
@@ -1604,6 +1666,54 @@ class RedisQueueBackend:
             )
             raise QueueConnectionError(
                 f"Failed to schedule job '{job.id}'",
+                details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)},
+            ) from e
+
+    async def extend_visibility(self, job: Job, additional_seconds: int) -> bool:
+        """Extend the visibility timeout of an in-flight job.
+
+        Updates the score in the processing sorted set and refreshes the TTL
+        on the job hash key so the job stays hidden from competing consumers.
+
+        Args:
+            job: The in-flight job to extend.
+            additional_seconds: Seconds to add beyond the current time.
+
+        Returns:
+            True if the expiry was updated, False if the job is no longer
+            in the processing set (already acked, rejected, or expired).
+
+        Raises:
+            QueueConnectionError: If the backend is unreachable.
+
+        """
+        processing_key = self._processing_key(job.queue_name)
+        job_key = self._job_key(job.queue_name, job.id)
+        new_expiry = time.time() + additional_seconds
+
+        try:
+            # xx=True: only update if the member already exists
+            updated = await self._client.zadd(processing_key, {job.id: new_expiry}, xx=True)
+            if updated:
+                # Refresh the job hash TTL to match the new expiry window
+                await self._client.expire(job_key, additional_seconds + 60)
+                logger.debug(
+                    "Visibility timeout extended",
+                    extra={
+                        "job_id": job.id,
+                        "queue_name": job.queue_name,
+                        "additional_seconds": additional_seconds,
+                    },
+                )
+            return bool(updated)
+
+        except Exception as e:
+            logger.error(
+                f"Redis extend_visibility failed for job '{job.id}': {e}",
+                extra={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)},
+            )
+            raise QueueConnectionError(
+                f"Failed to extend visibility for job '{job.id}'",
                 details={"job_id": job.id, "queue_name": job.queue_name, "error": str(e)},
             ) from e
 
