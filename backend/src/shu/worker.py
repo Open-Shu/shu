@@ -154,6 +154,8 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         # Get document and update status to EXTRACTING
         from sqlalchemy import select
 
+        from .models.knowledge_base import KnowledgeBase
+
         result = await session.execute(select(Document).where(Document.id == document_id))
         document = result.scalar_one_or_none()
 
@@ -163,6 +165,20 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 "Document not found for OCR job, failing permanently",
                 extra={"job_id": job.id, "document_id": document_id},
             )
+            return
+
+        # Check KB existence before retrieving staged bytes — frees staging memory immediately
+        # if the KB was deleted while this job was queued.
+        kb = await session.get(KnowledgeBase, knowledge_base_id)
+        if kb is None:
+            logger.info(
+                "Knowledge base deleted, discarding OCR job without retry",
+                extra={"job_id": job.id, "document_id": document_id, "knowledge_base_id": knowledge_base_id},
+            )
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception:
+                pass  # Non-fatal; file will TTL-expire
             return
 
         document.update_status(DocumentStatus.EXTRACTING)
@@ -346,6 +362,17 @@ async def _handle_embed_job(job) -> None:
             logger.error(
                 "Document not found for embed job, failing permanently",
                 extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
+
+        # Check KB existence before doing any embedding work — discard without retry if gone.
+        from .models.knowledge_base import KnowledgeBase
+
+        kb = await session.get(KnowledgeBase, knowledge_base_id)
+        if kb is None:
+            logger.info(
+                "Knowledge base deleted, discarding embed job without retry",
+                extra={"job_id": job.id, "document_id": document_id, "knowledge_base_id": knowledge_base_id},
             )
             return
 
