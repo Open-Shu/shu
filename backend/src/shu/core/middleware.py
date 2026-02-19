@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -291,6 +291,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         "name": current_user.name,
                         "role": current_user.role,
                         "is_active": current_user.is_active,
+                        "must_change_password": current_user.must_change_password,
                     }
                 else:
                     # Update user data with current database values to ensure consistency
@@ -300,6 +301,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                             "name": current_user.name,
                             "role": current_user.role,
                             "is_active": current_user.is_active,
+                            "must_change_password": current_user.must_change_password,
                         }
                     )
                 break
@@ -323,6 +325,49 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             response.headers["X-Token-Refresh-Needed"] = "true"
 
         return response
+
+
+class MustChangePasswordMiddleware(BaseHTTPMiddleware):
+    """Middleware to enforce the must_change_password flag server-side.
+
+    When an authenticated user has must_change_password=True, rejects all
+    requests with 403 Forbidden except the endpoints needed to complete the
+    password change flow: PUT /auth/change-password, GET /auth/me, and
+    POST /auth/refresh.
+
+    This provides defense-in-depth so the flag cannot be bypassed by calling
+    API endpoints directly (e.g. via curl or devtools).
+    """
+
+    # Paths that are allowed even when must_change_password is True.
+    # These use the full API-prefixed paths.
+    ALLOWED_PATHS: ClassVar[set[str]] = {
+        "/api/v1/auth/change-password",
+        "/api/v1/auth/me",
+        "/api/v1/auth/refresh",
+    }
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Check must_change_password flag and block disallowed requests."""
+        user = getattr(request.state, "user", None)
+
+        if user and isinstance(user, dict) and user.get("must_change_password"):
+            path = request.url.path
+            if path not in self.ALLOWED_PATHS:
+                logger.info(
+                    "Blocked request due to must_change_password",
+                    extra={
+                        "user_id": user.get("user_id"),
+                        "path": path,
+                        "method": request.method,
+                    },
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Password change required. Please change your password before continuing."},
+                )
+
+        return await call_next(request)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
