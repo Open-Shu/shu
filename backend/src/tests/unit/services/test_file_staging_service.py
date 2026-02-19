@@ -8,8 +8,7 @@ Tests cover:
 - Explicit delete_staged_file removes the file
 """
 
-import os
-import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -44,16 +43,16 @@ class TestFileStagingService:
         staging_key = await staging_service.stage_file(document_id, file_bytes)
 
         # staging_key is a file path
-        assert os.path.isfile(staging_key)
+        assert Path(staging_key).is_file()
         assert staging_key.startswith(staging_dir)
-        assert document_id in os.path.basename(staging_key)
+        assert document_id in Path(staging_key).name
 
         # Retrieve the file
         retrieved_bytes = await staging_service.retrieve_file(staging_key)
 
         assert retrieved_bytes == file_bytes
         # File must be deleted after retrieval (cleanup invariant)
-        assert not os.path.exists(staging_key)
+        assert not Path(staging_key).exists()
 
     @pytest.mark.asyncio
     async def test_retrieve_without_delete_preserves_file(
@@ -70,11 +69,11 @@ class TestFileStagingService:
         assert retrieved_bytes == file_bytes
 
         # File should still exist
-        assert os.path.isfile(staging_key)
+        assert Path(staging_key).is_file()
 
         # Explicit cleanup should remove it
         await staging_service.delete_staged_file(staging_key)
-        assert not os.path.exists(staging_key)
+        assert not Path(staging_key).exists()
 
     @pytest.mark.asyncio
     async def test_retrieve_missing_file_raises_error(
@@ -83,7 +82,7 @@ class TestFileStagingService:
         staging_dir: str,
     ):
         """retrieve_file() with a non-existent path raises FileStagingError."""
-        non_existent_key = os.path.join(staging_dir, "non_existent_doc_abc123.bin")
+        non_existent_key = str(Path(staging_dir) / "non_existent_doc_abc123.bin")
 
         with pytest.raises(FileStagingError) as exc_info:
             await staging_service.retrieve_file(non_existent_key)
@@ -95,11 +94,11 @@ class TestFileStagingService:
     async def test_staging_dir_created_on_init(self, tmp_path):
         """FileStagingService creates the staging directory if it doesn't exist."""
         new_dir = str(tmp_path / "does" / "not" / "exist")
-        assert not os.path.exists(new_dir)
+        assert not Path(new_dir).exists()
 
         FileStagingService(staging_dir=new_dir)
 
-        assert os.path.isdir(new_dir)
+        assert Path(new_dir).is_dir()
 
     @pytest.mark.asyncio
     async def test_unique_keys_for_same_document_id(

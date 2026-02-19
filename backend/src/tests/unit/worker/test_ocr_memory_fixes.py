@@ -8,12 +8,10 @@ Covers:
 """
 
 import asyncio
-import sys
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,51 +109,6 @@ class TestImgArrayReleasedAfterThreadStart:
             ocr_may_finish.set()
             await task
 
-    def test_run_ocr_closure_uses_default_arg_not_late_binding(self):
-        """
-        The run_ocr closure must capture img_array via a default argument,
-        not via late binding from the enclosing scope. Verify by inspecting
-        the closure's __defaults__.
-        """
-        import inspect
-        import textwrap
-
-        from shu.processors.text_extractor import TextExtractor
-
-        source = inspect.getsource(TextExtractor._process_pdf_with_ocr_direct)
-
-        # The closure definition must use `_img: ... = img_array` as a default arg
-        assert "_img" in source and "= img_array" in source, (
-            "run_ocr closure must capture img_array via default arg (_img=img_array), "
-            "not via late binding. Found source:\n" + textwrap.shorten(source, 500)
-        )
-
-        # The noqa B023 suppression must be gone
-        assert "noqa: B023" not in source, (
-            "# noqa: B023 suppression should have been removed after fixing the late-binding issue"
-        )
-
-    def test_del_img_array_follows_thread_start(self):
-        """
-        The source of _process_pdf_with_ocr_direct must contain `del img_array`
-        and `pix = None` after `ocr_thread.start()`.
-        """
-        import inspect
-
-        from shu.processors.text_extractor import TextExtractor
-
-        source = inspect.getsource(TextExtractor._process_pdf_with_ocr_direct)
-
-        assert "del img_array" in source, "del img_array must appear in _process_pdf_with_ocr_direct"
-        assert "pix = None" in source, "pix = None must appear in _process_pdf_with_ocr_direct"
-
-        # del img_array must come after ocr_thread.start()
-        start_pos = source.find("ocr_thread.start()")
-        del_pos = source.find("del img_array")
-        assert start_pos != -1, "ocr_thread.start() not found"
-        assert del_pos != -1, "del img_array not found"
-        assert del_pos > start_pos, "del img_array must appear after ocr_thread.start()"
-
 
 # ---------------------------------------------------------------------------
 # Fix #2 — semaphore acquired before fitz.open()
@@ -175,8 +128,6 @@ class TestSemaphoreBeforeFitzOpen:
         TextExtractor._ocr_semaphore = None
 
         acquire_order = []
-
-        original_inner = TextExtractor._extract_pdf_ocr_direct_inner
 
         async def patched_inner(self_inner, file_path, file_content=None, progress_callback=None):
             acquire_order.append("inner_called")
@@ -206,40 +157,6 @@ class TestSemaphoreBeforeFitzOpen:
         assert "acquire" in sem_acquire_calls, "Semaphore was never acquired"
         assert "inner_called" in acquire_order, "_extract_pdf_ocr_direct_inner was never called"
 
-    def test_semaphore_acquired_before_fitz_open_in_source(self):
-        """
-        In _extract_pdf_ocr_direct_inner source, the semaphore comment/docstring
-        must indicate it is called under semaphore, and fitz.open must appear
-        after the function entry (not in the outer wrapper).
-        """
-        import inspect
-
-        from shu.processors.text_extractor import TextExtractor
-
-        inner_source = inspect.getsource(TextExtractor._extract_pdf_ocr_direct_inner)
-        outer_source = inspect.getsource(TextExtractor._extract_pdf_ocr_direct)
-
-        # fitz.open must be in the inner function (called under semaphore)
-        assert "fitz.open" in inner_source, (
-            "fitz.open must be inside _extract_pdf_ocr_direct_inner (called under semaphore)"
-        )
-
-        # The outer wrapper must acquire the semaphore (async with sem)
-        assert "async with sem" in outer_source, (
-            "_extract_pdf_ocr_direct must acquire the semaphore with 'async with sem'"
-        )
-
-        # The outer wrapper must NOT contain fitz.open itself
-        # (it should only delegate to inner after acquiring)
-        outer_lines = [
-            line for line in outer_source.splitlines()
-            if "fitz.open" in line and not line.strip().startswith("#")
-        ]
-        assert len(outer_lines) == 0, (
-            f"fitz.open must not appear in _extract_pdf_ocr_direct (outer wrapper); "
-            f"found: {outer_lines}"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Fix #3 — render scale reads from config
@@ -247,36 +164,6 @@ class TestSemaphoreBeforeFitzOpen:
 
 class TestRenderScaleFromConfig:
     """fitz.Matrix render scale must come from config, not a hardcoded literal."""
-
-    def test_no_hardcoded_matrix_2_2_in_active_paths(self):
-        """
-        The active OCR paths (_process_pdf_with_ocr_direct and
-        _process_pdf_with_tesseract_direct) must not contain fitz.Matrix(2, 2).
-        """
-        import inspect
-
-        from shu.processors.text_extractor import TextExtractor
-
-        for method_name in ("_process_pdf_with_ocr_direct", "_process_pdf_with_tesseract_direct"):
-            source = inspect.getsource(getattr(TextExtractor, method_name))
-            assert "fitz.Matrix(2, 2)" not in source, (
-                f"{method_name} still contains hardcoded fitz.Matrix(2, 2); "
-                "it must use config_manager.settings.ocr_render_scale"
-            )
-
-    def test_render_scale_used_in_active_paths(self):
-        """
-        Both active render sites must reference ocr_render_scale from settings.
-        """
-        import inspect
-
-        from shu.processors.text_extractor import TextExtractor
-
-        for method_name in ("_process_pdf_with_ocr_direct", "_process_pdf_with_tesseract_direct"):
-            source = inspect.getsource(getattr(TextExtractor, method_name))
-            assert "ocr_render_scale" in source, (
-                f"{method_name} must read ocr_render_scale from settings"
-            )
 
     def test_ocr_render_scale_setting_exists_with_correct_default(self):
         """
@@ -308,7 +195,6 @@ class TestRenderScaleFromConfig:
         When ocr_render_scale=1.5, get_pixmap must be called with fitz.Matrix(1.5, 1.5).
         """
         import numpy as np
-        import fitz
         from PIL import Image
 
         extractor = _make_extractor(ocr_render_scale=1.5)

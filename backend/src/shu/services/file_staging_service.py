@@ -78,7 +78,7 @@ class FileStagingService:
         staging_path = str(Path(self._staging_dir) / filename)
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _write_file, staging_path, file_bytes)
 
             logger.debug(
@@ -124,7 +124,7 @@ class FileStagingService:
             )
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             file_bytes = await loop.run_in_executor(None, _read_file, staging_key)
 
             if delete_after_retrieve:

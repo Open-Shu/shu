@@ -70,7 +70,7 @@ class TestOCRHandlerStagingCleanupFailure:
         mock_session_local, mock_session = _make_session_with_document(mock_document)
 
         mock_staging_service = AsyncMock()
-        mock_staging_service.get_staged_file = AsyncMock(return_value=b"%PDF fake content")
+        mock_staging_service.retrieve_file = AsyncMock(return_value=b"%PDF fake content")
         mock_staging_service.delete_staged_file = AsyncMock(
             side_effect=Exception("Redis connection lost")
         )
@@ -120,7 +120,7 @@ class TestOCRHandlerStagingCleanupFailure:
         mock_session_local, mock_session = _make_session_with_document(mock_document)
 
         mock_staging_service = AsyncMock()
-        mock_staging_service.get_staged_file = AsyncMock(return_value=b"%PDF fake content")
+        mock_staging_service.retrieve_file = AsyncMock(return_value=b"%PDF fake content")
         mock_staging_service.delete_staged_file = AsyncMock(
             side_effect=Exception("TTL expired")
         )
@@ -181,7 +181,7 @@ class TestOCRHandlerDocumentNotFound:
             await _handle_ocr_job(job)
 
         # Staging service must not have been called (early return)
-        mock_staging_service.get_staged_file.assert_not_called()
+        mock_staging_service.retrieve_file.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_document_not_found_does_not_enqueue_embed_job(self):

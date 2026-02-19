@@ -208,7 +208,6 @@ class TestCleanupStaleUsesUpdatedAt:
             started_at=datetime.now(UTC) - timedelta(hours=2),
             updated_at=datetime.now(UTC) - timedelta(minutes=10),
         )
-        rec.status = PluginExecutionStatus.RUNNING
 
         class StaleResult:
             def scalars(self):

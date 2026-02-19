@@ -9,12 +9,11 @@ Redis behaviour is tested via mocks to avoid a live Redis dependency.
 """
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from shu.core.queue_backend import InMemoryQueueBackend, Job, RedisQueueBackend
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,39 +106,56 @@ class TestInMemoryExtendVisibility:
 
 
 class TestRedisExtendVisibility:
-    def _make_backend(self):
+    def _make_backend(self, current_score=None):
         client = MagicMock()
+        # Default: job exists with a score slightly in the future
+        client.zscore = AsyncMock(return_value=current_score if current_score is not None else time.time() + 60)
         client.zadd = AsyncMock(return_value=1)
         client.expire = AsyncMock(return_value=True)
         return RedisQueueBackend(redis_client=client), client
 
     @pytest.mark.asyncio
     async def test_extend_returns_true_when_job_found(self):
-        """Returns True when zadd with xx=True reports an update."""
+        """Returns True when zscore finds the job and zadd updates it."""
         backend, client = self._make_backend()
         job = _make_job()
 
         result = await backend.extend_visibility(job, additional_seconds=120)
 
         assert result is True
+        client.zscore.assert_awaited_once()
         client.zadd.assert_awaited_once()
-        # Verify xx=True was passed
         _, kwargs = client.zadd.call_args
         assert kwargs.get("xx") is True
         client.expire.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_extend_returns_false_when_job_not_found(self):
-        """Returns False when zadd with xx=True reports no update (job gone)."""
+        """Returns False when zscore returns None (job already gone)."""
         backend, client = self._make_backend()
-        client.zadd = AsyncMock(return_value=0)
+        client.zscore = AsyncMock(return_value=None)
         job = _make_job()
 
         result = await backend.extend_visibility(job, additional_seconds=120)
 
         assert result is False
-        # expire should NOT be called when the job wasn't found
+        client.zadd.assert_not_awaited()
         client.expire.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_extend_never_shortens_expiry(self):
+        """When the current score is far in the future, new_expiry uses it as the base."""
+        far_future = time.time() + 9999
+        backend, client = self._make_backend(current_score=far_future)
+        job = _make_job()
+
+        await backend.extend_visibility(job, additional_seconds=120)
+
+        # The zadd score must be at least far_future + 120
+        args, _ = client.zadd.call_args
+        score_dict = args[1]  # {job.id: new_expiry}
+        actual_expiry = next(iter(score_dict.values()))
+        assert actual_expiry >= far_future + 120
 
     @pytest.mark.asyncio
     async def test_extend_raises_on_redis_error(self):
@@ -147,7 +163,7 @@ class TestRedisExtendVisibility:
         from shu.core.queue_backend import QueueConnectionError
 
         backend, client = self._make_backend()
-        client.zadd = AsyncMock(side_effect=Exception("connection refused"))
+        client.zscore = AsyncMock(side_effect=Exception("connection refused"))
         job = _make_job()
 
         with pytest.raises(QueueConnectionError):

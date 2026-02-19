@@ -12,8 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shu.models.document import DocumentStatus
-
 
 class MockJob:
     """Minimal mock job for testing."""
@@ -112,7 +110,7 @@ class TestOCRHandlerKBDeletedEarlyExit:
     async def test_ocr_job_deletes_staged_file_when_kb_deleted(self):
         """
         When the KB is gone, the staged file must be deleted immediately
-        to free Redis staging memory.
+        to return disk space and prevent stale files.
         """
         document = _make_document()
         mock_session_local, _ = _make_session(document, kb=None)

@@ -4,11 +4,9 @@ Verifies that real confidence values flow from EasyOCR/Tesseract all the way to
 the dict returned by extract_text(), and that non-OCR paths store None.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,9 +54,6 @@ class TestExtractPdfOcrDirectInner:
             "_process_pdf_with_ocr_direct",
             new=AsyncMock(return_value=(expected_text, "ocr", expected_confidence)),
         ):
-            import fitz
-            from io import BytesIO
-
             # Minimal single-page PDF bytes
             doc = MagicMock()
             doc.__len__ = MagicMock(return_value=1)
@@ -242,9 +237,10 @@ class TestTesseractConfidenceIsQualityHeuristic:
 
         fake_text = "the quick brown fox jumps over the lazy dog"
 
-        with patch("pytesseract.image_to_string", return_value=fake_text):
-            with patch("PIL.Image.open", return_value=MagicMock()):
-                text, method, confidence = extractor._process_pdf_with_tesseract_direct(doc, "test.pdf")
+        with patch("pytesseract.image_to_string", return_value=fake_text), patch(
+            "PIL.Image.open", return_value=MagicMock()
+        ):
+            text, method, confidence = extractor._process_pdf_with_tesseract_direct(doc, "test.pdf")
 
         expected_quality = extractor._calculate_text_quality(fake_text)
         assert confidence == expected_quality

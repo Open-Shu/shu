@@ -1689,14 +1689,22 @@ class RedisQueueBackend:
         """
         processing_key = self._processing_key(job.queue_name)
         job_key = self._job_key(job.queue_name, job.id)
-        new_expiry = time.time() + additional_seconds
 
         try:
+            # Read the current expiry score so we never shorten the window
+            current_score = await self._client.zscore(processing_key, job.id)
+            if current_score is None:
+                return False
+
+            base = max(float(current_score), time.time())
+            new_expiry = base + additional_seconds
+
             # xx=True: only update if the member already exists
             updated = await self._client.zadd(processing_key, {job.id: new_expiry}, xx=True)
             if updated:
-                # Refresh the job hash TTL to match the new expiry window
-                await self._client.expire(job_key, additional_seconds + 60)
+                # Refresh the job hash TTL to cover the new visibility window
+                ttl = int(new_expiry - time.time()) + 60
+                await self._client.expire(job_key, ttl)
                 logger.debug(
                     "Visibility timeout extended",
                     extra={

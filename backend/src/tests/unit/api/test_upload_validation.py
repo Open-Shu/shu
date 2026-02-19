@@ -6,21 +6,8 @@ Covers:
 - Files with content mismatching their declared extension are rejected
 """
 
-import pytest
 
 from shu.api.knowledge_bases import _check_content_type_mismatch
-
-
-class TestEmptyFileValidation:
-    """0-byte files must be rejected at the upload endpoint."""
-
-    def test_empty_bytes_is_zero_length(self):
-        """Sanity check: empty bytes has length 0."""
-        assert len(b"") == 0
-
-    def test_non_empty_file_passes_length_check(self):
-        """A file with content must pass the length check."""
-        assert len(b"some content") > 0
 
 
 class TestContentTypeMismatch:

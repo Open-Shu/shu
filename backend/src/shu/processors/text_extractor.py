@@ -18,6 +18,17 @@ from ..core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Common English words used for OCR text quality scoring.
+# Kept at module level per DEVELOPMENT_STANDARDS §7.1 (no large constants in methods).
+_COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
+    "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
+    "with", "by", "a", "an", "is", "are", "was", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "this", "that", "these", "those",
+    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her",
+    "us", "them",
+})
+
 
 class UnsupportedFileFormatError(Exception):
     """Exception raised when a file format is not supported for text extraction."""
@@ -690,7 +701,7 @@ class TextExtractor:
                 return ""
 
         # Run in executor to avoid blocking
-        result = await asyncio.get_event_loop().run_in_executor(None, _extract_text_only)
+        result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
 
         if not result.strip():
             logger.warning("No text found in PDF with text extraction only", extra={"file_path": file_path})
@@ -739,7 +750,7 @@ class TextExtractor:
                 return ""
 
         # Run in executor to avoid blocking
-        result = await asyncio.get_event_loop().run_in_executor(None, _extract_text_only)
+        result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
 
         if not result.strip():
             logger.warning("No text found in PDF with fast extraction only", extra={"file_path": file_path})
@@ -992,7 +1003,7 @@ class TextExtractor:
             # Wait for OCR to complete (NON-BLOCKING with timeout)
             try:
                 await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, ocr_thread.join),
+                    asyncio.get_running_loop().run_in_executor(None, ocr_thread.join),
                     timeout=10.0,  # 10 second timeout for thread join
                 )
             except TimeoutError:
@@ -1134,7 +1145,7 @@ class TextExtractor:
             with open(file_path, encoding="utf-8", errors="ignore") as f:
                 return f.read()
 
-        return await asyncio.get_event_loop().run_in_executor(None, _read_file)
+        return await asyncio.get_running_loop().run_in_executor(None, _read_file)
 
     def _calculate_text_quality(self, text: str) -> float:
         """Calculate a quality score for extracted text."""
@@ -1154,58 +1165,7 @@ class TextExtractor:
         avg_word_length = sum(len(word) for word in words) / len(words) if words else 0
 
         # Calculate ratio of common English words
-        common_words = {
-            "the",
-            "and",
-            "or",
-            "but",
-            "in",
-            "on",
-            "at",
-            "to",
-            "for",
-            "of",
-            "with",
-            "by",
-            "a",
-            "an",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "have",
-            "has",
-            "had",
-            "do",
-            "does",
-            "did",
-            "will",
-            "would",
-            "could",
-            "should",
-            "may",
-            "might",
-            "can",
-            "this",
-            "that",
-            "these",
-            "those",
-            "i",
-            "you",
-            "he",
-            "she",
-            "it",
-            "we",
-            "they",
-            "me",
-            "him",
-            "her",
-            "us",
-            "them",
-        }
-        common_word_count = sum(1 for word in words if word.lower() in common_words)
+        common_word_count = sum(1 for word in words if word.lower() in _COMMON_ENGLISH_WORDS)
         common_word_ratio = common_word_count / len(words) if words else 0
 
         # Combine scores
@@ -1257,7 +1217,7 @@ class TextExtractor:
         for method_name, extractor_func in extraction_methods:
             try:
                 logger.debug(f"Attempting DOCX extraction with {method_name}")
-                text = await asyncio.get_event_loop().run_in_executor(None, extractor_func)
+                text = await asyncio.get_running_loop().run_in_executor(None, extractor_func)
 
                 if text and text.strip():
                     logger.debug(
@@ -1296,7 +1256,7 @@ class TextExtractor:
                         rtf_content = f.read()
                 return rtf_to_text(rtf_content)
 
-            return await asyncio.get_event_loop().run_in_executor(None, _extract_rtf)
+            return await asyncio.get_running_loop().run_in_executor(None, _extract_rtf)
         except ImportError:
             logger.warning("striprtf not installed, falling back to basic text extraction")
             return await self._extract_text_fallback(file_path, file_content)
@@ -1318,7 +1278,7 @@ class TextExtractor:
                 soup = BeautifulSoup(content, "html.parser")
                 return soup.get_text()
 
-            return await asyncio.get_event_loop().run_in_executor(None, _extract_html)
+            return await asyncio.get_running_loop().run_in_executor(None, _extract_html)
         except ImportError:
             logger.warning("BeautifulSoup not installed, falling back to basic text extraction")
             return await self._extract_text_fallback(file_path, file_content)
@@ -1403,7 +1363,7 @@ class TextExtractor:
                         logger.warning(f"Failed to read file: {file_path}, error: {e!s}")
                         return f"[Error: Cannot read file - {file_path}]"
 
-            return await asyncio.get_event_loop().run_in_executor(None, _read_file)
+            return await asyncio.get_running_loop().run_in_executor(None, _read_file)
         except Exception as e:
             logger.error("Fallback extraction failed", extra={"file_path": file_path, "error": str(e)})
             return f"[Error: Could not extract text from {file_path} - {e!s}]"
