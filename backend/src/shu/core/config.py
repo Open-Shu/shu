@@ -154,11 +154,6 @@ class Settings(BaseSettings):
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
-    # File staging configuration (for document ingestion pipeline)
-    file_staging_ttl: int = Field(
-        3600, alias="SHU_FILE_STAGING_TTL"
-    )  # TTL in seconds for staged files (default: 1 hour)
-
     # Disk-based ingestion staging directory
     ingestion_staging_dir: str = Field("./data/ingestion", alias="SHU_INGESTION_STAGING_DIR")
     ingestion_staging_max_age_hours: int = Field(24, alias="SHU_INGESTION_STAGING_MAX_AGE_HOURS")

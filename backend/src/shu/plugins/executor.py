@@ -648,9 +648,6 @@ class Executor:
             except Exception:
                 capabilities = []
 
-            # Get staging_ttl from settings for file staging configuration
-            staging_ttl = getattr(self._settings, "file_staging_ttl", None)
-
             host = make_host(
                 plugin_name=plugin.name,
                 user_id=user_id,
@@ -658,7 +655,6 @@ class Executor:
                 capabilities=capabilities,
                 provider_identities=(provider_identities or {}),
                 host_context=host_overlay,
-                staging_ttl=staging_ttl,
             )
             # Execute under import deny-hook for HTTP clients and host internals
             ctx = ExecuteContext(user_id=user_id, agent_key=agent_key)

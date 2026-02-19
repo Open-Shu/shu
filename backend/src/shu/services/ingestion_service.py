@@ -447,7 +447,6 @@ async def ingest_document(  # noqa: PLR0915
     source_url: str | None = None,
     attributes: dict[str, Any] | None = None,
     ocr_mode: str | None = None,
-    staging_ttl: int | None = None,
 ) -> dict[str, Any]:
     """Ingest a document asynchronously via queue pipeline.
 
@@ -471,8 +470,6 @@ async def ingest_document(  # noqa: PLR0915
         source_url: Optional source URL.
         attributes: Optional additional attributes.
         ocr_mode: Optional OCR mode override.
-        staging_ttl: Unused. Retained for call-site compatibility. Disk staging
-            manages its own TTL via IngestionStagingMaintenanceSource.
 
     """
     from ..core.queue_backend import get_queue_backend

@@ -234,12 +234,11 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             document.extraction_confidence = extraction_metadata.get("confidence")
             document.extraction_duration = extraction_metadata.get("duration")
             document.extraction_metadata = extraction_metadata.get("details")
-
-            # Update status to EMBEDDING
-            document.update_status(DocumentStatus.EMBEDDING)
             await session.commit()
 
-            # Enqueue INGESTION_EMBED job for next stage
+            # Enqueue INGESTION_EMBED job for next stage.
+            # Commit EMBEDDING status only after enqueue succeeds to avoid a window
+            # where the document is EMBEDDING with no job in the queue.
             queue = await get_queue_backend()
             await enqueue_job(
                 queue,
@@ -252,6 +251,9 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 max_attempts=3,
                 visibility_timeout=300,
             )
+
+            document.update_status(DocumentStatus.EMBEDDING)
+            await session.commit()
 
             # Clean up staged file now that extraction succeeded.
             # Failure here is non-fatal — the file will TTL-expire on its own.
@@ -450,6 +452,8 @@ async def _finalize_embed_job(job, session, document, document_id: str, profilin
             max_attempts=5,
             visibility_timeout=600,
         )
+        # Commit PROFILING status only after enqueue succeeds to avoid a window
+        # where the document is PROFILING with no job in the queue.
         document.update_status(DocumentStatus.PROFILING)
         await session.commit()
         logger.info(
