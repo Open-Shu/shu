@@ -304,7 +304,7 @@ class IngestionStagingMaintenanceSource:
         max_age_seconds = settings.ingestion_staging_max_age_hours * 3600
         cutoff = time.time() - max_age_seconds
 
-        if not os.path.isdir(staging_dir):
+        if not Path(staging_dir).is_dir():
             return 0
 
         deleted = 0
