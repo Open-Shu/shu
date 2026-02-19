@@ -448,6 +448,15 @@ class Settings(BaseSettings):
         alias="SHU_OCR_MAX_CONCURRENT_JOBS",
         description="Max concurrent OCR jobs. OCR is CPU/memory-intensive; limit to avoid OOM.",
     )
+    ocr_render_scale: float = Field(
+        default=2.0,
+        alias="SHU_OCR_RENDER_SCALE",
+        description=(
+            "Scale factor for PDF page rendering before OCR (fitz.Matrix scale). "
+            "Higher values improve OCR accuracy at the cost of more memory per page. "
+            "Default 2.0 renders at 2x resolution."
+        ),
+    )
     # Note: No page limits - OCR processes all pages in document
 
     @field_validator("database_url")

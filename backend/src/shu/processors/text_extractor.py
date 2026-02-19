@@ -756,8 +756,9 @@ class TextExtractor:
     ) -> str:
         """Extract PDF text using direct in-process OCR with proper metadata tracking.
 
-        Acquires the class-level OCR semaphore so that at most
-        ``SHU_OCR_MAX_CONCURRENT_JOBS`` OCR jobs run in parallel.
+        Acquires the class-level OCR semaphore before opening the PDF so that at most
+        ``SHU_OCR_MAX_CONCURRENT_JOBS`` jobs hold a fitz document in memory simultaneously.
+        This bounds peak RSS to the semaphore limit, not the worker concurrency limit.
         """
         sem = self.get_ocr_semaphore()
         logger.debug(
@@ -770,7 +771,7 @@ class TextExtractor:
     async def _extract_pdf_ocr_direct_inner(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
     ) -> str:
-        """Inner OCR processing (called under semaphore)."""
+        """Inner OCR processing (called under semaphore, which is acquired before fitz.open)."""
         start_time = time.time()
 
         try:
@@ -778,7 +779,8 @@ class TextExtractor:
 
             import fitz
 
-            # Open PDF
+            # Open PDF — semaphore is already held by the caller, so at most
+            # SHU_OCR_MAX_CONCURRENT_JOBS fitz documents are open simultaneously.
             doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
             total_pages = len(doc)
@@ -882,7 +884,8 @@ class TextExtractor:
                 progress_callback(page_num, total_pages)
 
             # Convert page to image
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better OCR
+            render_scale = self.config_manager.settings.ocr_render_scale
+            pix = page.get_pixmap(matrix=fitz.Matrix(render_scale, render_scale))
 
             # Convert to numpy array for EasyOCR
             import io
@@ -1078,7 +1081,8 @@ class TextExtractor:
             page = doc[page_num]
 
             # Convert page to image
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better OCR
+            render_scale = self.config_manager.settings.ocr_render_scale
+            pix = page.get_pixmap(matrix=fitz.Matrix(render_scale, render_scale))
             img_data = pix.tobytes("png")
 
             # Run Tesseract on page
