@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 import easyocr
 
-from ..core.config import ConfigurationManager, get_config_manager
+from ..core.config import ConfigurationManager
 from ..core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -60,8 +60,8 @@ class TextExtractor:
     _job_cancellation_events: ClassVar[dict[str, threading.Event]] = {}  # job_id -> threading.Event
     _cancellation_lock = threading.Lock()
 
-    def __init__(self, config_manager: ConfigurationManager = None) -> None:
-        self.config_manager = config_manager or get_config_manager()
+    def __init__(self, config_manager: ConfigurationManager) -> None:
+        self.config_manager = config_manager
         self.supported_formats = {
             ".txt": self._extract_text_plain,
             ".md": self._extract_text_plain,
@@ -76,14 +76,18 @@ class TextExtractor:
             ".email": self._extract_text_email,  # Gmail and other email messages
         }
 
-        # File types that support direct extraction
+        # File types that support direct extraction.
+        # Note: .pdf is intentionally absent from supported_formats above because
+        # _extract_text_direct routes PDFs to _extract_text_pdf_with_progress, which
+        # branches on ocr_mode (fast text extraction, OCR, or fallback with threshold).
+        # .email is included here even though it only appears in supported_formats
+        # (Gmail plugin messages with an .email pseudo-extension).
         self.supported_extensions = {
             ".pdf",
             ".docx",
             ".doc",
             ".rtf",
-            ".xlsx",
-            ".pptx",
+            ".email",
             ".txt",
             ".md",
             ".html",
@@ -1014,6 +1018,7 @@ class TextExtractor:
                 )
 
             # Process results
+            page_text = ""
             try:
                 if ocr_error:
                     raise ocr_error
@@ -1021,7 +1026,6 @@ class TextExtractor:
                 result = ocr_result
 
                 if result:
-                    page_text = ""
                     page_confidences = []
 
                     # Handle EasyOCR result format

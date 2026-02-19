@@ -105,6 +105,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         Exception: If text extraction fails (triggers retry).
 
     """
+    from .core.config import get_config_manager
     from .core.database import get_async_session_local
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
@@ -196,7 +197,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             )
 
             # Extract text using TextExtractor
-            extractor = TextExtractor()
+            extractor = TextExtractor(config_manager=get_config_manager())
 
             # Determine if OCR should be used based on ocr_mode.
             # "text_only" → no OCR; all other modes (including "fallback") let the

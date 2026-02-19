@@ -182,8 +182,15 @@ def make_host(
         h.cursor = CursorCapability(plugin_name=plugin_name, user_id=user_id, schedule_id=parsed.schedule_id)
 
     if "ocr" in caps:
+        from ...core.config import get_config_manager
+
         # Treat OCR as a utility without implicit policy; do not re-parse host overlay
-        h.ocr = OcrCapability(plugin_name=plugin_name, user_id=user_id, ocr_mode=None)
+        h.ocr = OcrCapability(
+            plugin_name=plugin_name,
+            user_id=user_id,
+            config_manager=get_config_manager(),
+            ocr_mode=None,
+        )
 
     if "cache" in caps:
         h.cache = CacheCapability(plugin_name=plugin_name, user_id=user_id)
