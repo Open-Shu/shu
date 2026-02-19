@@ -826,11 +826,11 @@ def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
     is_ole = header[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
     if ext == "pdf" and not is_pdf:
-        return f"File content does not match declared type .pdf (invalid PDF header)"
+        return "File content does not match declared type .pdf (invalid PDF header)"
     if ext in ("docx", "xlsx", "pptx") and not is_zip:
         return f"File content does not match declared type .{ext} (expected ZIP-based Office format)"
     if ext == "doc" and not is_ole and not is_zip:
-        return f"File content does not match declared type .doc (expected OLE2 or ZIP format)"
+        return "File content does not match declared type .doc (expected OLE2 or ZIP format)"
 
     return None
 
