@@ -173,7 +173,7 @@ const MessageList = React.memo(
               display: 'flex',
               flexDirection: 'column',
               py: 0,
-              px: { xs: 2, sm: 3 },
+              px: 1.5,
               pb: 2,
             }}
             onScroll={handleScroll}
