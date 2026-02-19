@@ -1034,8 +1034,6 @@ class ConfigurationManager:
         return self.settings.rag_full_doc_token_cap_default
 
 
-
-
 # Global configuration manager instance (for backward compatibility)
 _config_manager: ConfigurationManager | None = None
 

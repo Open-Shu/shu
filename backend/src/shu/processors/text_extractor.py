@@ -315,7 +315,9 @@ class TextExtractor:
         )
 
         try:
-            text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(file_path, file_content, progress_context, use_ocr)
+            text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(
+                file_path, file_content, progress_context, use_ocr
+            )
             duration = time.time() - start_time
 
             # Determine extraction method and engine based on what actually happened.
@@ -388,6 +390,7 @@ class TextExtractor:
         Returns:
             (text, ocr_actually_used, confidence) — callers should use the bool for metadata
             rather than inferring from the input use_ocr flag. confidence is None for non-OCR paths.
+
         """
         try:
             # Set up progress callback if context is provided
@@ -591,6 +594,7 @@ class TextExtractor:
             (text, ocr_actually_used, confidence) — ocr_actually_used is True only when
             OCR ran. confidence is the real per-word average from EasyOCR, a text quality
             heuristic when Tesseract ran, or None when fast text extraction succeeded.
+
         """
         logger.debug(
             "Extracting PDF text with progress updates",
@@ -755,6 +759,7 @@ class TextExtractor:
         Returns:
             (text, confidence) — confidence is the real per-word average from EasyOCR,
             or a text quality heuristic from ``_calculate_text_quality`` when Tesseract ran.
+
         """
         sem = self.get_ocr_semaphore()
         logger.debug(
@@ -1207,7 +1212,7 @@ class TextExtractor:
         return meaningful_ratio * 0.4 + min(avg_word_length / 10.0, 1.0) * 0.3 + common_word_ratio * 0.3
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
+    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from DOCX files using multiple methods with fallbacks."""
 
         def _try_python_docx():
