@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Avatar, Box, IconButton, Paper, Typography, Tooltip, CircularProgress, Button } from '@mui/material';
+import { Avatar, Box, IconButton, Paper, Typography, Tooltip, CircularProgress, Button, useMediaQuery } from '@mui/material';
 import {
   Person as UserIcon,
   SmartToy as BotIcon,
@@ -79,11 +79,49 @@ const MessageItem = React.memo(function MessageItem({
   const disableRegenerate = message.isStreaming || isVariantGroupStreaming(parentId) || pendingRegenerationForGroup;
 
   const isUser = message.role === 'user';
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  const INLINE_AVATAR_SIZE = 20;
+  const INLINE_AVATAR_ICON_SIZE = 14;
+  const DESKTOP_AVATAR_SIZE = 36;
+
+  const userInlineAvatar = (
+    <UserAvatar
+      user={user}
+      size={INLINE_AVATAR_SIZE}
+      sx={{
+        bgcolor: chatStyles.userBubbleBg,
+        color: chatStyles.userBubbleText,
+        flexShrink: 0,
+        width: INLINE_AVATAR_SIZE,
+        height: INLINE_AVATAR_SIZE,
+        fontSize: '0.65rem',
+        border: `1.5px solid ${chatStyles.userBubbleText}`,
+        opacity: 0.85,
+      }}
+      fallbackChar={<UserIcon sx={{ fontSize: INLINE_AVATAR_ICON_SIZE }} />}
+    />
+  );
+
+  const assistantInlineAvatar = (
+    <Avatar
+      sx={{
+        bgcolor: theme.palette.secondary.main,
+        color: theme.palette.secondary.contrastText,
+        width: INLINE_AVATAR_SIZE,
+        height: INLINE_AVATAR_SIZE,
+        flexShrink: 0,
+        fontSize: '0.65rem',
+      }}
+    >
+      <BotIcon sx={{ fontSize: INLINE_AVATAR_ICON_SIZE }} />
+    </Avatar>
+  );
 
   const avatarNode = isUser ? (
     <UserAvatar
       user={user}
-      size={36}
+      size={DESKTOP_AVATAR_SIZE}
       sx={{
         bgcolor: chatStyles.userBubbleBg,
         color: chatStyles.userBubbleText,
@@ -96,8 +134,8 @@ const MessageItem = React.memo(function MessageItem({
       sx={{
         bgcolor: theme.palette.secondary.main,
         color: theme.palette.secondary.contrastText,
-        width: 36,
-        height: 36,
+        width: DESKTOP_AVATAR_SIZE,
+        height: DESKTOP_AVATAR_SIZE,
         flexShrink: 0,
       }}
     >
@@ -156,7 +194,7 @@ const MessageItem = React.memo(function MessageItem({
       p: 2,
       flexShrink: 1,
       width: 'fit-content',
-      maxWidth: 'min(85%, calc(100% - 56px))',
+      maxWidth: isMobile ? '100%' : 'min(85%, calc(100% - 56px))',
       minWidth: 0,
       overflowWrap: 'anywhere',
       wordBreak: 'break-word',
@@ -178,13 +216,13 @@ const MessageItem = React.memo(function MessageItem({
               display: 'flex',
               flexDirection: containerDirection,
               alignItems: 'flex-end',
-              gap: 1.25,
+              gap: isMobile ? 0 : 1.25,
               width: '100%',
               maxWidth: '100%',
-              pr: 6,
+              pr: 0,
             }}
           >
-            {avatarNode}
+            {!isMobile && avatarNode}
             <Paper sx={userBubbleSx}>
               <MessageContent
                 message={message}
@@ -196,36 +234,46 @@ const MessageItem = React.memo(function MessageItem({
                 onOpenDocument={onOpenDocument}
                 attachmentChipStyles={attachmentChipStyles}
               />
-              <Typography
-                variant="caption"
+              <Box
                 sx={{
                   mt: 1,
-                  display: 'block',
-                  color: timestampColor,
-                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  gap: 0.75,
                 }}
               >
-                {formatMessageTimestamp(message.created_at)}
-                {name && (
-                  <>
-                    {' • '}
-                    <Tooltip title={tooltip || name} arrow>
-                      <Box
-                        component="span"
-                        sx={{
-                          display: 'inline',
-                          color: timestampColor,
-                          fontWeight: 600,
-                          cursor: 'default',
-                          opacity: 0.85,
-                        }}
-                      >
-                        {name}
-                      </Box>
-                    </Tooltip>
-                  </>
-                )}
-              </Typography>
+                <Typography
+                  variant="caption"
+                  component="span"
+                  sx={{
+                    color: timestampColor,
+                    fontWeight: 500,
+                  }}
+                >
+                  {formatMessageTimestamp(message.created_at)}
+                  {name && (
+                    <>
+                      {' • '}
+                      <Tooltip title={tooltip || name} arrow>
+                        <Box
+                          component="span"
+                          sx={{
+                            display: 'inline',
+                            color: timestampColor,
+                            fontWeight: 600,
+                            cursor: 'default',
+                            opacity: 0.85,
+                          }}
+                        >
+                          {name}
+                        </Box>
+                      </Tooltip>
+                    </>
+                  )}
+                </Typography>
+                {isMobile && userInlineAvatar}
+              </Box>
             </Paper>
           </Box>
         </Box>
@@ -242,7 +290,7 @@ const MessageItem = React.memo(function MessageItem({
       width: isSideBySide ? { xs: '100%', md: 'auto' } : 'fit-content',
       maxWidth: isSideBySide
         ? { xs: '100%', md: 'min(480px, 100%)', xl: 'min(620px, 100%)' }
-        : 'min(85%, calc(100% - 56px))',
+        : isMobile ? '100%' : 'min(85%, calc(100% - 56px))',
       minWidth: isSideBySide ? { xs: '100%', sm: 280, lg: 320 } : 0,
       overflowWrap: 'anywhere',
       wordBreak: 'break-word',
@@ -275,13 +323,13 @@ const MessageItem = React.memo(function MessageItem({
             display: 'flex',
             flexDirection: containerDirection,
             alignItems: 'flex-end',
-            gap: 1.25,
+            gap: isMobile ? 0 : 1.25,
             width: '100%',
             maxWidth: '100%',
             pr: 0,
           }}
         >
-          {avatarNode}
+          {!isMobile && avatarNode}
           <Box
             sx={{
               display: 'flex',
@@ -374,26 +422,38 @@ const MessageItem = React.memo(function MessageItem({
                       fontWeight: 500,
                     }}
                   >
-                    {formatMessageTimestamp(variant.created_at)}
-                    {name && (
-                      <>
-                        {' • '}
-                        <Tooltip title={tooltip || name} arrow>
-                          <Box
-                            component="span"
-                            sx={{
-                              display: 'inline',
-                              color: timestampColor,
-                              fontWeight: 600,
-                              cursor: 'default',
-                              opacity: isUser ? 0.85 : 1,
-                            }}
-                          >
-                            {name}
-                          </Box>
-                        </Tooltip>
-                      </>
-                    )}
+                    <Box
+                      component="span"
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.75,
+                      }}
+                    >
+                      {isMobile && assistantInlineAvatar}
+                      <span>
+                        {formatMessageTimestamp(variant.created_at)}
+                        {name && (
+                          <>
+                            {' • '}
+                            <Tooltip title={tooltip || name} arrow>
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline',
+                                  color: timestampColor,
+                                  fontWeight: 600,
+                                  cursor: 'default',
+                                  opacity: isUser ? 0.85 : 1,
+                                }}
+                              >
+                                {name}
+                              </Box>
+                            </Tooltip>
+                          </>
+                        )}
+                      </span>
+                    </Box>
                   </Typography>
                 </Paper>
               );
@@ -403,7 +463,7 @@ const MessageItem = React.memo(function MessageItem({
       </Box>
 
       {message.role === 'assistant' && (
-        <Box sx={{ mt: 0.5, pl: 7, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ mt: 0.5, pl: isMobile ? 0 : 7, display: 'flex', alignItems: 'center', gap: 1 }}>
           {group.length > 1 && !isSideBySide && (
             <>
               <Tooltip title="Previous variant">
