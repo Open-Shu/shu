@@ -24,6 +24,11 @@ import UserAvatar from '../../shared/UserAvatar.jsx';
 import { formatMessageTimestamp } from './utils/messageVariants';
 import { PLACEHOLDER_THINKING } from './utils/chatConfig';
 
+const INLINE_AVATAR_SIZE = 20;
+const INLINE_AVATAR_ICON_SIZE = 14;
+const DESKTOP_AVATAR_SIZE = 36;
+const DESKTOP_AVATAR_GAP = 1.25;
+
 const MessageItem = React.memo(function MessageItem({
   message,
   isLast = false,
@@ -90,10 +95,6 @@ const MessageItem = React.memo(function MessageItem({
 
   const isUser = message.role === 'user';
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-
-  const INLINE_AVATAR_SIZE = 20;
-  const INLINE_AVATAR_ICON_SIZE = 14;
-  const DESKTOP_AVATAR_SIZE = 36;
 
   const userInlineAvatar = (
     <UserAvatar
@@ -226,7 +227,7 @@ const MessageItem = React.memo(function MessageItem({
               display: 'flex',
               flexDirection: containerDirection,
               alignItems: 'flex-end',
-              gap: isMobile ? 0 : 1.25,
+              gap: isMobile ? 0 : DESKTOP_AVATAR_GAP,
               width: '100%',
               maxWidth: '100%',
               pr: 0,
@@ -335,7 +336,7 @@ const MessageItem = React.memo(function MessageItem({
             display: 'flex',
             flexDirection: containerDirection,
             alignItems: 'flex-end',
-            gap: isMobile ? 0 : 1.25,
+            gap: isMobile ? 0 : DESKTOP_AVATAR_GAP,
             width: '100%',
             maxWidth: '100%',
             pr: 0,
@@ -456,7 +457,7 @@ const MessageItem = React.memo(function MessageItem({
                                   color: timestampColor,
                                   fontWeight: 600,
                                   cursor: 'default',
-                                  opacity: isUser ? 0.85 : 1,
+                                  opacity: 1,
                                 }}
                               >
                                 {name}
