@@ -315,7 +315,7 @@ class TextExtractor:
         )
 
         try:
-            text, ocr_actually_used = await self._extract_text_direct(file_path, file_content, progress_context, use_ocr)
+            text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(file_path, file_content, progress_context, use_ocr)
             duration = time.time() - start_time
 
             # Determine extraction method and engine based on what actually happened.
@@ -328,7 +328,7 @@ class TextExtractor:
             if ocr_actually_used:
                 extraction_method = "ocr"
                 extraction_engine = "easyocr"  # Primary OCR engine (EasyOCR → Tesseract fallback)
-                extraction_confidence = 0.8  # Default confidence for OCR
+                extraction_confidence = ocr_confidence
                 actual_method = "ocr"
             elif file_ext == ".pdf":
                 extraction_method = "pdf_text"
@@ -382,12 +382,12 @@ class TextExtractor:
         file_content: bytes | None = None,
         progress_context: dict[str, Any] | None = None,
         use_ocr: bool = True,
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, float | None]:
         """Extract text directly in-memory with progress updates.
 
         Returns:
-            (text, ocr_actually_used) — callers should use the bool for metadata
-            rather than inferring from the input use_ocr flag.
+            (text, ocr_actually_used, confidence) — callers should use the bool for metadata
+            rather than inferring from the input use_ocr flag. confidence is None for non-OCR paths.
         """
         try:
             # Set up progress callback if context is provided
@@ -405,13 +405,14 @@ class TextExtractor:
                     ocr_mode = progress_context["ocr_mode"]
                 # Use a no-op progress callback when none provided
                 cb = progress_callback if progress_callback else None
-                raw_text, ocr_actually_used = await self._extract_text_pdf_with_progress(
+                raw_text, ocr_actually_used, ocr_confidence = await self._extract_text_pdf_with_progress(
                     file_path, file_content, cb, use_ocr, ocr_mode
                 )
             else:
                 extractor = self.supported_formats[file_ext]
                 raw_text = await extractor(file_path, file_content)
                 ocr_actually_used = False
+                ocr_confidence = None
 
             # Clean the extracted text to remove problematic characters
             cleaned_text = self._clean_text(raw_text)
@@ -426,7 +427,7 @@ class TextExtractor:
                 },
             )
 
-            return cleaned_text, ocr_actually_used
+            return cleaned_text, ocr_actually_used, ocr_confidence
 
         except Exception as e:
             logger.error("Failed to extract text", extra={"file_path": file_path, "error": str(e)})
@@ -583,12 +584,13 @@ class TextExtractor:
         progress_callback=None,
         use_ocr: bool = True,
         ocr_mode: str = "auto",
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, float | None]:
         """Extract text from PDF with page-by-page progress updates.
 
         Returns:
-            (text, ocr_actually_used) — the bool is True only when OCR ran,
-            False when fast text extraction succeeded.
+            (text, ocr_actually_used, confidence) — ocr_actually_used is True only when
+            OCR ran. confidence is the real per-word average from EasyOCR, a text quality
+            heuristic when Tesseract ran, or None when fast text extraction succeeded.
         """
         logger.debug(
             "Extracting PDF text with progress updates",
@@ -608,7 +610,7 @@ class TextExtractor:
                         "Fast extraction successful, skipping OCR",
                         extra={"file_path": file_path, "text_length": len(fast_text.strip())},
                     )
-                    return fast_text, False
+                    return fast_text, False, None
                 logger.info(
                     "Fast extraction yielded insufficient text, falling back to OCR",
                     extra={
@@ -629,10 +631,11 @@ class TextExtractor:
         if use_ocr:
             # OCR is enabled - use OCR directly
             logger.info("OCR enabled for PDF, using OCR processing", extra={"file_path": file_path})
-            return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback), True
+            text, confidence = await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
+            return text, True, confidence
         # OCR is disabled - try text extraction only
         logger.info("OCR disabled for PDF, using text extraction only", extra={"file_path": file_path})
-        return await self._extract_pdf_text_only(file_path, file_content, progress_callback), False
+        return await self._extract_pdf_text_only(file_path, file_content, progress_callback), False, None
 
     async def _extract_pdf_text_only(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
@@ -742,12 +745,16 @@ class TextExtractor:
 
     async def _extract_pdf_ocr_direct(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
-    ) -> str:
+    ) -> tuple[str, float]:
         """Extract PDF text using direct in-process OCR with proper metadata tracking.
 
         Acquires the class-level OCR semaphore before opening the PDF so that at most
         ``SHU_OCR_MAX_CONCURRENT_JOBS`` jobs hold a fitz document in memory simultaneously.
         This bounds peak RSS to the semaphore limit, not the worker concurrency limit.
+
+        Returns:
+            (text, confidence) — confidence is the real per-word average from EasyOCR,
+            or a text quality heuristic from ``_calculate_text_quality`` when Tesseract ran.
         """
         sem = self.get_ocr_semaphore()
         logger.debug(
@@ -759,7 +766,7 @@ class TextExtractor:
 
     async def _extract_pdf_ocr_direct_inner(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
-    ) -> str:
+    ) -> tuple[str, float]:
         """Inner OCR processing (called under semaphore, which is acquired before fitz.open)."""
         start_time = time.time()
 
@@ -794,15 +801,15 @@ class TextExtractor:
                         },
                     )
                     doc.close()
-                    return text
+                    return text, confidence
             except Exception as e:
                 logger.error(f"OCR processing failed: {e}", extra={"file_path": file_path})
                 doc.close()
-                return ""
+                return "", 0.0
 
             doc.close()
             logger.error("All direct OCR methods failed", extra={"file_path": file_path})
-            return ""
+            return "", 0.0
 
         except Exception as e:
             logger.error(f"Direct OCR processing failed: {e}", extra={"file_path": file_path})
@@ -818,13 +825,13 @@ class TextExtractor:
                         "PDF open failed; fell back to plain-text read for OCR test fixture",
                         extra={"file_path": file_path},
                     )
-                    return text
+                    return text, self._calculate_text_quality(text)
             except Exception as fallback_err:
                 logger.warning(
                     f"Plain-text fallback after OCR failure also failed: {fallback_err}",
                     extra={"file_path": file_path},
                 )
-            return ""
+            return "", 0.0
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
     async def _process_pdf_with_ocr_direct(self, doc, file_path: str, progress_callback=None):  # noqa: PLR0912, PLR0915
@@ -1088,7 +1095,7 @@ class TextExtractor:
                 logger.warning(f"Tesseract failed on page {page_num + 1}: {e}")
                 continue
 
-        return text.strip(), "tesseract_direct", 0.8  # Tesseract doesn't provide confidence
+        return text.strip(), "tesseract_direct", self._calculate_text_quality(text.strip())
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text by removing problematic characters."""
