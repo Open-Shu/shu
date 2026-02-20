@@ -257,12 +257,13 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             await session.commit()
 
             # Clean up staged file now that extraction succeeded.
-            # Failure here is non-fatal — the file will TTL-expire on its own.
+            # Failure here is non-fatal — orphaned files are cleaned by
+            # IngestionStagingMaintenanceSource.
             try:
                 await staging_service.delete_staged_file(staging_key)
             except Exception as cleanup_err:
                 logger.warning(
-                    "Failed to delete staged file after successful OCR (non-fatal, will TTL-expire)",
+                    "Failed to delete staged file after successful OCR (non-fatal, orphaned files cleaned by maintenance job)",
                     extra={
                         "job_id": job.id,
                         "document_id": document_id,

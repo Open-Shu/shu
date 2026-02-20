@@ -11,7 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _make_mock_document(*, processing_status: str, content_hash: str = "abc123", source_hash: str | None = None):
+def _make_mock_document(
+    *,
+    processing_status: str,
+    content_hash: str = "abc123",
+    source_hash: str | None = None,
+    processing_error: str | None = None,
+):
     """Build a minimal mock Document with the given status and hash."""
     doc = MagicMock()
     doc.id = "doc-existing"
@@ -23,20 +29,25 @@ def _make_mock_document(*, processing_status: str, content_hash: str = "abc123",
     doc.chunk_count = 2
     doc.is_processed = processing_status == "processed"
     doc.has_error = processing_status == "error"
+    doc.processing_error = processing_error
     return doc
 
 
 class TestCheckSkipErrorState:
     """ERROR-state documents with matching hash must be skipped."""
 
-    def test_error_state_matching_hash_returns_skip_result(self):
+    def test_deterministic_error_matching_hash_returns_skip_result(self):
         """
-        _check_skip must return a skip result for an ERROR-state document
-        when the content hash matches, preventing an automatic retry loop.
+        _check_skip must return a skip result for an ERROR-state document with a
+        deterministic error (extraction failure) when the content hash matches.
         """
         from shu.services.ingestion_service import _check_skip
 
-        existing = _make_mock_document(processing_status="error", content_hash="abc123")
+        existing = _make_mock_document(
+            processing_status="error",
+            content_hash="abc123",
+            processing_error="Text extraction failed after 3 attempts: corrupt PDF",
+        )
 
         result = _check_skip(
             existing=existing,
@@ -46,9 +57,54 @@ class TestCheckSkipErrorState:
             ko_id="ko-test",
         )
 
-        assert result is not None, "Expected skip result for ERROR-state document with matching hash"
+        assert result is not None, "Expected skip result for deterministic ERROR with matching hash"
         assert result["skipped"] is True
         assert result["skip_reason"] == "hash_match_error_state"
+
+    def test_transient_enqueue_error_allows_retry(self):
+        """
+        _check_skip must NOT skip an ERROR-state document when the error was a
+        transient staging/enqueue failure — next sync should retry.
+        """
+        from shu.services.ingestion_service import _check_skip
+
+        existing = _make_mock_document(
+            processing_status="error",
+            content_hash="abc123",
+            processing_error="Failed to stage/enqueue: ConnectionError('Redis unavailable')",
+        )
+
+        result = _check_skip(
+            existing=existing,
+            source_hash=None,
+            content_hash="abc123",
+            force_reingest=False,
+            ko_id="ko-test",
+        )
+
+        assert result is None, "Transient enqueue failure should allow retry"
+
+    def test_transient_staging_error_allows_retry(self):
+        """
+        _check_skip must NOT skip when the error was a file staging failure.
+        """
+        from shu.services.ingestion_service import _check_skip
+
+        existing = _make_mock_document(
+            processing_status="error",
+            content_hash="abc123",
+            processing_error="File staging failed: FileNotFoundError('staging file missing')",
+        )
+
+        result = _check_skip(
+            existing=existing,
+            source_hash=None,
+            content_hash="abc123",
+            force_reingest=False,
+            ko_id="ko-test",
+        )
+
+        assert result is None, "Transient staging failure should allow retry"
 
     def test_error_state_different_hash_does_not_skip(self):
         """
@@ -57,7 +113,11 @@ class TestCheckSkipErrorState:
         """
         from shu.services.ingestion_service import _check_skip
 
-        existing = _make_mock_document(processing_status="error", content_hash="old_hash")
+        existing = _make_mock_document(
+            processing_status="error",
+            content_hash="old_hash",
+            processing_error="Text extraction failed after 3 attempts: corrupt",
+        )
 
         result = _check_skip(
             existing=existing,

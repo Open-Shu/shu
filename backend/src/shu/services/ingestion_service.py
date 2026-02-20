@@ -218,6 +218,21 @@ def _hashes_match(incoming_source_hash: str | None, incoming_content_hash: str, 
     return (False, "")
 
 
+def _is_transient_error(error_message: Any) -> bool:
+    """Return True if the processing error is a transient infrastructure failure.
+
+    Transient errors (staging/enqueue failures) should be retried on next sync
+    rather than permanently skipped.  The prefixes below are written by our own
+    code in ingestion_service.py and worker.py, so matching on them is reliable.
+    """
+    msg = error_message or ""
+    return msg.startswith((
+        "Failed to stage/enqueue:",   # ingest_document enqueue path
+        "Failed to enqueue embedding:",  # ingest_text / ingest_thread enqueue path
+        "File staging failed:",        # worker.py staging retrieval
+    ))
+
+
 def _check_skip(
     existing: Document | None,
     source_hash: str | None,
@@ -233,8 +248,8 @@ def _check_skip(
     - Document exists
     - force_reingest is False
     - Hash matches (source_hash or content_hash)
-    - Document is in a terminal state (is_processed or ERROR — the error is
-      deterministic so re-ingesting the same content will fail the same way)
+    - Document is in a terminal state (is_processed, or ERROR with a
+      deterministic error — transient infrastructure errors allow retry)
     """
     if existing is None or force_reingest:
         return None
@@ -260,10 +275,19 @@ def _check_skip(
             "skip_reason": "hash_match",
         }
 
-    # Also skip ERROR-state documents with matching hash — the error is deterministic
-    # (same content will fail the same way). Prevents an automatic retry loop on every
-    # feed sync. Users can force re-ingestion by re-uploading or setting force_reingest.
+    # Skip ERROR-state documents with matching hash ONLY when the error is
+    # deterministic (same content will fail the same way).  Transient infrastructure
+    # errors (staging/enqueue failures) should be retried on the next sync.
     if hash_matches and existing.has_error:
+        if _is_transient_error(existing.processing_error):
+            logger.info(
+                "Allowing retry for transient error on hash-matched document",
+                extra={
+                    "document_id": existing.id,
+                    "processing_error": existing.processing_error,
+                },
+            )
+            return None  # Allow re-ingestion
         return {
             "ko_id": ko_id,
             "document_id": existing.id,
@@ -390,7 +414,7 @@ async def _upsert_document_record(
                 skipped=True,
                 skip_reason="hash_match",
             )
-        if match and existing.has_error:
+        if match and existing.has_error and not _is_transient_error(existing.processing_error):
             logger.info(
                 "Skipping ERROR-state document with matching hash (deterministic failure)",
                 extra={

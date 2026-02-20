@@ -1406,9 +1406,9 @@ class TextExtractor:
 
     def get_supported_formats(self) -> list:
         """Get list of supported file formats."""
-        return list(self.supported_formats.keys())
+        return sorted(self.supported_extensions)
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file format is supported."""
         file_ext = Path(file_path).suffix.lower()
-        return file_ext in self.supported_formats
+        return file_ext in self.supported_extensions
