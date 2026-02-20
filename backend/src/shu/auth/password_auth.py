@@ -314,8 +314,9 @@ class PasswordAuthService:
             relay it to the admin.
 
         Raises:
-            ValueError: If the user is not found, does not use password
-                authentication, or the password fails policy validation.
+            LookupError: If the user is not found.
+            ValueError: If the user does not use password authentication
+                or the password fails policy validation.
 
         """
         user = await self._get_password_user(user_id, db)

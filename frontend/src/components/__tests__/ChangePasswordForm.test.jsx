@@ -75,7 +75,7 @@ describe('ChangePasswordForm', () => {
     render(<ChangePasswordForm />);
 
     const newPasswordField = screen.getByLabelText(/^new password/i);
-    const confirmPasswordField = screen.getByLabelText(/confirm new password/i);
+    const confirmPasswordField = screen.getByLabelText(/^confirm new password/i);
 
     fireEvent.change(newPasswordField, { target: { value: 'NewPass123' } });
     fireEvent.change(confirmPasswordField, { target: { value: 'Different1' } });
@@ -86,7 +86,7 @@ describe('ChangePasswordForm', () => {
   test('shows same-as-current error when new password matches current', () => {
     render(<ChangePasswordForm />);
 
-    const currentPasswordField = screen.getByLabelText(/current password/i);
+    const currentPasswordField = screen.getByLabelText(/^current password/i);
     const newPasswordField = screen.getByLabelText(/^new password/i);
 
     fireEvent.change(currentPasswordField, { target: { value: 'SamePass123' } });
@@ -100,9 +100,9 @@ describe('ChangePasswordForm', () => {
 
     render(<ChangePasswordForm />);
 
-    const currentPasswordField = screen.getByLabelText(/current password/i);
+    const currentPasswordField = screen.getByLabelText(/^current password/i);
     const newPasswordField = screen.getByLabelText(/^new password/i);
-    const confirmPasswordField = screen.getByLabelText(/confirm new password/i);
+    const confirmPasswordField = screen.getByLabelText(/^confirm new password/i);
 
     fireEvent.change(currentPasswordField, { target: { value: 'OldPassword1' } });
     fireEvent.change(newPasswordField, { target: { value: 'NewPassword1' } });
@@ -128,9 +128,9 @@ describe('ChangePasswordForm', () => {
 
     render(<ChangePasswordForm />);
 
-    const currentPasswordField = screen.getByLabelText(/current password/i);
+    const currentPasswordField = screen.getByLabelText(/^current password/i);
     const newPasswordField = screen.getByLabelText(/^new password/i);
-    const confirmPasswordField = screen.getByLabelText(/confirm new password/i);
+    const confirmPasswordField = screen.getByLabelText(/^confirm new password/i);
 
     fireEvent.change(currentPasswordField, { target: { value: 'WrongPassword1' } });
     fireEvent.change(newPasswordField, { target: { value: 'NewPassword1' } });
