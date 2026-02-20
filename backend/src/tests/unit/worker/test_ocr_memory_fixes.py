@@ -127,23 +127,20 @@ class TestSemaphoreBeforeFitzOpen:
 
         TextExtractor._ocr_semaphore = None
 
-        acquire_order = []
+        # Single ordered list so we can assert acquire < inner_called
+        call_sequence = []
 
         async def patched_inner(self_inner, file_path, file_content=None, progress_callback=None):
-            acquire_order.append("inner_called")
-            # Return early — we just need to confirm order
+            call_sequence.append("inner_called")
             return ""
 
         extractor = _make_extractor()
 
-        # Use a real semaphore with limit=1 so we can observe acquire/release
         real_sem = asyncio.Semaphore(1)
-        sem_acquire_calls = []
-
         original_acquire = real_sem.acquire
 
         async def tracked_acquire():
-            sem_acquire_calls.append("acquire")
+            call_sequence.append("acquire")
             return await original_acquire()
 
         real_sem.acquire = tracked_acquire
@@ -154,8 +151,11 @@ class TestSemaphoreBeforeFitzOpen:
         ):
             await extractor._extract_pdf_ocr_direct("test.pdf", b"fake")
 
-        assert "acquire" in sem_acquire_calls, "Semaphore was never acquired"
-        assert "inner_called" in acquire_order, "_extract_pdf_ocr_direct_inner was never called"
+        assert "acquire" in call_sequence, "Semaphore was never acquired"
+        assert "inner_called" in call_sequence, "_extract_pdf_ocr_direct_inner was never called"
+        assert call_sequence.index("acquire") < call_sequence.index("inner_called"), (
+            f"Semaphore must be acquired before inner call, got: {call_sequence}"
+        )
 
 
 # ---------------------------------------------------------------------------

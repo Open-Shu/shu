@@ -1699,8 +1699,10 @@ class RedisQueueBackend:
             base = max(float(current_score), time.time())
             new_expiry = base + additional_seconds
 
-            # xx=True: only update if the member already exists
-            updated = await self._client.zadd(processing_key, {job.id: new_expiry}, xx=True)
+            # xx=True: only update if the member already exists.
+            # ch=True: return the count of *changed* members (not just added) so
+            # the subsequent TTL refresh and logging actually execute.
+            updated = await self._client.zadd(processing_key, {job.id: new_expiry}, xx=True, ch=True)
             if updated:
                 # Refresh the job hash TTL to cover the new visibility window
                 ttl = int(new_expiry - time.time()) + 60

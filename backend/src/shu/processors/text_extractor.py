@@ -100,6 +100,10 @@ class TextExtractor:
         # Ensure job tracking attribute always exists to avoid AttributeError in logs
         self._current_sync_job_id = None
 
+        # Populated by OCR processing with the actual engine used ("easyocr" or
+        # "tesseract").  Read by extract_text() for metadata.
+        self._last_ocr_engine: str | None = None
+
     @classmethod
     def _get_ocr_lock(cls) -> asyncio.Lock:
         """Return the singleton init lock, creating it lazily."""
@@ -312,16 +316,15 @@ class TextExtractor:
                 extra={"file_path": file_path, "fallback_extension": file_ext},
             )
 
-        if file_ext not in self.supported_formats:
-            # Log as warning instead of error for unsupported formats
+        if file_ext not in self.supported_extensions:
             logger.warning(
-                f"Unsupported file format for text extraction: {file_ext}",
+                "Unsupported file format for text extraction: %s",
+                file_ext,
                 extra={
                     "file_path": file_path,
-                    "supported_formats": list(self.supported_formats.keys()),
+                    "supported_extensions": sorted(self.supported_extensions),
                 },
             )
-            # Raise a specific exception that can be caught and handled gracefully
             raise UnsupportedFileFormatError(f"Unsupported file format: {file_ext}")
 
         # Use direct text extraction with OCR configuration
@@ -332,7 +335,7 @@ class TextExtractor:
 
         try:
             text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(
-                file_path, file_content, progress_context, use_ocr
+                file_path, file_content, progress_context, use_ocr, file_ext
             )
             duration = time.time() - start_time
 
@@ -345,7 +348,7 @@ class TextExtractor:
 
             if ocr_actually_used:
                 extraction_method = "ocr"
-                extraction_engine = "easyocr"  # Primary OCR engine (EasyOCR → Tesseract fallback)
+                extraction_engine = self._last_ocr_engine or "unknown"
                 extraction_confidence = ocr_confidence
                 actual_method = "ocr"
             elif file_ext == ".pdf":
@@ -400,8 +403,15 @@ class TextExtractor:
         file_content: bytes | None = None,
         progress_context: dict[str, Any] | None = None,
         use_ocr: bool = True,
+        file_ext: str | None = None,
     ) -> tuple[str, bool, float | None]:
         """Extract text directly in-memory with progress updates.
+
+        Args:
+            file_ext: Pre-resolved file extension (with leading dot). When provided,
+                skips re-deriving it from file_path. This is important for files
+                whose file_path has no extension (e.g. Google Docs titles) where
+                the caller applied a fallback.
 
         Returns:
             (text, ocr_actually_used, confidence) — callers should use the bool for metadata
@@ -414,7 +424,8 @@ class TextExtractor:
             if progress_context:
                 progress_callback = self._create_progress_callback(progress_context, use_ocr)
 
-            file_ext = Path(file_path).suffix.lower()
+            if not file_ext:
+                file_ext = Path(file_path).suffix.lower()
 
             # PDFs: always use the progress-aware path so OCR/use_ocr is honored even without a progress callback
             if file_ext == ".pdf":
@@ -809,13 +820,16 @@ class TextExtractor:
             # Process with OCR (EasyOCR with Tesseract fallback)
             try:
                 text, method, confidence = await self._process_pdf_with_ocr_direct(doc, file_path, progress_callback)
+                # Record the actual engine so extract_text() can report it accurately.
+                engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
+                self._last_ocr_engine = engine_map.get(method, method)
                 if text.strip():
                     processing_time = time.time() - start_time
                     logger.info(
                         "OCR processing successful",
                         extra={
                             "file_path": file_path,
-                            "method": method,
+                            "engine": self._last_ocr_engine,
                             "confidence": confidence,
                             "processing_time": processing_time,
                             "pages": total_pages,

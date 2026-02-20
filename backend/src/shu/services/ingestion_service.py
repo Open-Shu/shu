@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -232,7 +233,8 @@ def _check_skip(
     - Document exists
     - force_reingest is False
     - Hash matches (source_hash or content_hash)
-    - Document is in terminal successful state (is_ready or is_processed)
+    - Document is in a terminal state (is_processed or ERROR — the error is
+      deterministic so re-ingesting the same content will fail the same way)
     """
     if existing is None or force_reingest:
         return None
@@ -506,6 +508,14 @@ async def ingest_document(  # noqa: PLR0915
     source_type = f"plugin:{plugin_name}"
     file_type = _infer_file_type(filename, mime_type)
     title = filename or source_id
+
+    # Build an extraction filename with a file extension so TextExtractor can
+    # resolve the correct format handler.  Google Drive native documents (Docs,
+    # Sheets, Presentations) have titles without extensions; file_type (derived
+    # from mime_type by _infer_file_type) provides the authoritative format.
+    extraction_filename = filename
+    if filename and not PurePosixPath(filename).suffix:
+        extraction_filename = f"{filename}.{file_type}"
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
 
@@ -571,7 +581,7 @@ async def ingest_document(  # noqa: PLR0915
         job_payload = {
             "document_id": document.id,
             "knowledge_base_id": knowledge_base_id,
-            "filename": filename,
+            "filename": extraction_filename,
             "mime_type": mime_type,
             "source_id": source_id,
             "staging_key": staging_key,

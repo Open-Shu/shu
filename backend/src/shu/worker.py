@@ -177,7 +177,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             try:
                 await staging_service.delete_staged_file(staging_key)
             except Exception:
-                pass  # Non-fatal; file will TTL-expire
+                pass  # Non-fatal; orphaned files are cleaned up by IngestionStagingMaintenanceSource
             return
 
         document.update_status(DocumentStatus.EXTRACTING)
@@ -200,10 +200,11 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             extractor = TextExtractor(config_manager=get_config_manager())
 
             # Determine if OCR should be used based on ocr_mode.
-            # "text_only" → no OCR; all other modes (including "fallback") let the
-            # extractor decide per file type.  "fallback" must also be forwarded via
-            # progress_context so the PDF path can try fast extraction first.
-            use_ocr = ocr_mode != "text_only" if ocr_mode else True
+            # "never" and "text_only" disable OCR entirely; all other modes
+            # (including "fallback") let the extractor decide per file type.
+            # "fallback" must also be forwarded via progress_context so the
+            # PDF path can try fast extraction first.
+            use_ocr = ocr_mode not in {"text_only", "never"} if ocr_mode else True
             progress_ctx = {"ocr_mode": ocr_mode} if ocr_mode else None
 
             extraction_result = await extractor.extract_text(

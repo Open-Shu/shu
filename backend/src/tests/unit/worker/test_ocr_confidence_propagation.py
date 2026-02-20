@@ -31,6 +31,8 @@ def _make_extractor():
         ".txt": extractor._extract_text_plain,
         ".pdf": None,  # PDF handled separately
     }
+    extractor.supported_extensions = {".txt", ".pdf"}
+    extractor._last_ocr_engine = None
     return extractor
 
 
