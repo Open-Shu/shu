@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.logging import get_logger
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
+from ..services.document_service import DocumentService
 
 # Transient error prefixes — used both when setting processing_error and when
 # checking whether an error is retryable in _is_transient_error().  Keep these
@@ -34,8 +35,6 @@ _ERR_STAGE_ENQUEUE = "Failed to stage/enqueue:"
 _ERR_ENQUEUE_EMBEDDING = "Failed to enqueue embedding:"
 _ERR_FILE_STAGING = "File staging failed:"
 _TRANSIENT_PREFIXES = (_ERR_STAGE_ENQUEUE, _ERR_ENQUEUE_EMBEDDING, _ERR_FILE_STAGING)
-
-from ..services.document_service import DocumentService
 
 if TYPE_CHECKING:
     from ..core.queue_backend import QueueBackend
