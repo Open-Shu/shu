@@ -73,7 +73,8 @@ class TextExtractor:
             ".rtf": self._extract_text_rtf,
             ".html": self._extract_text_html,
             ".htm": self._extract_text_html,
-            ".email": self._extract_text_email,  # Gmail and other email messages
+            ".email": self._extract_text_email,  # Gmail plugin pseudo-extension
+            ".eml": self._extract_text_email,  # Standard RFC 822 email files
         }
 
         # File types that support direct extraction.
@@ -88,6 +89,7 @@ class TextExtractor:
             ".doc",
             ".rtf",
             ".email",
+            ".eml",
             ".txt",
             ".md",
             ".html",
