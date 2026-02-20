@@ -1,20 +1,96 @@
 """Central file-type registry for the Shu ingestion pipeline.
 
-This module is the single source of truth for supported file extensions,
-MIME-to-extension mappings, and default KB upload types within backend
-services.  Plugins are intentionally kept independent and should NOT
-import from this module.
+This module is the **single source of truth** for:
+
+* Supported file extensions and their ingestion handler categories
+* MIME-to-extension mappings
+* Default KB upload types
+* Magic-byte signatures for content validation
+* Known binary extensions (unsupported for text extraction)
+
+Plugins are intentionally kept independent and should NOT import from
+this module.
 """
 
 from __future__ import annotations
 
 import mimetypes
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import PurePosixPath
+
+# ---------------------------------------------------------------------------
+# IngestionType — the handler category each extension maps to
+# ---------------------------------------------------------------------------
+
+
+class IngestionType(str, Enum):
+    """Handler category for text extraction dispatch.
+
+    Each supported file extension maps to exactly one IngestionType.
+    TextExtractor maps each IngestionType to a handler method.
+    """
+
+    PLAIN_TEXT = "plain_text"
+    PDF = "pdf"
+    DOCX = "docx"
+    DOC = "doc"
+    RTF = "rtf"
+    HTML = "html"
+    EMAIL = "email"
+
+
+# ---------------------------------------------------------------------------
+# FileTypeEntry — one row in the registry
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FileTypeEntry:
+    """A single supported file type in the ingestion registry."""
+
+    extension: str  # Dotted, lowercase — e.g. ".pdf"
+    ingestion_type: IngestionType
+    plugin_only: bool = False  # True = not available for direct user upload
+
+
+# ---------------------------------------------------------------------------
+# _REGISTRY — the canonical list.  Everything else is derived from this.
+# ---------------------------------------------------------------------------
+
+_REGISTRY: tuple[FileTypeEntry, ...] = (
+    FileTypeEntry(".pdf", IngestionType.PDF),
+    FileTypeEntry(".docx", IngestionType.DOCX),
+    FileTypeEntry(".doc", IngestionType.DOC),
+    FileTypeEntry(".txt", IngestionType.PLAIN_TEXT),
+    FileTypeEntry(".md", IngestionType.PLAIN_TEXT),
+    FileTypeEntry(".csv", IngestionType.PLAIN_TEXT),
+    FileTypeEntry(".py", IngestionType.PLAIN_TEXT),
+    FileTypeEntry(".js", IngestionType.PLAIN_TEXT),
+    FileTypeEntry(".rtf", IngestionType.RTF),
+    FileTypeEntry(".html", IngestionType.HTML),
+    FileTypeEntry(".htm", IngestionType.HTML),
+    FileTypeEntry(".email", IngestionType.EMAIL, plugin_only=True),
+    FileTypeEntry(".eml", IngestionType.EMAIL),
+)
+
+# ---------------------------------------------------------------------------
+# Derived constants — do NOT maintain these by hand; edit _REGISTRY instead.
+# ---------------------------------------------------------------------------
+
+SUPPORTED_TEXT_EXTENSIONS: frozenset[str] = frozenset(e.extension for e in _REGISTRY)
+
+EXT_TO_INGESTION_TYPE: dict[str, IngestionType] = {e.extension: e.ingestion_type for e in _REGISTRY}
+
+_PLUGIN_ONLY_EXTENSIONS: frozenset[str] = frozenset(e.extension for e in _REGISTRY if e.plugin_only)
+
+DEFAULT_KB_FILE_TYPES: list[str] = sorted(e.extension.lstrip(".") for e in _REGISTRY if not e.plugin_only)
 
 # ---------------------------------------------------------------------------
 # MIME → dotted extension  (curated — covers all types handled by the
 # ingestion pipeline today)
 # ---------------------------------------------------------------------------
+
 MIME_TO_EXT: dict[str, str] = {
     # Documents
     "application/pdf": ".pdf",
@@ -43,47 +119,67 @@ MIME_TO_EXT: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# All extensions the backend can extract text from (with leading dots).
+# Magic-byte signatures — used for upload content validation and fallback
+# binary detection.  Separate from _REGISTRY because .xlsx/.pptx need
+# validation but have no extraction handler.
 # ---------------------------------------------------------------------------
-SUPPORTED_TEXT_EXTENSIONS: frozenset[str] = frozenset(
+
+_ZIP_SIGNATURES: tuple[bytes, ...] = (
+    b"\x50\x4b\x03\x04",
+    b"\x50\x4b\x05\x06",
+    b"\x50\x4b\x07\x08",
+)
+_PDF_SIGNATURE: tuple[bytes, ...] = (b"\x25\x50\x44\x46",)  # %PDF
+_OLE2_SIGNATURE: tuple[bytes, ...] = (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",)  # OLE2 compound document
+
+MAGIC_BYTES: dict[str, tuple[bytes, ...]] = {
+    ".pdf": _PDF_SIGNATURE,
+    ".docx": _ZIP_SIGNATURES,
+    ".xlsx": _ZIP_SIGNATURES,
+    ".pptx": _ZIP_SIGNATURES,
+    ".doc": _OLE2_SIGNATURE + _ZIP_SIGNATURES,
+}
+
+ALL_BINARY_SIGNATURES: tuple[bytes, ...] = tuple({sig for sigs in MAGIC_BYTES.values() for sig in sigs})
+
+# ---------------------------------------------------------------------------
+# Known binary extensions — files that must never be decoded as raw text
+# in the fallback extractor.
+# ---------------------------------------------------------------------------
+
+KNOWN_BINARY_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".pdf",
         ".docx",
         ".doc",
-        ".txt",
-        ".md",
-        ".rtf",
-        ".html",
-        ".htm",
-        ".csv",
-        ".py",
-        ".js",
-        ".xlsx",
         ".pptx",
-        ".email",  # Gmail plugin pseudo-extension
-        ".eml",
+        ".xlsx",
+        ".zip",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".bin",
+        ".dat",
+        ".obj",
+        ".class",
+        ".jar",
+        ".war",
+        ".ear",
+        ".apk",
+        ".ipa",
+        ".dmg",
+        ".iso",
+        ".img",
+        ".vhd",
+        ".vmdk",
     }
 )
 
+
 # ---------------------------------------------------------------------------
-# Default allowed types for KB uploads (without dots).  Referenced by
-# config.py Settings.kb_upload_allowed_types default_factory.
+# normalize_extension — filename / MIME → dotted extension
 # ---------------------------------------------------------------------------
-DEFAULT_KB_FILE_TYPES: list[str] = [
-    "pdf",
-    "docx",
-    "doc",
-    "txt",
-    "md",
-    "rtf",
-    "html",
-    "htm",
-    "csv",
-    "py",
-    "js",
-    "xlsx",
-    "pptx",
-]
 
 
 def normalize_extension(name_or_mime: str) -> str:

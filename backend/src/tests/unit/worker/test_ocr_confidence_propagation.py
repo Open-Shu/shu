@@ -8,9 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.ingestion.filetypes import IngestionType
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_extractor():
     """Return a TextExtractor with a minimal ConfigurationManager stub."""
@@ -27,9 +30,9 @@ def _make_extractor():
     extractor = TextExtractor.__new__(TextExtractor)
     extractor.config_manager = config_manager
     extractor._current_sync_job_id = None
-    extractor.supported_formats = {
-        ".txt": extractor._extract_text_plain,
-        ".pdf": None,  # PDF handled separately
+    extractor._type_handlers = {
+        IngestionType.PLAIN_TEXT: extractor._extract_text_plain,
+        # PDF routes through IngestionType.PDF check, not _type_handlers
     }
     extractor.supported_extensions = {".txt", ".pdf"}
     extractor._last_ocr_engine = None

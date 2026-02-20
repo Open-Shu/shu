@@ -15,6 +15,14 @@ import easyocr
 
 from ..core.config import ConfigurationManager
 from ..core.logging import get_logger
+from ..ingestion.filetypes import (
+    ALL_BINARY_SIGNATURES,
+    EXT_TO_INGESTION_TYPE,
+    KNOWN_BINARY_EXTENSIONS,
+    SUPPORTED_TEXT_EXTENSIONS,
+    IngestionType,
+    normalize_extension,
+)
 
 logger = get_logger(__name__)
 
@@ -62,42 +70,20 @@ class TextExtractor:
 
     def __init__(self, config_manager: ConfigurationManager) -> None:
         self.config_manager = config_manager
-        self.supported_formats = {
-            ".txt": self._extract_text_plain,
-            ".md": self._extract_text_plain,
-            ".csv": self._extract_text_plain,
-            ".py": self._extract_text_plain,
-            ".js": self._extract_text_plain,
-            ".docx": self._extract_text_docx,
-            ".doc": self._extract_text_doc,
-            ".rtf": self._extract_text_rtf,
-            ".html": self._extract_text_html,
-            ".htm": self._extract_text_html,
-            ".email": self._extract_text_email,  # Gmail plugin pseudo-extension
-            ".eml": self._extract_text_email,  # Standard RFC 822 email files
+
+        # Maps IngestionType → handler method.  PDF is intentionally absent
+        # because _extract_text_direct routes it to _extract_text_pdf_with_progress.
+        self._type_handlers = {
+            IngestionType.PLAIN_TEXT: self._extract_text_plain,
+            IngestionType.DOCX: self._extract_text_docx,
+            IngestionType.DOC: self._extract_text_doc,
+            IngestionType.RTF: self._extract_text_rtf,
+            IngestionType.HTML: self._extract_text_html,
+            IngestionType.EMAIL: self._extract_text_email,
         }
 
-        # File types that support direct extraction.
-        # Note: .pdf is intentionally absent from supported_formats above because
-        # _extract_text_direct routes PDFs to _extract_text_pdf_with_progress, which
-        # branches on ocr_mode (fast text extraction, OCR, or fallback with threshold).
-        # .email is included here even though it only appears in supported_formats
-        # (Gmail plugin messages with an .email pseudo-extension).
-        self.supported_extensions = {
-            ".pdf",
-            ".docx",
-            ".doc",
-            ".rtf",
-            ".email",
-            ".eml",
-            ".txt",
-            ".md",
-            ".html",
-            ".htm",
-            ".csv",
-            ".py",
-            ".js",
-        }
+        # Accepted extensions — derived from the central registry.
+        self.supported_extensions = set(SUPPORTED_TEXT_EXTENSIONS)
 
         # Ensure job tracking attribute always exists to avoid AttributeError in logs
         self._current_sync_job_id = None
@@ -310,8 +296,6 @@ class TextExtractor:
               confidence, duration
 
         """
-        from ..ingestion.filetypes import normalize_extension
-
         # --- Derive internal use_ocr bool from the public ocr_mode string ---
         effective_ocr_mode = (ocr_mode or "auto").strip().lower()
         use_ocr = effective_ocr_mode not in {"text_only", "never"}
@@ -368,6 +352,8 @@ class TextExtractor:
             )
             raise UnsupportedFileFormatError(f"Unsupported file format: {file_ext}")
 
+        ingestion_type = EXT_TO_INGESTION_TYPE.get(file_ext)
+
         # Use direct text extraction with OCR configuration
         logger.debug(
             "Using direct text extraction",
@@ -397,15 +383,15 @@ class TextExtractor:
                 extraction_engine = self._last_ocr_engine or "unknown"
                 extraction_confidence = ocr_confidence
                 actual_method = "ocr"
-            elif file_ext == ".pdf":
+            elif ingestion_type == IngestionType.PDF:
                 extraction_method = "pdf_text"
                 extraction_engine = "pymupdf"
                 actual_method = "fast_extraction"
-            elif file_ext in [".docx", ".doc"]:
+            elif ingestion_type in (IngestionType.DOCX, IngestionType.DOC):
                 extraction_method = "document"
                 extraction_engine = "python-docx"
                 actual_method = "fast_extraction"
-            elif file_ext in [".txt", ".md"]:
+            elif ingestion_type == IngestionType.PLAIN_TEXT:
                 extraction_method = "text"
                 extraction_engine = "direct"
                 actual_method = "fast_extraction"
@@ -475,15 +461,18 @@ class TextExtractor:
             if not file_ext:
                 file_ext = Path(file_path).suffix.lower()
 
+            # Resolve ingestion type for handler dispatch
+            ingestion_type = EXT_TO_INGESTION_TYPE.get(file_ext)
+
             # PDFs: always use the progress-aware path so OCR/use_ocr is honored even without a progress callback
-            if file_ext == ".pdf":
+            if ingestion_type == IngestionType.PDF:
                 cb = progress_callback if progress_callback else None
                 raw_text, ocr_actually_used, ocr_confidence = await self._extract_text_pdf_with_progress(
                     file_path, file_content, cb, use_ocr, ocr_mode
                 )
             else:
-                extractor = self.supported_formats[file_ext]
-                raw_text = await extractor(file_path, file_content)
+                handler = self._type_handlers[ingestion_type]
+                raw_text = await handler(file_path, file_content)
                 ocr_actually_used = False
                 ocr_confidence = None
 
@@ -1356,16 +1345,7 @@ class TextExtractor:
             def _read_file():
                 if file_content:
                     # For in-memory content, check if it looks like binary data
-                    # Look for common binary file signatures
-                    binary_signatures = [
-                        b"\x50\x4b\x03\x04",  # ZIP/DOCX/PPTX/XLSX
-                        b"\x25\x50\x44\x46",  # PDF
-                        b"\xd0\xcf\x11\xe0",  # DOC/XLS/PPT (OLE)
-                        b"\x50\x4b\x05\x06",  # ZIP
-                        b"\x50\x4b\x07\x08",  # ZIP
-                    ]
-
-                    for signature in binary_signatures:
+                    for signature in ALL_BINARY_SIGNATURES:
                         if file_content.startswith(signature):
                             logger.warning(f"Binary file detected in memory content: {file_path}")
                             return f"[Error: Binary file detected - cannot extract text from {file_path}]"
@@ -1379,34 +1359,8 @@ class TextExtractor:
                 else:
                     # Check file extension for known binary formats
                     file_ext = Path(file_path).suffix.lower()
-                    binary_extensions = {
-                        ".pdf",
-                        ".docx",
-                        ".doc",
-                        ".pptx",
-                        ".xlsx",
-                        ".zip",
-                        ".exe",
-                        ".dll",
-                        ".so",
-                        ".dylib",
-                        ".bin",
-                        ".dat",
-                        ".obj",
-                        ".class",
-                        ".jar",
-                        ".war",
-                        ".ear",
-                        ".apk",
-                        ".ipa",
-                        ".dmg",
-                        ".iso",
-                        ".img",
-                        ".vhd",
-                        ".vmdk",
-                    }
 
-                    if file_ext in binary_extensions:
+                    if file_ext in KNOWN_BINARY_EXTENSIONS:
                         logger.warning(f"Binary file extension detected: {file_path}")
                         return f"[Error: Binary file format {file_ext} - cannot extract text from {file_path}]"
 
