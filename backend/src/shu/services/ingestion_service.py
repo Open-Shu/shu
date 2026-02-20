@@ -26,6 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.logging import get_logger
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
+
+# Transient error prefixes — used both when setting processing_error and when
+# checking whether an error is retryable in _is_transient_error().  Keep these
+# in sync: any new transient prefix must be added to _TRANSIENT_PREFIXES too.
+_ERR_STAGE_ENQUEUE = "Failed to stage/enqueue:"
+_ERR_ENQUEUE_EMBEDDING = "Failed to enqueue embedding:"
+_ERR_FILE_STAGING = "File staging failed:"
+_TRANSIENT_PREFIXES = (_ERR_STAGE_ENQUEUE, _ERR_ENQUEUE_EMBEDDING, _ERR_FILE_STAGING)
+
 from ..services.document_service import DocumentService
 
 if TYPE_CHECKING:
@@ -222,17 +231,11 @@ def _is_transient_error(error_message: Any) -> bool:
     """Return True if the processing error is a transient infrastructure failure.
 
     Transient errors (staging/enqueue failures) should be retried on next sync
-    rather than permanently skipped.  The prefixes below are written by our own
-    code in ingestion_service.py and worker.py, so matching on them is reliable.
+    rather than permanently skipped.  The prefixes are defined as module-level
+    constants (_ERR_*) and shared with every write site so they cannot drift.
     """
     msg = error_message or ""
-    return msg.startswith(
-        (
-            "Failed to stage/enqueue:",  # ingest_document enqueue path
-            "Failed to enqueue embedding:",  # ingest_text / ingest_thread enqueue path
-            "File staging failed:",  # worker.py staging retrieval
-        )
-    )
+    return msg.startswith(_TRANSIENT_PREFIXES)
 
 
 def _check_skip(
@@ -633,7 +636,7 @@ async def ingest_document(  # noqa: PLR0915
         )
         # Mark document as ERROR so it doesn't stay PENDING forever
         document.update_status(DocumentStatus.ERROR)
-        document.processing_error = f"Failed to stage/enqueue: {e}"
+        document.processing_error = f"{_ERR_STAGE_ENQUEUE} {e}"
         db.add(document)
         await db.commit()
         # Clean up staged bytes if staging succeeded but enqueue failed
@@ -912,7 +915,7 @@ async def ingest_text(  # noqa: PLR0915
             },
         )
         document.update_status(DocumentStatus.ERROR)
-        document.processing_error = f"Failed to enqueue embedding: {e}"
+        document.processing_error = f"{_ERR_ENQUEUE_EMBEDDING} {e}"
         db.add(document)
         await db.commit()
         raise
@@ -1060,7 +1063,7 @@ async def ingest_thread(  # noqa: PLR0915
             },
         )
         document.update_status(DocumentStatus.ERROR)
-        document.processing_error = f"Failed to enqueue embedding: {e}"
+        document.processing_error = f"{_ERR_ENQUEUE_EMBEDDING} {e}"
         db.add(document)
         await db.commit()
         raise

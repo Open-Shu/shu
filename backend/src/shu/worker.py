@@ -43,6 +43,7 @@ from .core.logging import get_logger, setup_logging
 from .core.queue_backend import get_queue_backend
 from .core.worker import Worker, WorkerConfig
 from .core.workload_routing import WorkloadType
+from .services.ingestion_service import _ERR_FILE_STAGING
 
 logger = get_logger(__name__)
 
@@ -290,7 +291,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                     "error": str(e),
                 },
             )
-            document.mark_error(f"File staging failed: {e}")
+            document.mark_error(f"{_ERR_FILE_STAGING} {e}")
             await session.commit()
             raise
 
