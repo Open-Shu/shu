@@ -322,7 +322,8 @@ class PasswordAuthService:
         user = await self._get_password_user(user_id, db)
 
         if new_password is None:
-            new_password = self.generate_temporary_password()
+            length = max(16, self.settings.password_min_length)
+            new_password = self.generate_temporary_password(length=length)
 
         await self._apply_new_password(user, new_password, db, must_change=True)
 
