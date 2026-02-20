@@ -145,6 +145,49 @@ class TestConfigInjection:
             assert call_args[0][3] is False  # use_ocr
             assert call_args[0][5] == "never"  # ocr_mode
 
+    @pytest.mark.asyncio
+    async def test_invalid_ocr_mode_raises_value_error(self):
+        """An invalid ocr_mode must raise ValueError immediately."""
+        extractor, _ = _make_extractor()
+
+        with pytest.raises(ValueError, match="Invalid ocr_mode"):
+            await extractor.extract_text(
+                file_path="test.txt",
+                file_bytes=b"hello",
+                ocr_mode="turbo",
+            )
+
+    @pytest.mark.asyncio
+    async def test_magic_byte_fallback_detects_pdf(self):
+        """In-memory PDF bytes without file_path/mime_type should be detected as PDF."""
+        extractor, _ = _make_extractor()
+
+        with patch.object(
+            extractor,
+            "_extract_text_direct",
+            new=AsyncMock(return_value=("extracted", False, None)),
+        ) as mock_direct:
+            await extractor.extract_text(
+                file_bytes=b"%PDF-1.4 fake content",
+            )
+            # file_ext is the 5th positional arg
+            assert mock_direct.call_args[0][4] == ".pdf"
+
+    @pytest.mark.asyncio
+    async def test_magic_byte_fallback_defaults_to_txt(self):
+        """In-memory plain text without file_path/mime_type should fall back to .txt."""
+        extractor, _ = _make_extractor()
+
+        with patch.object(
+            extractor,
+            "_extract_text_direct",
+            new=AsyncMock(return_value=("extracted", False, None)),
+        ) as mock_direct:
+            await extractor.extract_text(
+                file_bytes=b"just some text",
+            )
+            assert mock_direct.call_args[0][4] == ".txt"
+
 
 # ===========================================================================
 # 2. Per-page OCR edge cases

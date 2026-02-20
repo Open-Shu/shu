@@ -17,6 +17,7 @@ from shu.ingestion.filetypes import (
     FileTypeEntry,
     IngestionType,
     _REGISTRY,
+    detect_extension_from_bytes,
     normalize_extension,
 )
 
@@ -329,3 +330,31 @@ class TestRegistryConstants:
     def test_supported_extensions_all_dotted(self) -> None:
         for ext in SUPPORTED_TEXT_EXTENSIONS:
             assert ext.startswith("."), f"{ext!r} in SUPPORTED_TEXT_EXTENSIONS should start with '.'"
+
+
+# ---------------------------------------------------------------------------
+# detect_extension_from_bytes
+# ---------------------------------------------------------------------------
+
+
+class TestDetectExtensionFromBytes:
+    def test_pdf_header_returns_pdf(self) -> None:
+        assert detect_extension_from_bytes(b"%PDF-1.4 content") == ".pdf"
+
+    def test_ole2_header_returns_doc(self) -> None:
+        ole2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 100
+        assert detect_extension_from_bytes(ole2) == ".doc"
+
+    def test_zip_header_returns_none(self) -> None:
+        """ZIP is ambiguous (docx/xlsx/pptx) — must return None."""
+        zip_bytes = b"\x50\x4b\x03\x04" + b"\x00" * 100
+        assert detect_extension_from_bytes(zip_bytes) is None
+
+    def test_short_data_returns_none(self) -> None:
+        assert detect_extension_from_bytes(b"\x25\x50") is None
+
+    def test_empty_data_returns_none(self) -> None:
+        assert detect_extension_from_bytes(b"") is None
+
+    def test_plain_text_returns_none(self) -> None:
+        assert detect_extension_from_bytes(b"Hello, world!") is None

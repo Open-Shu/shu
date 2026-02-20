@@ -96,6 +96,8 @@ MIME_TO_EXT: dict[str, str] = {
     "application/pdf": ".pdf",
     "application/msword": ".doc",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    # .xlsx/.pptx: recognized for MIME resolution and upload magic-byte validation,
+    # but NOT extractable (no handler in _REGISTRY / TextExtractor).
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
     "application/rtf": ".rtf",
@@ -119,9 +121,15 @@ MIME_TO_EXT: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Magic-byte signatures — used for upload content validation and fallback
-# binary detection.  Separate from _REGISTRY because .xlsx/.pptx need
-# validation but have no extraction handler.
+# Magic-byte signatures — used for upload content validation
+# (_check_content_type_mismatch) and fallback binary detection
+# (_extract_text_fallback).
+#
+# Note: .xlsx and .pptx are included here even though they have no
+# extraction handler (and are absent from _REGISTRY).  They are
+# "recognized but not extractable" — we can validate their magic bytes
+# at upload time to reject misnamed files early, but we cannot extract
+# text from them.
 # ---------------------------------------------------------------------------
 
 _ZIP_SIGNATURES: tuple[bytes, ...] = (
@@ -227,3 +235,31 @@ def normalize_extension(name_or_mime: str) -> str:
         return guessed.lower()
 
     return ".bin"
+
+
+def detect_extension_from_bytes(data: bytes) -> str | None:
+    """Attempt to identify a file's extension from its leading magic bytes.
+
+    Only returns a result for unambiguous signatures:
+
+    * PDF (``%PDF``) → ``".pdf"``
+    * OLE2 compound document → ``".doc"`` (most common OLE2 format)
+
+    ZIP-based formats (``.docx``, ``.xlsx``, ``.pptx``) share the same
+    ``PK`` header and cannot be reliably distinguished without inspecting
+    archive contents, so this function returns ``None`` for them.
+    """
+    if len(data) < 4:
+        return None
+
+    header = data[:8]
+
+    for sig in _PDF_SIGNATURE:
+        if header[: len(sig)] == sig:
+            return ".pdf"
+
+    for sig in _OLE2_SIGNATURE:
+        if header[: len(sig)] == sig:
+            return ".doc"
+
+    return None

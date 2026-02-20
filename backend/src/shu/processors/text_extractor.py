@@ -21,6 +21,7 @@ from ..ingestion.filetypes import (
     KNOWN_BINARY_EXTENSIONS,
     SUPPORTED_TEXT_EXTENSIONS,
     IngestionType,
+    detect_extension_from_bytes,
     normalize_extension,
 )
 
@@ -37,6 +38,8 @@ _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
     "us", "them",
 })
 # fmt: on
+
+VALID_OCR_MODES: frozenset[str] = frozenset({"auto", "always", "never", "fallback", "text_only"})
 
 
 class UnsupportedFileFormatError(Exception):
@@ -298,6 +301,10 @@ class TextExtractor:
         """
         # --- Derive internal use_ocr bool from the public ocr_mode string ---
         effective_ocr_mode = (ocr_mode or "auto").strip().lower()
+        if effective_ocr_mode not in VALID_OCR_MODES:
+            raise ValueError(
+                f"Invalid ocr_mode {ocr_mode!r}; must be one of {sorted(VALID_OCR_MODES)}"
+            )
         use_ocr = effective_ocr_mode not in {"text_only", "never"}
 
         logger.debug(
@@ -335,7 +342,7 @@ class TextExtractor:
             if file_ext == ".bin":
                 file_ext = ""
         if not file_ext and file_bytes is not None:
-            file_ext = ".txt"  # Default fallback for in-memory content
+            file_ext = detect_extension_from_bytes(file_bytes) or ".txt"
             logger.debug(
                 "No file extension found, using fallback",
                 extra={"file_path": file_path, "fallback_extension": file_ext},
