@@ -297,7 +297,6 @@ async def login_with_password(
 
 @router.put(
     "/change-password",
-    response_model=SuccessResponse[dict[str, str]],
     dependencies=[Depends(_check_auth_rate_limit)],
 )
 async def change_password(
@@ -325,7 +324,6 @@ async def change_password(
 
 @router.post(
     "/users/{user_id}/reset-password",
-    response_model=SuccessResponse[dict[str, str]],
     dependencies=[Depends(_check_auth_rate_limit)],
 )
 async def reset_user_password(

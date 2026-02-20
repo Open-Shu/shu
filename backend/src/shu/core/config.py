@@ -497,6 +497,14 @@ class Settings(BaseSettings):
             raise ValueError(f"Password policy must be one of: {valid_policies}")
         return v.lower()
 
+    @field_validator("password_special_chars")
+    @classmethod
+    def validate_password_special_chars(cls, v: str) -> str:
+        """Validate password special characters is not empty."""
+        if not v:
+            raise ValueError("password_special_chars must contain at least one character")
+        return v
+
     @field_validator("vector_index_type")
     @classmethod
     def validate_vector_index_type(cls, v: str) -> str:
