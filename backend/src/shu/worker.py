@@ -43,6 +43,7 @@ from .core.logging import get_logger, setup_logging
 from .core.queue_backend import get_queue_backend
 from .core.worker import Worker, WorkerConfig
 from .core.workload_routing import WorkloadType
+from .services.ingestion_service import _ERR_FILE_STAGING
 
 logger = get_logger(__name__)
 
@@ -105,7 +106,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         Exception: If text extraction fails (triggers retry).
 
     """
-    from .core.cache_backend import get_cache_backend
+    from .core.config import get_config_manager
     from .core.database import get_async_session_local
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
@@ -147,18 +148,38 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
     )
 
     session_local = get_async_session_local()
-    cache = await get_cache_backend()
-    staging_service = FileStagingService(cache)  # TTL not needed for retrieval
+    staging_service = FileStagingService()
 
     async with session_local() as session:
         # Get document and update status to EXTRACTING
         from sqlalchemy import select
 
+        from .models.knowledge_base import KnowledgeBase
+
         result = await session.execute(select(Document).where(Document.id == document_id))
         document = result.scalar_one_or_none()
 
         if not document:
-            raise ValueError(f"Document not found: {document_id}")
+            # Document was deleted after job was enqueued — permanent failure, no retry.
+            logger.error(
+                "Document not found for OCR job, failing permanently",
+                extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
+
+        # Check KB existence before retrieving staged bytes — frees staging memory immediately
+        # if the KB was deleted while this job was queued.
+        kb = await session.get(KnowledgeBase, knowledge_base_id)
+        if kb is None:
+            logger.info(
+                "Knowledge base deleted, discarding OCR job without retry",
+                extra={"job_id": job.id, "document_id": document_id, "knowledge_base_id": knowledge_base_id},
+            )
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception:
+                pass  # Non-fatal; orphaned files are cleaned up by IngestionStagingMaintenanceSource
+            return
 
         document.update_status(DocumentStatus.EXTRACTING)
         await session.commit()
@@ -177,13 +198,14 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             )
 
             # Extract text using TextExtractor
-            extractor = TextExtractor()
+            extractor = TextExtractor(config_manager=get_config_manager())
 
             # Determine if OCR should be used based on ocr_mode.
-            # "text_only" → no OCR; all other modes (including "fallback") let the
-            # extractor decide per file type.  "fallback" must also be forwarded via
-            # progress_context so the PDF path can try fast extraction first.
-            use_ocr = ocr_mode != "text_only" if ocr_mode else True
+            # "never" and "text_only" disable OCR entirely; all other modes
+            # (including "fallback") let the extractor decide per file type.
+            # "fallback" must also be forwarded via progress_context so the
+            # PDF path can try fast extraction first.
+            use_ocr = ocr_mode not in {"text_only", "never"} if ocr_mode else True
             progress_ctx = {"ocr_mode": ocr_mode} if ocr_mode else None
 
             extraction_result = await extractor.extract_text(
@@ -214,12 +236,11 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             document.extraction_confidence = extraction_metadata.get("confidence")
             document.extraction_duration = extraction_metadata.get("duration")
             document.extraction_metadata = extraction_metadata.get("details")
-
-            # Update status to EMBEDDING
-            document.update_status(DocumentStatus.EMBEDDING)
             await session.commit()
 
-            # Enqueue INGESTION_EMBED job for next stage
+            # Enqueue INGESTION_EMBED job for next stage.
+            # Commit EMBEDDING status only after enqueue succeeds to avoid a window
+            # where the document is EMBEDDING with no job in the queue.
             queue = await get_queue_backend()
             await enqueue_job(
                 queue,
@@ -233,8 +254,24 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 visibility_timeout=300,
             )
 
-            # Clean up staged file now that extraction succeeded
-            await staging_service.delete_staged_file(staging_key)
+            document.update_status(DocumentStatus.EMBEDDING)
+            await session.commit()
+
+            # Clean up staged file now that extraction succeeded.
+            # Failure here is non-fatal — orphaned files are cleaned by
+            # IngestionStagingMaintenanceSource.
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to delete staged file after successful OCR (non-fatal, orphaned files cleaned by maintenance job)",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "staging_key": staging_key,
+                        "error": str(cleanup_err),
+                    },
+                )
 
             logger.info(
                 "OCR job completed, enqueued embedding job",
@@ -254,7 +291,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                     "error": str(e),
                 },
             )
-            document.mark_error(f"File staging failed: {e}")
+            document.mark_error(f"{_ERR_FILE_STAGING} {e}")
             await session.commit()
             raise
 
@@ -294,8 +331,6 @@ async def _handle_embed_job(job) -> None:
 
     from .core.config import get_settings_instance
     from .core.database import get_async_session_local
-    from .core.queue_backend import get_queue_backend
-    from .core.workload_routing import WorkloadType, enqueue_job
     from .models.document import Document, DocumentStatus
     from .services.document_service import DocumentService
 
@@ -325,17 +360,53 @@ async def _handle_embed_job(job) -> None:
         document = result.scalar_one_or_none()
 
         if not document:
-            raise ValueError(f"Document not found: {document_id}")
+            # Document was deleted after job was enqueued — permanent failure, no retry.
+            logger.error(
+                "Document not found for embed job, failing permanently",
+                extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
+
+        # Check KB existence before doing any embedding work — discard without retry if gone.
+        from .models.knowledge_base import KnowledgeBase
+
+        kb = await session.get(KnowledgeBase, knowledge_base_id)
+        if kb is None:
+            logger.info(
+                "Knowledge base deleted, discarding embed job without retry",
+                extra={"job_id": job.id, "document_id": document_id, "knowledge_base_id": knowledge_base_id},
+            )
+            return
 
         try:
+            # Set EMBEDDING status before processing so a crash mid-embed leaves
+            # the document in a diagnosable state rather than the previous status.
+            document.update_status(DocumentStatus.EMBEDDING)
+            await session.commit()
+
             # Process chunks and embeddings using DocumentService
             doc_service = DocumentService(session)
-            word_count, char_count, chunk_count = await doc_service.process_and_update_chunks(
-                knowledge_base_id,
-                document,
-                document.title,
-                document.content,
-            )
+            try:
+                word_count, char_count, chunk_count = await doc_service.process_and_update_chunks(
+                    knowledge_base_id,
+                    document,
+                    document.title,  # type: ignore[arg-type]  # SQLAlchemy Column resolves at runtime
+                    document.content,  # type: ignore[arg-type]
+                )
+            except ValueError as kb_err:
+                # KB was deleted between OCR and embed stages — permanent failure, no retry.
+                logger.error(
+                    "Knowledge base not found for embed job, failing permanently",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "error": str(kb_err),
+                    },
+                )
+                document.mark_error(f"Knowledge base not found: {kb_err}")
+                await session.commit()
+                return
 
             logger.info(
                 "Embedding generation complete",
@@ -348,46 +419,8 @@ async def _handle_embed_job(job) -> None:
                 },
             )
 
-            # Check if profiling is enabled
             settings = get_settings_instance()
-            profiling_enabled = settings.enable_document_profiling
-
-            if profiling_enabled:
-                # Update status to PROFILING and enqueue profiling job
-                document.update_status(DocumentStatus.PROFILING)
-                await session.commit()
-
-                queue = await get_queue_backend()
-                await enqueue_job(
-                    queue,
-                    WorkloadType.PROFILING,
-                    payload={
-                        "document_id": document_id,
-                        "action": "profile_document",
-                    },
-                    max_attempts=5,
-                    visibility_timeout=600,
-                )
-
-                logger.info(
-                    "Embedding job completed, enqueued profiling job",
-                    extra={
-                        "job_id": job.id,
-                        "document_id": document_id,
-                    },
-                )
-            else:
-                # Profiling disabled - set status to PROCESSED
-                document.update_status(DocumentStatus.PROCESSED)
-                await session.commit()
-
-                logger.info(
-                    "Embedding job completed, document ready (profiling disabled)",
-                    extra={
-                        "job_id": job.id,
-                        "document_id": document_id,
-                    },
-                )
+            await _finalize_embed_job(job, session, document, document_id, settings.enable_document_profiling)
 
         except Exception as e:
             # Check if we've exhausted retries
@@ -405,6 +438,38 @@ async def _handle_embed_job(job) -> None:
                 document.mark_error(f"Embedding generation failed after {job.attempts} attempts: {e}")
                 await session.commit()
             raise
+
+
+async def _finalize_embed_job(job, session, document, document_id: str, profiling_enabled: bool) -> None:
+    """Enqueue a profiling job or mark the document PROCESSED after embedding."""
+    from .core.queue_backend import get_queue_backend
+    from .core.workload_routing import WorkloadType, enqueue_job
+    from .models.document import DocumentStatus
+
+    if profiling_enabled:
+        queue = await get_queue_backend()
+        await enqueue_job(
+            queue,
+            WorkloadType.PROFILING,
+            payload={"document_id": document_id, "action": "profile_document"},
+            max_attempts=5,
+            visibility_timeout=600,
+        )
+        # Commit PROFILING status only after enqueue succeeds to avoid a window
+        # where the document is PROFILING with no job in the queue.
+        document.update_status(DocumentStatus.PROFILING)
+        await session.commit()
+        logger.info(
+            "Embedding job completed, enqueued profiling job",
+            extra={"job_id": job.id, "document_id": document_id},
+        )
+    else:
+        document.update_status(DocumentStatus.PROCESSED)
+        await session.commit()
+        logger.info(
+            "Embedding job completed, document ready (profiling disabled)",
+            extra={"job_id": job.id, "document_id": document_id},
+        )
 
 
 async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
@@ -464,7 +529,7 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
             )
             return
 
-        if rec.status != PluginExecutionStatus.PENDING:
+        if rec.status != PluginExecutionStatus.PENDING:  # type: ignore[union-attr]
             logger.info(
                 "Plugin execution no longer PENDING, skipping",
                 extra={
@@ -478,9 +543,71 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
         # Mark as RUNNING
         from datetime import UTC, datetime
 
-        rec.status = PluginExecutionStatus.RUNNING
-        rec.started_at = datetime.now(UTC)
+        rec.status = PluginExecutionStatus.RUNNING  # type: ignore[assignment]  # SQLAlchemy Column
+        rec.started_at = datetime.now(UTC)  # type: ignore[assignment]
         await session.commit()
+
+        import asyncio
+
+        async def _heartbeat_loop(execution_id: str, interval: int = 60) -> None:
+            """Touch the PluginExecution row every `interval` seconds so updated_at
+            advances while the plugin is running. cleanup_stale_executions uses
+            updated_at as the stale cutoff, so a healthy worker is never marked stale.
+            Also extends the queue job's visibility timeout so a competing consumer
+            cannot re-deliver the job while this worker is still alive.
+            Uses a separate session to commit independently of the main execution session.
+            """
+            heartbeat_session_local = get_async_session_local()
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    try:
+                        async with heartbeat_session_local() as hb_session:
+                            hb_result = await hb_session.execute(
+                                select(PluginExecution).where(PluginExecution.id == execution_id)
+                            )
+                            hb_rec = hb_result.scalar_one_or_none()
+                            if hb_rec and hb_rec.status == PluginExecutionStatus.RUNNING:  # type: ignore[union-attr]
+                                # Touch updated_at via onupdate trigger
+                                hb_rec.updated_at = datetime.now(UTC)
+                                await hb_session.commit()
+                                logger.debug(
+                                    "Plugin execution heartbeat",
+                                    extra={"execution_id": execution_id},
+                                )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as hb_err:
+                        # Non-fatal: log and keep looping
+                        logger.warning(
+                            "Plugin execution heartbeat failed (non-fatal)",
+                            extra={"execution_id": execution_id, "error": str(hb_err)},
+                        )
+
+                    # Extend queue visibility so a competing consumer cannot
+                    # re-deliver this job while we are still running.
+                    try:
+                        from .core.queue_backend import get_queue_backend
+
+                        queue = await get_queue_backend()
+                        extended = await queue.extend_visibility(job, additional_seconds=interval * 2)
+                        if not extended:
+                            logger.warning(
+                                "extend_visibility returned False — job may have been re-delivered",
+                                extra={"execution_id": execution_id, "job_id": job.id},
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ev_err:
+                        # Non-fatal: heartbeat DB touch already succeeded
+                        logger.warning(
+                            "extend_visibility failed (non-fatal)",
+                            extra={"execution_id": execution_id, "job_id": job.id, "error": str(ev_err)},
+                        )
+            except asyncio.CancelledError:
+                pass
+
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(execution_id))
 
         try:
             from .services.plugin_execution_runner import execute_plugin_record
@@ -515,9 +642,9 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
                     rec.plugin_name,
                     rec.id,
                 )
-                rec.status = PluginExecutionStatus.PENDING
-                rec.started_at = None
-                rec.error = f"deferred:{err}"
+                rec.status = PluginExecutionStatus.PENDING  # type: ignore[assignment]
+                rec.started_at = None  # type: ignore[assignment]
+                rec.error = f"deferred:{err}"  # type: ignore[assignment]
                 await session.commit()
                 raise
 
@@ -527,9 +654,9 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
                 rec.plugin_name,
                 rec.id,
             )
-            rec.status = PluginExecutionStatus.FAILED
-            rec.error = str(he.detail)
-            rec.completed_at = datetime.now(UTC)
+            rec.status = PluginExecutionStatus.FAILED  # type: ignore[assignment]
+            rec.error = str(he.detail)  # type: ignore[assignment]
+            rec.completed_at = datetime.now(UTC)  # type: ignore[assignment]
             await session.commit()
 
         except Exception as e:
@@ -542,15 +669,22 @@ async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
             # pick up the record again (the race guard checks for PENDING).
             # Only mark FAILED on the final attempt.
             if job.attempts < job.max_attempts:
-                rec.status = PluginExecutionStatus.PENDING
-                rec.started_at = None
-                rec.error = str(e)
+                rec.status = PluginExecutionStatus.PENDING  # type: ignore[assignment]
+                rec.started_at = None  # type: ignore[assignment]
+                rec.error = str(e)  # type: ignore[assignment]
             else:
-                rec.status = PluginExecutionStatus.FAILED
-                rec.error = str(e)
-                rec.completed_at = datetime.now(UTC)
+                rec.status = PluginExecutionStatus.FAILED  # type: ignore[assignment]
+                rec.error = str(e)  # type: ignore[assignment]
+                rec.completed_at = datetime.now(UTC)  # type: ignore[assignment]
             await session.commit()
             raise
+
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
@@ -650,7 +784,7 @@ async def _handle_experience_execution_job(job) -> None:
             await _fail_queued_run(session, run_id, "user_not_found")
             return
 
-        if not user.is_active:
+        if not user.is_active:  # type: ignore[truthy-bool]
             logger.debug(
                 "User inactive, skipping experience execution",
                 extra={"job_id": job.id, "user_id": user_id},
@@ -893,7 +1027,7 @@ async def run_worker(
         await init_db()
         logger.info("Database initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize database: {e}", exc_info=True)
+        logger.error("Failed to initialize database: %s", e, exc_info=True)
         sys.exit(1)
 
     # Get queue backend (shared by all workers)
@@ -901,7 +1035,7 @@ async def run_worker(
         backend = await get_queue_backend()
         logger.info("Queue backend initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize queue backend: {e}", exc_info=True)
+        logger.error("Failed to initialize queue backend: %s", e, exc_info=True)
         sys.exit(1)
 
     # Start a lightweight log-maintenance loop so that worker processes
@@ -943,9 +1077,9 @@ async def run_worker(
 
             def _on_done(t: asyncio.Task, worker_id: str = wid) -> None:
                 if t.cancelled():
-                    logger.warning(f"Worker {worker_id} was cancelled")
+                    logger.warning("Worker %s was cancelled", worker_id)
                 elif exc := t.exception():
-                    logger.error(f"Worker {worker_id} failed with error: {exc}", exc_info=exc)
+                    logger.error("Worker %s failed with error: %s", worker_id, exc, exc_info=exc)
 
             task.add_done_callback(_on_done)
             tasks.append(task)
@@ -954,7 +1088,7 @@ async def run_worker(
     except KeyboardInterrupt:
         logger.info("Workers interrupted by user")
     except Exception as e:
-        logger.error(f"Worker orchestration error: {e}", exc_info=True)
+        logger.error("Worker orchestration error: %s", e, exc_info=True)
         sys.exit(1)
     finally:
         if not log_maintenance_task.done():
@@ -1044,7 +1178,7 @@ Valid workload types:
             workload_types = set(WorkloadType)
             logger.info("No workload types specified, consuming all types")
     except ValueError as e:
-        logger.error(f"Invalid workload types: {e}")
+        logger.error("Invalid workload types: %s", e)
         sys.exit(1)
 
     # Run worker
@@ -1058,7 +1192,7 @@ Valid workload types:
             )
         )
     except Exception as e:
-        logger.error(f"Worker failed: {e}", exc_info=True)
+        logger.error("Worker failed: %s", e, exc_info=True)
         sys.exit(1)
 
 

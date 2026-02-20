@@ -154,10 +154,9 @@ class Settings(BaseSettings):
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
-    # File staging configuration (for document ingestion pipeline)
-    file_staging_ttl: int = Field(
-        3600, alias="SHU_FILE_STAGING_TTL"
-    )  # TTL in seconds for staged files (default: 1 hour)
+    # Disk-based ingestion staging directory
+    ingestion_staging_dir: str = Field("./data/ingestion", alias="SHU_INGESTION_STAGING_DIR")
+    ingestion_staging_max_age_hours: int = Field(24, alias="SHU_INGESTION_STAGING_MAX_AGE_HOURS")
 
     # API Rate Limiting (HTTP request throttling, not LLM-specific)
     enable_api_rate_limiting: bool = Field(False, alias="SHU_ENABLE_API_RATE_LIMITING")
@@ -296,6 +295,18 @@ class Settings(BaseSettings):
         except Exception:
             return v
 
+    @field_validator("ingestion_staging_dir", mode="before")
+    @classmethod
+    def _resolve_ingestion_staging_dir(cls, v: str) -> str:
+        try:
+            p = Path(v)
+            if p.is_absolute():
+                return str(p)
+            root = cls._repo_root_from_this_file()
+            return str((root / p).resolve())
+        except Exception:
+            return v
+
     @field_validator("plugins_root", mode="before")
     @classmethod
     def _resolve_plugins_root(cls, v: str) -> str:
@@ -372,8 +383,10 @@ class Settings(BaseSettings):
     plugins_scheduler_enabled: bool = Field(True, alias="SHU_PLUGINS_SCHEDULER_ENABLED")
     plugins_scheduler_tick_seconds: int = Field(60, alias="SHU_PLUGINS_SCHEDULER_TICK_SECONDS")
     plugins_scheduler_batch_limit: int = Field(10, alias="SHU_PLUGINS_SCHEDULER_BATCH_LIMIT")
-    # Mark RUNNING executions older than this many seconds as stale (0 disables cleanup)
-    plugins_scheduler_running_timeout_seconds: int = Field(3600, alias="SHU_PLUGINS_SCHEDULER_RUNNING_TIMEOUT_SECONDS")
+    # Mark RUNNING executions with no heartbeat for longer than this many seconds as stale (0 disables cleanup).
+    # The stale cutoff is based on updated_at (bumped every 60 s by the worker heartbeat), so a healthy
+    # long-running plugin is never incorrectly marked stale.
+    plugins_scheduler_running_timeout_seconds: int = Field(300, alias="SHU_PLUGINS_SCHEDULER_RUNNING_TIMEOUT_SECONDS")
 
     plugins_scheduler_retry_backoff_seconds: int = Field(5, alias="SHU_PLUGINS_SCHEDULER_RETRY_BACKOFF_SECONDS")
 
@@ -447,6 +460,15 @@ class Settings(BaseSettings):
         default=1,
         alias="SHU_OCR_MAX_CONCURRENT_JOBS",
         description="Max concurrent OCR jobs. OCR is CPU/memory-intensive; limit to avoid OOM.",
+    )
+    ocr_render_scale: float = Field(
+        default=2.0,
+        alias="SHU_OCR_RENDER_SCALE",
+        description=(
+            "Scale factor for PDF page rendering before OCR (fitz.Matrix scale). "
+            "Higher values improve OCR accuracy at the cost of more memory per page. "
+            "Default 2.0 renders at 2x resolution."
+        ),
     )
     # Note: No page limits - OCR processes all pages in document
 
@@ -1023,8 +1045,6 @@ class ConfigurationManager:
         if model_config and model_config.get("full_doc_token_cap") is not None:
             return int(model_config["full_doc_token_cap"])
         return self.settings.rag_full_doc_token_cap_default
-
-
 
 
 # Global configuration manager instance (for backward compatibility)

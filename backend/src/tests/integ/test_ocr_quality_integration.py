@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from integ.base_integration_test import BaseIntegrationTestSuite
+from shu.core.config import get_config_manager
 from shu.processors.text_extractor import TextExtractor
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def _analyze_similarity(text_a: str, text_b: str) -> dict[str, Any]:
 
 async def _extract_text_with_ocr(path: Path) -> dict[str, Any]:
     """Extract text from a PDF file using OCR."""
-    extractor = TextExtractor()
+    extractor = TextExtractor(config_manager=get_config_manager())
     with open(path, "rb") as f:
         content = f.read()
     result = await extractor.extract_text(str(path), file_content=content, use_ocr=True)
@@ -69,7 +70,7 @@ async def _extract_text_with_ocr(path: Path) -> dict[str, Any]:
 
 async def _extract_embedded_text(path: Path) -> str:
     """Extract embedded text layer from a PDF (no OCR)."""
-    extractor = TextExtractor()
+    extractor = TextExtractor(config_manager=get_config_manager())
     with open(path, "rb") as f:
         content = f.read()
     result = await extractor.extract_text(str(path), file_content=content, use_ocr=False)

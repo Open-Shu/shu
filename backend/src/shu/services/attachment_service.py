@@ -1,6 +1,7 @@
 """AttachmentService handles chat attachments: saving files, extracting text, and persistence."""
 
 import datetime as dt
+import logging
 import mimetypes
 import uuid
 from pathlib import Path
@@ -9,9 +10,11 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.config import get_settings_instance
+from ..core.config import get_config_manager, get_settings_instance
 from ..models.attachment import Attachment, MessageAttachment
-from ..processors.text_extractor import TextExtractor
+from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fastapi import UploadFile
@@ -28,7 +31,7 @@ class AttachmentService:
         Path(self.settings.chat_attachment_storage_dir).mkdir(parents=True, exist_ok=True)
 
     async def _fast_extract_text(self, storage_path: Path, retry: bool = True) -> tuple[str, dict[str, Any]]:
-        extractor = TextExtractor()
+        extractor = TextExtractor(config_manager=get_config_manager())
         try:
             extraction = await extractor.extract_text(
                 str(storage_path), file_content=None, use_ocr=False, kb_config=None
@@ -38,7 +41,25 @@ class AttachmentService:
             if not meta.get("method"):
                 meta["method"] = "fast_extraction"
             return text, meta
+        except UnsupportedFileFormatError:
+            # Not a transient error — retrying won't help.
+            logger.debug("Unsupported format for fast extraction: %s", storage_path.suffix)
+            return "", {
+                "method": "fast_extraction",
+                "engine": "unknown",
+                "confidence": None,
+                "duration": None,
+                "details": {"error": f"unsupported format: {storage_path.suffix}"},
+            }
+        except (ImportError, TypeError, AttributeError):
+            # Systemic errors (missing dependencies, bad config) should not be masked.
+            raise
         except Exception as ex:
+            logger.warning(
+                "Fast text extraction failed for %s: %s",
+                storage_path.suffix,
+                ex,
+            )
             if retry:
                 return await self._fast_extract_text(storage_path, retry=False)
             return "", {

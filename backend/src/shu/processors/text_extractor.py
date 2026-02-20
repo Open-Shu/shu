@@ -13,10 +13,22 @@ from typing import Any, ClassVar
 
 import easyocr
 
-from ..core.config import ConfigurationManager, get_config_manager
+from ..core.config import ConfigurationManager
 from ..core.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Common English words used for OCR text quality scoring.
+# fmt: off
+_COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
+    "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
+    "with", "by", "a", "an", "is", "are", "was", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "this", "that", "these", "those",
+    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her",
+    "us", "them",
+})
+# fmt: on
 
 
 class UnsupportedFileFormatError(Exception):
@@ -48,31 +60,36 @@ class TextExtractor:
     _job_cancellation_events: ClassVar[dict[str, threading.Event]] = {}  # job_id -> threading.Event
     _cancellation_lock = threading.Lock()
 
-    def __init__(self, config_manager: ConfigurationManager = None) -> None:
-        self.config_manager = config_manager or get_config_manager()
+    def __init__(self, config_manager: ConfigurationManager) -> None:
+        self.config_manager = config_manager
         self.supported_formats = {
             ".txt": self._extract_text_plain,
             ".md": self._extract_text_plain,
             ".csv": self._extract_text_plain,
             ".py": self._extract_text_plain,
             ".js": self._extract_text_plain,
-            ".pdf": self._extract_text_pdf,
             ".docx": self._extract_text_docx,
             ".doc": self._extract_text_doc,
             ".rtf": self._extract_text_rtf,
             ".html": self._extract_text_html,
             ".htm": self._extract_text_html,
-            ".email": self._extract_text_email,  # Gmail and other email messages
+            ".email": self._extract_text_email,  # Gmail plugin pseudo-extension
+            ".eml": self._extract_text_email,  # Standard RFC 822 email files
         }
 
-        # File types that support direct extraction
+        # File types that support direct extraction.
+        # Note: .pdf is intentionally absent from supported_formats above because
+        # _extract_text_direct routes PDFs to _extract_text_pdf_with_progress, which
+        # branches on ocr_mode (fast text extraction, OCR, or fallback with threshold).
+        # .email is included here even though it only appears in supported_formats
+        # (Gmail plugin messages with an .email pseudo-extension).
         self.supported_extensions = {
             ".pdf",
             ".docx",
             ".doc",
             ".rtf",
-            ".xlsx",
-            ".pptx",
+            ".email",
+            ".eml",
             ".txt",
             ".md",
             ".html",
@@ -84,6 +101,10 @@ class TextExtractor:
 
         # Ensure job tracking attribute always exists to avoid AttributeError in logs
         self._current_sync_job_id = None
+
+        # Populated by OCR processing with the actual engine used ("easyocr" or
+        # "tesseract").  Read by extract_text() for metadata.
+        self._last_ocr_engine: str | None = None
 
     @classmethod
     def _get_ocr_lock(cls) -> asyncio.Lock:
@@ -297,16 +318,15 @@ class TextExtractor:
                 extra={"file_path": file_path, "fallback_extension": file_ext},
             )
 
-        if file_ext not in self.supported_formats:
-            # Log as warning instead of error for unsupported formats
+        if file_ext not in self.supported_extensions:
             logger.warning(
-                f"Unsupported file format for text extraction: {file_ext}",
+                "Unsupported file format for text extraction: %s",
+                file_ext,
                 extra={
                     "file_path": file_path,
-                    "supported_formats": list(self.supported_formats.keys()),
+                    "supported_extensions": sorted(self.supported_extensions),
                 },
             )
-            # Raise a specific exception that can be caught and handled gracefully
             raise UnsupportedFileFormatError(f"Unsupported file format: {file_ext}")
 
         # Use direct text extraction with OCR configuration
@@ -316,7 +336,9 @@ class TextExtractor:
         )
 
         try:
-            text, ocr_actually_used = await self._extract_text_direct(file_path, file_content, progress_context, use_ocr)
+            text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(
+                file_path, file_content, progress_context, use_ocr, file_ext
+            )
             duration = time.time() - start_time
 
             # Determine extraction method and engine based on what actually happened.
@@ -328,8 +350,8 @@ class TextExtractor:
 
             if ocr_actually_used:
                 extraction_method = "ocr"
-                extraction_engine = "easyocr"  # Primary OCR engine (EasyOCR → Tesseract fallback)
-                extraction_confidence = 0.8  # Default confidence for OCR
+                extraction_engine = self._last_ocr_engine or "unknown"
+                extraction_confidence = ocr_confidence
                 actual_method = "ocr"
             elif file_ext == ".pdf":
                 extraction_method = "pdf_text"
@@ -383,12 +405,20 @@ class TextExtractor:
         file_content: bytes | None = None,
         progress_context: dict[str, Any] | None = None,
         use_ocr: bool = True,
-    ) -> tuple[str, bool]:
+        file_ext: str | None = None,
+    ) -> tuple[str, bool, float | None]:
         """Extract text directly in-memory with progress updates.
 
+        Args:
+            file_ext: Pre-resolved file extension (with leading dot). When provided,
+                skips re-deriving it from file_path. This is important for files
+                whose file_path has no extension (e.g. Google Docs titles) where
+                the caller applied a fallback.
+
         Returns:
-            (text, ocr_actually_used) — callers should use the bool for metadata
-            rather than inferring from the input use_ocr flag.
+            (text, ocr_actually_used, confidence) — callers should use the bool for metadata
+            rather than inferring from the input use_ocr flag. confidence is None for non-OCR paths.
+
         """
         try:
             # Set up progress callback if context is provided
@@ -396,7 +426,8 @@ class TextExtractor:
             if progress_context:
                 progress_callback = self._create_progress_callback(progress_context, use_ocr)
 
-            file_ext = Path(file_path).suffix.lower()
+            if not file_ext:
+                file_ext = Path(file_path).suffix.lower()
 
             # PDFs: always use the progress-aware path so OCR/use_ocr is honored even without a progress callback
             if file_ext == ".pdf":
@@ -406,13 +437,14 @@ class TextExtractor:
                     ocr_mode = progress_context["ocr_mode"]
                 # Use a no-op progress callback when none provided
                 cb = progress_callback if progress_callback else None
-                raw_text, ocr_actually_used = await self._extract_text_pdf_with_progress(
+                raw_text, ocr_actually_used, ocr_confidence = await self._extract_text_pdf_with_progress(
                     file_path, file_content, cb, use_ocr, ocr_mode
                 )
             else:
                 extractor = self.supported_formats[file_ext]
                 raw_text = await extractor(file_path, file_content)
                 ocr_actually_used = False
+                ocr_confidence = None
 
             # Clean the extracted text to remove problematic characters
             cleaned_text = self._clean_text(raw_text)
@@ -427,7 +459,7 @@ class TextExtractor:
                 },
             )
 
-            return cleaned_text, ocr_actually_used
+            return cleaned_text, ocr_actually_used, ocr_confidence
 
         except Exception as e:
             logger.error("Failed to extract text", extra={"file_path": file_path, "error": str(e)})
@@ -584,12 +616,14 @@ class TextExtractor:
         progress_callback=None,
         use_ocr: bool = True,
         ocr_mode: str = "auto",
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, float | None]:
         """Extract text from PDF with page-by-page progress updates.
 
         Returns:
-            (text, ocr_actually_used) — the bool is True only when OCR ran,
-            False when fast text extraction succeeded.
+            (text, ocr_actually_used, confidence) — ocr_actually_used is True only when
+            OCR ran. confidence is the real per-word average from EasyOCR, a text quality
+            heuristic when Tesseract ran, or None when fast text extraction succeeded.
+
         """
         logger.debug(
             "Extracting PDF text with progress updates",
@@ -609,7 +643,7 @@ class TextExtractor:
                         "Fast extraction successful, skipping OCR",
                         extra={"file_path": file_path, "text_length": len(fast_text.strip())},
                     )
-                    return fast_text, False
+                    return fast_text, False, None
                 logger.info(
                     "Fast extraction yielded insufficient text, falling back to OCR",
                     extra={
@@ -630,10 +664,11 @@ class TextExtractor:
         if use_ocr:
             # OCR is enabled - use OCR directly
             logger.info("OCR enabled for PDF, using OCR processing", extra={"file_path": file_path})
-            return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback), True
+            text, confidence = await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
+            return text, True, confidence
         # OCR is disabled - try text extraction only
         logger.info("OCR disabled for PDF, using text extraction only", extra={"file_path": file_path})
-        return await self._extract_pdf_text_only(file_path, file_content, progress_callback), False
+        return await self._extract_pdf_text_only(file_path, file_content, progress_callback), False, None
 
     async def _extract_pdf_text_only(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
@@ -684,7 +719,7 @@ class TextExtractor:
                 return ""
 
         # Run in executor to avoid blocking
-        result = await asyncio.get_event_loop().run_in_executor(None, _extract_text_only)
+        result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
 
         if not result.strip():
             logger.warning("No text found in PDF with text extraction only", extra={"file_path": file_path})
@@ -733,7 +768,7 @@ class TextExtractor:
                 return ""
 
         # Run in executor to avoid blocking
-        result = await asyncio.get_event_loop().run_in_executor(None, _extract_text_only)
+        result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
 
         if not result.strip():
             logger.warning("No text found in PDF with fast extraction only", extra={"file_path": file_path})
@@ -741,23 +776,19 @@ class TextExtractor:
 
         return result
 
-    async def _try_ocr_fallback(self, file_path: str, file_content: bytes | None = None, progress_callback=None) -> str:
-        """Try OCR as fallback when regular PDF extraction fails."""
-        logger.info("OCR fallback needed for scanned PDF", extra={"file_path": file_path})
-
-        try:
-            return await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
-        except Exception as e:
-            logger.error(f"OCR fallback failed: {e}", extra={"file_path": file_path})
-            return ""
-
     async def _extract_pdf_ocr_direct(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
-    ) -> str:
+    ) -> tuple[str, float]:
         """Extract PDF text using direct in-process OCR with proper metadata tracking.
 
-        Acquires the class-level OCR semaphore so that at most
-        ``SHU_OCR_MAX_CONCURRENT_JOBS`` OCR jobs run in parallel.
+        Acquires the class-level OCR semaphore before opening the PDF so that at most
+        ``SHU_OCR_MAX_CONCURRENT_JOBS`` jobs hold a fitz document in memory simultaneously.
+        This bounds peak RSS to the semaphore limit, not the worker concurrency limit.
+
+        Returns:
+            (text, confidence) — confidence is the real per-word average from EasyOCR,
+            or a text quality heuristic from ``_calculate_text_quality`` when Tesseract ran.
+
         """
         sem = self.get_ocr_semaphore()
         logger.debug(
@@ -769,8 +800,8 @@ class TextExtractor:
 
     async def _extract_pdf_ocr_direct_inner(
         self, file_path: str, file_content: bytes | None = None, progress_callback=None
-    ) -> str:
-        """Inner OCR processing (called under semaphore)."""
+    ) -> tuple[str, float]:
+        """Inner OCR processing (called under semaphore, which is acquired before fitz.open)."""
         start_time = time.time()
 
         try:
@@ -778,7 +809,8 @@ class TextExtractor:
 
             import fitz
 
-            # Open PDF
+            # Open PDF — semaphore is already held by the caller, so at most
+            # SHU_OCR_MAX_CONCURRENT_JOBS fitz documents are open simultaneously.
             doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
             total_pages = len(doc)
@@ -790,28 +822,31 @@ class TextExtractor:
             # Process with OCR (EasyOCR with Tesseract fallback)
             try:
                 text, method, confidence = await self._process_pdf_with_ocr_direct(doc, file_path, progress_callback)
+                # Record the actual engine so extract_text() can report it accurately.
+                engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
+                self._last_ocr_engine = engine_map.get(method, method)
                 if text.strip():
                     processing_time = time.time() - start_time
                     logger.info(
                         "OCR processing successful",
                         extra={
                             "file_path": file_path,
-                            "method": method,
+                            "engine": self._last_ocr_engine,
                             "confidence": confidence,
                             "processing_time": processing_time,
                             "pages": total_pages,
                         },
                     )
                     doc.close()
-                    return text
+                    return text, confidence
             except Exception as e:
                 logger.error(f"OCR processing failed: {e}", extra={"file_path": file_path})
                 doc.close()
-                return ""
+                return "", 0.0
 
             doc.close()
             logger.error("All direct OCR methods failed", extra={"file_path": file_path})
-            return ""
+            return "", 0.0
 
         except Exception as e:
             logger.error(f"Direct OCR processing failed: {e}", extra={"file_path": file_path})
@@ -827,13 +862,13 @@ class TextExtractor:
                         "PDF open failed; fell back to plain-text read for OCR test fixture",
                         extra={"file_path": file_path},
                     )
-                    return text
+                    return text, self._calculate_text_quality(text)
             except Exception as fallback_err:
                 logger.warning(
                     f"Plain-text fallback after OCR failure also failed: {fallback_err}",
                     extra={"file_path": file_path},
                 )
-            return ""
+            return "", 0.0
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
     async def _process_pdf_with_ocr_direct(self, doc, file_path: str, progress_callback=None):  # noqa: PLR0912, PLR0915
@@ -882,7 +917,8 @@ class TextExtractor:
                 progress_callback(page_num, total_pages)
 
             # Convert page to image
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better OCR
+            render_scale = self.config_manager.settings.ocr_render_scale
+            pix = page.get_pixmap(matrix=fitz.Matrix(render_scale, render_scale))
 
             # Convert to numpy array for EasyOCR
             import io
@@ -988,7 +1024,7 @@ class TextExtractor:
             # Wait for OCR to complete (NON-BLOCKING with timeout)
             try:
                 await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, ocr_thread.join),
+                    asyncio.get_running_loop().run_in_executor(None, ocr_thread.join),
                     timeout=10.0,  # 10 second timeout for thread join
                 )
             except TimeoutError:
@@ -998,6 +1034,7 @@ class TextExtractor:
                 )
 
             # Process results
+            page_text = ""
             try:
                 if ocr_error:
                     raise ocr_error
@@ -1005,7 +1042,6 @@ class TextExtractor:
                 result = ocr_result
 
                 if result:
-                    page_text = ""
                     page_confidences = []
 
                     # Handle EasyOCR result format
@@ -1078,7 +1114,8 @@ class TextExtractor:
             page = doc[page_num]
 
             # Convert page to image
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better OCR
+            render_scale = self.config_manager.settings.ocr_render_scale
+            pix = page.get_pixmap(matrix=fitz.Matrix(render_scale, render_scale))
             img_data = pix.tobytes("png")
 
             # Run Tesseract on page
@@ -1095,12 +1132,7 @@ class TextExtractor:
                 logger.warning(f"Tesseract failed on page {page_num + 1}: {e}")
                 continue
 
-        return text.strip(), "tesseract_direct", 0.8  # Tesseract doesn't provide confidence
-
-    def _extract_text_pdf_fallback(self, file_path: str, file_content: bytes | None = None) -> str:
-        """Fallback PDF extraction without progress (original method)."""
-        # Use the original PDF extraction logic as fallback
-        return asyncio.run(self._extract_text_pdf(file_path, file_content))
+        return text.strip(), "tesseract_direct", self._calculate_text_quality(text.strip())
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text by removing problematic characters."""
@@ -1134,197 +1166,7 @@ class TextExtractor:
             with open(file_path, encoding="utf-8", errors="ignore") as f:
                 return f.read()
 
-        return await asyncio.get_event_loop().run_in_executor(None, _read_file)
-
-    # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def _extract_text_pdf(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
-        """Extract text from PDF files using multiple methods including OCR for image-based PDFs."""
-        logger.debug("Extracting text from PDF", extra={"file_path": file_path})
-
-        def _try_pymupdf():
-            """Try PyMuPDF for PDF text extraction."""
-            try:
-                from io import BytesIO
-
-                import fitz
-
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
-
-                text = ""
-                for page_num in range(len(doc)):
-                    page = doc.load_page(page_num)
-                    page_text = page.get_text()
-                    if page_text.strip():
-                        text += page_text + "\n"
-
-                doc.close()
-                return text.strip() if text.strip() else None
-            except Exception as e:
-                logger.debug(f"PyMuPDF failed: {e}", extra={"file_path": file_path})
-                return None
-
-        def _try_pdfplumber():
-            """Try pdfplumber for PDF text extraction."""
-            try:
-                from io import BytesIO
-
-                import pdfplumber
-
-                if file_content:
-                    with pdfplumber.open(BytesIO(file_content)) as pdf:
-                        text = ""
-                        for page in pdf.pages:
-                            page_text = page.extract_text()
-                            if page_text and page_text.strip():
-                                text += page_text + "\n"
-                else:
-                    with pdfplumber.open(file_path) as pdf:
-                        text = ""
-                        for page in pdf.pages:
-                            page_text = page.extract_text()
-                            if page_text and page_text.strip():
-                                text += page_text + "\n"
-
-                return text.strip() if text.strip() else None
-            except Exception as e:
-                logger.debug(f"pdfplumber failed: {e}", extra={"file_path": file_path})
-                return None
-
-        def _try_pypdf2():
-            """Try PyPDF2 for PDF text extraction."""
-            try:
-                from io import BytesIO
-
-                from PyPDF2 import PdfReader
-
-                reader = PdfReader(BytesIO(file_content)) if file_content else PdfReader(file_path)
-
-                text = ""
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text and page_text.strip():
-                        text += page_text + "\n"
-
-                return text.strip() if text.strip() else None
-            except Exception as e:
-                logger.debug(f"PyPDF2 failed: {e}", extra={"file_path": file_path})
-                return None
-
-        def _try_ocr():
-            """Try OCR for PDFs where text is converted to images."""
-            try:
-                from io import BytesIO
-
-                import fitz
-                import pytesseract
-                from PIL import Image
-
-                logger.debug(f"Starting OCR extraction for {file_path}")
-
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
-
-                page_count = len(doc)
-                logger.debug(f"PDF has {page_count} pages for OCR processing", extra={"file_path": file_path})
-
-                text = ""
-                for page_num in range(page_count):
-                    # Check for job cancellation before processing each page
-                    if self._current_sync_job_id and self.is_job_cancelled(self._current_sync_job_id):
-                        logger.info(
-                            f"Legacy OCR cancelled for job {self._current_sync_job_id}, stopping at page {page_num + 1}"
-                        )
-                        break
-
-                    try:
-                        page = doc.load_page(page_num)
-
-                        # Convert page to image
-                        mat = fitz.Matrix(2, 2)  # 2x zoom for better OCR
-                        pix = page.get_pixmap(matrix=mat)
-                        img_data = pix.tobytes("png")
-
-                        # Convert to PIL Image
-                        img = Image.open(BytesIO(img_data))
-                        logger.debug(
-                            f"Converted page {page_num + 1} to image: {img.size}",
-                            extra={"file_path": file_path},
-                        )
-
-                        # Extract text using OCR
-                        page_text = pytesseract.image_to_string(img)
-                        if page_text.strip():
-                            text += page_text + "\n"
-                            logger.debug(
-                                f"OCR extracted {len(page_text.strip())} characters from page {page_num + 1}",
-                                extra={"file_path": file_path},
-                            )
-                        else:
-                            logger.debug(
-                                f"OCR found no text on page {page_num + 1}",
-                                extra={"file_path": file_path},
-                            )
-
-                    except Exception as page_error:
-                        logger.warning(
-                            f"OCR failed on page {page_num + 1}: {page_error}",
-                            extra={"file_path": file_path},
-                        )
-                        continue
-
-                doc.close()
-
-                final_text = text.strip() if text.strip() else None
-                if final_text:
-                    logger.debug(
-                        f"OCR completed successfully, extracted {len(final_text)} total characters",
-                        extra={"file_path": file_path},
-                    )
-                else:
-                    logger.warning(
-                        "OCR completed but extracted no text from any pages",
-                        extra={"file_path": file_path},
-                    )
-
-                return final_text
-
-            except Exception as e:
-                logger.warning(f"OCR failed with error: {e}", extra={"file_path": file_path})
-                import traceback
-
-                logger.debug(f"OCR error traceback: {traceback.format_exc()}", extra={"file_path": file_path})
-                return None
-
-        # Try each method in order
-        # Always run both text extraction and OCR, then choose the best result
-        text_methods = [
-            ("PyMuPDF", _try_pymupdf),
-            ("pdfplumber", _try_pdfplumber),
-            ("PyPDF2", _try_pypdf2),
-        ]
-
-        extraction_errors = []
-
-        for method_name, method_func in text_methods:
-            try:
-                logger.debug(f"Attempting PDF extraction with {method_name}", extra={"file_path": file_path})
-                result = await asyncio.get_event_loop().run_in_executor(None, method_func)
-                if result:
-                    logger.info(
-                        f"Successfully extracted text using {method_name} ({len(result)} characters)",
-                        extra={"file_path": file_path},
-                    )
-                    return result
-                logger.debug(f"{method_name} returned empty text", extra={"file_path": file_path})
-                extraction_errors.append(f"{method_name}: returned empty text")
-            except Exception as e:
-                logger.warning(f"{method_name} failed: {e}", extra={"file_path": file_path})
-                extraction_errors.append(f"{method_name}: {e!s}")
-                continue
-
-        # If all methods fail, provide detailed error information
-        error_summary = "; ".join(extraction_errors)
-        logger.error(f"All PDF extraction methods failed: {error_summary}", extra={"file_path": file_path})
-        raise Exception(f"Could not extract text from PDF {file_path} - all extraction methods failed: {error_summary}")
+        return await asyncio.get_running_loop().run_in_executor(None, _read_file)
 
     def _calculate_text_quality(self, text: str) -> float:
         """Calculate a quality score for extracted text."""
@@ -1344,65 +1186,14 @@ class TextExtractor:
         avg_word_length = sum(len(word) for word in words) / len(words) if words else 0
 
         # Calculate ratio of common English words
-        common_words = {
-            "the",
-            "and",
-            "or",
-            "but",
-            "in",
-            "on",
-            "at",
-            "to",
-            "for",
-            "of",
-            "with",
-            "by",
-            "a",
-            "an",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "have",
-            "has",
-            "had",
-            "do",
-            "does",
-            "did",
-            "will",
-            "would",
-            "could",
-            "should",
-            "may",
-            "might",
-            "can",
-            "this",
-            "that",
-            "these",
-            "those",
-            "i",
-            "you",
-            "he",
-            "she",
-            "it",
-            "we",
-            "they",
-            "me",
-            "him",
-            "her",
-            "us",
-            "them",
-        }
-        common_word_count = sum(1 for word in words if word.lower() in common_words)
+        common_word_count = sum(1 for word in words if word.lower() in _COMMON_ENGLISH_WORDS)
         common_word_ratio = common_word_count / len(words) if words else 0
 
         # Combine scores
         return meaningful_ratio * 0.4 + min(avg_word_length / 10.0, 1.0) * 0.3 + common_word_ratio * 0.3
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:  # noqa: PLR0915
+    async def _extract_text_docx(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from DOCX files using multiple methods with fallbacks."""
 
         def _try_python_docx():
@@ -1441,43 +1232,13 @@ class TextExtractor:
                 logger.debug(f"python-docx extraction failed: {e!s}")
                 return None
 
-        def _try_textract():
-            """Try textract for DOCX text extraction."""
-            try:
-                import textract
-
-                if file_content:
-                    # For in-memory content, write to temporary file
-                    import tempfile
-
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_file:
-                        temp_file.write(file_content)
-                        temp_file_path = temp_file.name
-
-                    try:
-                        text = textract.process(temp_file_path).decode("utf-8")
-                        return text.strip()
-                    finally:
-                        import os
-
-                        os.unlink(temp_file_path)
-                else:
-                    text = textract.process(file_path).decode("utf-8")
-                    return text.strip()
-            except ImportError:
-                logger.debug("textract not available for DOCX extraction")
-                return None
-            except Exception as e:
-                logger.debug(f"textract DOCX extraction failed: {e!s}")
-                return None
-
         # Try multiple DOCX extraction methods in order of preference
-        extraction_methods = [("python-docx", _try_python_docx), ("textract", _try_textract)]
+        extraction_methods = [("python-docx", _try_python_docx)]
 
         for method_name, extractor_func in extraction_methods:
             try:
                 logger.debug(f"Attempting DOCX extraction with {method_name}")
-                text = await asyncio.get_event_loop().run_in_executor(None, extractor_func)
+                text = await asyncio.get_running_loop().run_in_executor(None, extractor_func)
 
                 if text and text.strip():
                     logger.debug(
@@ -1500,35 +1261,8 @@ class TextExtractor:
 
     async def _extract_text_doc(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from DOC files."""
-        try:
-            import textract
-
-            def _extract_doc():
-                if file_content:
-                    # For in-memory content, we need to write to a temporary file
-                    # since textract doesn't support BytesIO directly
-                    import tempfile
-
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".doc") as temp_file:
-                        temp_file.write(file_content)
-                        temp_file_path = temp_file.name
-
-                    try:
-                        return textract.process(temp_file_path).decode("utf-8")
-                    finally:
-                        import os
-
-                        os.unlink(temp_file_path)
-                else:
-                    return textract.process(file_path).decode("utf-8")
-
-            return await asyncio.get_event_loop().run_in_executor(None, _extract_doc)
-        except ImportError:
-            logger.warning("textract not installed, falling back to basic text extraction")
-            return await self._extract_text_fallback(file_path, file_content)
-        except Exception as e:
-            logger.warning("DOC extraction failed, falling back", extra={"error": str(e)})
-            return await self._extract_text_fallback(file_path, file_content)
+        logger.warning("DOC extraction not supported, falling back to basic text extraction")
+        return await self._extract_text_fallback(file_path, file_content)
 
     async def _extract_text_rtf(self, file_path: str, file_content: bytes | None = None) -> str:
         """Extract text from RTF files."""
@@ -1543,7 +1277,7 @@ class TextExtractor:
                         rtf_content = f.read()
                 return rtf_to_text(rtf_content)
 
-            return await asyncio.get_event_loop().run_in_executor(None, _extract_rtf)
+            return await asyncio.get_running_loop().run_in_executor(None, _extract_rtf)
         except ImportError:
             logger.warning("striprtf not installed, falling back to basic text extraction")
             return await self._extract_text_fallback(file_path, file_content)
@@ -1565,7 +1299,7 @@ class TextExtractor:
                 soup = BeautifulSoup(content, "html.parser")
                 return soup.get_text()
 
-            return await asyncio.get_event_loop().run_in_executor(None, _extract_html)
+            return await asyncio.get_running_loop().run_in_executor(None, _extract_html)
         except ImportError:
             logger.warning("BeautifulSoup not installed, falling back to basic text extraction")
             return await self._extract_text_fallback(file_path, file_content)
@@ -1650,7 +1384,7 @@ class TextExtractor:
                         logger.warning(f"Failed to read file: {file_path}, error: {e!s}")
                         return f"[Error: Cannot read file - {file_path}]"
 
-            return await asyncio.get_event_loop().run_in_executor(None, _read_file)
+            return await asyncio.get_running_loop().run_in_executor(None, _read_file)
         except Exception as e:
             logger.error("Fallback extraction failed", extra={"file_path": file_path, "error": str(e)})
             return f"[Error: Could not extract text from {file_path} - {e!s}]"
@@ -1674,9 +1408,9 @@ class TextExtractor:
 
     def get_supported_formats(self) -> list:
         """Get list of supported file formats."""
-        return list(self.supported_formats.keys())
+        return sorted(self.supported_extensions)
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file format is supported."""
         file_ext = Path(file_path).suffix.lower()
-        return file_ext in self.supported_formats
+        return file_ext in self.supported_extensions

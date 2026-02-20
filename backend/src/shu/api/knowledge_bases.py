@@ -807,6 +807,34 @@ async def get_extraction_summary(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
+    """Check if file content matches the declared extension via magic bytes.
+
+    Returns an error message string if a mismatch is detected, None if content looks valid.
+    Only checks binary formats where mismatches cause deterministic pipeline failures.
+    """
+    if len(file_bytes) < 4:
+        return None  # Too short to check signatures
+
+    header = file_bytes[:8]
+
+    # ZIP signature — used by DOCX, XLSX, PPTX, and plain ZIP files
+    is_zip = header[:4] in (b"\x50\x4b\x03\x04", b"\x50\x4b\x05\x06", b"\x50\x4b\x07\x08")
+    # PDF signature
+    is_pdf = header[:4] == b"\x25\x50\x44\x46"  # %PDF
+    # OLE2 compound document — used by legacy .doc, .xls, .ppt
+    is_ole = header[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+    if ext == "pdf" and not is_pdf:
+        return "File content does not match declared type .pdf (invalid PDF header)"
+    if ext in ("docx", "xlsx", "pptx") and not is_zip:
+        return f"File content does not match declared type .{ext} (expected ZIP-based Office format)"
+    if ext == "doc" and not is_ole and not is_zip:
+        return "File content does not match declared type .doc (expected OLE2 or ZIP format)"
+
+    return None
+
+
 @router.post(
     "/{kb_id}/documents/upload",
     summary="Upload documents to knowledge base",
@@ -868,6 +896,17 @@ async def upload_documents(
             )
             continue
 
+        # Validate file is not empty
+        if len(file_bytes) == 0:
+            results.append(
+                {
+                    "filename": filename,
+                    "success": False,
+                    "error": "File is empty (0 bytes)",
+                }
+            )
+            continue
+
         # Validate file size
         if len(file_bytes) > max_size:
             results.append(
@@ -879,7 +918,20 @@ async def upload_documents(
             )
             continue
 
-        # Determine MIME type
+        # Validate file content matches declared extension (magic bytes check).
+        # Catches files renamed to bypass extension validation (e.g. a ZIP named .pdf).
+        content_mismatch = _check_content_type_mismatch(ext, file_bytes)
+        if content_mismatch:
+            results.append(
+                {
+                    "filename": filename,
+                    "success": False,
+                    "error": content_mismatch,
+                }
+            )
+            continue
+
+        # Determine MIME type from filename (extension-based)
         mime_type, _ = mimetypes.guess_type(filename)
         mime_type = mime_type or "application/octet-stream"
 

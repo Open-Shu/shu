@@ -123,7 +123,6 @@ def make_host(
     capabilities: list[str] | None = None,
     provider_identities: dict[str, list[dict[str, Any]]] | None = None,
     host_context: dict[str, Any] | None = None,
-    staging_ttl: int | None = None,
 ) -> Host:
     caps = set(capabilities or [])
     # Policy: when kb is declared, auto-include cursor for plugin authors
@@ -169,7 +168,6 @@ def make_host(
             user_id=user_id,
             ocr_mode=parsed.ocr_mode,
             schedule_id=parsed.schedule_id,
-            staging_ttl=staging_ttl,
         )
 
     if "secrets" in caps:
@@ -182,8 +180,15 @@ def make_host(
         h.cursor = CursorCapability(plugin_name=plugin_name, user_id=user_id, schedule_id=parsed.schedule_id)
 
     if "ocr" in caps:
+        from ...core.config import get_config_manager
+
         # Treat OCR as a utility without implicit policy; do not re-parse host overlay
-        h.ocr = OcrCapability(plugin_name=plugin_name, user_id=user_id, ocr_mode=None)
+        h.ocr = OcrCapability(
+            plugin_name=plugin_name,
+            user_id=user_id,
+            config_manager=get_config_manager(),
+            ocr_mode=None,
+        )
 
     if "cache" in caps:
         h.cache = CacheCapability(plugin_name=plugin_name, user_id=user_id)

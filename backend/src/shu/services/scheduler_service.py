@@ -20,6 +20,7 @@ import logging
 import os
 from collections import deque
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -276,6 +277,66 @@ class LogMaintenanceSource:
         return {"enqueued": 0}
 
 
+class IngestionStagingMaintenanceSource:
+    """Schedulable source for ingestion staging directory cleanup.
+
+    Runs on every scheduler tick (typically every 60s). Scans
+    ``SHU_INGESTION_STAGING_DIR`` and deletes files older than
+    ``SHU_INGESTION_STAGING_MAX_AGE_HOURS``.
+
+    Orphans arise when a worker is OOMKilled or pod-evicted mid-job before it
+    can delete the staged file.  This sweep ensures disk space is reclaimed
+    without operator intervention.
+
+    This is a filesystem-only operation — no DB or queue interaction needed.
+    """
+
+    @property
+    def name(self) -> str:
+        return "ingestion_staging_maintenance"
+
+    async def cleanup_stale(self, db: AsyncSession) -> int:
+        import time
+
+        from ..core.config import get_settings_instance
+
+        settings = get_settings_instance()
+        staging_dir = settings.ingestion_staging_dir
+        max_age_seconds = settings.ingestion_staging_max_age_hours * 3600
+        cutoff = time.time() - max_age_seconds
+
+        if not Path(staging_dir).is_dir():
+            return 0
+
+        deleted = 0
+        try:
+            with os.scandir(staging_dir) as entries:
+                for entry in entries:
+                    if not entry.is_file():
+                        continue
+                    try:
+                        if entry.stat().st_mtime < cutoff:
+                            os.unlink(entry.path)
+                            deleted += 1
+                            logger.info(
+                                "Deleted orphaned staging file",
+                                extra={"path": entry.path},
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to delete orphaned staging file",
+                            extra={"path": entry.path, "error": str(e)},
+                        )
+        except Exception as e:
+            logger.warning("Ingestion staging sweep failed", extra={"error": str(e)})
+
+        return deleted
+
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
+        # Nothing to enqueue — all work happens in cleanup_stale
+        return {"enqueued": 0}
+
+
 class UnifiedSchedulerService:
     """Unified scheduler that iterates over registered sources per tick."""
 
@@ -380,6 +441,9 @@ async def start_scheduler() -> asyncio.Task:
 
     # Log maintenance source: midnight rotation + retention cleanup (always enabled)
     sources.append(LogMaintenanceSource())
+
+    # Ingestion staging maintenance: orphan file cleanup (always enabled)
+    sources.append(IngestionStagingMaintenanceSource())
 
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",

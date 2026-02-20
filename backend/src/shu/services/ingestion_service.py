@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,14 @@ from ..core.logging import get_logger
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
 from ..services.document_service import DocumentService
+
+# Transient error prefixes — used both when setting processing_error and when
+# checking whether an error is retryable in _is_transient_error().  Keep these
+# in sync: any new transient prefix must be added to _TRANSIENT_PREFIXES too.
+_ERR_STAGE_ENQUEUE = "Failed to stage/enqueue:"
+_ERR_ENQUEUE_EMBEDDING = "Failed to enqueue embedding:"
+_ERR_FILE_STAGING = "File staging failed:"
+_TRANSIENT_PREFIXES = (_ERR_STAGE_ENQUEUE, _ERR_ENQUEUE_EMBEDDING, _ERR_FILE_STAGING)
 
 if TYPE_CHECKING:
     from ..core.queue_backend import QueueBackend
@@ -217,6 +226,17 @@ def _hashes_match(incoming_source_hash: str | None, incoming_content_hash: str, 
     return (False, "")
 
 
+def _is_transient_error(error_message: Any) -> bool:
+    """Return True if the processing error is a transient infrastructure failure.
+
+    Transient errors (staging/enqueue failures) should be retried on next sync
+    rather than permanently skipped.  The prefixes are defined as module-level
+    constants (_ERR_*) and shared with every write site so they cannot drift.
+    """
+    msg = error_message or ""
+    return msg.startswith(_TRANSIENT_PREFIXES)
+
+
 def _check_skip(
     existing: Document | None,
     source_hash: str | None,
@@ -232,7 +252,8 @@ def _check_skip(
     - Document exists
     - force_reingest is False
     - Hash matches (source_hash or content_hash)
-    - Document is in terminal successful state (is_ready or is_processed)
+    - Document is in a terminal state (is_processed, or ERROR with a
+      deterministic error — transient infrastructure errors allow retry)
     """
     if existing is None or force_reingest:
         return None
@@ -256,6 +277,30 @@ def _check_skip(
             "chunk_count": existing.chunk_count or 0,
             "skipped": True,
             "skip_reason": "hash_match",
+        }
+
+    # Skip ERROR-state documents with matching hash ONLY when the error is
+    # deterministic (same content will fail the same way).  Transient infrastructure
+    # errors (staging/enqueue failures) should be retried on the next sync.
+    if hash_matches and existing.has_error:
+        if _is_transient_error(existing.processing_error):
+            logger.info(
+                "Allowing retry for transient error on hash-matched document",
+                extra={
+                    "document_id": existing.id,
+                    "processing_error": existing.processing_error,
+                },
+            )
+            return None  # Allow re-ingestion
+        return {
+            "ko_id": ko_id,
+            "document_id": existing.id,
+            "status": existing.processing_status,
+            "word_count": existing.word_count or 0,
+            "character_count": existing.character_count or 0,
+            "chunk_count": existing.chunk_count or 0,
+            "skipped": True,
+            "skip_reason": "hash_match_error_state",
         }
 
     return None
@@ -373,6 +418,23 @@ async def _upsert_document_record(
                 skipped=True,
                 skip_reason="hash_match",
             )
+        if match and existing.has_error and not _is_transient_error(existing.processing_error):
+            logger.info(
+                "Skipping ERROR-state document with matching hash (deterministic failure)",
+                extra={
+                    "kb_id": knowledge_base_id,
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "hash": matched_hash,
+                    "document_id": existing.id,
+                },
+            )
+            return UpsertResult(
+                document=existing,
+                extraction=extraction_data,
+                skipped=True,
+                skip_reason="hash_match_error_state",
+            )
 
     # Content changed or force_reingest - update the document
     document = existing
@@ -415,7 +477,6 @@ async def ingest_document(  # noqa: PLR0915
     source_url: str | None = None,
     attributes: dict[str, Any] | None = None,
     ocr_mode: str | None = None,
-    staging_ttl: int | None = None,
 ) -> dict[str, Any]:
     """Ingest a document asynchronously via queue pipeline.
 
@@ -439,10 +500,8 @@ async def ingest_document(  # noqa: PLR0915
         source_url: Optional source URL.
         attributes: Optional additional attributes.
         ocr_mode: Optional OCR mode override.
-        staging_ttl: Optional TTL for staged files (defaults to settings.file_staging_ttl).
 
     """
-    from ..core.cache_backend import get_cache_backend
     from ..core.queue_backend import get_queue_backend
     from ..core.workload_routing import WorkloadType, enqueue_job
     from ..models.document import DocumentStatus
@@ -477,6 +536,14 @@ async def ingest_document(  # noqa: PLR0915
     source_type = f"plugin:{plugin_name}"
     file_type = _infer_file_type(filename, mime_type)
     title = filename or source_id
+
+    # Build an extraction filename with a file extension so TextExtractor can
+    # resolve the correct format handler.  Google Drive native documents (Docs,
+    # Sheets, Presentations) have titles without extensions; file_type (derived
+    # from mime_type by _infer_file_type) provides the authoritative format.
+    extraction_filename = filename
+    if filename and not PurePosixPath(filename).suffix:
+        extraction_filename = f"{filename}.{file_type}"
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
 
@@ -534,10 +601,7 @@ async def ingest_document(  # noqa: PLR0915
     staging_key = None
     staging_service = None
     try:
-        cache = await get_cache_backend()
-        staging_service = (
-            FileStagingService(cache, staging_ttl=staging_ttl) if staging_ttl is not None else FileStagingService(cache)
-        )
+        staging_service = FileStagingService()
         staging_key = await staging_service.stage_file(document.id, file_bytes)
 
         # Enqueue OCR job
@@ -545,7 +609,7 @@ async def ingest_document(  # noqa: PLR0915
         job_payload = {
             "document_id": document.id,
             "knowledge_base_id": knowledge_base_id,
-            "filename": filename,
+            "filename": extraction_filename,
             "mime_type": mime_type,
             "source_id": source_id,
             "staging_key": staging_key,
@@ -571,7 +635,7 @@ async def ingest_document(  # noqa: PLR0915
         )
         # Mark document as ERROR so it doesn't stay PENDING forever
         document.update_status(DocumentStatus.ERROR)
-        document.processing_error = f"Failed to stage/enqueue: {e}"
+        document.processing_error = f"{_ERR_STAGE_ENQUEUE} {e}"
         db.add(document)
         await db.commit()
         # Clean up staged bytes if staging succeeded but enqueue failed
@@ -692,14 +756,28 @@ async def ingest_email(
             upsert_result.skip_reason,
         )
 
-    word_count, character_count, chunk_count = await svc.process_and_update_chunks(
-        knowledge_base_id,
-        document,
-        title,
-        content,
-    )
+    try:
+        word_count, character_count, chunk_count = await svc.process_and_update_chunks(
+            knowledge_base_id,
+            document,
+            title,
+            content,
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to process email document chunks",
+            extra={
+                "document_id": document.id,
+                "knowledge_base_id": knowledge_base_id,
+                "error": str(e),
+            },
+        )
+        document.mark_error(f"Chunk processing failed: {e}")
+        db.add(document)
+        await db.commit()
+        raise
 
-    # Trigger async profiling if enabled (SHU-344)
+    # Trigger async profiling if enabled
     await _trigger_profiling_if_enabled(document.id)
 
     return {
@@ -820,11 +898,9 @@ async def ingest_text(  # noqa: PLR0915
         await db.commit()
         await db.refresh(document)
 
-    # Set status to EMBEDDING (skip OCR stage)
-    document.update_status(DocumentStatus.EMBEDDING)
-    await db.commit()
-
-    # Enqueue embedding job directly (no file staging needed)
+    # Enqueue embedding job directly (no file staging needed).
+    # Commit EMBEDDING status only after enqueue succeeds to avoid a window
+    # where the document is EMBEDDING with no job in the queue.
     try:
         queue = await get_queue_backend()
         await _enqueue_embed_job(queue, document.id, knowledge_base_id)
@@ -838,10 +914,13 @@ async def ingest_text(  # noqa: PLR0915
             },
         )
         document.update_status(DocumentStatus.ERROR)
-        document.processing_error = f"Failed to enqueue embedding: {e}"
+        document.processing_error = f"{_ERR_ENQUEUE_EMBEDDING} {e}"
         db.add(document)
         await db.commit()
         raise
+
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
 
     logger.info(
         "Text ingestion enqueued (skipping OCR)",
@@ -967,11 +1046,9 @@ async def ingest_thread(  # noqa: PLR0915
         await db.commit()
         await db.refresh(document)
 
-    # Set status to EMBEDDING (skip OCR stage)
-    document.update_status(DocumentStatus.EMBEDDING)
-    await db.commit()
-
-    # Enqueue embedding job directly (no file staging needed)
+    # Enqueue embedding job directly (no file staging needed).
+    # Commit EMBEDDING status only after enqueue succeeds to avoid a window
+    # where the document is EMBEDDING with no job in the queue.
     try:
         queue = await get_queue_backend()
         await _enqueue_embed_job(queue, document.id, knowledge_base_id)
@@ -985,10 +1062,13 @@ async def ingest_thread(  # noqa: PLR0915
             },
         )
         document.update_status(DocumentStatus.ERROR)
-        document.processing_error = f"Failed to enqueue embedding: {e}"
+        document.processing_error = f"{_ERR_ENQUEUE_EMBEDDING} {e}"
         db.add(document)
         await db.commit()
         raise
+
+    document.update_status(DocumentStatus.EMBEDDING)
+    await db.commit()
 
     logger.info(
         "Thread ingestion enqueued (skipping OCR)",
