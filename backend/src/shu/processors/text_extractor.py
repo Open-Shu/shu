@@ -302,9 +302,7 @@ class TextExtractor:
         # --- Derive internal use_ocr bool from the public ocr_mode string ---
         effective_ocr_mode = (ocr_mode or "auto").strip().lower()
         if effective_ocr_mode not in VALID_OCR_MODES:
-            raise ValueError(
-                f"Invalid ocr_mode {ocr_mode!r}; must be one of {sorted(VALID_OCR_MODES)}"
-            )
+            raise ValueError(f"Invalid ocr_mode {ocr_mode!r}; must be one of {sorted(VALID_OCR_MODES)}")
         use_ocr = effective_ocr_mode not in {"text_only", "never"}
 
         logger.debug(
