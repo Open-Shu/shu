@@ -348,6 +348,18 @@ class IntegrationTestRunner:
             error_msg = f"{type(e).__name__}: {e!s}"
             result = TestResult(test_name, False, error_msg, duration)
 
+            # Rollback any dirty transaction left by the failed test
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+
+            # Clean up test data even on failure to prevent leaking into next test
+            try:
+                await self._cleanup_test_data(quick=True)
+            except Exception as cleanup_err:
+                logger.debug(f"Post-failure cleanup error for {test_name}: {cleanup_err}")
+
             # Log full traceback for debugging
             logger.debug(f"Full traceback for {test_name}:\n{traceback.format_exc()}")
 

@@ -99,15 +99,22 @@ class RAGServiceManager:
     def _cleanup_instance(self, instance: "RAGProcessingService") -> None:
         """Clean up resources associated with an instance."""
         try:
-            # Clear model reference to help with garbage collection
-            if hasattr(instance, "model"):
-                del instance.model
+            if hasattr(instance, "model") and instance.model is not None:
+                # Release tokenizer resources (may hold thread pool references)
+                try:
+                    if hasattr(instance.model, "tokenizer") and instance.model.tokenizer is not None:
+                        instance.model.tokenizer = None
+                except Exception:
+                    pass
+                instance.model = None
             logger.debug("Cleaned up RAGProcessingService instance resources")
         except Exception as e:
             logger.warning(f"Error cleaning up RAGProcessingService instance: {e}")
 
     def clear_all(self) -> None:
         """Clear all cached instances and shutdown executor."""
+        import gc
+
         logger.info("Clearing all RAGProcessingService instances")
 
         # Clean up all instances
@@ -116,11 +123,17 @@ class RAGServiceManager:
 
         self._instances.clear()
 
-        # Shutdown executor
-        if self._executor and not self._executor._shutdown:
-            self._executor.shutdown(wait=False)
+        # Shutdown executor (don't block — we're tearing down)
+        if self._executor is not None:
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
             self._executor = None
             logger.debug("Shutdown ThreadPoolExecutor")
+
+        # Force garbage collection to release model memory and references
+        gc.collect()
 
     def get_stats(self) -> dict[str, any]:
         """Get statistics about cached instances."""
