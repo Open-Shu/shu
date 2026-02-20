@@ -106,6 +106,20 @@ class ConfigService {
   }
 
   /**
+   * Get password policy settings for client-side validation.
+   * @returns {{ policy: string, min_length: number, special_chars: string }}
+   */
+  getPasswordPolicy() {
+    return (
+      this.config?.password_policy || {
+        policy: 'moderate',
+        min_length: 8,
+        special_chars: '!@#$%^&*()-_+=',
+      }
+    );
+  }
+
+  /**
    * Get upload restrictions for KB document uploads (text extraction only, no image OCR)
    * @returns {{ allowed_types: string[], max_size_bytes: number }}
    */

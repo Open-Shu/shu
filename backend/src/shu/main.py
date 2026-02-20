@@ -47,6 +47,7 @@ from .core.http_client import close_http_client
 from .core.logging import get_logger, setup_logging
 from .core.middleware import (
     AuthenticationMiddleware,
+    MustChangePasswordMiddleware,
     RateLimitMiddleware,
     RequestIDMiddleware,
     SecurityHeadersMiddleware,
@@ -442,6 +443,10 @@ def setup_middleware(app: FastAPI) -> None:
 
     # Timing middleware (custom)
     app.add_middleware(TimingMiddleware)
+
+    # Must-change-password enforcement (inner to AuthenticationMiddleware so
+    # it runs after user context is populated on request.state)
+    app.add_middleware(MustChangePasswordMiddleware)
 
     # Authentication middleware (custom)
     app.add_middleware(AuthenticationMiddleware)
