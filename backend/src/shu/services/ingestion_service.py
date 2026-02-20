@@ -226,11 +226,13 @@ def _is_transient_error(error_message: Any) -> bool:
     code in ingestion_service.py and worker.py, so matching on them is reliable.
     """
     msg = error_message or ""
-    return msg.startswith((
-        "Failed to stage/enqueue:",   # ingest_document enqueue path
-        "Failed to enqueue embedding:",  # ingest_text / ingest_thread enqueue path
-        "File staging failed:",        # worker.py staging retrieval
-    ))
+    return msg.startswith(
+        (
+            "Failed to stage/enqueue:",  # ingest_document enqueue path
+            "Failed to enqueue embedding:",  # ingest_text / ingest_thread enqueue path
+            "File staging failed:",  # worker.py staging retrieval
+        )
+    )
 
 
 def _check_skip(
