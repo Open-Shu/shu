@@ -145,7 +145,7 @@ MAGIC_BYTES: dict[str, tuple[bytes, ...]] = {
     ".docx": _ZIP_SIGNATURES,
     ".xlsx": _ZIP_SIGNATURES,
     ".pptx": _ZIP_SIGNATURES,
-    ".doc": _OLE2_SIGNATURE + _ZIP_SIGNATURES,
+    ".doc": _OLE2_SIGNATURE,
 }
 
 ALL_BINARY_SIGNATURES: tuple[bytes, ...] = tuple({sig for sigs in MAGIC_BYTES.values() for sig in sigs})

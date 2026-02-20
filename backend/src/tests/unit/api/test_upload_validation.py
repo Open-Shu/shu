@@ -86,6 +86,12 @@ class TestContentTypeMismatch:
         result = _check_content_type_mismatch("doc", pdf_bytes)
         assert result is not None
 
+    def test_zip_disguised_as_doc_is_rejected(self):
+        """A ZIP file (.docx) renamed to .doc must be rejected — .doc is OLE2 only."""
+        zip_bytes = b"\x50\x4b\x03\x04" + b"\x00" * 100
+        result = _check_content_type_mismatch("doc", zip_bytes)
+        assert result is not None
+
     # --- Text formats (no magic bytes check) ---
 
     def test_txt_any_content_passes(self):
