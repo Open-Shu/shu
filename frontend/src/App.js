@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
@@ -39,6 +39,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import RoleBasedRoute from './components/RoleBasedRoute';
 import ForceChangePasswordGate from './components/ForceChangePasswordGate';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+
+import configService from './services/config';
 
 // Theme Context
 import { ThemeProvider as CustomThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -101,6 +103,12 @@ const MainAppRedirect = () => {
 // Authenticated app component
 const AuthenticatedApp = () => {
   const { isAuthenticated, loading: authLoading } = useAuth();
+
+  // Fetch public config on mount so it's available regardless of auth state.
+  // AuthPage also calls this, but authenticated users skip AuthPage entirely.
+  useEffect(() => {
+    configService.fetchConfig();
+  }, []);
 
   if (authLoading) {
     return pageLoadingView;
