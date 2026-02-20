@@ -1,5 +1,3 @@
-import React from 'react';
-
 import { useAuth } from '../hooks/useAuth';
 import ChangePasswordForm from './ChangePasswordForm';
 
@@ -10,16 +8,14 @@ import ChangePasswordForm from './ChangePasswordForm';
  * renders a full-page ChangePasswordForm in force mode instead of children.
  * After the user successfully changes their password, the auth context refreshes
  * and normal navigation resumes.
+ *
+ * A logout link is provided so users are never fully locked out.
  */
 const ForceChangePasswordGate = ({ children }) => {
-  const { user, refreshUser } = useAuth();
+  const { user, logout } = useAuth();
 
   if (user?.must_change_password === true) {
-    const handleSuccess = async () => {
-      await refreshUser();
-    };
-
-    return <ChangePasswordForm forceMode onSuccess={handleSuccess} />;
+    return <ChangePasswordForm forceMode onLogout={logout} />;
   }
 
   return children;

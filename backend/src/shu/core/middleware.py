@@ -352,7 +352,7 @@ class MustChangePasswordMiddleware(BaseHTTPMiddleware):
         user = getattr(request.state, "user", None)
 
         if user and isinstance(user, dict) and user.get("must_change_password"):
-            path = request.url.path
+            path = request.url.path.rstrip("/")
             if path not in self.ALLOWED_PATHS:
                 logger.info(
                     "Blocked request due to must_change_password",

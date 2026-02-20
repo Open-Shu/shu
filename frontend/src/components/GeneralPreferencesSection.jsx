@@ -43,7 +43,7 @@ function useUserPreferences(themeMode) {
       queryClient.invalidateQueries('user-preferences');
       setError(null);
     },
-    onError: (err) => setError(formatError(err).message),
+    onError: (err) => setError(formatError(err)),
   });
 
   useQuery('user-preferences', userPreferencesAPI.getPreferences, {
@@ -57,7 +57,7 @@ function useUserPreferences(themeMode) {
         }));
       }
     },
-    onError: (err) => log.warn('Failed to load user preferences:', formatError(err).message),
+    onError: (err) => log.warn('Failed to load user preferences:', formatError(err)),
   });
 
   return { preferences, setPreferences, error, setError, mutation };
@@ -127,7 +127,7 @@ export default function GeneralPreferencesSection() {
             }
           />
           <Box sx={{ mt: 0.5 }}>
-            <NotImplemented label="Timezeone not applied globally yet" />
+            <NotImplemented label="Timezone not applied globally yet" />
           </Box>
         </Grid>
       </Grid>

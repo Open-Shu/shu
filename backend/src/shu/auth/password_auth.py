@@ -23,10 +23,9 @@ logger = logging.getLogger(__name__)
 class PasswordAuthService:
     """Service for password-based user authentication and management."""
 
-    SPECIAL_CHARS: str = "!@#$%^&*()-_+="
-
     def __init__(self) -> None:
         self.settings = get_settings_instance()
+        self.special_chars: str = self.settings.password_special_chars
         # Dummy hash for constant-time authentication (prevents timing attacks)
         # This is a bcrypt hash of "dummy_password_for_timing_attack_prevention"
         self._dummy_hash = "$2b$12$rQx8vQx8vQx8vQx8vQx8vOx8vQx8vQx8vQx8vQx8vQx8vQx8vQx8vQ"
@@ -75,9 +74,9 @@ class PasswordAuthService:
 
         # Additional rule for strict policy
         if self.settings.password_policy == "strict" and not any(  # pragma: allowlist secret  # noqa: S105
-            c in self.SPECIAL_CHARS for c in password
+            c in self.special_chars for c in password
         ):
-            errors.append(f"Password must contain at least one special character ({self.SPECIAL_CHARS})")
+            errors.append(f"Password must contain at least one special character ({self.special_chars})")
 
         return errors
 
@@ -97,14 +96,20 @@ class PasswordAuthService:
             A random password string of the requested length.
 
         """
-        full_charset = string.ascii_letters + string.digits + self.SPECIAL_CHARS
+        min_guaranteed = 4  # one uppercase, one lowercase, one digit, one special
+        if length < min_guaranteed:
+            raise ValueError(
+                f"Password length must be at least {min_guaranteed} to satisfy all character-class requirements"
+            )
+
+        full_charset = string.ascii_letters + string.digits + self.special_chars
 
         # Guarantee at least one character from each required class
         guaranteed = [
             secrets.choice(string.ascii_uppercase),
             secrets.choice(string.ascii_lowercase),
             secrets.choice(string.digits),
-            secrets.choice(self.SPECIAL_CHARS),
+            secrets.choice(self.special_chars),
         ]
 
         # Fill remaining length with random characters from the full charset

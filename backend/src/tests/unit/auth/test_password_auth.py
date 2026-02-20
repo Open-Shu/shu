@@ -10,12 +10,16 @@ import pytest
 from shu.auth.password_auth import PasswordAuthService
 
 
+DEFAULT_SPECIAL_CHARS = "!@#$%^&*()-_+="
+
+
 @pytest.fixture
 def mock_settings_moderate():
     """Settings mock with moderate password policy."""
     settings = MagicMock()
     settings.password_policy = "moderate"
     settings.password_min_length = 8
+    settings.password_special_chars = DEFAULT_SPECIAL_CHARS
     return settings
 
 
@@ -25,6 +29,7 @@ def mock_settings_strict():
     settings = MagicMock()
     settings.password_policy = "strict"
     settings.password_min_length = 8
+    settings.password_special_chars = DEFAULT_SPECIAL_CHARS
     return settings
 
 
@@ -138,6 +143,7 @@ class TestValidatePasswordMinLength:
         settings = MagicMock()
         settings.password_policy = "moderate"
         settings.password_min_length = 12
+        settings.password_special_chars = DEFAULT_SPECIAL_CHARS
         with patch("shu.auth.password_auth.get_settings_instance", return_value=settings):
             svc = PasswordAuthService()
 
@@ -149,6 +155,7 @@ class TestValidatePasswordMinLength:
         settings = MagicMock()
         settings.password_policy = "moderate"
         settings.password_min_length = 12
+        settings.password_special_chars = DEFAULT_SPECIAL_CHARS
         with patch("shu.auth.password_auth.get_settings_instance", return_value=settings):
             svc = PasswordAuthService()
 
@@ -182,7 +189,7 @@ class TestGenerateTemporaryPassword:
 
     def test_meets_strict_even_under_moderate(self, service_moderate: PasswordAuthService) -> None:
         """Generated password must satisfy strict rules even when service uses moderate policy."""
-        special = PasswordAuthService.SPECIAL_CHARS
+        special = service_moderate.special_chars
         for _ in range(20):
             pw = service_moderate.generate_temporary_password()
             assert any(c.isupper() for c in pw), f"No uppercase in '{pw}'"
@@ -332,12 +339,13 @@ class TestResetPassword:
     """
 
     @pytest.fixture
-    def mock_user(self) -> MagicMock:
+    def mock_user(self, service_moderate: PasswordAuthService) -> MagicMock:
         """Mock password-authenticated user."""
         user = MagicMock()
         user.id = "user-456"
         user.email = "reset-target@example.com"
         user.auth_method = "password"
+        user.password_hash = service_moderate._hash_password("OldTempPass1!")
         user.must_change_password = False
         return user
 

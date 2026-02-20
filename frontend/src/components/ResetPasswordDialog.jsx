@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useMutation } from 'react-query';
 import {
   Dialog,
@@ -14,15 +14,9 @@ import {
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { authAPI, extractDataFromResponse, formatError } from '../services/api';
+import { resolveUserId } from '../utils/userHelpers';
 
 const COPY_FEEDBACK_MS = 2000;
-
-const resolveUserId = (user) => {
-  if (!user) {
-    return '';
-  }
-  return user.user_id || user.id || '';
-};
 
 /** Phase 1: confirmation prompt before resetting. */
 const ConfirmPhase = ({ userName }) => (

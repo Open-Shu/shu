@@ -14,6 +14,7 @@ import {
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import LockIcon from '@mui/icons-material/Lock';
+import LogoutIcon from '@mui/icons-material/Logout';
 
 import { useAuth } from '../hooks/useAuth';
 import { authAPI, formatError } from '../services/api';
@@ -46,21 +47,19 @@ const PasswordField = ({ label, value, onChange, show, onToggleShow, disabled, a
     autoComplete={autoComplete}
     error={error}
     helperText={helperText}
-    slotProps={{
-      input: {
-        endAdornment: (
-          <InputAdornment position="end">
-            <IconButton
-              aria-label={`toggle ${label.toLowerCase()} visibility`}
-              onClick={onToggleShow}
-              edge="end"
-              size="small"
-            >
-              {show ? <VisibilityOff /> : <Visibility />}
-            </IconButton>
-          </InputAdornment>
-        ),
-      },
+    InputProps={{
+      endAdornment: (
+        <InputAdornment position="end">
+          <IconButton
+            aria-label={`toggle ${label.toLowerCase()} visibility`}
+            onClick={onToggleShow}
+            edge="end"
+            size="small"
+          >
+            {show ? <VisibilityOff /> : <Visibility />}
+          </IconButton>
+        </InputAdornment>
+      ),
     }}
   />
 );
@@ -177,12 +176,17 @@ const PasswordFormFields = ({
 );
 
 /** Centered container used for forced password change screen. */
-const ForceWrapper = ({ children }) => (
+const ForceWrapper = ({ children, onLogout }) => (
   <Container maxWidth="sm">
     <Box sx={{ marginTop: 8, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
         {children}
       </Paper>
+      {onLogout && (
+        <Button onClick={onLogout} startIcon={<LogoutIcon />} sx={{ mt: 2 }} color="inherit" size="small">
+          Log out
+        </Button>
+      )}
     </Box>
   </Container>
 );
@@ -190,11 +194,12 @@ const ForceWrapper = ({ children }) => (
 /**
  * Change password form with real-time validation.
  *
- * @param {{ onSuccess?: () => void, forceMode?: boolean }} props
+ * @param {{ onSuccess?: () => void, forceMode?: boolean, onLogout?: () => void }} props
  * - forceMode: renders as a full-page centered card with explanation text
+ * - onLogout: if provided, a logout button is shown in force mode
  * - default: renders as a card for embedding in UserPreferencesPage
  */
-const ChangePasswordForm = ({ onSuccess, forceMode = false }) => {
+const ChangePasswordForm = ({ onSuccess, forceMode = false, onLogout }) => {
   const { user, refreshUser } = useAuth();
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -292,7 +297,7 @@ const ChangePasswordForm = ({ onSuccess, forceMode = false }) => {
   );
 
   if (forceMode) {
-    return <ForceWrapper>{formContent}</ForceWrapper>;
+    return <ForceWrapper onLogout={onLogout}>{formContent}</ForceWrapper>;
   }
 
   return formContent;

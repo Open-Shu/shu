@@ -1,6 +1,6 @@
 """Configuration-related schemas for Shu API."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UploadRestrictions(BaseModel):
@@ -31,7 +31,9 @@ class PublicConfig(BaseModel):
     # KB document upload (no standalone image support - text extraction only)
     kb_upload_restrictions: UploadRestrictions
     # Password policy for client-side validation
-    password_policy: PasswordPolicy
+    password_policy: PasswordPolicy = Field(
+        default_factory=lambda: PasswordPolicy(policy="moderate", min_length=8, special_chars="!@#$%^&*()-_+=")
+    )
 
 
 class SetupStatus(BaseModel):

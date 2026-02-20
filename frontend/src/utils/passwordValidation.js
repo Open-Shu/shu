@@ -6,8 +6,6 @@
  * and a React component that renders a live checklist.
  */
 
-import React from 'react';
-
 import Cancel from '@mui/icons-material/Cancel';
 import CheckCircle from '@mui/icons-material/CheckCircle';
 import List from '@mui/material/List';

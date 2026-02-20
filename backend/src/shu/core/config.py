@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     api_key: str | None = Field(None, alias="SHU_API_KEY")
     password_policy: str = Field("moderate", alias="SHU_PASSWORD_POLICY")
     password_min_length: int = Field(8, alias="SHU_PASSWORD_MIN_LENGTH")
+    password_special_chars: str = Field("!@#$%^&*()-_+=", alias="SHU_PASSWORD_SPECIAL_CHARS")
     # When using the global API key (Tier 0), map it to this user's identity for RBAC
     api_key_user_email: str | None = Field(None, alias="SHU_API_KEY_USER_EMAIL")
     secret_key: str | None = Field(None, alias="SHU_SECRET_KEY")

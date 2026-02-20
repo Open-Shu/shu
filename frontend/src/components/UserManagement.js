@@ -36,15 +36,9 @@ import LockResetIcon from '@mui/icons-material/LockReset';
 import PeopleIcon from '@mui/icons-material/People';
 import { authAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+import { resolveUserId } from '../utils/userHelpers';
 import PageHelpHeader from './PageHelpHeader';
 import ResetPasswordDialog from './ResetPasswordDialog';
-
-const resolveUserId = (user) => {
-  if (!user) {
-    return '';
-  }
-  return user.user_id || user.id || '';
-};
 
 const UserManagement = () => {
   const { canManageUsers } = useAuth();

@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.dependencies import get_db
 from ..auth.models import User
-from ..auth.password_auth import PasswordAuthService
 from ..auth.rbac import get_current_user
 from ..core.config import get_settings_instance
 from ..models import (
@@ -50,7 +49,7 @@ async def get_public_config():
         password_policy=PasswordPolicy(
             policy=settings.password_policy,
             min_length=settings.password_min_length,
-            special_chars=PasswordAuthService.SPECIAL_CHARS,
+            special_chars=settings.password_special_chars,
         ),
     )
 

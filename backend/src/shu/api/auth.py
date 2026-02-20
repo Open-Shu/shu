@@ -15,6 +15,7 @@ from ..auth import User, UserRole
 from ..auth.password_auth import password_auth_service
 from ..auth.rbac import get_current_user, require_admin
 from ..core.rate_limiting import get_rate_limit_service
+from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
 from ..services.user_service import UserService, create_token_response, get_user_service
 
@@ -313,12 +314,12 @@ async def change_password(
             db=db,
         )
 
-        return SuccessResponse(data={"message": "Password changed successfully"})
+        return ShuResponse.success({"message": "Password changed successfully"})
 
     except (ValueError, LookupError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Password change error: {e}")
+        logger.error("Password change error: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change failed")
 
 
@@ -357,8 +358,8 @@ async def reset_user_password(
     """
     try:
         temporary_password = await password_auth_service.reset_password(user_id=user_id, db=db)
-        return SuccessResponse(
-            data={
+        return ShuResponse.success(
+            {
                 "temporary_password": temporary_password,
                 "message": "Password reset. The user will be required to change their password on next login.",
             }
@@ -368,7 +369,7 @@ async def reset_user_password(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Password reset error: {e}")
+        logger.error("Password reset error: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password reset failed")
 
 
