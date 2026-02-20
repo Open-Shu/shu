@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
 from typing import TYPE_CHECKING, Any
 
 from ...processors.text_extractor import TextExtractor
@@ -50,22 +49,11 @@ class OcrCapability(ImmutableCapabilityMixin):
     async def extract_text(self, *, file_bytes: bytes, mime_type: str, mode: str | None = None) -> dict[str, Any]:
         mm = (mode or self._ocr_mode or "auto").strip().lower()
 
-        # Derive a synthetic filename so TextExtractor can detect the file type
-        # from the extension.  mimetypes.guess_extension returns e.g. ".pdf".
-        ext = mimetypes.guess_extension(mime_type) or ".bin"
-        synthetic_path = f"plugin_upload{ext}"
-
-        # Translate OCR mode string → use_ocr bool + progress_context.
-        # "text_only" / "never" disable OCR; everything else enables it and
-        # lets the extractor decide based on content.
-        use_ocr = mm not in {"text_only", "never"}
-
         extractor = TextExtractor(config_manager=self._config_manager)
         res = await extractor.extract_text(
-            file_path=synthetic_path,
-            file_content=file_bytes,
-            use_ocr=use_ocr,
-            progress_context={"ocr_mode": mm} if mm != "auto" else None,
+            file_bytes=file_bytes,
+            mime_type=mime_type,
+            ocr_mode=mm,
         )
 
         logger.info(

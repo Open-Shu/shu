@@ -274,23 +274,52 @@ class TextExtractor:
                 logger.debug(f"Cleaned up cancellation tracking for job {job_id}")
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def extract_text(  # noqa: PLR0915
+    async def extract_text(  # noqa: PLR0912, PLR0915
         self,
-        file_path: str,
-        file_content: bytes | None = None,
-        use_ocr: bool = True,
+        *,
+        file_bytes: bytes | None = None,
+        file_path: str | None = None,
+        mime_type: str | None = None,
+        ocr_mode: str | None = None,
         kb_config: dict[str, Any] | None = None,
         progress_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Extract text from a file or file content using direct extraction.
+        """Extract text from a file or in-memory bytes.
+
+        All parameters are keyword-only.  Callers must provide at least
+        *file_bytes* or *file_path* (or both).
+
+        Args:
+            file_bytes: Raw file content.  When provided together with
+                *file_path*, the bytes are used directly and *file_path*
+                serves only for extension detection / logging.
+            file_path: Path to a file on disk **or** a filename/title used
+                only for extension inference (when *file_bytes* is given).
+            mime_type: MIME type string used as a fallback for extension
+                resolution when *file_path* has no suffix.
+            ocr_mode: One of ``"auto"`` (default), ``"always"``,
+                ``"never"``, ``"fallback"``, ``"text_only"``.
+            kb_config: Optional per-KB configuration overrides.
+            progress_context: Optional dict carrying progress tracking
+                objects (``enhanced_tracker``, ``sync_job_id``, etc.).
 
         Returns:
             Dictionary containing:
             - text: Extracted text content
-            - metadata: Extraction metadata including method, engine, confidence, duration
+            - metadata: Extraction metadata including method, engine,
+              confidence, duration
 
         """
-        logger.debug("Extracting text from file", extra={"file_path": file_path, "use_ocr": use_ocr})
+        from ..ingestion.filetypes import normalize_extension
+
+        # --- Derive internal use_ocr bool from the public ocr_mode string ---
+        effective_ocr_mode = (ocr_mode or "auto").strip().lower()
+        use_ocr = effective_ocr_mode not in {"text_only", "never"}
+
+        logger.debug(
+            "Extracting text from file",
+            extra={"file_path": file_path, "ocr_mode": effective_ocr_mode},
+        )
 
         # Set current sync job ID for cancellation tracking
         if progress_context and progress_context.get("sync_job_id"):
@@ -299,20 +328,30 @@ class TextExtractor:
 
         start_time = time.time()
 
-        if file_content is None:
+        # --- Input validation ---
+        if file_bytes is None and file_path is None:
+            raise ValueError("Either file_bytes or file_path must be provided")
+
+        if file_bytes is None:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"File not found: {file_path}")
         else:
-            logger.debug("Extracting text from in-memory content", extra={"file_path": file_path})
+            logger.debug(
+                "Extracting text from in-memory content",
+                extra={"file_path": file_path, "mime_type": mime_type},
+            )
 
-        # Handle case where file_path might be a title with extension
-        file_ext = Path(file_path).suffix.lower()
-
-        # If no extension found and we have content, try to infer from content or use fallback
-        if not file_ext and file_content:
-            # Try to infer format from content or use a default
-            # For now, we'll use a fallback approach
-            file_ext = ".txt"  # Default fallback
+        # --- Resolve file extension ---
+        file_ext = ""
+        if file_path:
+            file_ext = Path(file_path).suffix.lower()
+        if not file_ext and mime_type:
+            file_ext = normalize_extension(mime_type)
+            # normalize_extension returns ".bin" for unknowns — treat as empty
+            if file_ext == ".bin":
+                file_ext = ""
+        if not file_ext and file_bytes is not None:
+            file_ext = ".txt"  # Default fallback for in-memory content
             logger.debug(
                 "No file extension found, using fallback",
                 extra={"file_path": file_path, "fallback_extension": file_ext},
@@ -332,12 +371,17 @@ class TextExtractor:
         # Use direct text extraction with OCR configuration
         logger.debug(
             "Using direct text extraction",
-            extra={"file_path": file_path, "file_ext": file_ext, "use_ocr": use_ocr},
+            extra={"file_path": file_path, "file_ext": file_ext, "ocr_mode": effective_ocr_mode},
         )
 
         try:
             text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(
-                file_path, file_content, progress_context, use_ocr, file_ext
+                file_path or "",
+                file_bytes,
+                progress_context,
+                use_ocr,
+                file_ext,
+                effective_ocr_mode,
             )
             duration = time.time() - start_time
 
@@ -389,7 +433,7 @@ class TextExtractor:
                     "duration": duration,
                     "details": {
                         "file_extension": file_ext,
-                        "use_ocr": use_ocr,
+                        "ocr_mode": effective_ocr_mode,
                         "processing_time": duration,
                     },
                 },
@@ -406,6 +450,7 @@ class TextExtractor:
         progress_context: dict[str, Any] | None = None,
         use_ocr: bool = True,
         file_ext: str | None = None,
+        ocr_mode: str = "auto",
     ) -> tuple[str, bool, float | None]:
         """Extract text directly in-memory with progress updates.
 
@@ -414,6 +459,7 @@ class TextExtractor:
                 skips re-deriving it from file_path. This is important for files
                 whose file_path has no extension (e.g. Google Docs titles) where
                 the caller applied a fallback.
+            ocr_mode: OCR mode string passed through from the public API.
 
         Returns:
             (text, ocr_actually_used, confidence) — callers should use the bool for metadata
@@ -431,11 +477,6 @@ class TextExtractor:
 
             # PDFs: always use the progress-aware path so OCR/use_ocr is honored even without a progress callback
             if file_ext == ".pdf":
-                # Determine OCR mode from context if provided
-                ocr_mode = "auto"
-                if progress_context and "ocr_mode" in progress_context:
-                    ocr_mode = progress_context["ocr_mode"]
-                # Use a no-op progress callback when none provided
                 cb = progress_callback if progress_callback else None
                 raw_text, ocr_actually_used, ocr_confidence = await self._extract_text_pdf_with_progress(
                     file_path, file_content, cb, use_ocr, ocr_mode

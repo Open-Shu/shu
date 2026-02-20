@@ -62,7 +62,7 @@ async def _extract_text_with_ocr(path: Path) -> dict[str, Any]:
     extractor = TextExtractor(config_manager=get_config_manager())
     with open(path, "rb") as f:
         content = f.read()
-    result = await extractor.extract_text(str(path), file_content=content, use_ocr=True)
+    result = await extractor.extract_text(file_path=str(path), file_bytes=content, ocr_mode="auto")
     if isinstance(result, str):
         return {"text": result, "metadata": {}}
     return result
@@ -73,7 +73,7 @@ async def _extract_embedded_text(path: Path) -> str:
     extractor = TextExtractor(config_manager=get_config_manager())
     with open(path, "rb") as f:
         content = f.read()
-    result = await extractor.extract_text(str(path), file_content=content, use_ocr=False)
+    result = await extractor.extract_text(file_path=str(path), file_bytes=content, ocr_mode="never")
     if isinstance(result, str):
         return result
     return result.get("text", "")
