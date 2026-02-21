@@ -124,6 +124,19 @@ class TestNormalizeExtensionEdgeCases:
         """A string with no dot and not in MIME map should return .bin."""
         assert normalize_extension("randomgarbage") == ".bin"
 
+    @pytest.mark.parametrize(
+        ("mime_with_params", "expected"),
+        [
+            ("text/plain; charset=utf-8", ".txt"),
+            ("application/pdf; name=report.pdf", ".pdf"),
+            ("text/html; charset=iso-8859-1", ".html"),
+            ("application/vnd.openxmlformats-officedocument.wordprocessingml.document; charset=utf-8", ".docx"),
+        ],
+    )
+    def test_mime_with_parameters_stripped(self, mime_with_params: str, expected: str) -> None:
+        """MIME parameters after ';' must be stripped before lookup."""
+        assert normalize_extension(mime_with_params) == expected
+
 
 # ---------------------------------------------------------------------------
 # _infer_file_type — behavioral parity with the old implementation

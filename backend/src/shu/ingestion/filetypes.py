@@ -205,7 +205,10 @@ def normalize_extension(name_or_mime: str) -> str:
     if not value:
         return ".bin"
 
-    lower = value.lower()
+    # Strip MIME parameters (e.g. "text/plain; charset=utf-8" → "text/plain")
+    # before any lookups.  Only applies when the value looks like a MIME type.
+    mime_value = value.split(";")[0].strip()
+    lower = mime_value.lower()
 
     # 1. Curated MIME map — checked first so dotted subtypes like
     #    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -217,7 +220,7 @@ def normalize_extension(name_or_mime: str) -> str:
     #    (e.g. "application/pdf", "application/vnd.google-apps.document").
     #    Go straight to stdlib to avoid PurePosixPath extracting a bogus
     #    suffix from dotted subtypes.
-    if value.count("/") == 1 and not value.startswith("/"):
+    if mime_value.count("/") == 1 and not mime_value.startswith("/"):
         guessed = mimetypes.guess_extension(lower, strict=False)
         if guessed:
             return guessed.lower()
