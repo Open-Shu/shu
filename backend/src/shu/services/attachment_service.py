@@ -34,7 +34,8 @@ class AttachmentService:
         extractor = TextExtractor(config_manager=get_config_manager())
         try:
             extraction = await extractor.extract_text(
-                str(storage_path), file_content=None, use_ocr=False, kb_config=None
+                file_path=str(storage_path),
+                ocr_mode="never",
             )
             text = (extraction or {}).get("text", "")
             meta = (extraction or {}).get("metadata", {}) or {}

@@ -15,6 +15,15 @@ import easyocr
 
 from ..core.config import ConfigurationManager
 from ..core.logging import get_logger
+from ..ingestion.filetypes import (
+    ALL_BINARY_SIGNATURES,
+    EXT_TO_INGESTION_TYPE,
+    KNOWN_BINARY_EXTENSIONS,
+    SUPPORTED_TEXT_EXTENSIONS,
+    IngestionType,
+    detect_extension_from_bytes,
+    normalize_extension,
+)
 
 logger = get_logger(__name__)
 
@@ -29,6 +38,8 @@ _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
     "us", "them",
 })
 # fmt: on
+
+VALID_OCR_MODES: frozenset[str] = frozenset({"auto", "always", "never", "fallback", "text_only"})
 
 
 class UnsupportedFileFormatError(Exception):
@@ -62,42 +73,20 @@ class TextExtractor:
 
     def __init__(self, config_manager: ConfigurationManager) -> None:
         self.config_manager = config_manager
-        self.supported_formats = {
-            ".txt": self._extract_text_plain,
-            ".md": self._extract_text_plain,
-            ".csv": self._extract_text_plain,
-            ".py": self._extract_text_plain,
-            ".js": self._extract_text_plain,
-            ".docx": self._extract_text_docx,
-            ".doc": self._extract_text_doc,
-            ".rtf": self._extract_text_rtf,
-            ".html": self._extract_text_html,
-            ".htm": self._extract_text_html,
-            ".email": self._extract_text_email,  # Gmail plugin pseudo-extension
-            ".eml": self._extract_text_email,  # Standard RFC 822 email files
+
+        # Maps IngestionType → handler method.  PDF is intentionally absent
+        # because _extract_text_direct routes it to _extract_text_pdf_with_progress.
+        self._type_handlers = {
+            IngestionType.PLAIN_TEXT: self._extract_text_plain,
+            IngestionType.DOCX: self._extract_text_docx,
+            IngestionType.DOC: self._extract_text_doc,
+            IngestionType.RTF: self._extract_text_rtf,
+            IngestionType.HTML: self._extract_text_html,
+            IngestionType.EMAIL: self._extract_text_email,
         }
 
-        # File types that support direct extraction.
-        # Note: .pdf is intentionally absent from supported_formats above because
-        # _extract_text_direct routes PDFs to _extract_text_pdf_with_progress, which
-        # branches on ocr_mode (fast text extraction, OCR, or fallback with threshold).
-        # .email is included here even though it only appears in supported_formats
-        # (Gmail plugin messages with an .email pseudo-extension).
-        self.supported_extensions = {
-            ".pdf",
-            ".docx",
-            ".doc",
-            ".rtf",
-            ".email",
-            ".eml",
-            ".txt",
-            ".md",
-            ".html",
-            ".htm",
-            ".csv",
-            ".py",
-            ".js",
-        }
+        # Accepted extensions — derived from the central registry.
+        self.supported_extensions = set(SUPPORTED_TEXT_EXTENSIONS)
 
         # Ensure job tracking attribute always exists to avoid AttributeError in logs
         self._current_sync_job_id = None
@@ -274,23 +263,52 @@ class TextExtractor:
                 logger.debug(f"Cleaned up cancellation tracking for job {job_id}")
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def extract_text(  # noqa: PLR0915
+    async def extract_text(  # noqa: PLR0912, PLR0915
         self,
-        file_path: str,
-        file_content: bytes | None = None,
-        use_ocr: bool = True,
+        *,
+        file_bytes: bytes | None = None,
+        file_path: str | None = None,
+        mime_type: str | None = None,
+        ocr_mode: str | None = None,
         kb_config: dict[str, Any] | None = None,
         progress_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Extract text from a file or file content using direct extraction.
+        """Extract text from a file or in-memory bytes.
+
+        All parameters are keyword-only.  Callers must provide at least
+        *file_bytes* or *file_path* (or both).
+
+        Args:
+            file_bytes: Raw file content.  When provided together with
+                *file_path*, the bytes are used directly and *file_path*
+                serves only for extension detection / logging.
+            file_path: Path to a file on disk **or** a filename/title used
+                only for extension inference (when *file_bytes* is given).
+            mime_type: MIME type string used as a fallback for extension
+                resolution when *file_path* has no suffix.
+            ocr_mode: One of ``"auto"`` (default), ``"always"``,
+                ``"never"``, ``"fallback"``, ``"text_only"``.
+            kb_config: Optional per-KB configuration overrides.
+            progress_context: Optional dict carrying progress tracking
+                objects (``enhanced_tracker``, ``sync_job_id``, etc.).
 
         Returns:
             Dictionary containing:
             - text: Extracted text content
-            - metadata: Extraction metadata including method, engine, confidence, duration
+            - metadata: Extraction metadata including method, engine,
+              confidence, duration
 
         """
-        logger.debug("Extracting text from file", extra={"file_path": file_path, "use_ocr": use_ocr})
+        # --- Derive internal use_ocr bool from the public ocr_mode string ---
+        effective_ocr_mode = (ocr_mode or "auto").strip().lower()
+        if effective_ocr_mode not in VALID_OCR_MODES:
+            raise ValueError(f"Invalid ocr_mode {ocr_mode!r}; must be one of {sorted(VALID_OCR_MODES)}")
+        use_ocr = effective_ocr_mode not in {"text_only", "never"}
+
+        logger.debug(
+            "Extracting text from file",
+            extra={"file_path": file_path, "ocr_mode": effective_ocr_mode},
+        )
 
         # Set current sync job ID for cancellation tracking
         if progress_context and progress_context.get("sync_job_id"):
@@ -299,20 +317,30 @@ class TextExtractor:
 
         start_time = time.time()
 
-        if file_content is None:
+        # --- Input validation ---
+        if file_bytes is None and file_path is None:
+            raise ValueError("Either file_bytes or file_path must be provided")
+
+        if file_bytes is None:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"File not found: {file_path}")
         else:
-            logger.debug("Extracting text from in-memory content", extra={"file_path": file_path})
+            logger.debug(
+                "Extracting text from in-memory content",
+                extra={"file_path": file_path, "mime_type": mime_type},
+            )
 
-        # Handle case where file_path might be a title with extension
-        file_ext = Path(file_path).suffix.lower()
-
-        # If no extension found and we have content, try to infer from content or use fallback
-        if not file_ext and file_content:
-            # Try to infer format from content or use a default
-            # For now, we'll use a fallback approach
-            file_ext = ".txt"  # Default fallback
+        # --- Resolve file extension ---
+        file_ext = ""
+        if file_path:
+            file_ext = Path(file_path).suffix.lower()
+        if not file_ext and mime_type:
+            file_ext = normalize_extension(mime_type)
+            # normalize_extension returns ".bin" for unknowns — treat as empty
+            if file_ext == ".bin":
+                file_ext = ""
+        if not file_ext and file_bytes is not None:
+            file_ext = detect_extension_from_bytes(file_bytes) or ".txt"
             logger.debug(
                 "No file extension found, using fallback",
                 extra={"file_path": file_path, "fallback_extension": file_ext},
@@ -329,15 +357,22 @@ class TextExtractor:
             )
             raise UnsupportedFileFormatError(f"Unsupported file format: {file_ext}")
 
+        ingestion_type = EXT_TO_INGESTION_TYPE.get(file_ext)
+
         # Use direct text extraction with OCR configuration
         logger.debug(
             "Using direct text extraction",
-            extra={"file_path": file_path, "file_ext": file_ext, "use_ocr": use_ocr},
+            extra={"file_path": file_path, "file_ext": file_ext, "ocr_mode": effective_ocr_mode},
         )
 
         try:
             text, ocr_actually_used, ocr_confidence = await self._extract_text_direct(
-                file_path, file_content, progress_context, use_ocr, file_ext
+                file_path or "",
+                file_bytes,
+                progress_context,
+                use_ocr,
+                file_ext,
+                effective_ocr_mode,
             )
             duration = time.time() - start_time
 
@@ -353,15 +388,15 @@ class TextExtractor:
                 extraction_engine = self._last_ocr_engine or "unknown"
                 extraction_confidence = ocr_confidence
                 actual_method = "ocr"
-            elif file_ext == ".pdf":
+            elif ingestion_type == IngestionType.PDF:
                 extraction_method = "pdf_text"
                 extraction_engine = "pymupdf"
                 actual_method = "fast_extraction"
-            elif file_ext in [".docx", ".doc"]:
+            elif ingestion_type in (IngestionType.DOCX, IngestionType.DOC):
                 extraction_method = "document"
                 extraction_engine = "python-docx"
                 actual_method = "fast_extraction"
-            elif file_ext in [".txt", ".md"]:
+            elif ingestion_type == IngestionType.PLAIN_TEXT:
                 extraction_method = "text"
                 extraction_engine = "direct"
                 actual_method = "fast_extraction"
@@ -389,7 +424,7 @@ class TextExtractor:
                     "duration": duration,
                     "details": {
                         "file_extension": file_ext,
-                        "use_ocr": use_ocr,
+                        "ocr_mode": effective_ocr_mode,
                         "processing_time": duration,
                     },
                 },
@@ -406,6 +441,7 @@ class TextExtractor:
         progress_context: dict[str, Any] | None = None,
         use_ocr: bool = True,
         file_ext: str | None = None,
+        ocr_mode: str = "auto",
     ) -> tuple[str, bool, float | None]:
         """Extract text directly in-memory with progress updates.
 
@@ -414,6 +450,7 @@ class TextExtractor:
                 skips re-deriving it from file_path. This is important for files
                 whose file_path has no extension (e.g. Google Docs titles) where
                 the caller applied a fallback.
+            ocr_mode: OCR mode string passed through from the public API.
 
         Returns:
             (text, ocr_actually_used, confidence) — callers should use the bool for metadata
@@ -429,20 +466,18 @@ class TextExtractor:
             if not file_ext:
                 file_ext = Path(file_path).suffix.lower()
 
+            # Resolve ingestion type for handler dispatch
+            ingestion_type = EXT_TO_INGESTION_TYPE.get(file_ext)
+
             # PDFs: always use the progress-aware path so OCR/use_ocr is honored even without a progress callback
-            if file_ext == ".pdf":
-                # Determine OCR mode from context if provided
-                ocr_mode = "auto"
-                if progress_context and "ocr_mode" in progress_context:
-                    ocr_mode = progress_context["ocr_mode"]
-                # Use a no-op progress callback when none provided
+            if ingestion_type == IngestionType.PDF:
                 cb = progress_callback if progress_callback else None
                 raw_text, ocr_actually_used, ocr_confidence = await self._extract_text_pdf_with_progress(
                     file_path, file_content, cb, use_ocr, ocr_mode
                 )
             else:
-                extractor = self.supported_formats[file_ext]
-                raw_text = await extractor(file_path, file_content)
+                handler = self._type_handlers[ingestion_type]
+                raw_text = await handler(file_path, file_content)
                 ocr_actually_used = False
                 ocr_confidence = None
 
@@ -1315,16 +1350,7 @@ class TextExtractor:
             def _read_file():
                 if file_content:
                     # For in-memory content, check if it looks like binary data
-                    # Look for common binary file signatures
-                    binary_signatures = [
-                        b"\x50\x4b\x03\x04",  # ZIP/DOCX/PPTX/XLSX
-                        b"\x25\x50\x44\x46",  # PDF
-                        b"\xd0\xcf\x11\xe0",  # DOC/XLS/PPT (OLE)
-                        b"\x50\x4b\x05\x06",  # ZIP
-                        b"\x50\x4b\x07\x08",  # ZIP
-                    ]
-
-                    for signature in binary_signatures:
+                    for signature in ALL_BINARY_SIGNATURES:
                         if file_content.startswith(signature):
                             logger.warning(f"Binary file detected in memory content: {file_path}")
                             return f"[Error: Binary file detected - cannot extract text from {file_path}]"
@@ -1338,34 +1364,8 @@ class TextExtractor:
                 else:
                     # Check file extension for known binary formats
                     file_ext = Path(file_path).suffix.lower()
-                    binary_extensions = {
-                        ".pdf",
-                        ".docx",
-                        ".doc",
-                        ".pptx",
-                        ".xlsx",
-                        ".zip",
-                        ".exe",
-                        ".dll",
-                        ".so",
-                        ".dylib",
-                        ".bin",
-                        ".dat",
-                        ".obj",
-                        ".class",
-                        ".jar",
-                        ".war",
-                        ".ear",
-                        ".apk",
-                        ".ipa",
-                        ".dmg",
-                        ".iso",
-                        ".img",
-                        ".vhd",
-                        ".vmdk",
-                    }
 
-                    if file_ext in binary_extensions:
+                    if file_ext in KNOWN_BINARY_EXTENSIONS:
                         logger.warning(f"Binary file extension detected: {file_path}")
                         return f"[Error: Binary file format {file_ext} - cannot extract text from {file_path}]"
 

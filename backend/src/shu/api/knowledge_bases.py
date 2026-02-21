@@ -24,6 +24,7 @@ from ..core.config import get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
+from ..ingestion.filetypes import MAGIC_BYTES
 from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, RAGConfig
 from ..services.document_service import DocumentService
 from ..services.ingestion_service import ingest_document as ingest_document_service
@@ -810,29 +811,23 @@ async def get_extraction_summary(
 def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
     """Check if file content matches the declared extension via magic bytes.
 
-    Returns an error message string if a mismatch is detected, None if content looks valid.
-    Only checks binary formats where mismatches cause deterministic pipeline failures.
+    Returns an error message string if a mismatch is detected, None if content
+    looks valid.  Magic-byte signatures are defined centrally in
+    :data:`shu.ingestion.filetypes.MAGIC_BYTES`.
     """
+    dotted = f".{ext}"
+    expected = MAGIC_BYTES.get(dotted)
+    if expected is None:
+        return None  # No magic-byte check for this type (text files, etc.)
+
     if len(file_bytes) < 4:
         return None  # Too short to check signatures
 
     header = file_bytes[:8]
+    if any(header[: len(sig)] == sig for sig in expected):
+        return None  # Content matches an expected signature
 
-    # ZIP signature — used by DOCX, XLSX, PPTX, and plain ZIP files
-    is_zip = header[:4] in (b"\x50\x4b\x03\x04", b"\x50\x4b\x05\x06", b"\x50\x4b\x07\x08")
-    # PDF signature
-    is_pdf = header[:4] == b"\x25\x50\x44\x46"  # %PDF
-    # OLE2 compound document — used by legacy .doc, .xls, .ppt
-    is_ole = header[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-
-    if ext == "pdf" and not is_pdf:
-        return "File content does not match declared type .pdf (invalid PDF header)"
-    if ext in ("docx", "xlsx", "pptx") and not is_zip:
-        return f"File content does not match declared type .{ext} (expected ZIP-based Office format)"
-    if ext == "doc" and not is_ole and not is_zip:
-        return "File content does not match declared type .doc (expected OLE2 or ZIP format)"
-
-    return None
+    return f"File content does not match declared type .{ext}"
 
 
 @router.post(

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging import get_logger
+from ..ingestion.filetypes import normalize_extension
 from ..knowledge.ko import deterministic_ko_id
 from ..models.document import Document
 from ..services.document_service import DocumentService
@@ -134,61 +135,21 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
 
 
 def _infer_file_type(filename: str, mime_type: str) -> str:
-    name = (filename or "").lower()
-    if name.endswith(".pdf") or mime_type == "application/pdf":
-        return "pdf"
-    for ext in (
-        ".md",
-        ".txt",
-        ".docx",
-        ".doc",
-        ".rtf",
-        ".html",
-        ".htm",
-        ".eml",
-        ".csv",
-        ".py",
-        ".js",
-        ".xlsx",
-        ".pptx",
-    ):
-        if name.endswith(ext):
+    """Infer a short file-type label from *filename* and/or *mime_type*.
+
+    Priority: filename extension → MIME-type lookup → ``"txt"`` default.
+    """
+    name = (filename or "").strip()
+    if name:
+        ext = normalize_extension(name)
+        if ext != ".bin":
             return ext.lstrip(".")
-    if mime_type in (
-        "text/plain",
-        "text/markdown",
-        "text/html",
-        "text/csv",
-        # JavaScript
-        "text/javascript",
-        "application/javascript",
-        "application/x-javascript",
-        "text/ecmascript",
-        "application/ecmascript",
-        # Python
-        "text/x-python",
-        "application/x-python",
-        "application/x-python-code",
-    ):
-        if mime_type == "text/plain":
-            return "txt"
-        if mime_type == "text/markdown":
-            return "md"
-        if mime_type == "text/html":
-            return "html"
-        if mime_type == "text/csv":
-            return "csv"
-        if mime_type in (
-            "text/javascript",
-            "application/javascript",
-            "application/x-javascript",
-            "text/ecmascript",
-            "application/ecmascript",
-        ):
-            return "js"
-        if mime_type in ("text/x-python", "application/x-python", "application/x-python-code"):
-            return "py"
-        return "txt"
+
+    if mime_type:
+        ext = normalize_extension(mime_type)
+        if ext != ".bin":
+            return ext.lstrip(".")
+
     return "txt"
 
 
