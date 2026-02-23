@@ -1,6 +1,5 @@
 """Scheduled cleanup for chat attachments."""
 
-import asyncio
 import logging
 import os
 from datetime import UTC, datetime
@@ -9,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
-from ..core.database import get_db_session
 from ..models.attachment import Attachment
 
 logger = logging.getLogger(__name__)
@@ -47,28 +45,3 @@ class AttachmentCleanupService:
         if not dry_run:
             await self.db.commit()
         return deleted
-
-
-async def start_attachment_cleanup_scheduler():
-    settings = get_settings_instance()
-    interval = getattr(settings, "chat_attachment_cleanup_interval_seconds", 6 * 3600)
-
-    async def _runner() -> None:
-        while True:
-            try:
-                db = await get_db_session()
-                async with db as session:
-                    service = AttachmentCleanupService(session)
-                    count = await service.cleanup_expired_attachments()
-                    if count:
-                        logger.info(f"Attachment cleanup deleted {count} expired attachments")
-            except Exception as e:
-                logger.warning(f"Attachment cleanup run failed: {e}")
-            finally:
-                try:
-                    await asyncio.sleep(interval)
-                except asyncio.CancelledError:
-                    break
-
-    # Fire-and-forget task; caller should hold task handle if they need cancellation
-    return asyncio.create_task(_runner(), name="attachments:cleanup:scheduler")

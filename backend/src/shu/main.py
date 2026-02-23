@@ -224,16 +224,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         logger.error(f"Failed to preload embedding model: {e}", exc_info=True)
         # Don't raise here, as the app can still function without preloaded model
 
-    # Start attachments TTL cleanup scheduler
-    try:
-        from .services.attachment_cleanup import start_attachment_cleanup_scheduler
-
-        app.state.attachments_cleanup_task = await start_attachment_cleanup_scheduler()
-        logger.info("Attachment cleanup scheduler started")
-    except Exception as e:
-        logger.warning(f"Failed to start attachment cleanup scheduler: {e}")
-
-    # Start unified scheduler (plugin feeds + experiences)
+    # Start unified scheduler (plugin feeds + experiences + maintenance tasks)
     try:
         from .services.scheduler_service import start_scheduler
 
@@ -308,7 +299,6 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
 
     # Cancel and await background schedulers for clean shutdown
     task_attrs = [
-        ("attachments_cleanup", "attachments_cleanup_task"),
         ("scheduler", "scheduler_task"),
     ]
     tasks_to_cancel = []

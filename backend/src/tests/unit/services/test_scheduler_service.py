@@ -7,6 +7,7 @@ Tests cover:
 - ExperienceSource fans out one job per user per experience
 - ExperienceSource advances schedule after enqueue
 - ExperienceSource handles no-users case
+- AttachmentCleanupSource delegates to AttachmentCleanupService
 - UnifiedSchedulerService.tick() iterates all sources
 - Source errors don't block other sources
 """
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.services.scheduler_service import (
+    AttachmentCleanupSource,
     ExperienceSource,
     PluginFeedSource,
     UnifiedSchedulerService,
@@ -220,6 +222,41 @@ class TestExperienceSource:
         # Schedule advanced once
         mock_exp.schedule_next.assert_called_once()
         assert mock_exp.last_run_at is not None
+
+
+class TestAttachmentCleanupSource:
+    """Tests for AttachmentCleanupSource delegation."""
+
+    def test_name(self):
+        source = AttachmentCleanupSource()
+        assert source.name == "attachment_cleanup"
+
+    @pytest.mark.asyncio
+    @patch("shu.services.attachment_cleanup.AttachmentCleanupService")
+    async def test_cleanup_stale_delegates(self, mock_svc_class):
+        """cleanup_stale delegates to AttachmentCleanupService.cleanup_expired_attachments."""
+        mock_svc = MagicMock()
+        mock_svc.cleanup_expired_attachments = AsyncMock(return_value=5)
+        mock_svc_class.return_value = mock_svc
+
+        source = AttachmentCleanupSource()
+        db = AsyncMock()
+        result = await source.cleanup_stale(db)
+
+        assert result == 5
+        mock_svc_class.assert_called_once_with(db)
+        mock_svc.cleanup_expired_attachments.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_enqueue_due_returns_zero(self):
+        """enqueue_due returns zero since all work happens in cleanup_stale."""
+        source = AttachmentCleanupSource()
+        db = AsyncMock()
+        queue = AsyncMock()
+
+        result = await source.enqueue_due(db, queue, limit=10)
+
+        assert result == {"enqueued": 0}
 
 
 class TestUnifiedSchedulerService:
