@@ -37,8 +37,8 @@ class Attachment(BaseModel):
     extraction_duration = Column(Float, nullable=True)
     extraction_metadata = Column(JSON, nullable=True)
 
-    # Expiration
-    expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Expiration (indexed for efficient cleanup queries)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True)
 
     # Relationships
     conversation = relationship("Conversation", back_populates="attachments", lazy="selectin")
