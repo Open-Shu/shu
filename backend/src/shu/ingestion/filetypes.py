@@ -189,6 +189,10 @@ KNOWN_BINARY_EXTENSIONS: frozenset[str] = frozenset(
 # normalize_extension — filename / MIME → dotted extension
 # ---------------------------------------------------------------------------
 
+_MIME_TOP_LEVELS: frozenset[str] = frozenset(
+    {"application", "audio", "font", "image", "message", "model", "multipart", "text", "video"}
+)
+
 
 def normalize_extension(name_or_mime: str) -> str:
     """Return a dotted extension like ``".pdf"`` for a filename or MIME type.
@@ -216,11 +220,13 @@ def normalize_extension(name_or_mime: str) -> str:
     if lower in MIME_TO_EXT:
         return MIME_TO_EXT[lower]
 
-    # 2. MIME-type heuristic: exactly one "/" and not an absolute path
-    #    (e.g. "application/pdf", "application/vnd.google-apps.document").
-    #    Go straight to stdlib to avoid PurePosixPath extracting a bogus
-    #    suffix from dotted subtypes.
-    if mime_value.count("/") == 1 and not mime_value.startswith("/"):
+    # 2. MIME-type heuristic: exactly one "/" whose left side is a known
+    #    IANA top-level type (e.g. "application/pdf", "text/plain").
+    #    This avoids misclassifying relative paths like "subdir/report.pdf"
+    #    as MIME types.  Go straight to stdlib to avoid PurePosixPath
+    #    extracting a bogus suffix from dotted subtypes.
+    top = lower.split("/", 1)[0] if "/" in lower else ""
+    if mime_value.count("/") == 1 and top in _MIME_TOP_LEVELS:
         guessed = mimetypes.guess_extension(lower, strict=False)
         if guessed:
             return guessed.lower()
