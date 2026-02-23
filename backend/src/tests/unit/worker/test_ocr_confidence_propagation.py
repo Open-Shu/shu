@@ -8,9 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.ingestion.filetypes import IngestionType
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_extractor():
     """Return a TextExtractor with a minimal ConfigurationManager stub."""
@@ -27,9 +30,9 @@ def _make_extractor():
     extractor = TextExtractor.__new__(TextExtractor)
     extractor.config_manager = config_manager
     extractor._current_sync_job_id = None
-    extractor.supported_formats = {
-        ".txt": extractor._extract_text_plain,
-        ".pdf": None,  # PDF handled separately
+    extractor._type_handlers = {
+        IngestionType.PLAIN_TEXT: extractor._extract_text_plain,
+        # PDF routes through IngestionType.PDF check, not _type_handlers
     }
     extractor.supported_extensions = {".txt", ".pdf"}
     extractor._last_ocr_engine = None
@@ -167,7 +170,7 @@ class TestExtractTextEndToEnd:
             "_extract_text_direct",
             new=AsyncMock(return_value=("extracted text", True, real_confidence)),
         ):
-            result = await extractor.extract_text("test.pdf", b"fake", use_ocr=True)
+            result = await extractor.extract_text(file_path="test.pdf", file_bytes=b"fake", ocr_mode="auto")
 
         assert result["metadata"]["confidence"] == real_confidence
         assert result["metadata"]["confidence"] != 0.8, "Must not be the old hardcoded value"
@@ -183,7 +186,7 @@ class TestExtractTextEndToEnd:
             "_extract_text_direct",
             new=AsyncMock(return_value=("tesseract text", True, quality_score)),
         ):
-            result = await extractor.extract_text("test.pdf", b"fake", use_ocr=True)
+            result = await extractor.extract_text(file_path="test.pdf", file_bytes=b"fake", ocr_mode="auto")
 
         assert result["metadata"]["confidence"] == quality_score
         assert result["metadata"]["confidence"] != 0.8
@@ -198,7 +201,7 @@ class TestExtractTextEndToEnd:
             "_extract_text_direct",
             new=AsyncMock(return_value=("plain text", False, None)),
         ):
-            result = await extractor.extract_text("test.pdf", b"fake", use_ocr=False)
+            result = await extractor.extract_text(file_path="test.pdf", file_bytes=b"fake", ocr_mode="never")
 
         assert result["metadata"]["confidence"] is None
 
@@ -212,7 +215,7 @@ class TestExtractTextEndToEnd:
             "_extract_text_direct",
             new=AsyncMock(return_value=("plain text", False, None)),
         ):
-            result = await extractor.extract_text("readme.txt", b"plain text", use_ocr=False)
+            result = await extractor.extract_text(file_path="readme.txt", file_bytes=b"plain text", ocr_mode="never")
 
         assert result["metadata"]["confidence"] is None
 

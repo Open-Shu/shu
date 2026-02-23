@@ -200,19 +200,10 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             # Extract text using TextExtractor
             extractor = TextExtractor(config_manager=get_config_manager())
 
-            # Determine if OCR should be used based on ocr_mode.
-            # "never" and "text_only" disable OCR entirely; all other modes
-            # (including "fallback") let the extractor decide per file type.
-            # "fallback" must also be forwarded via progress_context so the
-            # PDF path can try fast extraction first.
-            use_ocr = ocr_mode not in {"text_only", "never"} if ocr_mode else True
-            progress_ctx = {"ocr_mode": ocr_mode} if ocr_mode else None
-
             extraction_result = await extractor.extract_text(
                 file_path=filename,
-                file_content=file_bytes,
-                use_ocr=use_ocr,
-                progress_context=progress_ctx,
+                file_bytes=file_bytes,
+                ocr_mode=ocr_mode,
             )
 
             extracted_text = extraction_result.get("text", "")

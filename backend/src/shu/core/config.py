@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ..ingestion.filetypes import DEFAULT_KB_FILE_TYPES
+
 # Load environment variables from .env file
 # Use override=True to ensure .env changes take effect immediately
 load_dotenv(override=True)
@@ -218,21 +220,7 @@ class Settings(BaseSettings):
     # KB document upload (types supported by text extractor - no standalone image OCR)
     kb_upload_max_size: int = Field(50 * 1024 * 1024, alias="SHU_KB_UPLOAD_MAX_SIZE")  # 50MB
     kb_upload_allowed_types: list[str] = Field(
-        default_factory=lambda: [
-            "pdf",
-            "docx",
-            "doc",
-            "txt",
-            "md",
-            "rtf",
-            "html",
-            "htm",
-            "csv",
-            "py",
-            "js",
-            "xlsx",
-            "pptx",
-        ],
+        default_factory=lambda: list(DEFAULT_KB_FILE_TYPES),
         alias="SHU_KB_UPLOAD_ALLOWED_TYPES",
     )
 
