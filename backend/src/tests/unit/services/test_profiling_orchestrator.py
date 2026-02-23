@@ -29,6 +29,10 @@ def mock_settings():
     settings.profiling_full_doc_max_tokens = 4000
     settings.profiling_max_input_tokens = 8000
     settings.enable_document_profiling = True
+    settings.enable_query_synthesis = False  # Disabled by default in tests
+    settings.query_synthesis_timeout_seconds = 90
+    settings.query_synthesis_max_queries = 20
+    settings.query_synthesis_min_queries = 3
     return settings
 
 
@@ -352,3 +356,208 @@ class TestHelperMethods:
 
         status = await orchestrator.get_profiling_status("nonexistent")
         assert status is None
+
+
+class TestQuerySynthesisIntegration:
+    """Tests for query synthesis integration in profiling orchestrator."""
+
+    @pytest.mark.asyncio
+    async def test_query_synthesis_runs_when_enabled(self, orchestrator, mock_db, mock_settings):
+        """Test that query synthesis runs after profiling when enabled."""
+        from shu.schemas.query_synthesis import QuerySynthesisResult, SynthesizedQuery
+
+        mock_settings.enable_query_synthesis = True
+
+        doc = create_mock_document()
+        doc.knowledge_base_id = "kb-123"
+        chunks = [create_mock_chunk("c1", 0, "Content")]
+        mock_db.get.return_value = doc
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = chunks
+        mock_db.execute.return_value = mock_result
+
+        doc_profile = DocumentProfile(
+            synopsis="Test synopsis",
+            document_type=DocumentType.TECHNICAL,
+            capability_manifest=CapabilityManifest(answers_questions_about=["APIs"]),
+        )
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="Chunk 1", keywords=[], topics=[]),
+                success=True,
+            ),
+        ]
+
+        query_result = QuerySynthesisResult(
+            queries=[
+                SynthesizedQuery(query_text="What is the API?", query_type="interrogative", topic_covered="APIs"),
+                SynthesizedQuery(query_text="API documentation", query_type="declarative", topic_covered="APIs"),
+            ],
+            main_ideas=[],
+            success=True,
+            tokens_used=150,
+        )
+
+        with patch.object(orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 50)):
+            with patch.object(
+                orchestrator.profiling_service,
+                "profile_document",
+                return_value=(doc_profile, MagicMock(tokens_used=100)),
+            ):
+                with patch.object(
+                    orchestrator.query_synthesis_service,
+                    "synthesize_queries",
+                    return_value=query_result,
+                ) as mock_synthesis:
+                    with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
+                        result = await orchestrator.run_for_document("doc-123")
+
+        assert result.success is True
+        mock_synthesis.assert_called_once()
+        # Verify synopsis and capability_manifest were passed
+        call_kwargs = mock_synthesis.call_args[1]
+        assert call_kwargs["synopsis"] == "Test synopsis"
+        assert call_kwargs["capability_manifest"]["answers_questions_about"] == ["APIs"]
+        # Verify queries were added to DB
+        assert mock_db.add.call_count == 2  # Two queries
+
+    @pytest.mark.asyncio
+    async def test_query_synthesis_skipped_when_disabled(self, orchestrator, mock_db, mock_settings):
+        """Test that query synthesis is skipped when disabled."""
+        mock_settings.enable_query_synthesis = False
+
+        doc = create_mock_document()
+        chunks = [create_mock_chunk("c1", 0, "Content")]
+        mock_db.get.return_value = doc
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = chunks
+        mock_db.execute.return_value = mock_result
+
+        doc_profile = DocumentProfile(
+            synopsis="Test synopsis",
+            document_type=DocumentType.TECHNICAL,
+            capability_manifest=CapabilityManifest(),
+        )
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="Chunk 1", keywords=[], topics=[]),
+                success=True,
+            ),
+        ]
+
+        with patch.object(orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 50)):
+            with patch.object(
+                orchestrator.profiling_service,
+                "profile_document",
+                return_value=(doc_profile, MagicMock(tokens_used=100)),
+            ):
+                with patch.object(
+                    orchestrator.query_synthesis_service,
+                    "synthesize_queries",
+                ) as mock_synthesis:
+                    with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
+                        result = await orchestrator.run_for_document("doc-123")
+
+        assert result.success is True
+        mock_synthesis.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_query_synthesis_skipped_when_profiling_fails(self, orchestrator, mock_db, mock_settings):
+        """Test that query synthesis is skipped when document profiling fails."""
+        mock_settings.enable_query_synthesis = True
+
+        doc = create_mock_document()
+        chunks = [create_mock_chunk("c1", 0, "Content")]
+        mock_db.get.return_value = doc
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = chunks
+        mock_db.execute.return_value = mock_result
+
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="Chunk 1", keywords=[], topics=[]),
+                success=True,
+            ),
+        ]
+
+        with patch.object(orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 50)):
+            with patch.object(
+                orchestrator.profiling_service,
+                "profile_document",
+                return_value=(None, MagicMock(tokens_used=100)),  # Profile failed
+            ):
+                with patch.object(
+                    orchestrator.query_synthesis_service,
+                    "synthesize_queries",
+                ) as mock_synthesis:
+                    with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
+                        result = await orchestrator.run_for_document("doc-123")
+
+        assert result.success is False
+        mock_synthesis.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_query_synthesis_failure_does_not_fail_profiling(self, orchestrator, mock_db, mock_settings):
+        """Test that query synthesis failure doesn't fail the overall profiling."""
+        from shu.schemas.query_synthesis import QuerySynthesisResult
+
+        mock_settings.enable_query_synthesis = True
+
+        doc = create_mock_document()
+        doc.knowledge_base_id = "kb-123"
+        chunks = [create_mock_chunk("c1", 0, "Content")]
+        mock_db.get.return_value = doc
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = chunks
+        mock_db.execute.return_value = mock_result
+
+        doc_profile = DocumentProfile(
+            synopsis="Test synopsis",
+            document_type=DocumentType.TECHNICAL,
+            capability_manifest=CapabilityManifest(),
+        )
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="Chunk 1", keywords=[], topics=[]),
+                success=True,
+            ),
+        ]
+
+        # Query synthesis fails
+        query_result = QuerySynthesisResult(
+            queries=[],
+            main_ideas=[],
+            success=False,
+            error="LLM timeout",
+            tokens_used=50,
+        )
+
+        with patch.object(orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 50)):
+            with patch.object(
+                orchestrator.profiling_service,
+                "profile_document",
+                return_value=(doc_profile, MagicMock(tokens_used=100)),
+            ):
+                with patch.object(
+                    orchestrator.query_synthesis_service,
+                    "synthesize_queries",
+                    return_value=query_result,
+                ):
+                    with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
+                        result = await orchestrator.run_for_document("doc-123")
+
+        # Profiling should still succeed even though query synthesis failed
+        assert result.success is True
+        assert result.document_profile is not None

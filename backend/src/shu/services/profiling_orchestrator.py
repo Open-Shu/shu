@@ -1,4 +1,4 @@
-"""Document Profiling Orchestrator (SHU-343).
+"""Document Profiling Orchestrator.
 
 DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Loads document and chunk records from the database
@@ -6,9 +6,7 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Manages profiling_status transitions (pending -> in_progress -> complete/failed)
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
-
-SHU-344 (ingestion integration) calls this orchestrator rather than
-re-implementing status or persistence logic.
+- Optionally runs query synthesis after profiling completes
 """
 
 import time
@@ -18,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
-from ..models.document import Document, DocumentChunk
+from ..models.document import Document, DocumentChunk, DocumentQuery
 from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
@@ -27,6 +25,7 @@ from ..schemas.profiling import (
 )
 from ..utils.tokenization import estimate_tokens
 from .profiling_service import ProfilingService
+from .query_synthesis_service import QuerySynthesisService
 from .side_call_service import SideCallService
 
 logger = structlog.get_logger(__name__)
@@ -44,6 +43,7 @@ class ProfilingOrchestrator:
         self.db = db
         self.settings = settings
         self.profiling_service = ProfilingService(side_call_service, settings)
+        self.query_synthesis_service = QuerySynthesisService(side_call_service, settings)
 
     async def run_for_document(self, document_id: str) -> ProfilingResult:
         """Run profiling for a document and its chunks.
@@ -132,7 +132,28 @@ class ProfilingOrchestrator:
             # Persist results
             await self._persist_results(document, chunks, doc_profile, chunk_results)
 
+            # Run query synthesis if enabled and profiling succeeded
+            query_synthesis_tokens = 0
+            queries_created = 0
+            if doc_profile and self.settings.enable_query_synthesis:
+                query_synthesis_tokens, queries_created = await self._run_query_synthesis(
+                    document=document,
+                    full_text=full_text,
+                    doc_profile=doc_profile,
+                )
+                total_tokens += query_synthesis_tokens
+
             duration_ms = int((time.time() - start_time) * 1000)
+
+            logger.info(
+                "profiling_complete",
+                document_id=document_id,
+                profiling_mode=mode.value,
+                tokens_used=total_tokens,
+                query_synthesis_enabled=self.settings.enable_query_synthesis,
+                queries_created=queries_created,
+                duration_ms=duration_ms,
+            )
 
             return ProfilingResult(
                 document_id=document_id,
@@ -220,6 +241,70 @@ class ProfilingOrchestrator:
             chunks_profiled=sum(1 for r in chunk_results if r.success),
             chunks_failed=sum(1 for r in chunk_results if not r.success),
         )
+
+    async def _run_query_synthesis(
+        self,
+        document: Document,
+        full_text: str,
+        doc_profile,
+    ) -> tuple[int, int]:
+        """Run query synthesis and persist results.
+
+        Args:
+            document: The document being profiled
+            full_text: Full document text
+            doc_profile: Document profile result (contains synopsis and capability_manifest)
+
+        Returns:
+            Tuple of (tokens_used, queries_created)
+
+        """
+        logger.info(
+            "starting_query_synthesis",
+            document_id=document.id,
+        )
+
+        # Get capability manifest dict for reuse optimization
+        capability_manifest = None
+        if doc_profile.capability_manifest:
+            capability_manifest = doc_profile.capability_manifest.model_dump()
+
+        result = await self.query_synthesis_service.synthesize_queries(
+            document_text=full_text,
+            synopsis=doc_profile.synopsis,
+            capability_manifest=capability_manifest,
+        )
+
+        if not result.success:
+            logger.warning(
+                "query_synthesis_failed",
+                document_id=document.id,
+                error=result.error,
+            )
+            return result.tokens_used, 0
+
+        # Persist synthesized queries
+        queries_created = 0
+        for query in result.queries:
+            doc_query = DocumentQuery.create_for_document(
+                document_id=document.id,
+                knowledge_base_id=document.knowledge_base_id,
+                query_text=query.query_text,
+            )
+            self.db.add(doc_query)
+            queries_created += 1
+
+        await self.db.commit()
+
+        logger.info(
+            "query_synthesis_complete",
+            document_id=document.id,
+            queries_created=queries_created,
+            main_ideas_found=len(result.main_ideas),
+            tokens_used=result.tokens_used,
+        )
+
+        return result.tokens_used, queries_created
 
     async def is_profiling_enabled(self) -> bool:
         """Check if document profiling is enabled."""

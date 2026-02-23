@@ -238,6 +238,15 @@ class Settings(BaseSettings):
     # Tasks beyond this limit queue in memory; see SHU-211 for persistent queue migration
     profiling_max_concurrent_tasks: int = Field(5, alias="SHU_PROFILING_MAX_CONCURRENT_TASKS")
 
+    # Shu RAG Query Synthesis (SHU-353)
+    enable_query_synthesis: bool = Field(False, alias="SHU_ENABLE_QUERY_SYNTHESIS")
+    # Upper bound on queries per document (cost control)
+    query_synthesis_max_queries: int = Field(20, alias="SHU_QUERY_SYNTHESIS_MAX_QUERIES")
+    # Minimum queries for any document
+    query_synthesis_min_queries: int = Field(3, alias="SHU_QUERY_SYNTHESIS_MIN_QUERIES")
+    # Timeout for query synthesis LLM calls
+    query_synthesis_timeout_seconds: int = Field(90, alias="SHU_QUERY_SYNTHESIS_TIMEOUT_SECONDS")
+
     @staticmethod
     def _repo_root_from_this_file() -> Path:
         """Resolve repository root robustly for both local and container layouts.
