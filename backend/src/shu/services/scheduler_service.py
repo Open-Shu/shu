@@ -337,6 +337,32 @@ class IngestionStagingMaintenanceSource:
         return {"enqueued": 0}
 
 
+class AttachmentCleanupSource:
+    """Schedulable source for chat attachment TTL cleanup.
+
+    Runs on every scheduler tick (typically every 60s). Deletes attachments
+    where expires_at <= now and removes their files from disk.
+
+    The old 6-hour interval was just how often we checked — the TTL logic
+    is unchanged. Checking every tick is fine since cleanup only affects
+    rows where expires_at <= now.
+    """
+
+    @property
+    def name(self) -> str:
+        return "attachment_cleanup"
+
+    async def cleanup_stale(self, db: AsyncSession) -> int:
+        from .attachment_cleanup import AttachmentCleanupService
+
+        service = AttachmentCleanupService(db)
+        return await service.cleanup_expired_attachments()
+
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
+        # Nothing to enqueue — all work happens in cleanup_stale
+        return {"enqueued": 0}
+
+
 class UnifiedSchedulerService:
     """Unified scheduler that iterates over registered sources per tick."""
 
@@ -444,6 +470,9 @@ async def start_scheduler() -> asyncio.Task:
 
     # Ingestion staging maintenance: orphan file cleanup (always enabled)
     sources.append(IngestionStagingMaintenanceSource())
+
+    # Attachment cleanup: TTL-based chat attachment deletion (always enabled)
+    sources.append(AttachmentCleanupSource())
 
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",
