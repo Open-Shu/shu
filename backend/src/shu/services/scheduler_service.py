@@ -337,6 +337,48 @@ class IngestionStagingMaintenanceSource:
         return {"enqueued": 0}
 
 
+class AttachmentCleanupSource:
+    """Schedulable source for chat attachment TTL cleanup.
+
+    Runs at a configurable interval (default 6 hours via
+    SHU_CHAT_ATTACHMENT_CLEANUP_INTERVAL_SECONDS). Deletes attachments
+    where expires_at <= now and removes their files from disk.
+
+    The interval controls how often we check — the TTL logic is based on
+    each attachment's expires_at timestamp. With an index on expires_at,
+    the query is efficient even at scale.
+    """
+
+    def __init__(self) -> None:
+        self._last_run: datetime | None = None
+
+    @property
+    def name(self) -> str:
+        return "attachment_cleanup"
+
+    async def cleanup_stale(self, db: AsyncSession) -> int:
+        settings = get_settings_instance()
+        interval_seconds = settings.chat_attachment_cleanup_interval_seconds
+        now = datetime.now(UTC)
+
+        # Skip if we ran recently (within the configured interval)
+        if self._last_run is not None:
+            elapsed = (now - self._last_run).total_seconds()
+            if elapsed < interval_seconds:
+                return 0
+
+        from .attachment_cleanup import AttachmentCleanupService
+
+        service = AttachmentCleanupService(db)
+        deleted = await service.cleanup_expired_attachments()
+        self._last_run = now
+        return deleted
+
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
+        # Nothing to enqueue — all work happens in cleanup_stale
+        return {"enqueued": 0}
+
+
 class UnifiedSchedulerService:
     """Unified scheduler that iterates over registered sources per tick."""
 
@@ -373,7 +415,7 @@ class UnifiedSchedulerService:
         return results
 
 
-async def start_scheduler() -> asyncio.Task:
+async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     """Start the unified scheduler background task.
 
     Replaces both start_plugins_scheduler() and start_experiences_scheduler()
@@ -444,6 +486,9 @@ async def start_scheduler() -> asyncio.Task:
 
     # Ingestion staging maintenance: orphan file cleanup (always enabled)
     sources.append(IngestionStagingMaintenanceSource())
+
+    # Attachment cleanup: TTL-based chat attachment deletion (always enabled)
+    sources.append(AttachmentCleanupSource())
 
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",
