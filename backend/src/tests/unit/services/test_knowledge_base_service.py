@@ -7,6 +7,9 @@ stats are properly maintained.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from shu.models.document import Document
+from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
 class TestRecalculateKBStats:
     """Tests for recalculate_kb_stats method."""
@@ -14,7 +17,7 @@ class TestRecalculateKBStats:
     @pytest.mark.asyncio
     async def test_recalculate_kb_stats_updates_denormalized_columns(self):
         """Verify recalculate_kb_stats updates KB document_count and total_chunks."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         # Mock database session
         mock_db = AsyncMock()
@@ -52,7 +55,7 @@ class TestRecalculateKBStats:
     @pytest.mark.asyncio
     async def test_recalculate_kb_stats_handles_empty_kb(self):
         """Verify recalculate_kb_stats handles KB with no documents."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
 
@@ -78,7 +81,7 @@ class TestRecalculateKBStats:
     @pytest.mark.asyncio
     async def test_recalculate_kb_stats_handles_null_scalars(self):
         """Verify recalculate_kb_stats handles NULL scalar results gracefully."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
 
@@ -105,7 +108,7 @@ class TestRecalculateKBStats:
     @pytest.mark.asyncio
     async def test_recalculate_kb_stats_handles_missing_kb(self):
         """Verify recalculate_kb_stats handles non-existent KB gracefully."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
 
@@ -134,7 +137,7 @@ class TestGetOverallKnowledgeBaseStats:
     @pytest.mark.asyncio
     async def test_aggregates_from_denormalized_stats(self):
         """Verify get_overall_knowledge_base_stats aggregates from KB columns."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
 
@@ -166,7 +169,7 @@ class TestGetOverallKnowledgeBaseStats:
     @pytest.mark.asyncio
     async def test_handles_null_sums(self):
         """Verify get_overall_knowledge_base_stats handles NULL sums (no KBs)."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
 
@@ -192,7 +195,7 @@ class TestGetDocumentFilterCondition:
 
     def test_search_uses_title_only(self):
         """Verify search filter only searches title, not content."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = MagicMock()
         service = KnowledgeBaseService(mock_db)
@@ -217,7 +220,7 @@ class TestDocumentToListDict:
 
     def test_excludes_heavy_fields(self):
         """Verify to_list_dict excludes content, embeddings, and other heavy fields."""
-        from shu.models.document import Document
+
 
         doc = Document(
             id="test-id",
@@ -253,7 +256,7 @@ class TestDocumentToListDict:
 
     def test_includes_all_list_view_fields(self):
         """Verify to_list_dict includes all fields needed for list views."""
-        from shu.models.document import Document
+
         from datetime import datetime, UTC
 
         now = datetime.now(UTC)
@@ -304,7 +307,7 @@ class TestAdjustDocumentStats:
     @pytest.mark.asyncio
     async def test_adjust_document_stats_increments(self):
         """Verify adjust_document_stats increments counts correctly."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock()
@@ -320,7 +323,7 @@ class TestAdjustDocumentStats:
     @pytest.mark.asyncio
     async def test_adjust_document_stats_decrements(self):
         """Verify adjust_document_stats decrements counts correctly."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock()
@@ -335,7 +338,7 @@ class TestAdjustDocumentStats:
     @pytest.mark.asyncio
     async def test_adjust_document_stats_skips_zero_delta(self):
         """Verify adjust_document_stats does nothing when both deltas are zero."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock()
@@ -351,7 +354,7 @@ class TestAdjustDocumentStats:
     @pytest.mark.asyncio
     async def test_adjust_document_stats_handles_doc_only(self):
         """Verify adjust_document_stats works with only doc_delta."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock()
@@ -367,7 +370,7 @@ class TestAdjustDocumentStats:
     @pytest.mark.asyncio
     async def test_adjust_document_stats_handles_chunk_only(self):
         """Verify adjust_document_stats works with only chunk_delta."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock()
@@ -383,7 +386,7 @@ class TestAdjustDocumentStats:
     @pytest.mark.asyncio
     async def test_adjust_document_stats_rollback_on_error(self):
         """Verify adjust_document_stats rolls back on error."""
-        from shu.services.knowledge_base_service import KnowledgeBaseService
+
 
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(side_effect=Exception("DB error"))
