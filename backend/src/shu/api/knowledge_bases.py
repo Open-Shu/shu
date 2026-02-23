@@ -69,12 +69,9 @@ async def list_knowledge_bases(
         kb_service = KnowledgeBaseService(db)
         knowledge_bases, total_count = await kb_service.list_knowledge_bases(limit=limit, offset=offset, search=search)
 
-        # Format response with actual statistics
+        # Format response using denormalized stats (no per-KB COUNT queries)
         kb_items = []
         for kb in knowledge_bases:
-            # Get actual document and chunk counts
-            stats = await kb_service.get_knowledge_base_stats(kb.id)
-
             kb_items.append(
                 {
                     "id": kb.id,
@@ -85,8 +82,8 @@ async def list_knowledge_bases(
                     "chunk_size": kb.chunk_size,
                     "chunk_overlap": kb.chunk_overlap,
                     "status": kb.status or "active",
-                    "document_count": stats["document_count"],
-                    "total_chunks": stats["total_chunks"],
+                    "document_count": kb.document_count,
+                    "total_chunks": kb.total_chunks,
                     "last_sync_at": kb.last_sync_at.isoformat() if kb.last_sync_at is not None else None,
                     "created_at": kb.created_at.isoformat(),
                     "updated_at": kb.updated_at.isoformat(),
@@ -659,7 +656,7 @@ async def list_documents(
     kb_id: str,
     limit: int = Query(50, description="Number of documents to return"),
     offset: int = Query(0, description="Number of documents to skip"),
-    search_query: str | None = Query(None, description="Document title or content to search by"),
+    search_query: str | None = Query(None, description="Document title to search by"),
     filter_by: str = Query("all", description="Document filter to apply to search"),
     current_user: User = Depends(require_kb_query_default),
     db: AsyncSession = Depends(get_db),
@@ -677,14 +674,8 @@ async def list_documents(
             kb_id, limit=limit, offset=offset, search_query=search_query, filter_by=filter_by
         )
 
-        # Normalize stats so UI shows character/word counts even before embeddings complete
-        items = []
-        for doc in documents:
-            d = doc.to_dict()
-            # Fallback to computed counts when DB stats are not yet populated
-            # Avoid lazy-loading content here to prevent MissingGreenlet; rely on stored stats
-            # If stats are zero/missing, show as-is rather than loading content in this path.
-            items.append(d)
+        # Use lightweight serialization to exclude heavy fields (content, embeddings, etc.)
+        items = [doc.to_list_dict() for doc in documents]
 
         return ShuResponse.success({"items": items, "total": total, "limit": limit, "offset": offset})
     except Exception as e:

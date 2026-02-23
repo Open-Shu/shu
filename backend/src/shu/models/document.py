@@ -182,6 +182,39 @@ class Document(BaseModel):
         )
         return base_dict
 
+    def to_list_dict(self) -> dict[str, Any]:
+        """Convert to lightweight dictionary for list views.
+
+        Excludes heavy fields like content, synopsis_embedding, capability_manifest,
+        extraction_metadata, and source_metadata to minimize response size and
+        avoid loading deferred columns.
+        """
+        return {
+            "id": self.id,
+            "knowledge_base_id": self.knowledge_base_id,
+            "title": self.title,
+            "source_type": self.source_type,
+            "source_id": self.source_id,
+            "file_type": self.file_type,
+            "file_size": self.file_size,
+            "mime_type": self.mime_type,
+            "processing_status": self.processing_status,
+            "processing_error": self.processing_error,
+            "extraction_method": self.extraction_method,
+            "extraction_engine": self.extraction_engine,
+            "extraction_confidence": self.extraction_confidence,
+            "source_url": self.source_url,
+            "word_count": self.word_count,
+            "character_count": self.character_count,
+            "chunk_count": self.chunk_count,
+            "document_type": self.document_type,
+            "profiling_status": self.profiling_status,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "processed_at": self.processed_at.isoformat() if self.processed_at else None,
+            "source_modified_at": self.source_modified_at.isoformat() if self.source_modified_at else None,
+        }
+
     @property
     def is_processed(self) -> bool:
         """Check if document has been processed successfully."""

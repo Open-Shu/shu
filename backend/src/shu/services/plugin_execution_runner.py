@@ -286,6 +286,29 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
                 exc_info=True,
             )
 
+    # Step 16: Recalculate KB stats after successful feed sync
+    if status == PluginExecutionStatus.COMPLETED:
+        kb_id = eff_params.get("kb_id") or eff_params.get("knowledge_base_id")
+        if kb_id:
+            try:
+                from .knowledge_base_service import KnowledgeBaseService
+
+                kb_service = KnowledgeBaseService(session)
+                await kb_service.recalculate_kb_stats(kb_id)
+                feed_updates["kb_stats_recalculated"] = True
+                logger.debug(
+                    "Recalculated KB stats after feed sync | exec_id=%s kb_id=%s",
+                    rec.id,
+                    kb_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to recalculate KB stats after feed sync | exec_id=%s kb_id=%s",
+                    rec.id,
+                    kb_id,
+                    exc_info=True,
+                )
+
     return PluginExecutionResult(
         status=status,
         result=payload,
