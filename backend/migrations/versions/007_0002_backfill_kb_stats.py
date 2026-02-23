@@ -36,7 +36,3 @@ def upgrade() -> None:
             0
         )
     """)
-
-
-def downgrade() -> None:
-
