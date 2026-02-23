@@ -1,4 +1,4 @@
-"""Add index on documents.title and backfill KB stats.
+"""backfill KB stats.
 
 Revision ID: 007_0002
 Revises: 007_0001_add_must_change_password
