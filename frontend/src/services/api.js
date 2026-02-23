@@ -253,6 +253,9 @@ export const authAPI = {
   activateUser: (userId) => api.patch(`/auth/users/${userId}/activate`),
   deactivateUser: (userId) => api.patch(`/auth/users/${userId}/deactivate`),
 
+  changePassword: (data) => api.put('/auth/change-password', data),
+  resetUserPassword: (userId) => api.post(`/auth/users/${userId}/reset-password`),
+
   exchangeGoogleLogin: (code) => api.post('/auth/google/exchange-login', { code }),
   exchangeMicrosoftLogin: (code) => api.post('/auth/microsoft/exchange-login', { code }),
 };

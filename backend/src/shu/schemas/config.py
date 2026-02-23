@@ -1,6 +1,6 @@
 """Configuration-related schemas for Shu API."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UploadRestrictions(BaseModel):
@@ -8,6 +8,14 @@ class UploadRestrictions(BaseModel):
 
     allowed_types: list[str]
     max_size_bytes: int
+
+
+class PasswordPolicy(BaseModel):
+    """Password policy settings exposed to the frontend for client-side validation."""
+
+    policy: str  # "moderate" or "strict"
+    min_length: int
+    special_chars: str
 
 
 class PublicConfig(BaseModel):
@@ -22,6 +30,10 @@ class PublicConfig(BaseModel):
     upload_restrictions: UploadRestrictions
     # KB document upload (no standalone image support - text extraction only)
     kb_upload_restrictions: UploadRestrictions
+    # Password policy for client-side validation
+    password_policy: PasswordPolicy = Field(
+        default_factory=lambda: PasswordPolicy(policy="moderate", min_length=8, special_chars="!@#$%^&*()-_+=")
+    )
 
 
 class SetupStatus(BaseModel):

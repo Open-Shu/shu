@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
@@ -37,7 +37,10 @@ import UserPreferencesPage from './components/UserPreferencesPage';
 import AuthPage from './components/AuthPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleBasedRoute from './components/RoleBasedRoute';
+import ForceChangePasswordGate from './components/ForceChangePasswordGate';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+
+import configService from './services/config';
 
 // Theme Context
 import { ThemeProvider as CustomThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -101,6 +104,12 @@ const MainAppRedirect = () => {
 const AuthenticatedApp = () => {
   const { isAuthenticated, loading: authLoading } = useAuth();
 
+  // Fetch public config on mount so it's available regardless of auth state.
+  // AuthPage also calls this, but authenticated users skip AuthPage entirely.
+  useEffect(() => {
+    configService.fetchConfig();
+  }, []);
+
   if (authLoading) {
     return pageLoadingView;
   }
@@ -110,244 +119,246 @@ const AuthenticatedApp = () => {
   }
 
   return (
-    <Router>
-      <Routes>
-        {/* Root redirect - everyone goes to chat */}
-        <Route path="/" element={<MainAppRedirect />} />
+    <ForceChangePasswordGate>
+      <Router>
+        <Routes>
+          {/* Root redirect - everyone goes to chat */}
+          <Route path="/" element={<MainAppRedirect />} />
 
-        {/* Auth route - redirect if already authenticated */}
-        <Route path="/auth" element={<AuthPageWrapper />} />
+          {/* Auth route - redirect if already authenticated */}
+          <Route path="/auth" element={<AuthPageWrapper />} />
 
-        {/* Main Chat Interface - Available to ALL users */}
-        <Route
-          path="/chat"
-          element={
-            <RoleBasedRoute layout="user">
-              <ModernChat />
-            </RoleBasedRoute>
-          }
-        />
+          {/* Main Chat Interface - Available to ALL users */}
+          <Route
+            path="/chat"
+            element={
+              <RoleBasedRoute layout="user">
+                <ModernChat />
+              </RoleBasedRoute>
+            }
+          />
 
-        {/* Experience Dashboard - Available to ALL users */}
-        <Route
-          path="/dashboard"
-          element={
-            <RoleBasedRoute layout="user">
-              <DashboardPage />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/dashboard/experience/:experienceId"
-          element={
-            <RoleBasedRoute layout="user">
-              <ExperienceDetailPage />
-            </RoleBasedRoute>
-          }
-        />
+          {/* Experience Dashboard - Available to ALL users */}
+          <Route
+            path="/dashboard"
+            element={
+              <RoleBasedRoute layout="user">
+                <DashboardPage />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/experience/:experienceId"
+            element={
+              <RoleBasedRoute layout="user">
+                <ExperienceDetailPage />
+              </RoleBasedRoute>
+            }
+          />
 
-        {/* User Permissions Dashboard - Available to ALL users */}
-        <Route
-          path="/permissions"
-          element={
-            <RoleBasedRoute layout="user">
-              <UserPermissionsDashboard />
-            </RoleBasedRoute>
-          }
-        />
+          {/* User Permissions Dashboard - Available to ALL users */}
+          <Route
+            path="/permissions"
+            element={
+              <RoleBasedRoute layout="user">
+                <UserPermissionsDashboard />
+              </RoleBasedRoute>
+            }
+          />
 
-        {/* Connected Accounts - Available to ALL users */}
-        <Route
-          path="/settings/connected-accounts"
-          element={
-            <RoleBasedRoute layout="user">
-              <ConnectedAccountsPage />
-            </RoleBasedRoute>
-          }
-        />
+          {/* Connected Accounts - Available to ALL users */}
+          <Route
+            path="/settings/connected-accounts"
+            element={
+              <RoleBasedRoute layout="user">
+                <ConnectedAccountsPage />
+              </RoleBasedRoute>
+            }
+          />
 
-        {/* User Preferences - Available to ALL users */}
-        <Route path="/settings/preferences" element={<Navigate to="/settings/preferences/general" replace />} />
-        <Route
-          path="/settings/preferences/:section"
-          element={
-            <RoleBasedRoute layout="user">
-              <UserPreferencesPage />
-            </RoleBasedRoute>
-          }
-        />
+          {/* User Preferences - Available to ALL users */}
+          <Route path="/settings/preferences" element={<Navigate to="/settings/preferences/general" replace />} />
+          <Route
+            path="/settings/preferences/:section"
+            element={
+              <RoleBasedRoute layout="user">
+                <UserPreferencesPage />
+              </RoleBasedRoute>
+            }
+          />
 
-        {/* Admin Routes */}
-        <Route
-          path="/admin/dashboard"
-          element={
-            <RoleBasedRoute adminOnly>
-              <QuickStart />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/knowledge-bases"
-          element={
-            <RoleBasedRoute adminOnly>
-              <KnowledgeBases />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/knowledge-bases/:kbId/documents"
-          element={
-            <RoleBasedRoute adminOnly>
-              <Documents />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/prompts"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="power_user">
-                <Prompts />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
+          {/* Admin Routes */}
+          <Route
+            path="/admin/dashboard"
+            element={
+              <RoleBasedRoute adminOnly>
+                <QuickStart />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/knowledge-bases"
+            element={
+              <RoleBasedRoute adminOnly>
+                <KnowledgeBases />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/knowledge-bases/:kbId/documents"
+            element={
+              <RoleBasedRoute adminOnly>
+                <Documents />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/prompts"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="power_user">
+                  <Prompts />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
 
-        <Route
-          path="/admin/query-tester"
-          element={
-            <RoleBasedRoute adminOnly>
-              <QueryTester />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/llm-tester"
-          element={
-            <RoleBasedRoute adminOnly>
-              <LLMTester />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/health"
-          element={
-            <RoleBasedRoute adminOnly>
-              <HealthMonitor />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/llm-providers"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <LLMProviders />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/model-configurations"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="power_user">
-                <ModelConfigurations />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/branding"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <BrandingSettings />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <UserManagement />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/user-groups"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <UserGroups />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/kb-permissions"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <KBPermissions />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/plugins"
-          element={
-            <RoleBasedRoute adminOnly>
-              <PluginsAdmin />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/feeds"
-          element={
-            <RoleBasedRoute adminOnly>
-              <PluginsAdminFeeds />
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/experiences"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <ExperiencesAdmin />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/experiences/new"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <ExperienceEditor />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
-        <Route
-          path="/admin/experiences/:experienceId/edit"
-          element={
-            <RoleBasedRoute adminOnly>
-              <ProtectedRoute requiredRole="admin">
-                <ExperienceEditor />
-              </ProtectedRoute>
-            </RoleBasedRoute>
-          }
-        />
+          <Route
+            path="/admin/query-tester"
+            element={
+              <RoleBasedRoute adminOnly>
+                <QueryTester />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/llm-tester"
+            element={
+              <RoleBasedRoute adminOnly>
+                <LLMTester />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/health"
+            element={
+              <RoleBasedRoute adminOnly>
+                <HealthMonitor />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/llm-providers"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <LLMProviders />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/model-configurations"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="power_user">
+                  <ModelConfigurations />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/branding"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <BrandingSettings />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <UserManagement />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/user-groups"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <UserGroups />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/kb-permissions"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <KBPermissions />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/plugins"
+            element={
+              <RoleBasedRoute adminOnly>
+                <PluginsAdmin />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/feeds"
+            element={
+              <RoleBasedRoute adminOnly>
+                <PluginsAdminFeeds />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/experiences"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <ExperiencesAdmin />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/experiences/new"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <ExperienceEditor />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/experiences/:experienceId/edit"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <ExperienceEditor />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
 
-        {/* Catch all - redirect to main chat interface */}
-        <Route path="*" element={<MainAppRedirect />} />
-      </Routes>
-    </Router>
+          {/* Catch all - redirect to main chat interface */}
+          <Route path="*" element={<MainAppRedirect />} />
+        </Routes>
+      </Router>
+    </ForceChangePasswordGate>
   );
 };
 
