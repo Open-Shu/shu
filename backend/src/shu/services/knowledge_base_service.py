@@ -6,7 +6,7 @@ including CRUD operations, statistics, and configuration management.
 
 from typing import Any, ClassVar
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -202,8 +202,86 @@ class KnowledgeBaseService:
             logger.error(f"Failed to update RAG config for knowledge base '{kb_id}': {e}", exc_info=True)
             raise ShuException(f"Failed to update RAG configuration: {e!s}", "RAG_CONFIG_UPDATE_ERROR")
 
+    async def recalculate_kb_stats(self, kb_id: str) -> dict[str, int]:
+        """Recalculate and update KB document/chunk counts from actual data.
+
+        This performs a full recalculation rather than incremental updates,
+        which handles edge cases like feed cursor resets or re-runs.
+
+        Args:
+            kb_id: Knowledge base ID
+
+        Returns:
+            Dictionary with updated document_count and total_chunks
+
+        """
+        try:
+            # Count documents
+            doc_count_result = await self.db.execute(
+                select(func.count(Document.id)).where(Document.knowledge_base_id == kb_id)
+            )
+            document_count = doc_count_result.scalar() or 0
+
+            # Count chunks using direct FK (no JOIN needed - DocumentChunk has knowledge_base_id)
+            chunk_count_result = await self.db.execute(
+                select(func.count(DocumentChunk.id)).where(DocumentChunk.knowledge_base_id == kb_id)
+            )
+            total_chunks = chunk_count_result.scalar() or 0
+
+            # Update the KB's denormalized stats
+            kb = await self.db.get(KnowledgeBase, kb_id)
+            if kb:
+                kb.update_document_stats(document_count, total_chunks)
+                await self.db.commit()
+                logger.debug(f"Recalculated KB stats: kb_id={kb_id}, docs={document_count}, chunks={total_chunks}")
+
+            return {"document_count": document_count, "total_chunks": total_chunks}
+
+        except Exception as e:
+            logger.error(f"Failed to recalculate stats for KB '{kb_id}': {e}", exc_info=True)
+            await self.db.rollback()
+            raise
+
+    async def adjust_document_stats(self, kb_id: str, doc_delta: int = 0, chunk_delta: int = 0) -> None:
+        """Atomically adjust KB document/chunk counts by delta values.
+
+        Use this for single-document operations (manual upload, delete) where a full
+        recalculation would be wasteful. For batch operations (feed sync), use
+        recalculate_kb_stats() instead.
+
+        Args:
+            kb_id: Knowledge base ID
+            doc_delta: Change in document count (+1 for add, -1 for delete)
+            chunk_delta: Change in chunk count
+
+        """
+        if doc_delta == 0 and chunk_delta == 0:
+            return
+
+        try:
+            from sqlalchemy import update
+
+            await self.db.execute(
+                update(KnowledgeBase)
+                .where(KnowledgeBase.id == kb_id)
+                .values(
+                    document_count=KnowledgeBase.document_count + doc_delta,
+                    total_chunks=KnowledgeBase.total_chunks + chunk_delta,
+                )
+            )
+            await self.db.commit()
+            logger.debug(f"Adjusted KB stats: kb_id={kb_id}, doc_delta={doc_delta}, chunk_delta={chunk_delta}")
+
+        except Exception as e:
+            logger.error(f"Failed to adjust stats for KB '{kb_id}': {e}", exc_info=True)
+            await self.db.rollback()
+            raise
+
     async def get_knowledge_base_stats(self, kb_id: str) -> dict[str, Any]:
-        """Get statistics for a specific knowledge base.
+        """Get statistics for a specific knowledge base by recalculating from actual data.
+
+        This method recalculates stats from the database. For listing KBs,
+        prefer using the denormalized stats directly from the KB model.
 
         Args:
             kb_id: Knowledge base ID
@@ -219,11 +297,9 @@ class KnowledgeBaseService:
             )
             document_count = doc_count_result.scalar() or 0
 
-            # Get total chunk count
+            # Get total chunk count using direct FK (no JOIN needed)
             chunk_count_result = await self.db.execute(
-                select(func.count(DocumentChunk.id))
-                .join(Document, DocumentChunk.document_id == Document.id)
-                .where(Document.knowledge_base_id == kb_id)
+                select(func.count(DocumentChunk.id)).where(DocumentChunk.knowledge_base_id == kb_id)
             )
             total_chunks = chunk_count_result.scalar() or 0
 
@@ -381,6 +457,8 @@ class KnowledgeBaseService:
     async def get_overall_knowledge_base_stats(self) -> dict[str, Any]:
         """Get overall statistics for all knowledge bases.
 
+        Aggregates stats from KB denormalized columns for efficiency.
+
         Returns:
             Dictionary with overall statistics
 
@@ -402,12 +480,18 @@ class KnowledgeBaseService:
             )
             sync_enabled_count = sync_enabled_result.scalar() or 0
 
-            # Mock other statistics for now
+            # Aggregate document and chunk counts from KB denormalized stats
+            total_docs_result = await self.db.execute(select(func.sum(KnowledgeBase.document_count)))
+            total_documents = total_docs_result.scalar() or 0
+
+            total_chunks_result = await self.db.execute(select(func.sum(KnowledgeBase.total_chunks)))
+            total_chunks = total_chunks_result.scalar() or 0
+
             return {
                 "total_knowledge_bases": total_kbs,
                 "active_knowledge_bases": active_kbs,
-                "total_documents": 0,  # Would need to count from documents table
-                "total_chunks": 0,  # Would need to count from chunks table
+                "total_documents": total_documents,
+                "total_chunks": total_chunks,
                 "sync_enabled_count": sync_enabled_count,
                 "source_type_breakdown": {},  # Would need to analyze documents
                 "status_breakdown": {"active": active_kbs, "inactive": total_kbs - active_kbs},
@@ -521,14 +605,13 @@ class KnowledgeBaseService:
     def get_document_filter_condition(self, kb_id, search_query, filter_by):
         conditions = [Document.knowledge_base_id == kb_id]
 
-        # Apply the search on the document title and content (case-insensitive)
+        # Apply the search on the document title only (case-insensitive)
+        # Content search was removed for performance - full-text search on TEXT columns
+        # causes full table scans. Use dedicated search functionality if needed.
         if search_query:
-            conditions.append(
-                or_(
-                    Document.title.ilike(f"%{search_query}%"),
-                    Document.content.ilike(f"%{search_query}%"),
-                )
-            )
+            # Escape SQL LIKE wildcards so they're treated as literals
+            escaped = search_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append(Document.title.ilike(f"%{escaped}%", escape="\\"))
 
         # Apply filter_by options
         if filter_by and filter_by != "all":
@@ -584,9 +667,6 @@ class KnowledgeBaseService:
             if not kb:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
-            # Aggregate stats
-            stats = await self.get_knowledge_base_stats(kb_id)
-
             # Distinct source types for this KB
             result = await self.db.execute(
                 select(Document.source_type).where(Document.knowledge_base_id == kb_id).distinct()
@@ -594,14 +674,15 @@ class KnowledgeBaseService:
             source_types = [row[0] for row in result.fetchall() if row[0] is not None]
 
             # Return a dict that matches KnowledgeBaseSummary fields
+            # Use denormalized stats directly from KB model
             return {
                 "id": kb.id,
                 "name": kb.name,
                 "description": kb.description,
                 "source_types": source_types,
                 "status": kb.status,
-                "document_count": stats["document_count"],
-                "total_chunks": stats["total_chunks"],
+                "document_count": kb.document_count,
+                "total_chunks": kb.total_chunks,
                 "last_sync_at": kb.last_sync_at,
             }
         except Exception as e:
