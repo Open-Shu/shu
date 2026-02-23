@@ -239,6 +239,42 @@ class KnowledgeBaseService:
 
         except Exception as e:
             logger.error(f"Failed to recalculate stats for KB '{kb_id}': {e}", exc_info=True)
+            await self.db.rollback()
+            raise
+
+    async def adjust_document_stats(self, kb_id: str, doc_delta: int = 0, chunk_delta: int = 0) -> None:
+        """Atomically adjust KB document/chunk counts by delta values.
+
+        Use this for single-document operations (manual upload, delete) where a full
+        recalculation would be wasteful. For batch operations (feed sync), use
+        recalculate_kb_stats() instead.
+
+        Args:
+            kb_id: Knowledge base ID
+            doc_delta: Change in document count (+1 for add, -1 for delete)
+            chunk_delta: Change in chunk count
+
+        """
+        if doc_delta == 0 and chunk_delta == 0:
+            return
+
+        try:
+            from sqlalchemy import update
+
+            await self.db.execute(
+                update(KnowledgeBase)
+                .where(KnowledgeBase.id == kb_id)
+                .values(
+                    document_count=KnowledgeBase.document_count + doc_delta,
+                    total_chunks=KnowledgeBase.total_chunks + chunk_delta,
+                )
+            )
+            await self.db.commit()
+            logger.debug(f"Adjusted KB stats: kb_id={kb_id}, doc_delta={doc_delta}, chunk_delta={chunk_delta}")
+
+        except Exception as e:
+            logger.error(f"Failed to adjust stats for KB '{kb_id}': {e}", exc_info=True)
+            await self.db.rollback()
             raise
 
     async def get_knowledge_base_stats(self, kb_id: str) -> dict[str, Any]:
@@ -573,7 +609,9 @@ class KnowledgeBaseService:
         # Content search was removed for performance - full-text search on TEXT columns
         # causes full table scans. Use dedicated search functionality if needed.
         if search_query:
-            conditions.append(Document.title.ilike(f"%{search_query}%"))
+            # Escape SQL LIKE wildcards so they're treated as literals
+            escaped = search_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append(Document.title.ilike(f"%{escaped}%", escape="\\"))
 
         # Apply filter_by options
         if filter_by and filter_by != "all":

@@ -296,3 +296,102 @@ class TestDocumentToListDict:
         ]
         for field in expected_fields:
             assert field in result, f"Missing field: {field}"
+
+
+class TestAdjustDocumentStats:
+    """Tests for adjust_document_stats method."""
+
+    @pytest.mark.asyncio
+    async def test_adjust_document_stats_increments(self):
+        """Verify adjust_document_stats increments counts correctly."""
+        from shu.services.knowledge_base_service import KnowledgeBaseService
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+        await service.adjust_document_stats("test-kb-id", doc_delta=1, chunk_delta=10)
+
+        # Verify execute was called with an UPDATE statement
+        mock_db.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_adjust_document_stats_decrements(self):
+        """Verify adjust_document_stats decrements counts correctly."""
+        from shu.services.knowledge_base_service import KnowledgeBaseService
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+        await service.adjust_document_stats("test-kb-id", doc_delta=-1, chunk_delta=-15)
+
+        mock_db.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_adjust_document_stats_skips_zero_delta(self):
+        """Verify adjust_document_stats does nothing when both deltas are zero."""
+        from shu.services.knowledge_base_service import KnowledgeBaseService
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+        await service.adjust_document_stats("test-kb-id", doc_delta=0, chunk_delta=0)
+
+        # Should not execute any queries when deltas are zero
+        mock_db.execute.assert_not_called()
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_adjust_document_stats_handles_doc_only(self):
+        """Verify adjust_document_stats works with only doc_delta."""
+        from shu.services.knowledge_base_service import KnowledgeBaseService
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+        await service.adjust_document_stats("test-kb-id", doc_delta=5, chunk_delta=0)
+
+        # Should still execute since doc_delta is non-zero
+        mock_db.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_adjust_document_stats_handles_chunk_only(self):
+        """Verify adjust_document_stats works with only chunk_delta."""
+        from shu.services.knowledge_base_service import KnowledgeBaseService
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+        await service.adjust_document_stats("test-kb-id", doc_delta=0, chunk_delta=100)
+
+        # Should still execute since chunk_delta is non-zero
+        mock_db.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_adjust_document_stats_rollback_on_error(self):
+        """Verify adjust_document_stats rolls back on error."""
+        from shu.services.knowledge_base_service import KnowledgeBaseService
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(side_effect=Exception("DB error"))
+        mock_db.rollback = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+
+        with pytest.raises(Exception, match="DB error"):
+            await service.adjust_document_stats("test-kb-id", doc_delta=1, chunk_delta=10)
+
+        mock_db.rollback.assert_called_once()

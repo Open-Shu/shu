@@ -721,9 +721,15 @@ async def delete_document(
                 status_code=403,
             )
 
+        # Capture chunk count before deletion for stats adjustment
+        chunk_count = document.chunk_count or 0
+
         # Delete the document
         doc_service = DocumentService(db)
         await doc_service.delete_document(document_id)
+
+        # Adjust KB stats (decrement by 1 doc and its chunks)
+        await kb_service.adjust_document_stats(kb_id, doc_delta=-1, chunk_delta=-chunk_count)
 
         logger.info(
             "Deleted document",
@@ -967,6 +973,14 @@ async def upload_documents(
     # Summary
     successful = sum(1 for r in results if r.get("success"))
     failed = len(results) - successful
+
+    # Adjust KB stats once at the end for all successful uploads
+    # Note: We only adjust doc_delta here because chunks are created asynchronously
+    # by the worker. The chunk count will be updated when:
+    # 1. The worker finishes and updates Document.chunk_count
+    # 2. A feed sync runs recalculate_kb_stats()
+    if successful > 0:
+        await kb_service.adjust_document_stats(kb_id, doc_delta=successful, chunk_delta=0)
 
     return ShuResponse.success(
         {

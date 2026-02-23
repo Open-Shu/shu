@@ -83,6 +83,10 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
     - Generates chunks+embeddings and replaces existing chunks
     - Marks document processed with stats
     Returns the KO ID (deterministic if not provided).
+
+    Note: This function does NOT update KB denormalized stats. For feed syncs,
+    call recalculate_kb_stats() at the end of the sync operation. For single
+    manual operations, the caller should use adjust_document_stats().
     """
     # Compute deterministic KO id if not provided
     if not ko.id:
@@ -166,7 +170,12 @@ async def delete_ko_by_external_id(
     db: AsyncSession, *, kb_id: str, external_id: str, plugin_name: str
 ) -> dict[str, Any]:
     """Delete a single KO (Document) by (kb_id, source_type=plugin:<name>, source_id).
-    Returns {deleted: bool, ko_id?: str}.
+
+    Note: This function does NOT update KB denormalized stats. For feed syncs,
+    call recalculate_kb_stats() at the end of the sync operation. For single
+    manual operations, the caller should use adjust_document_stats().
+
+    Returns {deleted: bool, ko_id?: str, chunk_count?: int}.
     """
     from sqlalchemy import and_, select
 
@@ -186,9 +195,10 @@ async def delete_ko_by_external_id(
     if not doc:
         return {"deleted": False}
     doc_id = str(doc.id)
+    chunk_count = doc.chunk_count or 0
     await db.delete(doc)
     await db.commit()
-    return {"deleted": True, "ko_id": doc_id}
+    return {"deleted": True, "ko_id": doc_id, "chunk_count": chunk_count}
 
 
 async def delete_kos_by_external_ids(
@@ -200,6 +210,10 @@ async def delete_kos_by_external_ids(
     chunk_size: int = 500,
 ) -> dict[str, Any]:
     """Delete multiple KOs by external_ids under a plugin source_type in a KB.
+
+    Note: This function does NOT update KB denormalized stats. For feed syncs,
+    call recalculate_kb_stats() at the end of the sync operation.
+
     Returns {deleted_count, failed}.
     """
     from sqlalchemy import and_, select
