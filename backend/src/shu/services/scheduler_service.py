@@ -399,7 +399,7 @@ class UnifiedSchedulerService:
         return results
 
 
-async def start_scheduler() -> asyncio.Task:
+async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     """Start the unified scheduler background task.
 
     Replaces both start_plugins_scheduler() and start_experiences_scheduler()
