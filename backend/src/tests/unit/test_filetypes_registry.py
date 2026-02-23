@@ -79,6 +79,7 @@ class TestNormalizeExtensionMime:
             ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
             ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
             ("application/rtf", ".rtf"),
+            ("text/rtf", ".rtf"),
             ("text/plain", ".txt"),
             ("text/markdown", ".md"),
             ("text/html", ".html"),
