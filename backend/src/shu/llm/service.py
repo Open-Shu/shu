@@ -232,8 +232,28 @@ class LLMService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_client(self, provider_id: str, conversation_owner_id: str | None = None) -> UnifiedLLMClient:
-        """Get LLM client for a specific provider."""
+    async def get_client(
+        self,
+        provider_id: str,
+        conversation_owner_id: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
+    ) -> UnifiedLLMClient:
+        """Get LLM client for a specific provider.
+
+        Args:
+            provider_id: ID of the provider to create a client for.
+            conversation_owner_id: Optional user ID of the conversation owner,
+                forwarded to the adapter for per-user plugin authorisation.
+            knowledge_base_ids: Optional list of knowledge base IDs to scope
+                plugin tool calls to this conversation's knowledge bases.
+
+        Returns:
+            Configured ``UnifiedLLMClient`` ready to make chat completion calls.
+
+        Raises:
+            LLMProviderError: If the provider is not found or not active.
+
+        """
         provider = await self.get_provider_by_id(provider_id)
         if not provider:
             raise LLMProviderError(f"Provider with ID '{provider_id}' not found")
@@ -241,7 +261,7 @@ class LLMService:
         if not provider.is_active:
             raise LLMProviderError(f"Provider '{provider.name}' is not active")
 
-        return UnifiedLLMClient(self.db, provider, conversation_owner_id)
+        return UnifiedLLMClient(self.db, provider, conversation_owner_id, knowledge_base_ids=knowledge_base_ids)
 
     async def test_provider_connection(self, provider_id: str) -> bool:
         """Test connection to an LLM provider."""

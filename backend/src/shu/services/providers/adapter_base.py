@@ -37,12 +37,16 @@ class ProviderAdapterContext:
         provider: LLMProvider ORM row
         model_configuration: ModelConfiguration ORM row
         encryption_key: Fernet key used to decrypt provider API keys
+        knowledge_base_ids: Optional list of knowledge base IDs scoped to this
+            request. When set, plugin tool calls will be restricted to these
+            knowledge bases.
 
     """
 
     db_session: AsyncSession
     provider: LLMProvider | None = None
     conversation_owner_id: str | None = None
+    knowledge_base_ids: list[str] | None = None
 
 
 @dataclass
@@ -157,6 +161,7 @@ class BaseProviderAdapter:
     def __init__(self, context: ProviderAdapterContext) -> None:
         self.provider = context.provider
         self.conversation_owner_id = context.conversation_owner_id
+        self.knowledge_base_ids = context.knowledge_base_ids
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
         self.api_key = None
@@ -178,7 +183,33 @@ class BaseProviderAdapter:
             logger.error(f"Failed to decrypt API key for provider {self.provider.name}: {e}")
             raise LLMConfigurationError(f"Failed to decrypt API key: {e}")
 
-    async def _call_plugin(self, plugin_name, operation, args_dict):
+    async def _call_plugin(self, plugin_name: str, operation: str, args_dict: dict[str, Any]) -> str:
+        """Invoke a plugin operation and return the JSON-serialised result.
+
+        When knowledge base IDs are bound to this adapter instance (via
+        ``self.knowledge_base_ids``), they are merged into the ``__host.kb``
+        section of *args_dict* so that KB-aware plugins receive the correct
+        scope.  Any pre-existing keys in ``__host`` (e.g. ``auth``, ``exec``)
+        are preserved.
+
+        Args:
+            plugin_name: Registered name of the plugin to call.
+            operation: The specific operation within the plugin to invoke.
+            args_dict: Arguments provided by the LLM for this tool call.
+
+        Returns:
+            JSON string of the plugin's return value.
+
+        """
+        if self.knowledge_base_ids:
+            host = dict(args_dict.get("__host") or {})
+            kb = dict(host.get("kb") or {})
+            kb["knowledge_base_ids"] = self.knowledge_base_ids
+            host["kb"] = kb
+            args_dict = {**args_dict, "__host": host}
+
+        logger.info("Calling plugin | %s - %s - %s", plugin_name, operation, args_dict)
+
         return json.dumps(
             await execute_plugin(self.db_session, plugin_name, operation, args_dict, self.conversation_owner_id)
         )
@@ -456,9 +487,31 @@ def get_adapter(name: str, context: ProviderAdapterContext) -> BaseProviderAdapt
 
 
 def get_adapter_from_provider(
-    db_session: AsyncSession, provider: LLMProvider, conversation_owner_id: str | None = None
+    db_session: AsyncSession,
+    provider: LLMProvider,
+    conversation_owner_id: str | None = None,
+    knowledge_base_ids: list[str] | None = None,
 ) -> BaseProviderAdapter:
+    """Instantiate the correct provider adapter for *provider*.
+
+    Args:
+        db_session: Active async database session.
+        provider: LLMProvider ORM row identifying the target provider.
+        conversation_owner_id: Optional user ID of the conversation owner,
+            used for per-user plugin authorisation.
+        knowledge_base_ids: Optional list of knowledge base IDs to scope
+            plugin tool calls (e.g. KB search) to this conversation's KBs.
+
+    Returns:
+        Configured ``BaseProviderAdapter`` subclass instance.
+
+    """
     return get_adapter(
         provider.provider_definition.provider_adapter_name,
-        ProviderAdapterContext(db_session=db_session, provider=provider, conversation_owner_id=conversation_owner_id),
+        ProviderAdapterContext(
+            db_session=db_session,
+            provider=provider,
+            conversation_owner_id=conversation_owner_id,
+            knowledge_base_ids=knowledge_base_ids,
+        ),
     )

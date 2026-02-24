@@ -381,7 +381,10 @@ class EnsembleStreamingHelper:
                 inputs (ModelExecutionInputs): Execution inputs and configuration for this variant, including provider/model identifiers, context messages, and rate-limit settings.
 
             """
-            client = await service.llm_service.get_client(inputs.provider_id, conversation_owner_id)
+            kb_ids = getattr(inputs.model_configuration, "knowledge_base_ids", None) or None
+            client = await service.llm_service.get_client(
+                inputs.provider_id, conversation_owner_id, knowledge_base_ids=kb_ids
+            )
             config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
             model_snapshot = dict(config_metadata.get("model_configuration") or {})
             model_display_name = getattr(inputs.model_configuration, "name", None)
@@ -430,7 +433,7 @@ class EnsembleStreamingHelper:
                 final_message_event: ProviderResponseEvent | None = None
                 call_messages = inputs.context_messages
 
-                # We loop until the agens are done pulling what they need to pull.
+                # We loop until the agents are done pulling what they need to pull.
                 while True:
                     # If there is nothing new, we don't need to actually call the provider anymore, exit.
                     final_message_event, additional_messages = await self._call_provider(
@@ -461,10 +464,7 @@ class EnsembleStreamingHelper:
                 if final_message_event.type == "error":
                     raise LLMProviderError(final_message_event.content)
 
-                (
-                    full_content,
-                    final_source_metadata,
-                ) = await self.message_context_builder._post_process_references(
+                full_content, final_source_metadata = await self.message_context_builder._post_process_references(
                     final_message_event.content,
                     inputs.source_metadata or [],
                     inputs.knowledge_base_id,

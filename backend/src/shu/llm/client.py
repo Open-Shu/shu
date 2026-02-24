@@ -181,11 +181,15 @@ class UnifiedLLMClient:
         provider: LLMProvider,
         conversation_owner_id: str | None = None,
         settings: Any | None = None,
+        knowledge_base_ids: list[str] | None = None,
     ) -> None:
         self.provider = provider
         self.conversation_owner_id = conversation_owner_id
+        self.knowledge_base_ids = knowledge_base_ids
         self.db_session = db_session
-        self.provider_adapter = get_adapter_from_provider(db_session, provider, self.conversation_owner_id)
+        self.provider_adapter = get_adapter_from_provider(
+            db_session, provider, self.conversation_owner_id, knowledge_base_ids=knowledge_base_ids
+        )
 
         # Inject settings instance for testability
         self.settings = settings if settings is not None else get_settings_instance()

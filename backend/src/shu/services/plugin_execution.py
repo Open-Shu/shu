@@ -69,12 +69,24 @@ async def build_agent_tools(db_session: AsyncSession) -> list[CallableTool]:
             pass
 
         for op in chat_ops:
+            # Use a per-op schema when the plugin provides get_schema_for_op().
+            # Falls back to the shared schema for plugins that don't implement it.
+            op_schema = schema
+            try:
+                get_op_schema = getattr(plugin, "get_schema_for_op", None)
+                if callable(get_op_schema):
+                    per_op = get_op_schema(op)
+                    if per_op is not None:
+                        op_schema = per_op
+            except Exception:
+                pass
+
             tools.append(
                 CallableTool(
                     name=name,
                     op=op,
                     plugin=plugin,
-                    schema=schema,
+                    schema=op_schema,
                     enum_labels=enum_labels,
                 )
             )
