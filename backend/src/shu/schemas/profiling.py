@@ -168,3 +168,23 @@ class UnifiedProfilingResponse(BaseModel):
         default_factory=list,
         description="Hypothetical queries this document can satisfy",
     )
+
+
+class FinalBatchResponse(BaseModel):
+    """Response from final batch profiling for large documents.
+
+    The final batch produces both chunk profiles AND document-level metadata,
+    eliminating the need for a separate aggregation LLM call.
+    """
+
+    chunks: list[UnifiedChunkProfile] = Field(default_factory=list, description="Per-chunk profiles for this batch")
+    synopsis: str = Field(..., description="2-4 sentence document summary derived from accumulated one-liners")
+    document_type: str = Field(..., description="narrative, transactional, technical, conversational")
+    capability_manifest: CapabilityManifest = Field(
+        default_factory=CapabilityManifest,
+        description="What questions this document can answer",
+    )
+    synthesized_queries: list[str] = Field(
+        default_factory=list,
+        description="Hypothetical queries this document can satisfy",
+    )

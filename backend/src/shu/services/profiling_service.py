@@ -7,7 +7,7 @@ orchestrator handles DB operations and calls this service for LLM work.
 Key responsibilities:
 - Generate unified profiles (synopsis, one-liners, chunk profiles, queries) for small docs
 - Generate chunk profiles (one-liner, summary, keywords, topics) for batch processing
-- Aggregate chunk profiles for large documents
+- Generate document metadata in final batch for large documents (incremental profiling)
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
 
@@ -18,8 +18,11 @@ import structlog
 from ..core.config import Settings
 from ..schemas.profiling import (
     ChunkData,
+    ChunkProfile,
     ChunkProfileResult,
     DocumentProfile,
+    DocumentType,
+    FinalBatchResponse,
     UnifiedProfilingResponse,
 )
 from ..utils.tokenization import estimate_tokens
@@ -84,12 +87,25 @@ Guidelines:
 - topics: Broader conceptual categories.
 Limit to 5-10 keywords and 3-5 topics."""
 
-# Aggregate profiling prompt for large documents
-AGGREGATE_PROFILE_SYSTEM_PROMPT = """You are a document summarization assistant. Given one-liner summaries of document chunks, generate an overall document profile.
+# Final batch prompt for large documents - generates chunk profiles AND document metadata
+FINAL_BATCH_SYSTEM_PROMPT = """You are a document profiling assistant. You are processing the FINAL batch of chunks for a large document.
 
-Generate a JSON response with:
+You have two tasks:
+1. Profile the chunks in this batch (same as previous batches)
+2. Generate document-level metadata using the accumulated one-liners from ALL previous chunks
+
+Generate a JSON response with this exact structure:
 {
-    "synopsis": "A 2-4 sentence summary synthesizing the chunk summaries into a cohesive document overview.",
+    "chunks": [
+        {
+            "index": 0,
+            "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
+            "summary": "Longer description of what this chunk contains",
+            "keywords": ["specific", "extractable", "terms"],
+            "topics": ["conceptual", "categories"]
+        }
+    ],
+    "synopsis": "A 2-4 sentence summary synthesizing ALL chunk one-liners into a cohesive document overview.",
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {
         "answers_questions_about": ["consolidated list of topics from all chunks"],
@@ -99,12 +115,18 @@ Generate a JSON response with:
         "question_domains": ["who", "what", "when", "where", "why", "how"]
     },
     "synthesized_queries": [
-        "What is the main topic?",
-        "How does X work?"
+        "What is the main topic of this document?",
+        "How does X work?",
+        "Tell me about Y"
     ]
 }
 
-Synthesize the chunk information into a coherent whole. Generate 3-5 queries this document can answer."""
+Guidelines:
+- one_liner: Start with action verb ("Explains...", "Covers...", "Lists..."). Capture specific information.
+- synopsis: Synthesize the accumulated one-liners into a strategic narrative. Capture cross-chunk themes.
+- synthesized_queries: Generate 3-5 diverse queries this document can answer.
+- keywords: Specific extractable terms from the text.
+- topics: Broader conceptual categories."""
 
 
 class ProfilingService:
@@ -306,46 +328,112 @@ class ProfilingService:
         parsed_results = self.parser.parse_chunk_profiles(result.content, chunks)
         return parsed_results, result.tokens_used
 
-    async def aggregate_chunk_profiles(
+    async def profile_chunks_incremental(
         self,
-        chunk_profiles: list[ChunkProfileResult],
+        chunks: list[ChunkData],
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
-    ) -> tuple[tuple[DocumentProfile, list[str]] | None, SideCallResult]:
-        """Generate a document profile by aggregating chunk profiles.
+    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int]:
+        """Profile chunks incrementally, with final batch generating document metadata.
 
-        Used for large documents that exceed PROFILING_FULL_DOC_MAX_TOKENS.
-        Uses one-liners from chunks to generate synopsis and queries.
+        This method eliminates the separate aggregation LLM call by having the final
+        batch generate document-level metadata (synopsis, capability_manifest, queries)
+        from accumulated one-liners.
 
         Args:
-            chunk_profiles: Profiles from all document chunks
-            document_metadata: Optional document metadata
-            timeout_ms: Optional timeout override
+            chunks: List of chunk data to profile
+            document_metadata: Optional document metadata (title, source, etc.)
+            timeout_ms: Optional timeout override per batch
 
         Returns:
-            Tuple of ((DocumentProfile, synthesized_queries) or None if failed, SideCallResult)
+            Tuple of (chunk_results, document_profile, synthesized_queries, total_tokens)
 
         """
+        if not chunks:
+            return [], None, [], 0
+
         timeout = self._resolve_timeout_ms(timeout_ms)
+        batch_size = self.settings.chunk_profiling_batch_size
+        all_results: list[ChunkProfileResult] = []
+        accumulated_one_liners: list[str] = []
+        total_tokens = 0
 
-        # Build summary using one-liners for compact representation
-        one_liner_summaries = []
-        all_keywords = set()
-        all_topics = set()
+        # Calculate batch boundaries
+        num_batches = (len(chunks) + batch_size - 1) // batch_size
 
-        for cp in chunk_profiles:
-            if cp.success and cp.profile:
-                # Prefer one_liner, fall back to summary
-                summary_text = cp.profile.one_liner or cp.profile.summary
-                one_liner_summaries.append(f"Chunk {cp.chunk_index}: {summary_text}")
-                all_keywords.update(cp.profile.keywords)
-                all_topics.update(cp.profile.topics)
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, len(chunks))
+            batch = chunks[start_idx:end_idx]
+            is_final_batch = (batch_idx == num_batches - 1)
 
-        user_content = (
-            f"Document has {len(chunk_profiles)} chunks.\n\n"
-            f"Chunk one-liners:\n" + "\n".join(one_liner_summaries) + "\n\n"
-            f"Keywords found: {', '.join(list(all_keywords)[:50])}\n"
-            f"Topics found: {', '.join(list(all_topics)[:30])}"
+            if is_final_batch:
+                # Final batch: generate chunk profiles AND document metadata
+                batch_results, doc_profile, queries, tokens = await self._profile_final_batch(
+                    batch,
+                    accumulated_one_liners,
+                    document_metadata,
+                    timeout,
+                )
+                all_results.extend(batch_results)
+                total_tokens += tokens
+                return all_results, doc_profile, queries, total_tokens
+            else:
+                # Regular batch: just chunk profiles
+                batch_results, tokens = await self._profile_chunk_batch(batch, timeout)
+                all_results.extend(batch_results)
+                total_tokens += tokens
+
+                # Accumulate one-liners for final batch
+                for result in batch_results:
+                    if result.success and result.profile.one_liner:
+                        accumulated_one_liners.append(
+                            f"Chunk {result.chunk_index}: {result.profile.one_liner}"
+                        )
+
+        # Should not reach here, but handle edge case
+        return all_results, None, [], total_tokens
+
+    async def _profile_final_batch(
+        self,
+        chunks: list[ChunkData],
+        accumulated_one_liners: list[str],
+        document_metadata: dict | None,
+        timeout_ms: int,
+    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int]:
+        """Profile the final batch and generate document-level metadata.
+
+        Args:
+            chunks: Chunks in this final batch
+            accumulated_one_liners: One-liners from all previous batches
+            document_metadata: Optional document metadata
+            timeout_ms: Timeout for LLM call
+
+        Returns:
+            Tuple of (chunk_results, document_profile, synthesized_queries, tokens_used)
+
+        """
+        # Build user message with chunks and accumulated context
+        chunks_text = []
+        for chunk in chunks:
+            chunks_text.append(f"[CHUNK {chunk.chunk_index}]\n{chunk.content}\n[/CHUNK]")
+
+        user_content = "This is the FINAL batch of chunks for this document.\n\n"
+
+        if accumulated_one_liners:
+            user_content += "One-liners from previous chunks:\n"
+            user_content += "\n".join(accumulated_one_liners)
+            user_content += "\n\n"
+
+        user_content += f"Profile these final {len(chunks)} chunks:\n\n"
+        user_content += "\n\n".join(chunks_text)
+        user_content += (
+            "\n\nRespond with a JSON object containing:\n"
+            "1. 'chunks': array of profiles for these chunks (index, one_liner, summary, keywords, topics)\n"
+            "2. 'synopsis': 2-4 sentence summary of the ENTIRE document based on all one-liners\n"
+            "3. 'document_type': narrative, transactional, technical, or conversational\n"
+            "4. 'capability_manifest': what questions this document can answer\n"
+            "5. 'synthesized_queries': 3-5 queries this document can answer"
         )
 
         if document_metadata:
@@ -353,23 +441,77 @@ class ProfilingService:
             user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
 
         # Validate input doesn't exceed max tokens
-        error_result = self._validate_input_tokens(user_content, f"aggregate profiling ({len(chunk_profiles)} chunks)")
+        error_result = self._validate_input_tokens(
+            user_content, f"final batch ({len(chunks)} chunks, {len(accumulated_one_liners)} accumulated)"
+        )
         if error_result:
-            return None, error_result
+            failed_results = [
+                self.parser.create_failed_chunk_result(c, error_result.error_message or "Input too large")
+                for c in chunks
+            ]
+            return failed_results, None, [], 0
 
         message_sequence = [{"role": "user", "content": user_content}]
 
         result = await self.side_call.call(
             message_sequence=message_sequence,
-            system_prompt=AGGREGATE_PROFILE_SYSTEM_PROMPT,
+            system_prompt=FINAL_BATCH_SYSTEM_PROMPT,
             user_id=None,
-            timeout_ms=timeout,
+            timeout_ms=timeout_ms,
         )
 
         if not result.success:
-            logger.warning("aggregate_profiling_failed", error=result.error_message)
-            return None, result
+            logger.warning("final_batch_profiling_failed", error=result.error_message)
+            failed_results = [
+                self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed")
+                for c in chunks
+            ]
+            return failed_results, None, [], 0
 
-        # Parse the response - now includes synthesized_queries
-        parsed = self.parser.parse_aggregate_response(result.content)
-        return parsed, result
+        # Parse the final batch response
+        final_response = self.parser.parse_final_batch_response(result.content)
+        if not final_response:
+            logger.warning("failed_to_parse_final_batch_response")
+            failed_results = [
+                self.parser.create_failed_chunk_result(c, "Failed to parse final batch response")
+                for c in chunks
+            ]
+            return failed_results, None, [], result.tokens_used
+
+        # Convert FinalBatchResponse chunks to ChunkProfileResults
+        chunk_results = []
+        response_chunks_by_index = {rc.index: rc for rc in final_response.chunks}
+
+        for chunk in chunks:
+            response_chunk = response_chunks_by_index.get(chunk.chunk_index)
+            if response_chunk:
+                profile = ChunkProfile(
+                    one_liner=response_chunk.one_liner,
+                    summary=response_chunk.summary,
+                    keywords=response_chunk.keywords,
+                    topics=response_chunk.topics,
+                )
+                chunk_results.append(ChunkProfileResult(
+                    chunk_id=chunk.chunk_id,
+                    chunk_index=chunk.chunk_index,
+                    profile=profile,
+                    success=True,
+                ))
+            else:
+                chunk_results.append(self.parser.create_failed_chunk_result(
+                    chunk, "No profile in final batch response"
+                ))
+
+        # Build DocumentProfile from final response
+        try:
+            doc_type = DocumentType(final_response.document_type.lower())
+        except ValueError:
+            doc_type = DocumentType.NARRATIVE
+
+        doc_profile = DocumentProfile(
+            synopsis=final_response.synopsis,
+            document_type=doc_type,
+            capability_manifest=final_response.capability_manifest,
+        )
+
+        return chunk_results, doc_profile, final_response.synthesized_queries, result.tokens_used

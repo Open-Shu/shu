@@ -201,7 +201,12 @@ class TestRunForDocument:
 
     @pytest.mark.asyncio
     async def test_chunk_aggregation_profiling(self, orchestrator, mock_db, mock_settings):
-        """Test chunk aggregation profiling path for large documents."""
+        """Test incremental profiling path for large documents (SHU-582).
+
+        Large documents use profile_chunks_incremental() which eliminates
+        the separate aggregation LLM call by having the final batch generate
+        document-level metadata from accumulated one-liners.
+        """
         doc = create_mock_document()
         chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}") for i in range(20)]
         mock_db.get.return_value = doc
@@ -211,7 +216,7 @@ class TestRunForDocument:
         mock_db.execute.return_value = mock_result
 
         doc_profile = DocumentProfile(
-            synopsis="Aggregated synopsis",
+            synopsis="Incremental synopsis from one-liners",
             document_type=DocumentType.NARRATIVE,
             capability_manifest=CapabilityManifest(),
         )
@@ -232,18 +237,16 @@ class TestRunForDocument:
         synthesized_queries = ["What is this about?", "How does it work?"]
 
         with patch.object(
-            orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 100)
+            orchestrator.profiling_service,
+            "profile_chunks_incremental",
+            return_value=(chunk_results, doc_profile, synthesized_queries, 300),
         ):
-            with patch.object(
-                orchestrator.profiling_service,
-                "aggregate_chunk_profiles",
-                return_value=((doc_profile, synthesized_queries), MagicMock(tokens_used=200)),
-            ):
-                with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=10000):
-                    result = await orchestrator.run_for_document("doc-123")
+            with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=10000):
+                result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
+        assert result.document_profile.synopsis == "Incremental synopsis from one-liners"
         # Verify queries were persisted
         assert mock_db.add.call_count == 2
 

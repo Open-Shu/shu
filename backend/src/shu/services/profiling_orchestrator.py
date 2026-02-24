@@ -7,7 +7,7 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
 - For small docs: Uses unified profiling (synopsis + chunks + queries in one call)
-- For large docs: Uses batch chunk profiling + aggregation
+- For large docs: Uses incremental profiling (batches + final batch generates doc metadata)
 """
 
 import time
@@ -23,6 +23,7 @@ from ..schemas.profiling import (
     ChunkProfile,
     ChunkProfileResult,
     DocumentProfile,
+    DocumentType,
     ProfilingMode,
     ProfilingResult,
 )
@@ -56,8 +57,9 @@ class ProfilingOrchestrator:
           capability manifest, and synthesized queries.
 
         For large documents:
-        - Uses batch chunk profiling followed by aggregation.
-        - Synthesized queries are generated during aggregation.
+        - Uses incremental profiling: batches produce chunk profiles, final batch
+          generates document-level metadata from accumulated one-liners.
+        - Eliminates the separate aggregation LLM call for efficiency.
 
         Args:
             document_id: ID of the document to profile
@@ -139,19 +141,15 @@ class ProfilingOrchestrator:
                     chunk_results = self._unified_to_chunk_results(unified_result, chunk_data)
                     synthesized_queries = unified_result.synthesized_queries
             else:
-                # Large document: batch chunk profiling + aggregation
-                chunk_results, chunk_tokens = await self.profiling_service.profile_chunks(chunk_data)
-                total_tokens += chunk_tokens
-
-                # Aggregate from chunk profiles (now includes queries)
-                aggregate_result, llm_result = await self.profiling_service.aggregate_chunk_profiles(
-                    chunk_profiles=chunk_results,
-                    document_metadata={"title": document.title},
+                # Large document: incremental profiling with final batch generating doc metadata
+                # This eliminates the separate aggregation LLM call (SHU-582)
+                chunk_results, doc_profile, synthesized_queries, tokens = (
+                    await self.profiling_service.profile_chunks_incremental(
+                        chunks=chunk_data,
+                        document_metadata={"title": document.title},
+                    )
                 )
-                total_tokens += llm_result.tokens_used
-
-                if aggregate_result:
-                    doc_profile, synthesized_queries = aggregate_result
+                total_tokens += tokens
 
             # Persist results
             await self._persist_results(document, chunks, doc_profile, chunk_results)
@@ -200,8 +198,6 @@ class ProfilingOrchestrator:
 
     def _unified_to_document_profile(self, unified) -> DocumentProfile:
         """Convert UnifiedProfilingResponse to DocumentProfile."""
-        from ..schemas.profiling import DocumentType
-
         try:
             doc_type = DocumentType(unified.document_type.lower())
         except ValueError:

@@ -13,8 +13,7 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfile,
     ChunkProfileResult,
-    DocumentProfile,
-    DocumentType,
+    FinalBatchResponse,
     UnifiedChunkProfile,
     UnifiedProfilingResponse,
 )
@@ -31,6 +30,63 @@ class ProfileParser:
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
 
+    def _parse_capability_manifest(self, data: dict) -> CapabilityManifest:
+        """Parse capability manifest from JSON data.
+
+        Args:
+            data: Raw JSON data containing capability_manifest key
+
+        Returns:
+            CapabilityManifest with parsed or default values
+
+        """
+        manifest_data = data.get("capability_manifest", {})
+        return CapabilityManifest(
+            answers_questions_about=manifest_data.get("answers_questions_about", []),
+            provides_information_type=manifest_data.get("provides_information_type", []),
+            authority_level=manifest_data.get("authority_level", "secondary"),
+            completeness=manifest_data.get("completeness", "partial"),
+            question_domains=manifest_data.get("question_domains", []),
+        )
+
+    def _parse_chunks(self, chunks_data: list) -> list[UnifiedChunkProfile]:
+        """Parse chunk profiles from JSON data.
+
+        Args:
+            chunks_data: List of chunk dictionaries from JSON
+
+        Returns:
+            List of UnifiedChunkProfile with truncated fields
+
+        """
+        chunks = []
+        for chunk_data in chunks_data:
+            chunks.append(UnifiedChunkProfile(
+                index=chunk_data.get("index", 0),
+                one_liner=chunk_data.get("one_liner", "")[:self.MAX_ONE_LINER_LENGTH],
+                summary=chunk_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
+                keywords=chunk_data.get("keywords", [])[:self.MAX_KEYWORDS],
+                topics=chunk_data.get("topics", [])[:self.MAX_TOPICS],
+            ))
+        return chunks
+
+    def _parse_synthesized_queries(self, queries: list) -> list[str]:
+        """Parse synthesized queries, handling both string and object formats.
+
+        Args:
+            queries: List of queries (strings or dicts with query_text)
+
+        Returns:
+            List of query strings, capped at 10
+
+        """
+        if not queries:
+            return []
+        # Handle case where LLM returns objects instead of strings
+        if isinstance(queries[0], dict):
+            queries = [q.get("query_text", str(q)) for q in queries]
+        return queries[:10]
+
     def parse_unified_response(self, content: str) -> UnifiedProfilingResponse | None:
         """Parse unified profiling LLM response.
 
@@ -45,40 +101,14 @@ class ProfileParser:
             json_str = self.extract_json(content)
             data = json.loads(json_str)
 
-            # Parse capability manifest
-            manifest_data = data.get("capability_manifest", {})
-            manifest = CapabilityManifest(
-                answers_questions_about=manifest_data.get("answers_questions_about", []),
-                provides_information_type=manifest_data.get("provides_information_type", []),
-                authority_level=manifest_data.get("authority_level", "secondary"),
-                completeness=manifest_data.get("completeness", "partial"),
-                question_domains=manifest_data.get("question_domains", []),
-            )
-
-            # Parse chunks
-            chunks_data = data.get("chunks", [])
-            chunks = []
-            for chunk_data in chunks_data:
-                chunks.append(UnifiedChunkProfile(
-                    index=chunk_data.get("index", 0),
-                    one_liner=chunk_data.get("one_liner", "")[:self.MAX_ONE_LINER_LENGTH],
-                    summary=chunk_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
-                    keywords=chunk_data.get("keywords", [])[:self.MAX_KEYWORDS],
-                    topics=chunk_data.get("topics", [])[:self.MAX_TOPICS],
-                ))
-
-            # Parse synthesized queries (list of strings)
-            queries = data.get("synthesized_queries", [])
-            if queries and isinstance(queries[0], dict):
-                # Handle case where LLM returns objects instead of strings
-                queries = [q.get("query_text", str(q)) for q in queries]
-
             return UnifiedProfilingResponse(
                 synopsis=data.get("synopsis", ""),
-                chunks=chunks,
+                chunks=self._parse_chunks(data.get("chunks", [])),
                 document_type=data.get("document_type", "narrative").lower(),
-                capability_manifest=manifest,
-                synthesized_queries=queries[:10],  # Cap at 10 queries
+                capability_manifest=self._parse_capability_manifest(data),
+                synthesized_queries=self._parse_synthesized_queries(
+                    data.get("synthesized_queries", [])
+                ),
             )
         except Exception as e:
             logger.warning(
@@ -88,96 +118,34 @@ class ProfileParser:
             )
             return None
 
-    def parse_aggregate_response(self, content: str) -> tuple[DocumentProfile, list[str]] | None:
-        """Parse aggregate profiling LLM response (includes queries).
+    def parse_final_batch_response(self, content: str) -> FinalBatchResponse | None:
+        """Parse final batch profiling LLM response.
+
+        The final batch includes both chunk profiles AND document-level metadata.
 
         Args:
             content: Raw LLM response content
 
         Returns:
-            Tuple of (DocumentProfile, synthesized_queries) if parsing succeeds, None otherwise
+            FinalBatchResponse if parsing succeeds, None otherwise
 
         """
         try:
             json_str = self.extract_json(content)
             data = json.loads(json_str)
 
-            # Parse capability manifest
-            manifest_data = data.get("capability_manifest", {})
-            manifest = CapabilityManifest(
-                answers_questions_about=manifest_data.get("answers_questions_about", []),
-                provides_information_type=manifest_data.get("provides_information_type", []),
-                authority_level=manifest_data.get("authority_level", "secondary"),
-                completeness=manifest_data.get("completeness", "partial"),
-                question_domains=manifest_data.get("question_domains", []),
-            )
-
-            # Parse document type with fallback
-            doc_type_str = data.get("document_type", "narrative").lower()
-            try:
-                doc_type = DocumentType(doc_type_str)
-            except ValueError:
-                doc_type = DocumentType.NARRATIVE
-
-            profile = DocumentProfile(
+            return FinalBatchResponse(
+                chunks=self._parse_chunks(data.get("chunks", [])),
                 synopsis=data.get("synopsis", ""),
-                document_type=doc_type,
-                capability_manifest=manifest,
-            )
-
-            # Parse synthesized queries
-            queries = data.get("synthesized_queries", [])
-            if queries and isinstance(queries[0], dict):
-                queries = [q.get("query_text", str(q)) for q in queries]
-
-            return profile, queries[:10]
-        except Exception as e:
-            logger.warning(
-                "failed_to_parse_aggregate_response",
-                error=str(e),
-                content=content[:500] if content else "",
-            )
-            return None
-
-    def parse_document_profile(self, content: str) -> DocumentProfile | None:
-        """Parse LLM response into DocumentProfile.
-
-        Args:
-            content: Raw LLM response content
-
-        Returns:
-            DocumentProfile if parsing succeeds, None otherwise
-
-        """
-        try:
-            json_str = self.extract_json(content)
-            data = json.loads(json_str)
-
-            # Parse capability manifest
-            manifest_data = data.get("capability_manifest", {})
-            manifest = CapabilityManifest(
-                answers_questions_about=manifest_data.get("answers_questions_about", []),
-                provides_information_type=manifest_data.get("provides_information_type", []),
-                authority_level=manifest_data.get("authority_level", "secondary"),
-                completeness=manifest_data.get("completeness", "partial"),
-                question_domains=manifest_data.get("question_domains", []),
-            )
-
-            # Parse document type with fallback
-            doc_type_str = data.get("document_type", "narrative").lower()
-            try:
-                doc_type = DocumentType(doc_type_str)
-            except ValueError:
-                doc_type = DocumentType.NARRATIVE
-
-            return DocumentProfile(
-                synopsis=data.get("synopsis", ""),
-                document_type=doc_type,
-                capability_manifest=manifest,
+                document_type=data.get("document_type", "narrative").lower(),
+                capability_manifest=self._parse_capability_manifest(data),
+                synthesized_queries=self._parse_synthesized_queries(
+                    data.get("synthesized_queries", [])
+                ),
             )
         except Exception as e:
             logger.warning(
-                "failed_to_parse_document_profile",
+                "failed_to_parse_final_batch_response",
                 error=str(e),
                 content=content[:500] if content else "",
             )
