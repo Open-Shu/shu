@@ -29,6 +29,16 @@ class ProfileParser:
     MAX_SUMMARY_LENGTH = 500
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
+    DEFAULT_MAX_QUERIES = 20
+
+    def __init__(self, max_queries: int | None = None) -> None:
+        """Initialize parser with configurable limits.
+
+        Args:
+            max_queries: Maximum number of synthesized queries to keep (default: 20)
+
+        """
+        self.max_queries = max_queries or self.DEFAULT_MAX_QUERIES
 
     def _parse_capability_manifest(self, data: dict) -> CapabilityManifest:
         """Parse capability manifest from JSON data.
@@ -77,7 +87,7 @@ class ProfileParser:
             queries: List of queries (strings or dicts with query_text)
 
         Returns:
-            List of query strings, capped at 10
+            List of query strings, capped at configured max_queries
 
         """
         if not queries:
@@ -85,7 +95,7 @@ class ProfileParser:
         # Handle case where LLM returns objects instead of strings
         if isinstance(queries[0], dict):
             queries = [q.get("query_text", str(q)) for q in queries]
-        return queries[:10]
+        return queries[:self.max_queries]
 
     def parse_unified_response(self, content: str) -> UnifiedProfilingResponse | None:
         """Parse unified profiling LLM response.

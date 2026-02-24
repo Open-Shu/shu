@@ -19,7 +19,6 @@ from shu.schemas.profiling import (
 )
 from shu.services.profiling_service import (
     CHUNK_PROFILE_SYSTEM_PROMPT,
-    UNIFIED_PROFILING_SYSTEM_PROMPT,
     ProfilingService,
 )
 from shu.services.side_call_service import SideCallResult
@@ -33,6 +32,8 @@ def mock_settings():
     settings.chunk_profiling_batch_size = 5
     settings.profiling_full_doc_max_tokens = 4000
     settings.profiling_max_input_tokens = 8000
+    settings.query_synthesis_min_queries = 3
+    settings.query_synthesis_max_queries = 20
     return settings
 
 
@@ -107,7 +108,9 @@ class TestUnifiedProfiling:
         assert "API design" in unified.capability_manifest.answers_questions_about
         mock_side_call_service.call.assert_called_once()
         call_kwargs = mock_side_call_service.call.call_args[1]
-        assert call_kwargs["system_prompt"] == UNIFIED_PROFILING_SYSTEM_PROMPT
+        # Verify prompt uses configured query limits
+        assert "3-20 diverse queries" in call_kwargs["system_prompt"]
+        assert "document profiling assistant" in call_kwargs["system_prompt"]
 
     @pytest.mark.asyncio
     async def test_unified_profiling_with_metadata(self, profiling_service, mock_side_call_service):
@@ -654,9 +657,7 @@ class TestFinalBatchPrompt:
     async def test_final_batch_uses_correct_prompt(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test that final batch uses FINAL_BATCH_SYSTEM_PROMPT."""
-        from shu.services.profiling_service import FINAL_BATCH_SYSTEM_PROMPT
-
+        """Test that final batch uses dynamically built prompt with configured query limits."""
         mock_settings.chunk_profiling_batch_size = 10
 
         mock_side_call_service.call.return_value = SideCallResult(
@@ -675,7 +676,9 @@ class TestFinalBatchPrompt:
         await profiling_service.profile_chunks_incremental(chunks=chunks)
 
         call_kwargs = mock_side_call_service.call.call_args[1]
-        assert call_kwargs["system_prompt"] == FINAL_BATCH_SYSTEM_PROMPT
+        # Verify prompt uses configured query limits (min=3, max=20 from mock_settings)
+        assert "3-20 diverse queries" in call_kwargs["system_prompt"]
+        assert "FINAL batch" in call_kwargs["system_prompt"]
 
     @pytest.mark.asyncio
     async def test_final_batch_includes_document_metadata(

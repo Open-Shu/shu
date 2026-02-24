@@ -32,40 +32,46 @@ from .side_call_service import SideCallResult, SideCallService
 logger = structlog.get_logger(__name__)
 
 
-# Unified profiling prompt for small documents - generates everything in one pass
-UNIFIED_PROFILING_SYSTEM_PROMPT = """You are a document profiling assistant. Analyze the document and generate a complete profile including document-level metadata, per-chunk summaries, and hypothetical queries.
+# Base unified profiling prompt template - {min_queries} and {max_queries} are injected dynamically
+UNIFIED_PROFILING_SYSTEM_PROMPT_TEMPLATE = """You are a document profiling assistant. Analyze the document and generate a complete profile including document-level metadata, per-chunk summaries, and hypothetical queries.
 
 Generate a JSON response with this exact structure:
-{
+{{
     "synopsis": "A 2-4 sentence summary capturing the document's essence, main topics, and purpose.",
     "chunks": [
-        {
+        {{
             "index": 0,
             "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
             "summary": "Longer description of what this chunk contains",
             "keywords": ["specific", "extractable", "terms"],
             "topics": ["conceptual", "categories"]
-        }
+        }}
     ],
     "document_type": "One of: narrative, transactional, technical, conversational",
-    "capability_manifest": {
+    "capability_manifest": {{
         "answers_questions_about": ["list of specific topics the document addresses"],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
         "question_domains": ["who", "what", "when", "where", "why", "how"]
-    },
+    }},
     "synthesized_queries": [
         "What is the main topic of this document?",
         "How does X work?",
         "Tell me about Y"
     ]
-}
+}}
 
 Guidelines:
 - one_liner: Start with action verb when possible ("Explains...", "Covers...", "Lists..."). Capture specific information, not just topic.
 - synopsis: Capture strategic narrative and cross-chunk themes.
-- synthesized_queries: Generate 3-5 diverse queries (questions, commands, keyword searches) that this document can answer.
+- synthesized_queries: Generate {min_queries}-{max_queries} diverse queries (questions, commands, keyword searches) that this document can answer.
+  Scaling rules:
+  - Generate at least one query per distinct topic in answers_questions_about
+  - Add queries for each question_domain the document addresses (who/what/when/where/why/how)
+  - Include a mix of interrogative ("What is...?"), imperative ("Tell me about..."), and keyword searches ("X vs Y comparison")
+  - Simple single-topic documents: closer to {min_queries}
+  - Complex multi-topic documents with many domains: closer to {max_queries}
 - keywords: Specific extractable terms (names, numbers, dates, technical terms).
 - topics: Broader conceptual categories."""
 
@@ -87,44 +93,50 @@ Guidelines:
 - topics: Broader conceptual categories.
 Limit to 5-10 keywords and 3-5 topics."""
 
-# Final batch prompt for large documents - generates chunk profiles AND document metadata
-FINAL_BATCH_SYSTEM_PROMPT = """You are a document profiling assistant. You are processing the FINAL batch of chunks for a large document.
+# Final batch prompt template for large documents - {min_queries} and {max_queries} injected dynamically
+FINAL_BATCH_SYSTEM_PROMPT_TEMPLATE = """You are a document profiling assistant. You are processing the FINAL batch of chunks for a large document.
 
 You have two tasks:
 1. Profile the chunks in this batch (same as previous batches)
 2. Generate document-level metadata using the accumulated one-liners from ALL previous chunks
 
 Generate a JSON response with this exact structure:
-{
+{{
     "chunks": [
-        {
+        {{
             "index": 0,
             "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
             "summary": "Longer description of what this chunk contains",
             "keywords": ["specific", "extractable", "terms"],
             "topics": ["conceptual", "categories"]
-        }
+        }}
     ],
     "synopsis": "A 2-4 sentence summary synthesizing ALL chunk one-liners into a cohesive document overview.",
     "document_type": "One of: narrative, transactional, technical, conversational",
-    "capability_manifest": {
+    "capability_manifest": {{
         "answers_questions_about": ["consolidated list of topics from all chunks"],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
         "question_domains": ["who", "what", "when", "where", "why", "how"]
-    },
+    }},
     "synthesized_queries": [
         "What is the main topic of this document?",
         "How does X work?",
         "Tell me about Y"
     ]
-}
+}}
 
 Guidelines:
 - one_liner: Start with action verb ("Explains...", "Covers...", "Lists..."). Capture specific information.
 - synopsis: Synthesize the accumulated one-liners into a strategic narrative. Capture cross-chunk themes.
-- synthesized_queries: Generate 3-5 diverse queries this document can answer.
+- synthesized_queries: Generate {min_queries}-{max_queries} diverse queries this document can answer.
+  Scaling rules:
+  - Generate at least one query per distinct topic in answers_questions_about
+  - Add queries for each question_domain the document addresses (who/what/when/where/why/how)
+  - Include a mix of interrogative ("What is...?"), imperative ("Tell me about..."), and keyword searches ("X vs Y comparison")
+  - Simple single-topic documents: closer to {min_queries}
+  - Complex multi-topic documents with many domains: closer to {max_queries}
 - keywords: Specific extractable terms from the text.
 - topics: Broader conceptual categories."""
 
@@ -139,11 +151,25 @@ class ProfilingService:
     ) -> None:
         self.side_call = side_call_service
         self.settings = settings
-        self.parser = ProfileParser()
+        self.parser = ProfileParser(max_queries=settings.query_synthesis_max_queries)
 
     def _resolve_timeout_ms(self, timeout_ms: int | None) -> int:
         """Resolve timeout, using settings default if not provided."""
         return timeout_ms or (self.settings.profiling_timeout_seconds * 1000)
+
+    def _build_unified_profiling_prompt(self) -> str:
+        """Build unified profiling system prompt with configured query limits."""
+        return UNIFIED_PROFILING_SYSTEM_PROMPT_TEMPLATE.format(
+            min_queries=self.settings.query_synthesis_min_queries,
+            max_queries=self.settings.query_synthesis_max_queries,
+        )
+
+    def _build_final_batch_prompt(self) -> str:
+        """Build final batch system prompt with configured query limits."""
+        return FINAL_BATCH_SYSTEM_PROMPT_TEMPLATE.format(
+            min_queries=self.settings.query_synthesis_min_queries,
+            max_queries=self.settings.query_synthesis_max_queries,
+        )
 
     def _validate_input_tokens(self, content: str, context: str) -> SideCallResult | None:
         """Validate that content does not exceed profiling_max_input_tokens.
@@ -220,7 +246,7 @@ class ProfilingService:
 
         result = await self.side_call.call(
             message_sequence=message_sequence,
-            system_prompt=UNIFIED_PROFILING_SYSTEM_PROMPT,
+            system_prompt=self._build_unified_profiling_prompt(),
             user_id=None,  # System operation
             timeout_ms=timeout,
         )
@@ -455,7 +481,7 @@ class ProfilingService:
 
         result = await self.side_call.call(
             message_sequence=message_sequence,
-            system_prompt=FINAL_BATCH_SYSTEM_PROMPT,
+            system_prompt=self._build_final_batch_prompt(),
             user_id=None,
             timeout_ms=timeout_ms,
         )
