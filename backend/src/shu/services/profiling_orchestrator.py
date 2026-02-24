@@ -128,7 +128,6 @@ class ProfilingOrchestrator:
             if mode == ProfilingMode.FULL_DOCUMENT:
                 # Unified profiling: one LLM call for everything
                 unified_result, llm_result = await self.profiling_service.profile_document_unified(
-                    document_text=full_text,
                     chunks=chunk_data,
                     document_metadata={"title": document.title},
                 )
@@ -248,6 +247,9 @@ class ProfilingOrchestrator:
     async def _persist_queries(self, document: Document, queries: list[str]) -> int:
         """Persist synthesized queries to the database.
 
+        Deletes any existing queries for this document before creating new ones
+        to handle re-profiling scenarios.
+
         Args:
             document: The document being profiled
             queries: List of query strings
@@ -256,6 +258,13 @@ class ProfilingOrchestrator:
             Number of queries created
 
         """
+        from sqlalchemy import delete
+
+        # Delete existing queries for this document (re-profiling case)
+        await self.db.execute(
+            delete(DocumentQuery).where(DocumentQuery.document_id == document.id)
+        )
+
         queries_created = 0
         for query_text in queries:
             if query_text.strip():  # Skip empty queries

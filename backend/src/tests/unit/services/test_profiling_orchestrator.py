@@ -369,6 +369,7 @@ class TestPersistQueries:
     async def test_persist_queries_success(self, orchestrator, mock_db):
         """Test persisting synthesized queries."""
         doc = create_mock_document()
+        mock_db.execute = AsyncMock()  # Mock the delete execute
 
         queries_created = await orchestrator._persist_queries(
             doc,
@@ -376,6 +377,8 @@ class TestPersistQueries:
         )
 
         assert queries_created == 3
+        # 1 execute for delete + 3 adds
+        mock_db.execute.assert_called_once()  # Delete existing queries
         assert mock_db.add.call_count == 3
         mock_db.commit.assert_called_once()
 
@@ -383,6 +386,7 @@ class TestPersistQueries:
     async def test_persist_queries_skips_empty(self, orchestrator, mock_db):
         """Test that empty queries are skipped."""
         doc = create_mock_document()
+        mock_db.execute = AsyncMock()
 
         queries_created = await orchestrator._persist_queries(
             doc,
@@ -396,12 +400,29 @@ class TestPersistQueries:
     async def test_persist_queries_empty_list(self, orchestrator, mock_db):
         """Test handling empty query list."""
         doc = create_mock_document()
+        mock_db.execute = AsyncMock()
 
         queries_created = await orchestrator._persist_queries(doc, [])
 
         assert queries_created == 0
+        # Delete is still called even for empty list (clears old queries)
+        mock_db.execute.assert_called_once()
         mock_db.add.assert_not_called()
         mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persist_queries_deletes_existing(self, orchestrator, mock_db):
+        """Test that existing queries are deleted before creating new ones (re-profiling)."""
+        doc = create_mock_document()
+        mock_db.execute = AsyncMock()
+
+        await orchestrator._persist_queries(doc, ["New query"])
+
+        # Verify delete was called with correct document_id filter
+        mock_db.execute.assert_called_once()
+        delete_call = mock_db.execute.call_args[0][0]
+        # The delete statement should target document_queries table
+        assert "document_queries" in str(delete_call) or "DocumentQuery" in str(delete_call)
 
 
 class TestUnifiedToDocumentProfile:

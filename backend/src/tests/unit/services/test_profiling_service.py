@@ -94,7 +94,6 @@ class TestUnifiedProfiling:
             ChunkData(chunk_id="c2", chunk_index=1, content="Auth content"),
         ]
         unified, result = await profiling_service.profile_document_unified(
-            document_text="Full document text",
             chunks=chunks,
         )
 
@@ -121,7 +120,6 @@ class TestUnifiedProfiling:
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
         await profiling_service.profile_document_unified(
-            document_text="Document text",
             chunks=chunks,
             document_metadata={"title": "My Doc", "source": "email"},
         )
@@ -140,7 +138,6 @@ class TestUnifiedProfiling:
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
         unified, result = await profiling_service.profile_document_unified(
-            document_text="Document text",
             chunks=chunks,
         )
 
@@ -167,115 +164,11 @@ class TestUnifiedProfiling:
 
         chunks = []
         unified, result = await profiling_service.profile_document_unified(
-            document_text="Document text",
             chunks=chunks,
         )
 
         assert unified is not None
         assert unified.synthesized_queries == ["What is X?", "How does Y work?"]
-
-
-class TestDocumentProfiling:
-    """Tests for profile_document method (legacy, for backward compatibility)."""
-
-    @pytest.mark.asyncio
-    async def test_profile_document_success(self, profiling_service, mock_side_call_service):
-        """Test successful document profiling."""
-        llm_response = json.dumps({
-            "synopsis": "A technical document about API design patterns.",
-            "document_type": "technical",
-            "capability_manifest": {
-                "answers_questions_about": ["API design", "REST conventions"],
-                "provides_information_type": ["instructions", "facts"],
-                "authority_level": "primary",
-                "completeness": "complete",
-                "question_domains": ["what", "how"],
-            },
-        })
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=150
-        )
-
-        profile, result = await profiling_service.profile_document("Sample document text")
-
-        assert result.success is True
-        assert profile is not None
-        assert profile.synopsis == "A technical document about API design patterns."
-        assert profile.document_type == DocumentType.TECHNICAL
-        assert "API design" in profile.capability_manifest.answers_questions_about
-        mock_side_call_service.call.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_profile_document_with_metadata(self, profiling_service, mock_side_call_service):
-        """Test profiling includes document metadata."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content='{"synopsis":"Test","document_type":"narrative","capability_manifest":{}}',
-            success=True,
-            tokens_used=100,
-        )
-
-        await profiling_service.profile_document(
-            "Document text",
-            document_metadata={"title": "My Doc", "source": "email"},
-        )
-
-        call_kwargs = mock_side_call_service.call.call_args[1]
-        user_message = call_kwargs["message_sequence"][0]["content"]
-        assert "My Doc" in user_message
-        assert "email" in user_message
-
-    @pytest.mark.asyncio
-    async def test_profile_document_llm_failure(self, profiling_service, mock_side_call_service):
-        """Test handling of LLM call failure."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content="", success=False, error_message="Rate limited"
-        )
-
-        profile, result = await profiling_service.profile_document("Document text")
-
-        assert result.success is False
-        assert profile is None
-        assert result.error_message == "Rate limited"
-
-    @pytest.mark.asyncio
-    async def test_profile_document_invalid_json(self, profiling_service, mock_side_call_service):
-        """Test handling of invalid JSON response."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content="This is not valid JSON", success=True, tokens_used=50
-        )
-
-        profile, result = await profiling_service.profile_document("Document text")
-
-        assert result.success is True  # LLM call succeeded
-        assert profile is None  # But parsing failed
-
-    @pytest.mark.asyncio
-    async def test_profile_document_markdown_json(self, profiling_service, mock_side_call_service):
-        """Test parsing JSON wrapped in markdown code blocks."""
-        llm_response = """```json
-{"synopsis":"Wrapped in code blocks","document_type":"narrative","capability_manifest":{}}
-```"""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=100
-        )
-
-        profile, result = await profiling_service.profile_document("Document text")
-
-        assert profile is not None
-        assert profile.synopsis == "Wrapped in code blocks"
-
-    @pytest.mark.asyncio
-    async def test_profile_document_unknown_type_defaults(self, profiling_service, mock_side_call_service):
-        """Test fallback to NARRATIVE for unknown document types."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content='{"synopsis":"Test","document_type":"unknown_type","capability_manifest":{}}',
-            success=True,
-            tokens_used=50,
-        )
-
-        profile, _ = await profiling_service.profile_document("Document text")
-
-        assert profile.document_type == DocumentType.NARRATIVE
 
 
 class TestChunkProfiling:
@@ -543,12 +436,10 @@ class TestInputValidation:
         """Test that oversized input is rejected for unified profiling."""
         mock_settings.profiling_max_input_tokens = 100
 
-        # Create input that exceeds token limit
-        large_text = "word " * 500
-
-        chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
+        # Create chunks with content that exceeds token limit
+        large_content = "word " * 500
+        chunks = [ChunkData(chunk_id="c1", chunk_index=0, content=large_content)]
         unified, result = await profiling_service.profile_document_unified(
-            document_text=large_text,
             chunks=chunks,
         )
 

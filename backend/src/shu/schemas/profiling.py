@@ -137,23 +137,6 @@ class ProfilingResult(BaseModel):
     duration_ms: int = Field(0, description="Total profiling duration in milliseconds")
 
 
-class SynthesizedQuery(BaseModel):
-    """A synthesized query that a document can answer.
-
-    Generated during unified profiling. Queries encompass questions,
-    imperatives, and declarative searches.
-    """
-
-    query_text: str = Field(
-        ...,
-        description="The synthesized query text",
-    )
-    query_type: str = Field(
-        default="interrogative",
-        description="Type: interrogative, imperative, declarative, interpretive, temporal, structural",
-    )
-
-
 class UnifiedChunkProfile(BaseModel):
     """Chunk profile from unified LLM response.
 

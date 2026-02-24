@@ -155,7 +155,6 @@ class ProfilingService:
 
     async def profile_document_unified(
         self,
-        document_text: str,
         chunks: list[ChunkData],
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
@@ -167,8 +166,7 @@ class ProfilingService:
         queries in a single LLM call.
 
         Args:
-            document_text: Full text of the document
-            chunks: List of chunk data with content
+            chunks: List of chunk data with content (contains full document)
             document_metadata: Optional metadata (title, source, etc.)
             timeout_ms: Optional timeout override
 
@@ -178,13 +176,13 @@ class ProfilingService:
         """
         timeout = self._resolve_timeout_ms(timeout_ms)
 
-        # Build the user message with document and chunk structure
+        # Build the user message with chunk structure only
+        # The chunks contain the full document content - no need to duplicate
         chunks_text = []
         for chunk in chunks:
             chunks_text.append(f"[CHUNK {chunk.chunk_index}]\n{chunk.content}\n[/CHUNK]")
 
-        user_content = f"Document text:\n\n{document_text}\n\n"
-        user_content += f"The document has {len(chunks)} chunks:\n\n"
+        user_content = f"Analyze this document with {len(chunks)} chunks:\n\n"
         user_content += "\n\n".join(chunks_text)
 
         if document_metadata:
@@ -215,70 +213,6 @@ class ProfilingService:
         # Parse the unified response
         unified_response = self.parser.parse_unified_response(result.content)
         return unified_response, result
-
-    async def profile_document(
-        self,
-        document_text: str,
-        document_metadata: dict | None = None,
-        timeout_ms: int | None = None,
-    ) -> tuple[DocumentProfile | None, SideCallResult]:
-        """Generate a document profile from full document text.
-
-        DEPRECATED: Use profile_document_unified for small documents.
-        This method is kept for backward compatibility with large document
-        aggregation path.
-
-        Args:
-            document_text: Full text of the document
-            document_metadata: Optional metadata (title, source, etc.)
-            timeout_ms: Optional timeout override
-
-        Returns:
-            Tuple of (DocumentProfile or None if failed, SideCallResult with details)
-
-        """
-        # For backward compatibility, use the legacy prompt
-        timeout = self._resolve_timeout_ms(timeout_ms)
-
-        legacy_prompt = """You are a document profiling assistant. Analyze the document and generate a structured profile.
-
-Generate a JSON response with:
-{
-    "synopsis": "A 2-4 sentence summary capturing the document's essence.",
-    "document_type": "One of: narrative, transactional, technical, conversational",
-    "capability_manifest": {
-        "answers_questions_about": ["topics the document addresses"],
-        "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
-        "authority_level": "primary, secondary, or commentary",
-        "completeness": "complete, partial, or reference",
-        "question_domains": ["who", "what", "when", "where", "why", "how"]
-    }
-}"""
-
-        user_content = f"Document text:\n\n{document_text}"
-        if document_metadata:
-            meta_str = json.dumps(document_metadata, indent=2)
-            user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
-
-        error_result = self._validate_input_tokens(user_content, "document profiling")
-        if error_result:
-            return None, error_result
-
-        message_sequence = [{"role": "user", "content": user_content}]
-
-        result = await self.side_call.call(
-            message_sequence=message_sequence,
-            system_prompt=legacy_prompt,
-            user_id=None,
-            timeout_ms=timeout,
-        )
-
-        if not result.success:
-            logger.warning("document_profiling_failed", error=result.error_message)
-            return None, result
-
-        profile = self.parser.parse_document_profile(result.content)
-        return profile, result
 
     async def profile_chunks(
         self,
