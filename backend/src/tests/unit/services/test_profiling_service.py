@@ -13,8 +13,6 @@ import pytest
 
 from shu.schemas.profiling import (
     ChunkData,
-    ChunkProfile,
-    ChunkProfileResult,
     DocumentType,
 )
 from shu.services.profiling_service import (
@@ -29,11 +27,13 @@ def mock_settings():
     """Mock settings with profiling configuration."""
     settings = MagicMock()
     settings.profiling_timeout_seconds = 60
+    settings.query_synthesis_timeout_seconds = 90
     settings.chunk_profiling_batch_size = 5
     settings.profiling_full_doc_max_tokens = 4000
     settings.profiling_max_input_tokens = 8000
     settings.query_synthesis_min_queries = 3
     settings.query_synthesis_max_queries = 20
+    settings.enable_query_synthesis = True  # Explicit default for tests
     return settings
 
 
@@ -109,7 +109,7 @@ class TestUnifiedProfiling:
         mock_side_call_service.call.assert_called_once()
         call_kwargs = mock_side_call_service.call.call_args[1]
         # Verify prompt uses configured query limits
-        assert "3-20 diverse queries" in call_kwargs["system_prompt"]
+        assert "3-20 queries" in call_kwargs["system_prompt"]
         assert "document profiling assistant" in call_kwargs["system_prompt"]
 
     @pytest.mark.asyncio
@@ -677,7 +677,7 @@ class TestFinalBatchPrompt:
 
         call_kwargs = mock_side_call_service.call.call_args[1]
         # Verify prompt uses configured query limits (min=3, max=20 from mock_settings)
-        assert "3-20 diverse queries" in call_kwargs["system_prompt"]
+        assert "3-20 queries" in call_kwargs["system_prompt"]
         assert "FINAL batch" in call_kwargs["system_prompt"]
 
     @pytest.mark.asyncio
@@ -708,3 +708,126 @@ class TestFinalBatchPrompt:
         user_content = mock_side_call_service.call.call_args[1]["message_sequence"][0]["content"]
         assert "My Document" in user_content
         assert "email" in user_content
+
+
+class TestQuerySynthesisToggle:
+    """Tests for enable_query_synthesis controlling prompt content."""
+
+    @pytest.mark.asyncio
+    async def test_unified_prompt_excludes_queries_when_disabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """When enable_query_synthesis=False, unified prompt should NOT ask for queries."""
+        mock_settings.enable_query_synthesis = False
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        mock_side_call_service.call.return_value = SideCallResult(
+            content=json.dumps({
+                "synopsis": "Test",
+                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "document_type": "narrative",
+                "capability_manifest": {},
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_document_unified(chunks=chunks)
+
+        system_prompt = mock_side_call_service.call.call_args[1]["system_prompt"]
+        assert "synthesized_queries" not in system_prompt
+        assert "PURPOSE: These queries" not in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_unified_prompt_includes_queries_when_enabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """When enable_query_synthesis=True, unified prompt SHOULD ask for queries."""
+        mock_settings.enable_query_synthesis = True
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        mock_side_call_service.call.return_value = SideCallResult(
+            content=json.dumps({
+                "synopsis": "Test",
+                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "document_type": "narrative",
+                "capability_manifest": {},
+                "synthesized_queries": ["Query 1"],
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_document_unified(chunks=chunks)
+
+        system_prompt = mock_side_call_service.call.call_args[1]["system_prompt"]
+        assert "synthesized_queries" in system_prompt
+        assert "3-20 queries" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_final_batch_prompt_excludes_queries_when_disabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """When enable_query_synthesis=False, final batch prompt should NOT ask for queries."""
+        mock_settings.enable_query_synthesis = False
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        mock_side_call_service.call.return_value = SideCallResult(
+            content=json.dumps({
+                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "synopsis": "Test",
+                "document_type": "narrative",
+                "capability_manifest": {},
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_chunks_incremental(chunks=chunks)
+
+        call_kwargs = mock_side_call_service.call.call_args[1]
+        system_prompt = call_kwargs["system_prompt"]
+        user_content = call_kwargs["message_sequence"][0]["content"]
+
+        # System prompt should not mention queries
+        assert "synthesized_queries" not in system_prompt
+        # User content should not ask for queries
+        assert "synthesized_queries" not in user_content
+
+    @pytest.mark.asyncio
+    async def test_final_batch_prompt_includes_queries_when_enabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """When enable_query_synthesis=True, final batch prompt SHOULD ask for queries."""
+        mock_settings.enable_query_synthesis = True
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        mock_side_call_service.call.return_value = SideCallResult(
+            content=json.dumps({
+                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "synopsis": "Test",
+                "document_type": "narrative",
+                "capability_manifest": {},
+                "synthesized_queries": ["Query 1"],
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_chunks_incremental(chunks=chunks)
+
+        call_kwargs = mock_side_call_service.call.call_args[1]
+        system_prompt = call_kwargs["system_prompt"]
+        user_content = call_kwargs["message_sequence"][0]["content"]
+
+        # System prompt should mention queries
+        assert "synthesized_queries" in system_prompt
+        assert "3-20 queries" in system_prompt
+        # User content should ask for queries
+        assert "synthesized_queries" in user_content

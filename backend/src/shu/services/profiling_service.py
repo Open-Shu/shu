@@ -22,7 +22,6 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     DocumentProfile,
     DocumentType,
-    FinalBatchResponse,
     UnifiedProfilingResponse,
 )
 from ..utils.tokenization import estimate_tokens
@@ -32,8 +31,11 @@ from .side_call_service import SideCallResult, SideCallService
 logger = structlog.get_logger(__name__)
 
 
-# Base unified profiling prompt template - {min_queries} and {max_queries} are injected dynamically
-UNIFIED_PROFILING_SYSTEM_PROMPT_TEMPLATE = """You are a document profiling assistant. Analyze the document and generate a complete profile including document-level metadata, per-chunk summaries, and hypothetical queries.
+# Unified profiling prompt template with conditional query synthesis sections
+# Placeholders: {query_intro}, {queries_json}, {queries_guidelines}
+# When queries disabled: all placeholders are empty strings
+# When queries enabled: placeholders contain the query-specific content
+UNIFIED_PROFILING_PROMPT_TEMPLATE = """You are a document profiling assistant. Analyze the document and generate a complete profile including document-level metadata and per-chunk summaries{query_intro}.
 
 Generate a JSON response with this exact structure:
 {{
@@ -54,24 +56,12 @@ Generate a JSON response with this exact structure:
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
         "question_domains": ["who", "what", "when", "where", "why", "how"]
-    }},
-    "synthesized_queries": [
-        "What is the main topic of this document?",
-        "How does X work?",
-        "Tell me about Y"
-    ]
+    }}{queries_json}
 }}
 
 Guidelines:
 - one_liner: Start with action verb when possible ("Explains...", "Covers...", "Lists..."). Capture specific information, not just topic.
-- synopsis: Capture strategic narrative and cross-chunk themes.
-- synthesized_queries: Generate {min_queries}-{max_queries} diverse queries (questions, commands, keyword searches) that this document can answer.
-  Scaling rules:
-  - Generate at least one query per distinct topic in answers_questions_about
-  - Add queries for each question_domain the document addresses (who/what/when/where/why/how)
-  - Include a mix of interrogative ("What is...?"), imperative ("Tell me about..."), and keyword searches ("X vs Y comparison")
-  - Simple single-topic documents: closer to {min_queries}
-  - Complex multi-topic documents with many domains: closer to {max_queries}
+- synopsis: Capture strategic narrative and cross-chunk themes.{queries_guidelines}
 - keywords: Specific extractable terms (names, numbers, dates, technical terms).
 - topics: Broader conceptual categories."""
 
@@ -93,8 +83,9 @@ Guidelines:
 - topics: Broader conceptual categories.
 Limit to 5-10 keywords and 3-5 topics."""
 
-# Final batch prompt template for large documents - {min_queries} and {max_queries} injected dynamically
-FINAL_BATCH_SYSTEM_PROMPT_TEMPLATE = """You are a document profiling assistant. You are processing the FINAL batch of chunks for a large document.
+# Final batch prompt template with conditional query synthesis sections
+# Same placeholder pattern as unified prompt
+FINAL_BATCH_PROMPT_TEMPLATE = """You are a document profiling assistant. You are processing the FINAL batch of chunks for a large document.
 
 You have two tasks:
 1. Profile the chunks in this batch (same as previous batches)
@@ -119,26 +110,36 @@ Generate a JSON response with this exact structure:
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
         "question_domains": ["who", "what", "when", "where", "why", "how"]
-    }},
-    "synthesized_queries": [
-        "What is the main topic of this document?",
-        "How does X work?",
-        "Tell me about Y"
-    ]
+    }}{queries_json}
 }}
 
 Guidelines:
 - one_liner: Start with action verb ("Explains...", "Covers...", "Lists..."). Capture specific information.
-- synopsis: Synthesize the accumulated one-liners into a strategic narrative. Capture cross-chunk themes.
-- synthesized_queries: Generate {min_queries}-{max_queries} diverse queries this document can answer.
-  Scaling rules:
-  - Generate at least one query per distinct topic in answers_questions_about
-  - Add queries for each question_domain the document addresses (who/what/when/where/why/how)
-  - Include a mix of interrogative ("What is...?"), imperative ("Tell me about..."), and keyword searches ("X vs Y comparison")
-  - Simple single-topic documents: closer to {min_queries}
-  - Complex multi-topic documents with many domains: closer to {max_queries}
+- synopsis: Synthesize the accumulated one-liners into a strategic narrative. Capture cross-chunk themes.{queries_guidelines}
 - keywords: Specific extractable terms from the text.
 - topics: Broader conceptual categories."""
+
+# Query synthesis additions - injected into templates when enable_query_synthesis=True
+QUERY_INTRO_ADDITION = ", and hypothetical queries"
+
+QUERIES_JSON_ADDITION = """,
+    "synthesized_queries": [
+        "What is the main topic of this document?",
+        "How does X work?",
+        "Tell me about Y"
+    ]"""
+
+QUERIES_GUIDELINES_TEMPLATE = """
+- synthesized_queries: Generate {min_queries}-{max_queries} queries that this document can answer.
+  PURPOSE: These queries will be embedded and matched against user searches to help find this document.
+  Include specific details (names, dates, topics, unique terms) that distinguish this document from others.
+  AVOID generic queries like "What were the results?" - instead use "What were the results of the Q3 2024 marketing analysis?"
+  Balance specificity with discoverability - queries should be specific enough to identify this document but general enough to match natural user questions.
+  Scaling rules:
+  - Generate at least one query per distinct topic in answers_questions_about
+  - Include a mix of interrogative ("What is...?"), imperative ("Tell me about..."), and keyword searches
+  - Simple single-topic documents: closer to {min_queries}
+  - Complex multi-topic documents with many domains: closer to {max_queries}"""
 
 
 class ProfilingService:
@@ -153,22 +154,59 @@ class ProfilingService:
         self.settings = settings
         self.parser = ProfileParser(max_queries=settings.query_synthesis_max_queries)
 
-    def _resolve_timeout_ms(self, timeout_ms: int | None) -> int:
-        """Resolve timeout, using settings default if not provided."""
-        return timeout_ms or (self.settings.profiling_timeout_seconds * 1000)
+    def _resolve_timeout_ms(self, timeout_ms: int | None, *, for_query_synthesis: bool = False) -> int:
+        """Resolve timeout, using settings default if not provided.
+
+        Args:
+            timeout_ms: Explicit timeout override (takes priority)
+            for_query_synthesis: If True, use query_synthesis_timeout_seconds as default
+                instead of profiling_timeout_seconds (for calls that generate queries)
+
+        """
+        if timeout_ms is not None:
+            return timeout_ms
+        if for_query_synthesis:
+            return self.settings.query_synthesis_timeout_seconds * 1000
+        return self.settings.profiling_timeout_seconds * 1000
 
     def _build_unified_profiling_prompt(self) -> str:
-        """Build unified profiling system prompt with configured query limits."""
-        return UNIFIED_PROFILING_SYSTEM_PROMPT_TEMPLATE.format(
-            min_queries=self.settings.query_synthesis_min_queries,
-            max_queries=self.settings.query_synthesis_max_queries,
+        """Build unified profiling system prompt.
+
+        Injects query synthesis sections when enable_query_synthesis is True.
+        """
+        if self.settings.enable_query_synthesis:
+            queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
+                min_queries=self.settings.query_synthesis_min_queries,
+                max_queries=self.settings.query_synthesis_max_queries,
+            )
+            return UNIFIED_PROFILING_PROMPT_TEMPLATE.format(
+                query_intro=QUERY_INTRO_ADDITION,
+                queries_json=QUERIES_JSON_ADDITION,
+                queries_guidelines=queries_guidelines,
+            )
+        return UNIFIED_PROFILING_PROMPT_TEMPLATE.format(
+            query_intro="",
+            queries_json="",
+            queries_guidelines="",
         )
 
     def _build_final_batch_prompt(self) -> str:
-        """Build final batch system prompt with configured query limits."""
-        return FINAL_BATCH_SYSTEM_PROMPT_TEMPLATE.format(
-            min_queries=self.settings.query_synthesis_min_queries,
-            max_queries=self.settings.query_synthesis_max_queries,
+        """Build final batch system prompt.
+
+        Injects query synthesis sections when enable_query_synthesis is True.
+        """
+        if self.settings.enable_query_synthesis:
+            queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
+                min_queries=self.settings.query_synthesis_min_queries,
+                max_queries=self.settings.query_synthesis_max_queries,
+            )
+            return FINAL_BATCH_PROMPT_TEMPLATE.format(
+                queries_json=QUERIES_JSON_ADDITION,
+                queries_guidelines=queries_guidelines,
+            )
+        return FINAL_BATCH_PROMPT_TEMPLATE.format(
+            queries_json="",
+            queries_guidelines="",
         )
 
     def _validate_input_tokens(self, content: str, context: str) -> SideCallResult | None:
@@ -222,7 +260,7 @@ class ProfilingService:
             Tuple of (UnifiedProfilingResponse or None if failed, SideCallResult)
 
         """
-        timeout = self._resolve_timeout_ms(timeout_ms)
+        timeout = self._resolve_timeout_ms(timeout_ms, for_query_synthesis=self.settings.enable_query_synthesis)
 
         # Build the user message with chunk structure only
         # The chunks contain the full document content - no need to duplicate
@@ -260,6 +298,8 @@ class ProfilingService:
 
         # Parse the unified response
         unified_response = self.parser.parse_unified_response(result.content)
+        if not unified_response:
+            logger.warning("failed_to_parse_unified_profiling_response")
         return unified_response, result
 
     async def profile_chunks(
@@ -379,6 +419,9 @@ class ProfilingService:
             return [], None, [], 0
 
         timeout = self._resolve_timeout_ms(timeout_ms)
+        final_batch_timeout = self._resolve_timeout_ms(
+            timeout_ms, for_query_synthesis=self.settings.enable_query_synthesis
+        )
         batch_size = self.settings.chunk_profiling_batch_size
         all_results: list[ChunkProfileResult] = []
         accumulated_one_liners: list[str] = []
@@ -391,7 +434,7 @@ class ProfilingService:
             start_idx = batch_idx * batch_size
             end_idx = min(start_idx + batch_size, len(chunks))
             batch = chunks[start_idx:end_idx]
-            is_final_batch = (batch_idx == num_batches - 1)
+            is_final_batch = batch_idx == num_batches - 1
 
             if is_final_batch:
                 # Final batch: generate chunk profiles AND document metadata
@@ -399,23 +442,20 @@ class ProfilingService:
                     batch,
                     accumulated_one_liners,
                     document_metadata,
-                    timeout,
+                    final_batch_timeout,
                 )
                 all_results.extend(batch_results)
                 total_tokens += tokens
                 return all_results, doc_profile, queries, total_tokens
-            else:
-                # Regular batch: just chunk profiles
-                batch_results, tokens = await self._profile_chunk_batch(batch, timeout)
-                all_results.extend(batch_results)
-                total_tokens += tokens
+            # Regular batch: just chunk profiles
+            batch_results, tokens = await self._profile_chunk_batch(batch, timeout)
+            all_results.extend(batch_results)
+            total_tokens += tokens
 
-                # Accumulate one-liners for final batch
-                for result in batch_results:
-                    if result.success and result.profile.one_liner:
-                        accumulated_one_liners.append(
-                            f"Chunk {result.chunk_index}: {result.profile.one_liner}"
-                        )
+            # Accumulate one-liners for final batch
+            for result in batch_results:
+                if result.success and result.profile.one_liner:
+                    accumulated_one_liners.append(f"Chunk {result.chunk_index}: {result.profile.one_liner}")
 
         # Should not reach here, but handle edge case
         return all_results, None, [], total_tokens
@@ -453,14 +493,19 @@ class ProfilingService:
 
         user_content += f"Profile these final {len(chunks)} chunks:\n\n"
         user_content += "\n\n".join(chunks_text)
+
+        # Build response instructions - only request queries if enabled
         user_content += (
             "\n\nRespond with a JSON object containing:\n"
             "1. 'chunks': array of profiles for these chunks (index, one_liner, summary, keywords, topics)\n"
             "2. 'synopsis': 2-4 sentence summary of the ENTIRE document based on all one-liners\n"
             "3. 'document_type': narrative, transactional, technical, or conversational\n"
-            "4. 'capability_manifest': what questions this document can answer\n"
-            "5. 'synthesized_queries': 3-5 queries this document can answer"
+            "4. 'capability_manifest': what questions this document can answer"
         )
+        if self.settings.enable_query_synthesis:
+            min_q = self.settings.query_synthesis_min_queries
+            max_q = self.settings.query_synthesis_max_queries
+            user_content += f"\n5. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
 
         if document_metadata:
             meta_str = json.dumps(document_metadata, indent=2)
@@ -489,8 +534,7 @@ class ProfilingService:
         if not result.success:
             logger.warning("final_batch_profiling_failed", error=result.error_message)
             failed_results = [
-                self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed")
-                for c in chunks
+                self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks
             ]
             return failed_results, None, [], 0
 
@@ -499,8 +543,7 @@ class ProfilingService:
         if not final_response:
             logger.warning("failed_to_parse_final_batch_response")
             failed_results = [
-                self.parser.create_failed_chunk_result(c, "Failed to parse final batch response")
-                for c in chunks
+                self.parser.create_failed_chunk_result(c, "Failed to parse final batch response") for c in chunks
             ]
             return failed_results, None, [], result.tokens_used
 
@@ -508,8 +551,16 @@ class ProfilingService:
         chunk_results = []
         response_chunks_by_index = {rc.index: rc for rc in final_response.chunks}
 
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             response_chunk = response_chunks_by_index.get(chunk.chunk_index)
+            if not response_chunk and i < len(final_response.chunks):
+                # Fallback: LLM may have returned batch-relative (0-based) indices
+                logger.debug(
+                    "using_positional_fallback_for_chunk",
+                    expected_index=chunk.chunk_index,
+                    position=i,
+                )
+                response_chunk = final_response.chunks[i]
             if response_chunk:
                 profile = ChunkProfile(
                     one_liner=response_chunk.one_liner,
@@ -517,21 +568,23 @@ class ProfilingService:
                     keywords=response_chunk.keywords,
                     topics=response_chunk.topics,
                 )
-                chunk_results.append(ChunkProfileResult(
-                    chunk_id=chunk.chunk_id,
-                    chunk_index=chunk.chunk_index,
-                    profile=profile,
-                    success=True,
-                ))
+                chunk_results.append(
+                    ChunkProfileResult(
+                        chunk_id=chunk.chunk_id,
+                        chunk_index=chunk.chunk_index,
+                        profile=profile,
+                        success=True,
+                    )
+                )
             else:
-                chunk_results.append(self.parser.create_failed_chunk_result(
-                    chunk, "No profile in final batch response"
-                ))
+                chunk_results.append(
+                    self.parser.create_failed_chunk_result(chunk, "No profile in final batch response")
+                )
 
         # Build DocumentProfile from final response
         try:
-            doc_type = DocumentType(final_response.document_type.lower())
-        except ValueError:
+            doc_type = DocumentType((final_response.document_type or "narrative").lower())
+        except (ValueError, AttributeError):
             doc_type = DocumentType.NARRATIVE
 
         doc_profile = DocumentProfile(

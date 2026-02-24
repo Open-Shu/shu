@@ -13,7 +13,7 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 import time
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
@@ -143,21 +143,28 @@ class ProfilingOrchestrator:
             else:
                 # Large document: incremental profiling with final batch generating doc metadata
                 # This eliminates the separate aggregation LLM call (SHU-582)
-                chunk_results, doc_profile, synthesized_queries, tokens = (
-                    await self.profiling_service.profile_chunks_incremental(
-                        chunks=chunk_data,
-                        document_metadata={"title": document.title},
-                    )
+                (
+                    chunk_results,
+                    doc_profile,
+                    synthesized_queries,
+                    tokens,
+                ) = await self.profiling_service.profile_chunks_incremental(
+                    chunks=chunk_data,
+                    document_metadata={"title": document.title},
                 )
                 total_tokens += tokens
 
             # Persist results
             await self._persist_results(document, chunks, doc_profile, chunk_results)
 
-            # Persist synthesized queries if enabled and we have them
+            # Persist synthesized queries if enabled (even if empty, to delete stale queries on re-profile)
+            # Isolated from main try block so query failures don't mark profiling as failed
             queries_created = 0
-            if doc_profile and self.settings.enable_query_synthesis and synthesized_queries:
-                queries_created = await self._persist_queries(document, synthesized_queries)
+            if doc_profile and self.settings.enable_query_synthesis:
+                try:
+                    queries_created = await self._persist_queries(document, synthesized_queries)
+                except Exception as e:
+                    logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
 
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -190,7 +197,7 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 document_profile=None,
                 chunk_profiles=[],
-                profiling_mode=ProfilingMode.FULL_DOCUMENT,
+                profiling_mode=ProfilingMode.FULL_DOCUMENT,  # code could fail before mode is determined, so return full doc as default
                 success=False,
                 error=str(e),
                 duration_ms=int((time.time() - start_time) * 1000),
@@ -199,8 +206,8 @@ class ProfilingOrchestrator:
     def _unified_to_document_profile(self, unified) -> DocumentProfile:
         """Convert UnifiedProfilingResponse to DocumentProfile."""
         try:
-            doc_type = DocumentType(unified.document_type.lower())
-        except ValueError:
+            doc_type = DocumentType((unified.document_type or "narrative").lower())
+        except (ValueError, AttributeError):
             doc_type = DocumentType.NARRATIVE
 
         return DocumentProfile(
@@ -215,8 +222,16 @@ class ProfilingOrchestrator:
         unified_chunks_by_index = {c.index: c for c in unified.chunks}
 
         results = []
-        for chunk in chunk_data:
+        for i, chunk in enumerate(chunk_data):
             unified_chunk = unified_chunks_by_index.get(chunk.chunk_index)
+            if not unified_chunk and i < len(unified.chunks):
+                # Fallback: LLM may have returned batch-relative (0-based) indices
+                logger.debug(
+                    "using_positional_fallback_for_unified_chunk",
+                    expected_index=chunk.chunk_index,
+                    position=i,
+                )
+                unified_chunk = unified.chunks[i]
             if unified_chunk:
                 profile = ChunkProfile(
                     one_liner=unified_chunk.one_liner,
@@ -224,20 +239,24 @@ class ProfilingOrchestrator:
                     keywords=unified_chunk.keywords,
                     topics=unified_chunk.topics,
                 )
-                results.append(ChunkProfileResult(
-                    chunk_id=chunk.chunk_id,
-                    chunk_index=chunk.chunk_index,
-                    profile=profile,
-                    success=True,
-                ))
+                results.append(
+                    ChunkProfileResult(
+                        chunk_id=chunk.chunk_id,
+                        chunk_index=chunk.chunk_index,
+                        profile=profile,
+                        success=True,
+                    )
+                )
             else:
-                results.append(ChunkProfileResult(
-                    chunk_id=chunk.chunk_id,
-                    chunk_index=chunk.chunk_index,
-                    profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
-                    success=False,
-                    error="No profile in unified response",
-                ))
+                results.append(
+                    ChunkProfileResult(
+                        chunk_id=chunk.chunk_id,
+                        chunk_index=chunk.chunk_index,
+                        profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
+                        success=False,
+                        error="No profile in unified response",
+                    )
+                )
         return results
 
     async def _persist_queries(self, document: Document, queries: list[str]) -> int:
@@ -254,12 +273,8 @@ class ProfilingOrchestrator:
             Number of queries created
 
         """
-        from sqlalchemy import delete
-
         # Delete existing queries for this document (re-profiling case)
-        await self.db.execute(
-            delete(DocumentQuery).where(DocumentQuery.document_id == document.id)
-        )
+        await self.db.execute(delete(DocumentQuery).where(DocumentQuery.document_id == document.id))
 
         queries_created = 0
         for query_text in queries:
@@ -272,8 +287,9 @@ class ProfilingOrchestrator:
                 self.db.add(doc_query)
                 queries_created += 1
 
+        # Always commit to flush the DELETE even if no new queries were created
+        await self.db.commit()
         if queries_created > 0:
-            await self.db.commit()
             logger.info(
                 "queries_persisted",
                 document_id=document.id,

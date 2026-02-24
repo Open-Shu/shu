@@ -412,7 +412,16 @@ class DocumentChunk(BaseModel):
         topics: list[str],
         one_liner: str | None = None,
     ) -> None:
-        """Set the chunk profile data."""
+        """Set the chunk profile data.
+
+        Args:
+            summary: Longer description of chunk content for retrieval ranking.
+            keywords: Specific extractable terms (names, numbers, dates, technical terms).
+            topics: Conceptual categories the chunk relates to (broader themes, domains).
+            one_liner: Optional condensed summary (~50-80 chars) for agent scanning
+                during agentic search.
+
+        """
         self.one_liner = one_liner
         self.summary = summary
         self.keywords = keywords

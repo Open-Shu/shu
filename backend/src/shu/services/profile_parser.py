@@ -5,6 +5,7 @@ This module handles JSON parsing and validation of LLM profile responses.
 """
 
 import json
+import re
 
 import structlog
 
@@ -38,7 +39,7 @@ class ProfileParser:
             max_queries: Maximum number of synthesized queries to keep (default: 20)
 
         """
-        self.max_queries = max_queries or self.DEFAULT_MAX_QUERIES
+        self.max_queries = max_queries if max_queries is not None else self.DEFAULT_MAX_QUERIES
 
     def _parse_capability_manifest(self, data: dict) -> CapabilityManifest:
         """Parse capability manifest from JSON data.
@@ -70,14 +71,21 @@ class ProfileParser:
 
         """
         chunks = []
-        for chunk_data in chunks_data:
-            chunks.append(UnifiedChunkProfile(
-                index=chunk_data.get("index", 0),
-                one_liner=chunk_data.get("one_liner", "")[:self.MAX_ONE_LINER_LENGTH],
-                summary=chunk_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
-                keywords=chunk_data.get("keywords", [])[:self.MAX_KEYWORDS],
-                topics=chunk_data.get("topics", [])[:self.MAX_TOPICS],
-            ))
+        for pos, chunk_data in enumerate(chunks_data):
+            raw_index = chunk_data.get("index")
+            try:
+                index = int(raw_index) if raw_index is not None else pos
+            except (ValueError, TypeError):
+                index = pos
+            chunks.append(
+                UnifiedChunkProfile(
+                    index=index,
+                    one_liner=chunk_data.get("one_liner", "")[: self.MAX_ONE_LINER_LENGTH],
+                    summary=chunk_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
+                    keywords=chunk_data.get("keywords", [])[: self.MAX_KEYWORDS],
+                    topics=chunk_data.get("topics", [])[: self.MAX_TOPICS],
+                )
+            )
         return chunks
 
     def _parse_synthesized_queries(self, queries: list) -> list[str]:
@@ -87,15 +95,25 @@ class ProfileParser:
             queries: List of queries (strings or dicts with query_text)
 
         Returns:
-            List of query strings, capped at configured max_queries
+            List of non-empty query strings, capped at configured max_queries
 
         """
         if not queries:
             return []
-        # Handle case where LLM returns objects instead of strings
-        if isinstance(queries[0], dict):
-            queries = [q.get("query_text", str(q)) for q in queries]
-        return queries[:self.max_queries]
+        result = []
+        for q in queries:
+            if q is None:
+                continue
+            if isinstance(q, dict):
+                value = q.get("query_text")
+                if value is None:
+                    continue
+                text = str(value).strip()
+            else:
+                text = str(q).strip()
+            if text:
+                result.append(text)
+        return result[: self.max_queries]
 
     def parse_unified_response(self, content: str) -> UnifiedProfilingResponse | None:
         """Parse unified profiling LLM response.
@@ -114,17 +132,15 @@ class ProfileParser:
             return UnifiedProfilingResponse(
                 synopsis=data.get("synopsis", ""),
                 chunks=self._parse_chunks(data.get("chunks", [])),
-                document_type=data.get("document_type", "narrative").lower(),
+                document_type=(data.get("document_type") or "narrative").lower(),
                 capability_manifest=self._parse_capability_manifest(data),
-                synthesized_queries=self._parse_synthesized_queries(
-                    data.get("synthesized_queries", [])
-                ),
+                synthesized_queries=self._parse_synthesized_queries(data.get("synthesized_queries", [])),
             )
         except Exception as e:
             logger.warning(
                 "failed_to_parse_unified_response",
                 error=str(e),
-                content=content[:500] if content else "",
+                content_length=len(content) if content else 0,
             )
             return None
 
@@ -147,17 +163,15 @@ class ProfileParser:
             return FinalBatchResponse(
                 chunks=self._parse_chunks(data.get("chunks", [])),
                 synopsis=data.get("synopsis", ""),
-                document_type=data.get("document_type", "narrative").lower(),
+                document_type=(data.get("document_type") or "narrative").lower(),
                 capability_manifest=self._parse_capability_manifest(data),
-                synthesized_queries=self._parse_synthesized_queries(
-                    data.get("synthesized_queries", [])
-                ),
+                synthesized_queries=self._parse_synthesized_queries(data.get("synthesized_queries", [])),
             )
         except Exception as e:
             logger.warning(
                 "failed_to_parse_final_batch_response",
                 error=str(e),
-                content=content[:500] if content else "",
+                content_length=len(content) if content else 0,
             )
             return None
 
@@ -185,10 +199,10 @@ class ProfileParser:
                 if i < len(data):
                     profile_data = data[i]
                     profile = ChunkProfile(
-                        one_liner=profile_data.get("one_liner", "")[:self.MAX_ONE_LINER_LENGTH],
-                        summary=profile_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
-                        keywords=profile_data.get("keywords", [])[:self.MAX_KEYWORDS],
-                        topics=profile_data.get("topics", [])[:self.MAX_TOPICS],
+                        one_liner=profile_data.get("one_liner", "")[: self.MAX_ONE_LINER_LENGTH],
+                        summary=profile_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
+                        keywords=profile_data.get("keywords", [])[: self.MAX_KEYWORDS],
+                        topics=profile_data.get("topics", [])[: self.MAX_TOPICS],
                     )
                     results.append(
                         ChunkProfileResult(
@@ -204,7 +218,7 @@ class ProfileParser:
             return results
 
         except Exception as e:
-            logger.warning(f"failed_to_parse_chunk_profiles: {e}")
+            logger.warning("failed_to_parse_chunk_profiles", error=str(e))
             return [self.create_failed_chunk_result(c, str(e)) for c in chunks]
 
     def extract_json(self, content: str) -> str:
@@ -218,12 +232,11 @@ class ProfileParser:
 
         """
         content = content.strip()
-        # Handle ```json ... ``` blocks
-        if content.startswith("```"):
-            lines = content.split("\n")
-            # Remove first and last lines (code fence)
-            lines = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
-            content = "\n".join(lines)
+        # Scan for a fenced code block anywhere in the response
+        # Allow optional whitespace/newline after the opening fence
+        match = re.search(r"```(?:\w+)?\s*(.*?)```", content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
         return content.strip()
 
     @staticmethod

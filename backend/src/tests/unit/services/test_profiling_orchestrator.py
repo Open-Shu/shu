@@ -183,7 +183,7 @@ class TestRunForDocument:
         with patch.object(
             orchestrator.profiling_service,
             "profile_document_unified",
-            return_value=(unified_response, MagicMock(tokens_used=200)),
+            new=AsyncMock(return_value=(unified_response, MagicMock(tokens_used=200))),
         ) as mock_unified:
             with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
                 result = await orchestrator.run_for_document("doc-123")
@@ -239,7 +239,7 @@ class TestRunForDocument:
         with patch.object(
             orchestrator.profiling_service,
             "profile_chunks_incremental",
-            return_value=(chunk_results, doc_profile, synthesized_queries, 300),
+            new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300)),
         ):
             with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=10000):
                 result = await orchestrator.run_for_document("doc-123")
@@ -411,7 +411,8 @@ class TestPersistQueries:
         # Delete is still called even for empty list (clears old queries)
         mock_db.execute.assert_called_once()
         mock_db.add.assert_not_called()
-        mock_db.commit.assert_not_called()
+        # Commit is called to flush the DELETE even with no new queries
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_persist_queries_deletes_existing(self, orchestrator, mock_db):
@@ -607,7 +608,7 @@ class TestQuerySynthesisDisabled:
         with patch.object(
             orchestrator.profiling_service,
             "profile_document_unified",
-            return_value=(unified_response, MagicMock(tokens_used=100)),
+            new=AsyncMock(return_value=(unified_response, MagicMock(tokens_used=100))),
         ):
             with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
                 result = await orchestrator.run_for_document("doc-123")
