@@ -1,4 +1,4 @@
-"""Profile parsing utilities for document and chunk profiling (SHU-343).
+"""Profile parsing utilities for document and chunk profiling.
 
 Extracted from ProfilingService to adhere to Single Responsibility Principle.
 This module handles JSON parsing and validation of LLM profile responses.
@@ -15,6 +15,8 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     DocumentProfile,
     DocumentType,
+    UnifiedChunkProfile,
+    UnifiedProfilingResponse,
 )
 
 logger = structlog.get_logger(__name__)
@@ -24,9 +26,118 @@ class ProfileParser:
     """Parses LLM responses into profile data structures."""
 
     # Limits for truncation
+    MAX_ONE_LINER_LENGTH = 100
     MAX_SUMMARY_LENGTH = 500
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
+
+    def parse_unified_response(self, content: str) -> UnifiedProfilingResponse | None:
+        """Parse unified profiling LLM response.
+
+        Args:
+            content: Raw LLM response content
+
+        Returns:
+            UnifiedProfilingResponse if parsing succeeds, None otherwise
+
+        """
+        try:
+            json_str = self.extract_json(content)
+            data = json.loads(json_str)
+
+            # Parse capability manifest
+            manifest_data = data.get("capability_manifest", {})
+            manifest = CapabilityManifest(
+                answers_questions_about=manifest_data.get("answers_questions_about", []),
+                provides_information_type=manifest_data.get("provides_information_type", []),
+                authority_level=manifest_data.get("authority_level", "secondary"),
+                completeness=manifest_data.get("completeness", "partial"),
+                question_domains=manifest_data.get("question_domains", []),
+            )
+
+            # Parse chunks
+            chunks_data = data.get("chunks", [])
+            chunks = []
+            for chunk_data in chunks_data:
+                chunks.append(UnifiedChunkProfile(
+                    index=chunk_data.get("index", 0),
+                    one_liner=chunk_data.get("one_liner", "")[:self.MAX_ONE_LINER_LENGTH],
+                    summary=chunk_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
+                    keywords=chunk_data.get("keywords", [])[:self.MAX_KEYWORDS],
+                    topics=chunk_data.get("topics", [])[:self.MAX_TOPICS],
+                ))
+
+            # Parse synthesized queries (list of strings)
+            queries = data.get("synthesized_queries", [])
+            if queries and isinstance(queries[0], dict):
+                # Handle case where LLM returns objects instead of strings
+                queries = [q.get("query_text", str(q)) for q in queries]
+
+            return UnifiedProfilingResponse(
+                synopsis=data.get("synopsis", ""),
+                chunks=chunks,
+                document_type=data.get("document_type", "narrative").lower(),
+                capability_manifest=manifest,
+                synthesized_queries=queries[:10],  # Cap at 10 queries
+            )
+        except Exception as e:
+            logger.warning(
+                "failed_to_parse_unified_response",
+                error=str(e),
+                content=content[:500] if content else "",
+            )
+            return None
+
+    def parse_aggregate_response(self, content: str) -> tuple[DocumentProfile, list[str]] | None:
+        """Parse aggregate profiling LLM response (includes queries).
+
+        Args:
+            content: Raw LLM response content
+
+        Returns:
+            Tuple of (DocumentProfile, synthesized_queries) if parsing succeeds, None otherwise
+
+        """
+        try:
+            json_str = self.extract_json(content)
+            data = json.loads(json_str)
+
+            # Parse capability manifest
+            manifest_data = data.get("capability_manifest", {})
+            manifest = CapabilityManifest(
+                answers_questions_about=manifest_data.get("answers_questions_about", []),
+                provides_information_type=manifest_data.get("provides_information_type", []),
+                authority_level=manifest_data.get("authority_level", "secondary"),
+                completeness=manifest_data.get("completeness", "partial"),
+                question_domains=manifest_data.get("question_domains", []),
+            )
+
+            # Parse document type with fallback
+            doc_type_str = data.get("document_type", "narrative").lower()
+            try:
+                doc_type = DocumentType(doc_type_str)
+            except ValueError:
+                doc_type = DocumentType.NARRATIVE
+
+            profile = DocumentProfile(
+                synopsis=data.get("synopsis", ""),
+                document_type=doc_type,
+                capability_manifest=manifest,
+            )
+
+            # Parse synthesized queries
+            queries = data.get("synthesized_queries", [])
+            if queries and isinstance(queries[0], dict):
+                queries = [q.get("query_text", str(q)) for q in queries]
+
+            return profile, queries[:10]
+        except Exception as e:
+            logger.warning(
+                "failed_to_parse_aggregate_response",
+                error=str(e),
+                content=content[:500] if content else "",
+            )
+            return None
 
     def parse_document_profile(self, content: str) -> DocumentProfile | None:
         """Parse LLM response into DocumentProfile.
@@ -96,9 +207,10 @@ class ProfileParser:
                 if i < len(data):
                     profile_data = data[i]
                     profile = ChunkProfile(
-                        summary=profile_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
-                        keywords=profile_data.get("keywords", [])[: self.MAX_KEYWORDS],
-                        topics=profile_data.get("topics", [])[: self.MAX_TOPICS],
+                        one_liner=profile_data.get("one_liner", "")[:self.MAX_ONE_LINER_LENGTH],
+                        summary=profile_data.get("summary", "")[:self.MAX_SUMMARY_LENGTH],
+                        keywords=profile_data.get("keywords", [])[:self.MAX_KEYWORDS],
+                        topics=profile_data.get("topics", [])[:self.MAX_TOPICS],
                     )
                     results.append(
                         ChunkProfileResult(
@@ -151,7 +263,7 @@ class ProfileParser:
         return ChunkProfileResult(
             chunk_id=chunk.chunk_id,
             chunk_index=chunk.chunk_index,
-            profile=ChunkProfile(summary="", keywords=[], topics=[]),
+            profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
             success=False,
             error=error,
         )

@@ -356,7 +356,9 @@ class DocumentChunk(BaseModel):
     chunk_metadata = Column(JSON, nullable=True)  # Flexible metadata storage for chunk-specific data
 
     # Shu RAG Chunk Profile (SHU-342)
-    # Summary: One-line description of chunk content for LLM-scannable index
+    # One-liner: Condensed summary (~50-80 chars) for agent scanning during agentic search
+    one_liner = Column(Text, nullable=True)
+    # Summary: Longer description of chunk content for retrieval ranking
     summary = Column(Text, nullable=True)
     # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
     keywords = Column(JSONB, nullable=True)
@@ -383,6 +385,7 @@ class DocumentChunk(BaseModel):
                 "has_embedding": self.embedding is not None,
                 "embedding_created_at": self.embedding_created_at.isoformat() if self.embedding_created_at else None,
                 # Profile fields
+                "one_liner": self.one_liner,
                 "summary": self.summary,
                 "keywords": self.keywords,
                 "topics": self.topics,
@@ -407,8 +410,10 @@ class DocumentChunk(BaseModel):
         summary: str,
         keywords: list[str],
         topics: list[str],
+        one_liner: str | None = None,
     ) -> None:
         """Set the chunk profile data."""
+        self.one_liner = one_liner
         self.summary = summary
         self.keywords = keywords
         self.topics = topics

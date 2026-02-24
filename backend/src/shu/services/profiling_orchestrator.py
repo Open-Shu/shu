@@ -6,7 +6,8 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Manages profiling_status transitions (pending -> in_progress -> complete/failed)
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
-- Optionally runs query synthesis after profiling completes
+- For small docs: Uses unified profiling (synopsis + chunks + queries in one call)
+- For large docs: Uses batch chunk profiling + aggregation
 """
 
 import time
@@ -19,13 +20,14 @@ from ..core.config import Settings
 from ..models.document import Document, DocumentChunk, DocumentQuery
 from ..schemas.profiling import (
     ChunkData,
+    ChunkProfile,
     ChunkProfileResult,
+    DocumentProfile,
     ProfilingMode,
     ProfilingResult,
 )
 from ..utils.tokenization import estimate_tokens
 from .profiling_service import ProfilingService
-from .query_synthesis_service import QuerySynthesisService
 from .side_call_service import SideCallService
 
 logger = structlog.get_logger(__name__)
@@ -43,12 +45,19 @@ class ProfilingOrchestrator:
         self.db = db
         self.settings = settings
         self.profiling_service = ProfilingService(side_call_service, settings)
-        self.query_synthesis_service = QuerySynthesisService(side_call_service, settings)
 
     async def run_for_document(self, document_id: str) -> ProfilingResult:
         """Run profiling for a document and its chunks.
 
-        This is the main entry point called by ingestion integration (SHU-344).
+        This is the main entry point called by ingestion integration.
+
+        For small documents (≤ PROFILING_FULL_DOC_MAX_TOKENS):
+        - Uses unified profiling: one LLM call produces synopsis, chunk profiles,
+          capability manifest, and synthesized queries.
+
+        For large documents:
+        - Uses batch chunk profiling followed by aggregation.
+        - Synthesized queries are generated during aggregation.
 
         Args:
             document_id: ID of the document to profile
@@ -102,7 +111,7 @@ class ProfilingOrchestrator:
                 mode=mode.value,
             )
 
-            # Always profile chunks (for retrieval)
+            # Prepare chunk data
             chunk_data = [
                 ChunkData(
                     chunk_id=c.id,
@@ -111,37 +120,47 @@ class ProfilingOrchestrator:
                 )
                 for c in chunks
             ]
-            chunk_results, chunk_tokens = await self.profiling_service.profile_chunks(chunk_data)
-            total_tokens += chunk_tokens
 
-            # Profile document based on mode
+            doc_profile: DocumentProfile | None = None
+            chunk_results: list[ChunkProfileResult] = []
+            synthesized_queries: list[str] = []
+
             if mode == ProfilingMode.FULL_DOCUMENT:
-                doc_profile, llm_result = await self.profiling_service.profile_document(
+                # Unified profiling: one LLM call for everything
+                unified_result, llm_result = await self.profiling_service.profile_document_unified(
                     document_text=full_text,
+                    chunks=chunk_data,
                     document_metadata={"title": document.title},
                 )
                 total_tokens += llm_result.tokens_used
+
+                if unified_result:
+                    # Convert unified response to standard structures
+                    doc_profile = self._unified_to_document_profile(unified_result)
+                    chunk_results = self._unified_to_chunk_results(unified_result, chunk_data)
+                    synthesized_queries = unified_result.synthesized_queries
             else:
-                # Aggregate from chunk profiles
-                doc_profile, llm_result = await self.profiling_service.aggregate_chunk_profiles(
+                # Large document: batch chunk profiling + aggregation
+                chunk_results, chunk_tokens = await self.profiling_service.profile_chunks(chunk_data)
+                total_tokens += chunk_tokens
+
+                # Aggregate from chunk profiles (now includes queries)
+                aggregate_result, llm_result = await self.profiling_service.aggregate_chunk_profiles(
                     chunk_profiles=chunk_results,
                     document_metadata={"title": document.title},
                 )
                 total_tokens += llm_result.tokens_used
 
+                if aggregate_result:
+                    doc_profile, synthesized_queries = aggregate_result
+
             # Persist results
             await self._persist_results(document, chunks, doc_profile, chunk_results)
 
-            # Run query synthesis if enabled and profiling succeeded
-            query_synthesis_tokens = 0
+            # Persist synthesized queries if enabled and we have them
             queries_created = 0
-            if doc_profile and self.settings.enable_query_synthesis:
-                query_synthesis_tokens, queries_created = await self._run_query_synthesis(
-                    document=document,
-                    full_text=full_text,
-                    doc_profile=doc_profile,
-                )
-                total_tokens += query_synthesis_tokens
+            if doc_profile and self.settings.enable_query_synthesis and synthesized_queries:
+                queries_created = await self._persist_queries(document, synthesized_queries)
 
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -150,7 +169,6 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 profiling_mode=mode.value,
                 tokens_used=total_tokens,
-                query_synthesis_enabled=self.settings.enable_query_synthesis,
                 queries_created=queries_created,
                 duration_ms=duration_ms,
             )
@@ -180,6 +198,84 @@ class ProfilingOrchestrator:
                 error=str(e),
                 duration_ms=int((time.time() - start_time) * 1000),
             )
+
+    def _unified_to_document_profile(self, unified) -> DocumentProfile:
+        """Convert UnifiedProfilingResponse to DocumentProfile."""
+        from ..schemas.profiling import DocumentType
+
+        try:
+            doc_type = DocumentType(unified.document_type.lower())
+        except ValueError:
+            doc_type = DocumentType.NARRATIVE
+
+        return DocumentProfile(
+            synopsis=unified.synopsis,
+            document_type=doc_type,
+            capability_manifest=unified.capability_manifest,
+        )
+
+    def _unified_to_chunk_results(self, unified, chunk_data: list[ChunkData]) -> list[ChunkProfileResult]:
+        """Convert UnifiedProfilingResponse chunks to ChunkProfileResults."""
+        # Build index map from unified chunks
+        unified_chunks_by_index = {c.index: c for c in unified.chunks}
+
+        results = []
+        for chunk in chunk_data:
+            unified_chunk = unified_chunks_by_index.get(chunk.chunk_index)
+            if unified_chunk:
+                profile = ChunkProfile(
+                    one_liner=unified_chunk.one_liner,
+                    summary=unified_chunk.summary,
+                    keywords=unified_chunk.keywords,
+                    topics=unified_chunk.topics,
+                )
+                results.append(ChunkProfileResult(
+                    chunk_id=chunk.chunk_id,
+                    chunk_index=chunk.chunk_index,
+                    profile=profile,
+                    success=True,
+                ))
+            else:
+                results.append(ChunkProfileResult(
+                    chunk_id=chunk.chunk_id,
+                    chunk_index=chunk.chunk_index,
+                    profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
+                    success=False,
+                    error="No profile in unified response",
+                ))
+        return results
+
+    async def _persist_queries(self, document: Document, queries: list[str]) -> int:
+        """Persist synthesized queries to the database.
+
+        Args:
+            document: The document being profiled
+            queries: List of query strings
+
+        Returns:
+            Number of queries created
+
+        """
+        queries_created = 0
+        for query_text in queries:
+            if query_text.strip():  # Skip empty queries
+                doc_query = DocumentQuery.create_for_document(
+                    document_id=document.id,
+                    knowledge_base_id=document.knowledge_base_id,
+                    query_text=query_text.strip(),
+                )
+                self.db.add(doc_query)
+                queries_created += 1
+
+        if queries_created > 0:
+            await self.db.commit()
+            logger.info(
+                "queries_persisted",
+                document_id=document.id,
+                queries_created=queries_created,
+            )
+
+        return queries_created
 
     def _choose_profiling_mode(self, doc_tokens: int) -> ProfilingMode:
         """Determine whether to use full-doc or chunk-aggregation profiling.
@@ -230,6 +326,7 @@ class ProfilingOrchestrator:
                     summary=result.profile.summary,
                     keywords=result.profile.keywords,
                     topics=result.profile.topics,
+                    one_liner=result.profile.one_liner,
                 )
 
         await self.db.commit()
@@ -241,70 +338,6 @@ class ProfilingOrchestrator:
             chunks_profiled=sum(1 for r in chunk_results if r.success),
             chunks_failed=sum(1 for r in chunk_results if not r.success),
         )
-
-    async def _run_query_synthesis(
-        self,
-        document: Document,
-        full_text: str,
-        doc_profile,
-    ) -> tuple[int, int]:
-        """Run query synthesis and persist results.
-
-        Args:
-            document: The document being profiled
-            full_text: Full document text
-            doc_profile: Document profile result (contains synopsis and capability_manifest)
-
-        Returns:
-            Tuple of (tokens_used, queries_created)
-
-        """
-        logger.info(
-            "starting_query_synthesis",
-            document_id=document.id,
-        )
-
-        # Get capability manifest dict for reuse optimization
-        capability_manifest = None
-        if doc_profile.capability_manifest:
-            capability_manifest = doc_profile.capability_manifest.model_dump()
-
-        result = await self.query_synthesis_service.synthesize_queries(
-            document_text=full_text,
-            synopsis=doc_profile.synopsis,
-            capability_manifest=capability_manifest,
-        )
-
-        if not result.success:
-            logger.warning(
-                "query_synthesis_failed",
-                document_id=document.id,
-                error=result.error,
-            )
-            return result.tokens_used, 0
-
-        # Persist synthesized queries
-        queries_created = 0
-        for query in result.queries:
-            doc_query = DocumentQuery.create_for_document(
-                document_id=document.id,
-                knowledge_base_id=document.knowledge_base_id,
-                query_text=query.query_text,
-            )
-            self.db.add(doc_query)
-            queries_created += 1
-
-        await self.db.commit()
-
-        logger.info(
-            "query_synthesis_complete",
-            document_id=document.id,
-            queries_created=queries_created,
-            main_ideas_found=len(result.main_ideas),
-            tokens_used=result.tokens_used,
-        )
-
-        return result.tokens_used, queries_created
 
     async def is_profiling_enabled(self) -> bool:
         """Check if document profiling is enabled."""

@@ -68,9 +68,13 @@ class ChunkProfile(BaseModel):
     Used for retrieval-time filtering and LLM-scannable indexing.
     """
 
+    one_liner: str = Field(
+        default="",
+        description="Condensed summary (~50-80 chars) for agent scanning",
+    )
     summary: str = Field(
         ...,
-        description="One-line description of chunk content",
+        description="Longer description of chunk content for retrieval ranking",
     )
     keywords: list[str] = Field(
         default_factory=list,
@@ -131,3 +135,53 @@ class ProfilingResult(BaseModel):
     error: str | None = Field(None, description="Error message if failed")
     tokens_used: int = Field(0, description="Total tokens used for profiling")
     duration_ms: int = Field(0, description="Total profiling duration in milliseconds")
+
+
+class SynthesizedQuery(BaseModel):
+    """A synthesized query that a document can answer.
+
+    Generated during unified profiling. Queries encompass questions,
+    imperatives, and declarative searches.
+    """
+
+    query_text: str = Field(
+        ...,
+        description="The synthesized query text",
+    )
+    query_type: str = Field(
+        default="interrogative",
+        description="Type: interrogative, imperative, declarative, interpretive, temporal, structural",
+    )
+
+
+class UnifiedChunkProfile(BaseModel):
+    """Chunk profile from unified LLM response.
+
+    Includes chunk index for mapping back to chunks.
+    """
+
+    index: int = Field(..., description="Chunk index within the document")
+    one_liner: str = Field(..., description="Condensed summary (~50-80 chars) for agent scanning")
+    summary: str = Field(..., description="Longer description for retrieval ranking")
+    keywords: list[str] = Field(default_factory=list, description="Specific extractable terms")
+    topics: list[str] = Field(default_factory=list, description="Conceptual categories")
+
+
+class UnifiedProfilingResponse(BaseModel):
+    """Complete response from unified profiling LLM call.
+
+    Used for small documents where everything is generated in one pass.
+    This schema matches the JSON structure requested from the LLM.
+    """
+
+    synopsis: str = Field(..., description="2-4 sentence document summary")
+    chunks: list[UnifiedChunkProfile] = Field(default_factory=list, description="Per-chunk profiles")
+    document_type: str = Field(..., description="narrative, transactional, technical, conversational")
+    capability_manifest: CapabilityManifest = Field(
+        default_factory=CapabilityManifest,
+        description="What questions this document can answer",
+    )
+    synthesized_queries: list[str] = Field(
+        default_factory=list,
+        description="Hypothetical queries this document can satisfy",
+    )

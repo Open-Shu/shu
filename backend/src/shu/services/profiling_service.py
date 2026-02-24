@@ -1,13 +1,12 @@
-"""Document and Chunk Profiling Service (SHU-343).
+"""Document and Chunk Profiling Service.
 
 This service generates document and chunk profiles using LLM inference.
 It is a pure LLM-facing service with no database access. The profiling
 orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
-- Generate document profiles (synopsis, type, capability manifest)
-- Generate chunk profiles (summary, keywords, topics)
-- Batch chunk profiling for efficiency
+- Generate unified profiles (synopsis, one-liners, chunk profiles, queries) for small docs
+- Generate chunk profiles (one-liner, summary, keywords, topics) for batch processing
 - Aggregate chunk profiles for large documents
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
@@ -21,6 +20,7 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
     DocumentProfile,
+    UnifiedProfilingResponse,
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
@@ -29,53 +29,82 @@ from .side_call_service import SideCallResult, SideCallService
 logger = structlog.get_logger(__name__)
 
 
-# Prompts for profiling
-DOCUMENT_PROFILE_SYSTEM_PROMPT = """You are a document profiling assistant. Your task is to analyze a document and generate a structured profile that describes what the document contains and what questions it can answer.
+# Unified profiling prompt for small documents - generates everything in one pass
+UNIFIED_PROFILING_SYSTEM_PROMPT = """You are a document profiling assistant. Analyze the document and generate a complete profile including document-level metadata, per-chunk summaries, and hypothetical queries.
 
-Generate a JSON response with the following structure:
+Generate a JSON response with this exact structure:
 {
-    "synopsis": "A one-paragraph summary (2-4 sentences) capturing the document's essence, main topics, and purpose.",
+    "synopsis": "A 2-4 sentence summary capturing the document's essence, main topics, and purpose.",
+    "chunks": [
+        {
+            "index": 0,
+            "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
+            "summary": "Longer description of what this chunk contains",
+            "keywords": ["specific", "extractable", "terms"],
+            "topics": ["conceptual", "categories"]
+        }
+    ],
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {
-        "answers_questions_about": ["list of specific topics/subjects the document addresses"],
-        "provides_information_type": ["facts", "opinions", "decisions", "instructions", etc.],
-        "authority_level": "primary (authoritative source), secondary (derived), or commentary",
-        "completeness": "complete (standalone), partial (needs context), or reference",
-        "question_domains": ["who", "what", "when", "where", "why", "how" - which apply]
-    }
+        "answers_questions_about": ["list of specific topics the document addresses"],
+        "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
+        "authority_level": "primary, secondary, or commentary",
+        "completeness": "complete, partial, or reference",
+        "question_domains": ["who", "what", "when", "where", "why", "how"]
+    },
+    "synthesized_queries": [
+        "What is the main topic of this document?",
+        "How does X work?",
+        "Tell me about Y"
+    ]
 }
 
-Be specific and concise. Focus on what makes this document useful for answering questions."""
+Guidelines:
+- one_liner: Start with action verb when possible ("Explains...", "Covers...", "Lists..."). Capture specific information, not just topic.
+- synopsis: Capture strategic narrative and cross-chunk themes.
+- synthesized_queries: Generate 3-5 diverse queries (questions, commands, keyword searches) that this document can answer.
+- keywords: Specific extractable terms (names, numbers, dates, technical terms).
+- topics: Broader conceptual categories."""
 
-CHUNK_PROFILE_SYSTEM_PROMPT = """You are a document chunk profiling assistant. Your task is to analyze text chunks and generate lightweight metadata for retrieval indexing.
+# Legacy prompt for chunk-only profiling (used in batch processing for large docs)
+CHUNK_PROFILE_SYSTEM_PROMPT = """You are a document chunk profiling assistant. Analyze text chunks and generate metadata for retrieval indexing.
 
 For each chunk, generate a JSON response with:
 {
-    "summary": "One-line description of what this chunk contains",
+    "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
+    "summary": "Longer description of what this chunk contains",
     "keywords": ["specific", "extractable", "terms", "names", "numbers", "dates"],
     "topics": ["conceptual", "categories", "themes"]
 }
 
-Keywords should be specific, extractable terms from the text (names, numbers, dates, technical terms).
-Topics should be broader conceptual categories that help group related content.
-Keep summaries under 100 characters. Limit to 5-10 keywords and 3-5 topics."""
+Guidelines:
+- one_liner: Start with action verb ("Explains...", "Covers...", "Lists..."). Capture specific information.
+- summary: More detailed description for retrieval ranking.
+- keywords: Specific extractable terms from the text.
+- topics: Broader conceptual categories.
+Limit to 5-10 keywords and 3-5 topics."""
 
-AGGREGATE_PROFILE_SYSTEM_PROMPT = """You are a document summarization assistant. Given summaries of document chunks, generate an overall document profile.
+# Aggregate profiling prompt for large documents
+AGGREGATE_PROFILE_SYSTEM_PROMPT = """You are a document summarization assistant. Given one-liner summaries of document chunks, generate an overall document profile.
 
-Generate a JSON response with the following structure:
+Generate a JSON response with:
 {
-    "synopsis": "A one-paragraph summary (2-4 sentences) synthesizing the chunk summaries into a cohesive document overview.",
+    "synopsis": "A 2-4 sentence summary synthesizing the chunk summaries into a cohesive document overview.",
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {
         "answers_questions_about": ["consolidated list of topics from all chunks"],
-        "provides_information_type": ["facts", "opinions", "decisions", "instructions", etc.],
+        "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
         "question_domains": ["who", "what", "when", "where", "why", "how"]
-    }
+    },
+    "synthesized_queries": [
+        "What is the main topic?",
+        "How does X work?"
+    ]
 }
 
-Synthesize the chunk information into a coherent whole, not just a list."""
+Synthesize the chunk information into a coherent whole. Generate 3-5 queries this document can answer."""
 
 
 class ProfilingService:
@@ -119,10 +148,73 @@ class ProfilingService:
                 success=False,
                 content="",
                 tokens_used=0,
-                duration_ms=0,
+                response_time_ms=0,
                 error_message=error_msg,
             )
         return None
+
+    async def profile_document_unified(
+        self,
+        document_text: str,
+        chunks: list[ChunkData],
+        document_metadata: dict | None = None,
+        timeout_ms: int | None = None,
+    ) -> tuple[UnifiedProfilingResponse | None, SideCallResult]:
+        """Generate a complete unified profile for a small document.
+
+        This is the primary method for small documents. It generates synopsis,
+        per-chunk one-liners and profiles, capability manifest, and synthesized
+        queries in a single LLM call.
+
+        Args:
+            document_text: Full text of the document
+            chunks: List of chunk data with content
+            document_metadata: Optional metadata (title, source, etc.)
+            timeout_ms: Optional timeout override
+
+        Returns:
+            Tuple of (UnifiedProfilingResponse or None if failed, SideCallResult)
+
+        """
+        timeout = self._resolve_timeout_ms(timeout_ms)
+
+        # Build the user message with document and chunk structure
+        chunks_text = []
+        for chunk in chunks:
+            chunks_text.append(f"[CHUNK {chunk.chunk_index}]\n{chunk.content}\n[/CHUNK]")
+
+        user_content = f"Document text:\n\n{document_text}\n\n"
+        user_content += f"The document has {len(chunks)} chunks:\n\n"
+        user_content += "\n\n".join(chunks_text)
+
+        if document_metadata:
+            meta_str = json.dumps(document_metadata, indent=2)
+            user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
+
+        # Validate input doesn't exceed max tokens
+        error_result = self._validate_input_tokens(user_content, "unified profiling")
+        if error_result:
+            return None, error_result
+
+        message_sequence = [{"role": "user", "content": user_content}]
+
+        result = await self.side_call.call(
+            message_sequence=message_sequence,
+            system_prompt=UNIFIED_PROFILING_SYSTEM_PROMPT,
+            user_id=None,  # System operation
+            timeout_ms=timeout,
+        )
+
+        if not result.success:
+            logger.warning(
+                "unified_profiling_failed",
+                error=result.error_message,
+            )
+            return None, result
+
+        # Parse the unified response
+        unified_response = self.parser.parse_unified_response(result.content)
+        return unified_response, result
 
     async def profile_document(
         self,
@@ -132,7 +224,9 @@ class ProfilingService:
     ) -> tuple[DocumentProfile | None, SideCallResult]:
         """Generate a document profile from full document text.
 
-        Used for small documents that fit within PROFILING_FULL_DOC_MAX_TOKENS.
+        DEPRECATED: Use profile_document_unified for small documents.
+        This method is kept for backward compatibility with large document
+        aggregation path.
 
         Args:
             document_text: Full text of the document
@@ -143,15 +237,29 @@ class ProfilingService:
             Tuple of (DocumentProfile or None if failed, SideCallResult with details)
 
         """
+        # For backward compatibility, use the legacy prompt
         timeout = self._resolve_timeout_ms(timeout_ms)
 
-        # Build the user message
+        legacy_prompt = """You are a document profiling assistant. Analyze the document and generate a structured profile.
+
+Generate a JSON response with:
+{
+    "synopsis": "A 2-4 sentence summary capturing the document's essence.",
+    "document_type": "One of: narrative, transactional, technical, conversational",
+    "capability_manifest": {
+        "answers_questions_about": ["topics the document addresses"],
+        "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
+        "authority_level": "primary, secondary, or commentary",
+        "completeness": "complete, partial, or reference",
+        "question_domains": ["who", "what", "when", "where", "why", "how"]
+    }
+}"""
+
         user_content = f"Document text:\n\n{document_text}"
         if document_metadata:
             meta_str = json.dumps(document_metadata, indent=2)
             user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
 
-        # Validate input doesn't exceed max tokens
         error_result = self._validate_input_tokens(user_content, "document profiling")
         if error_result:
             return None, error_result
@@ -160,19 +268,15 @@ class ProfilingService:
 
         result = await self.side_call.call(
             message_sequence=message_sequence,
-            system_prompt=DOCUMENT_PROFILE_SYSTEM_PROMPT,
-            user_id=None,  # System operation - no user attribution
+            system_prompt=legacy_prompt,
+            user_id=None,
             timeout_ms=timeout,
         )
 
         if not result.success:
-            logger.warning(
-                "document_profiling_failed",
-                error=result.error_message,
-            )
+            logger.warning("document_profiling_failed", error=result.error_message)
             return None, result
 
-        # Parse the response using dedicated parser
         profile = self.parser.parse_document_profile(result.content)
         return profile, result
 
@@ -183,7 +287,11 @@ class ProfilingService:
     ) -> tuple[list[ChunkProfileResult], int]:
         """Generate profiles for multiple chunks.
 
-        Processes chunks in batches for efficiency.
+        Processes chunks in batches for efficiency. Each chunk gets:
+        - one_liner: Condensed summary for agent scanning
+        - summary: Longer description for retrieval ranking
+        - keywords: Specific extractable terms
+        - topics: Conceptual categories
 
         Args:
             chunks: List of chunk data to profile
@@ -229,7 +337,8 @@ class ProfilingService:
         user_content = (
             f"Profile the following {len(chunks)} chunks:\n\n"
             + "\n\n".join(chunks_text)
-            + "\n\nRespond with a JSON array of profiles, one per chunk, in order."
+            + "\n\nRespond with a JSON array of profiles, one per chunk, in order. "
+            + "Each profile must include: one_liner, summary, keywords, topics."
         )
 
         # Validate input doesn't exceed max tokens
@@ -247,7 +356,7 @@ class ProfilingService:
         result = await self.side_call.call(
             message_sequence=message_sequence,
             system_prompt=CHUNK_PROFILE_SYSTEM_PROMPT,
-            user_id=None,  # System operation - no user attribution
+            user_id=None,  # System operation
             timeout_ms=timeout_ms,
         )
 
@@ -268,10 +377,11 @@ class ProfilingService:
         chunk_profiles: list[ChunkProfileResult],
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
-    ) -> tuple[DocumentProfile | None, SideCallResult]:
+    ) -> tuple[tuple[DocumentProfile, list[str]] | None, SideCallResult]:
         """Generate a document profile by aggregating chunk profiles.
 
         Used for large documents that exceed PROFILING_FULL_DOC_MAX_TOKENS.
+        Uses one-liners from chunks to generate synopsis and queries.
 
         Args:
             chunk_profiles: Profiles from all document chunks
@@ -279,25 +389,27 @@ class ProfilingService:
             timeout_ms: Optional timeout override
 
         Returns:
-            Tuple of (DocumentProfile or None if failed, SideCallResult)
+            Tuple of ((DocumentProfile, synthesized_queries) or None if failed, SideCallResult)
 
         """
         timeout = self._resolve_timeout_ms(timeout_ms)
 
-        # Build summary of chunk profiles
-        chunk_summaries = []
+        # Build summary using one-liners for compact representation
+        one_liner_summaries = []
         all_keywords = set()
         all_topics = set()
 
         for cp in chunk_profiles:
             if cp.success and cp.profile:
-                chunk_summaries.append(f"Chunk {cp.chunk_index}: {cp.profile.summary}")
+                # Prefer one_liner, fall back to summary
+                summary_text = cp.profile.one_liner or cp.profile.summary
+                one_liner_summaries.append(f"Chunk {cp.chunk_index}: {summary_text}")
                 all_keywords.update(cp.profile.keywords)
                 all_topics.update(cp.profile.topics)
 
         user_content = (
             f"Document has {len(chunk_profiles)} chunks.\n\n"
-            f"Chunk summaries:\n" + "\n".join(chunk_summaries) + "\n\n"
+            f"Chunk one-liners:\n" + "\n".join(one_liner_summaries) + "\n\n"
             f"Keywords found: {', '.join(list(all_keywords)[:50])}\n"
             f"Topics found: {', '.join(list(all_topics)[:30])}"
         )
@@ -316,16 +428,14 @@ class ProfilingService:
         result = await self.side_call.call(
             message_sequence=message_sequence,
             system_prompt=AGGREGATE_PROFILE_SYSTEM_PROMPT,
-            user_id=None,  # System operation - no user attribution
+            user_id=None,
             timeout_ms=timeout,
         )
 
         if not result.success:
-            logger.warning(
-                "aggregate_profiling_failed",
-                error=result.error_message,
-            )
+            logger.warning("aggregate_profiling_failed", error=result.error_message)
             return None, result
 
-        profile = self.parser.parse_document_profile(result.content)
-        return profile, result
+        # Parse the response - now includes synthesized_queries
+        parsed = self.parser.parse_aggregate_response(result.content)
+        return parsed, result
