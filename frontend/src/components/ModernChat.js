@@ -188,6 +188,10 @@ const ModernChat = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const CLEAR_PARAM_SENTINEL = '__cleared__';
   const pendingConversationParamRef = useRef(null);
+  const pendingInitialMessageRef = useRef(null);
+  const initialMessageAppliedToRef = useRef(null); // tracks which conv the message was applied to
+  const pendingInitialMessageReadyToSendRef = useRef(false); // true only when input was programmatically populated
+  const latestHandleSendMessageRef = useRef(null); // always points to latest handleSendMessage
   const syncConversationParam = useCallback(
     (conversationId) => {
       pendingConversationParamRef.current = conversationId ?? CLEAR_PARAM_SENTINEL;
@@ -682,6 +686,7 @@ const ModernChat = () => {
   });
 
   const isStreamingForSelectedConversation = streamingConversationId === selectedConversation?.id;
+  latestHandleSendMessageRef.current = handleSendMessage;
 
   const isSendDisabled = isStreamingForSelectedConversation;
 
@@ -866,6 +871,68 @@ const ModernChat = () => {
       }, 100);
     }
   }, [selectedConversation]);
+
+  useEffect(() => {
+    const initialMsg = searchParams.get('initialMessage');
+    if (initialMsg && initialMsg !== pendingInitialMessageRef.current) {
+      pendingInitialMessageRef.current = initialMsg;
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!selectedConversation) {
+      return;
+    }
+    if (!pendingInitialMessageRef.current) {
+      initialMessageAppliedToRef.current = null;
+      return;
+    }
+    if (initialMessageAppliedToRef.current === null) {
+      // First conversation seen with a pending message — apply it
+      initialMessageAppliedToRef.current = selectedConversation.id;
+      pendingInitialMessageReadyToSendRef.current = true;
+      handleInputChange({ target: { value: pendingInitialMessageRef.current } });
+    } else if (initialMessageAppliedToRef.current !== selectedConversation.id) {
+      // Navigated to a different conversation before the message was sent — abandon
+      pendingInitialMessageRef.current = null;
+      initialMessageAppliedToRef.current = null;
+      pendingInitialMessageReadyToSendRef.current = false;
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('initialMessage');
+          return next;
+        },
+        { replace: true }
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConversation]);
+
+  useEffect(() => {
+    if (
+      pendingInitialMessageRef.current &&
+      pendingInitialMessageReadyToSendRef.current &&
+      inputMessage === pendingInitialMessageRef.current &&
+      selectedConversation &&
+      !loadingMessages &&
+      !isStreamingForSelectedConversation
+    ) {
+      pendingInitialMessageRef.current = null;
+      initialMessageAppliedToRef.current = null;
+      pendingInitialMessageReadyToSendRef.current = false;
+      latestHandleSendMessageRef.current();
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('initialMessage');
+          return next;
+        },
+        { replace: true }
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputMessage, loadingMessages, isStreamingForSelectedConversation]);
 
   useEffect(() => {
     const cid = searchParams.get('conversationId');
