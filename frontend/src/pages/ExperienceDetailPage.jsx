@@ -1,8 +1,24 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
 import { useState } from 'react';
-import { Alert, Box, Button, CircularProgress, IconButton, Paper, Snackbar, Typography } from '@mui/material';
-import { ArrowBack as ArrowBackIcon, Chat as ChatIcon, PlayArrow as PlayArrowIcon } from '@mui/icons-material';
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  IconButton,
+  InputAdornment,
+  Paper,
+  Snackbar,
+  TextField,
+  Typography,
+} from '@mui/material';
+import {
+  ArrowBack as ArrowBackIcon,
+  Chat as ChatIcon,
+  PlayArrow as PlayArrowIcon,
+  Send as SendIcon,
+} from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
 import ExperienceRunDialog from '../components/ExperienceRunDialog';
@@ -22,6 +38,7 @@ const ExperienceDetailPage = () => {
 
   // State for conversation creation
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [initialQuestion, setInitialQuestion] = useState('');
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [errorSnackbar, setErrorSnackbar] = useState({
     open: false,
@@ -44,7 +61,7 @@ const ExperienceDetailPage = () => {
     navigate('/dashboard');
   };
 
-  const handleStartConversation = async () => {
+  const handleStartConversation = async (question) => {
     if (!experience?.latest_run_id) {
       setErrorSnackbar({
         open: true,
@@ -56,7 +73,6 @@ const ExperienceDetailPage = () => {
     try {
       setIsCreatingConversation(true);
 
-      // Create conversation from experience run
       const response = await chatAPI.createConversationFromExperience(experience.latest_run_id);
       const conversation = extractDataFromResponse(response);
 
@@ -66,8 +82,7 @@ const ExperienceDetailPage = () => {
         experienceId: experience.experience_id,
       });
 
-      // Navigate to conversation view
-      navigate(`/chat?conversationId=${conversation.id}`);
+      navigate(`/chat?conversationId=${conversation.id}&initialMessage=${encodeURIComponent(question)}`);
     } catch (error) {
       log.error('Failed to start conversation from experience:', error);
       setErrorSnackbar({
@@ -123,14 +138,6 @@ const ExperienceDetailPage = () => {
               onClick={() => setRunDialogOpen(true)}
             >
               Run
-            </Button>
-            <Button
-              variant="outlined"
-              startIcon={<ChatIcon />}
-              onClick={handleStartConversation}
-              disabled={isCreatingConversation || !experience.latest_run_id || !experience.result_preview}
-            >
-              {isCreatingConversation ? 'Starting...' : 'Start Conversation'}
             </Button>
           </>
         )}
@@ -198,6 +205,57 @@ const ExperienceDetailPage = () => {
 
             <MarkdownRenderer content={experience.result_preview} isDarkMode={isDarkMode} />
           </Box>
+        )}
+
+        {/* Question input — inline below output */}
+        {!isLoading && !error && experience?.latest_run_id && (
+          <Paper
+            elevation={0}
+            sx={{
+              mt: 3,
+              p: 2,
+              border: 2,
+              borderColor: 'primary.main',
+              borderRadius: 2,
+              bgcolor: (t) =>
+                t.palette.mode === 'dark' ? `${t.palette.primary.main}14` : `${t.palette.primary.main}0d`,
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <ChatIcon fontSize="small" color="primary" />
+              <Typography variant="body2" color="primary" sx={{ fontWeight: 600 }}>
+                Ask a follow-up question
+              </Typography>
+            </Box>
+            <TextField
+              fullWidth
+              multiline
+              maxRows={4}
+              placeholder="What would you like to know about this?"
+              value={initialQuestion}
+              onChange={(e) => setInitialQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && initialQuestion.trim()) {
+                  e.preventDefault();
+                  handleStartConversation(initialQuestion.trim());
+                }
+              }}
+              disabled={isCreatingConversation}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      onClick={() => handleStartConversation(initialQuestion.trim())}
+                      disabled={!initialQuestion.trim() || isCreatingConversation}
+                      color="primary"
+                    >
+                      {isCreatingConversation ? <CircularProgress size={20} /> : <SendIcon />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Paper>
         )}
       </Box>
 

@@ -50,33 +50,6 @@ const CardRunButton = ({ experience, onRun }) => (
 );
 
 /**
- * Code-like data preview block for experience cards.
- */
-const CardDataPreview = ({ experience, dataPreview, theme }) => (
-  <>
-    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-      {experience.experience_name.toLowerCase().replace(/\s+/g, '_')}
-    </Typography>
-    <Typography
-      variant="body2"
-      color="text.secondary"
-      sx={{
-        fontFamily: 'monospace',
-        fontSize: '0.75rem',
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-all',
-        mb: 1.5,
-        backgroundColor: alpha(theme.palette.text.primary, 0.05),
-        p: 1,
-        borderRadius: 1,
-      }}
-    >
-      {dataPreview.length > 100 ? dataPreview.substring(0, 100) + '...' : dataPreview}
-    </Typography>
-  </>
-);
-
-/**
  * Timestamp chip with green status indicator.
  */
 const CardTimestamp = ({ relativeTime, theme }) => (
@@ -114,9 +87,6 @@ const CardTimestamp = ({ relativeTime, theme }) => (
 const ExperienceResultCard = ({ experience, onClick, onRun }) => {
   const theme = useTheme();
   const navigate = useNavigate();
-  const hasResult = !!experience.latest_run_id;
-  const promptPreview = experience.prompt_template ? experience.prompt_template.substring(0, 100) : '';
-  const dataPreview = experience.result_preview ? experience.result_preview.substring(0, 200) : '';
   const relativeTime = experience.latest_run_finished_at
     ? formatDistanceToNow(new Date(experience.latest_run_finished_at), { addSuffix: true })
     : null;
@@ -166,14 +136,10 @@ const ExperienceResultCard = ({ experience, onClick, onRun }) => {
             <CardRunButton experience={experience} onRun={onRun} />
           </Box>
 
-          {promptPreview && (
+          {experience.experience_description && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              {promptPreview}...
+              {experience.experience_description}
             </Typography>
-          )}
-
-          {hasResult && dataPreview && (
-            <CardDataPreview experience={experience} dataPreview={dataPreview} theme={theme} />
           )}
 
           {relativeTime && <CardTimestamp relativeTime={relativeTime} theme={theme} />}
