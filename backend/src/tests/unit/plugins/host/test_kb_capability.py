@@ -8,8 +8,10 @@ Covers:
 - parse_host_context() extracts kb.knowledge_base_ids
 - make_host() passes KB IDs to KbCapability when "kb" in capabilities
 
-Import strategy: modules are loaded directly from file paths to avoid the circular
-import chain that occurs when importing through shu.plugins.host package __init__.py.
+Import strategy: modules are loaded directly from file paths to avoid triggering
+the full shu.plugins.host package __init__, which stubs out heavy capability
+dependencies. KbSearchService is imported lazily inside _with_search_service
+(not at module level), so no kb_search_service stub is needed here.
 """
 
 from __future__ import annotations
@@ -35,6 +37,11 @@ def _load_module(module_name: str, file_path: Path):
     if module_name in sys.modules:
         return sys.modules[module_name]
     spec = importlib.util.spec_from_file_location(module_name, str(file_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(
+            f"Cannot load module '{module_name}' from '{file_path}': "
+            "spec_from_file_location returned None spec or loader"
+        )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
@@ -65,20 +72,10 @@ if "shu.core.database" not in sys.modules:
     _db_stub.get_db_session = AsyncMock()
     sys.modules["shu.core.database"] = _db_stub
 
-# Load kb_search_service stub (real class needed for _SEARCH_OPS type hints only)
-_kb_search_svc_was_stubbed = False
-if "shu.services.kb_search_service" not in sys.modules:
-    sys.modules["shu.services.kb_search_service"] = MagicMock()
-    _kb_search_svc_was_stubbed = True
-
-# Now load kb_capability directly
+# Now load kb_capability directly — no kb_search_service stub needed because
+# kb_capability no longer imports it at module level (deferred local import).
 _kb_cap_mod = _load_module("shu.plugins.host.kb_capability", _HOST_DIR / "kb_capability.py")
 KbCapability = _kb_cap_mod.KbCapability
-
-# Remove the stub so that other test modules can import the real kb_search_service.
-# _SEARCH_OPS in kb_capability is patched per-test anyway, so the stub values are irrelevant.
-if _kb_search_svc_was_stubbed:
-    sys.modules.pop("shu.services.kb_search_service", None)
 
 # Stub out the heavier capability modules used by host_builder before loading it
 for _cap_stub in (
@@ -234,7 +231,7 @@ class TestSearchChunksDelegation:
         mock_op = AsyncMock(return_value=expected_result)
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService") as MockSvc, \
+             patch("shu.services.kb_search_service.KbSearchService") as MockSvc, \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             mock_svc = MagicMock()
@@ -260,7 +257,7 @@ class TestSearchChunksDelegation:
         mock_op = AsyncMock(return_value={"status": "ok", "results": []})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             await cap_with_kbs.search_chunks("content", "eq", "hello")
@@ -273,7 +270,7 @@ class TestSearchChunksDelegation:
         mock_op = AsyncMock(return_value={"status": "ok", "results": []})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService") as MockSvc, \
+             patch("shu.services.kb_search_service.KbSearchService") as MockSvc, \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             MockSvc.return_value = MagicMock()
@@ -298,7 +295,7 @@ class TestSearchDocumentsDelegation:
         mock_op = AsyncMock(return_value=expected_result)
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService") as MockSvc, \
+             patch("shu.services.kb_search_service.KbSearchService") as MockSvc, \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_documents": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             mock_svc = MagicMock()
@@ -324,7 +321,7 @@ class TestSearchDocumentsDelegation:
         mock_op = AsyncMock(return_value={"status": "ok", "results": []})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_documents": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             await cap_with_kbs.search_documents("title", "eq", "hello")
@@ -347,7 +344,7 @@ class TestGetDocumentDelegation:
         mock_op = AsyncMock(return_value=expected_result)
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService") as MockSvc, \
+             patch("shu.services.kb_search_service.KbSearchService") as MockSvc, \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"get_document": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             mock_svc = MagicMock()
@@ -369,7 +366,7 @@ class TestGetDocumentDelegation:
         mock_op = AsyncMock(return_value={"id": "doc-1"})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"get_document": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             await cap_with_kbs.get_document("doc-1")
@@ -391,7 +388,7 @@ class TestExceptionHandling:
         mock_op = AsyncMock(side_effect=RuntimeError("DB exploded"))
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             result = await cap_with_kbs.search_chunks("content", "eq", "hello")
@@ -406,7 +403,7 @@ class TestExceptionHandling:
         mock_op = AsyncMock(side_effect=ValueError("bad value"))
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_documents": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             result = await cap_with_kbs.search_documents("title", "eq", "hello")
@@ -421,7 +418,7 @@ class TestExceptionHandling:
         mock_op = AsyncMock(side_effect=ConnectionError("timeout"))
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"get_document": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             result = await cap_with_kbs.get_document("doc-1")
@@ -436,7 +433,7 @@ class TestExceptionHandling:
         mock_op = AsyncMock(side_effect=Exception("boom"))
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              _patch_access_granted(cap_with_kbs):
             await cap_with_kbs.search_chunks("content", "eq", "hello")
@@ -462,7 +459,7 @@ class TestRbacEnforcement:
         mock_op = AsyncMock(return_value={"status": "ok", "results": []})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              patch.object(KbCapability, "_check_kb_access", new=AsyncMock(return_value=access_error)):
             result = await cap_with_kbs.search_chunks("content", "eq", "hello")
@@ -481,7 +478,7 @@ class TestRbacEnforcement:
         mock_op = AsyncMock(return_value={"status": "ok", "results": []})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_documents": mock_op}), \
              patch.object(KbCapability, "_check_kb_access", new=AsyncMock(return_value=access_error)):
             result = await cap_with_kbs.search_documents("title", "eq", "hello")
@@ -500,7 +497,7 @@ class TestRbacEnforcement:
         mock_op = AsyncMock(return_value={"id": "doc-1"})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"get_document": mock_op}), \
              patch.object(KbCapability, "_check_kb_access", new=AsyncMock(return_value=access_error)):
             result = await cap_with_kbs.get_document("doc-1")
@@ -519,7 +516,7 @@ class TestRbacEnforcement:
         mock_op = AsyncMock(return_value={"status": "ok", "results": []})
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": mock_op}), \
              patch.object(KbCapability, "_check_kb_access", new=AsyncMock(return_value=access_error)):
             result = await cap_with_kbs.search_chunks("content", "eq", "hello")
@@ -537,7 +534,7 @@ class TestRbacEnforcement:
         }
 
         with patch("shu.plugins.host.kb_capability.get_db_session", new=AsyncMock(return_value=mock_db)), \
-             patch("shu.plugins.host.kb_capability.KbSearchService", return_value=MagicMock()), \
+             patch("shu.services.kb_search_service.KbSearchService", return_value=MagicMock()), \
              patch.dict("shu.plugins.host.kb_capability._SEARCH_OPS", {"search_chunks": AsyncMock()}), \
              patch.object(KbCapability, "_check_kb_access", new=AsyncMock(return_value=access_error)):
             await cap_with_kbs.search_chunks("content", "eq", "hello")

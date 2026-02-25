@@ -146,14 +146,10 @@ async def test_event_handling(responses_adapter, patch_plugin_calls):
 async def test_completion_flow(responses_adapter, patch_plugin_calls):
     events = await responses_adapter.handle_provider_completion(OPENAI_COMPLETE_FUNCTION_CALL_PAYLOAD)
 
-    # We get two events here, the first one is the tool call, the second is an empty final message.
-    # Empty final messages are ignored.
-    assert len(events) == 2
+    # Function-call-only responses produce no final message event (no text in output).
+    assert len(events) == 1
 
     _evaluate_tool_call_events(events[0])
-
-    final_event = events[1]
-    assert final_event.content is None  # no message item in output — ignored by caller
 
     events = await responses_adapter.handle_provider_completion(OPENAI_COMPLETE_OUTPUT_PAYLOAD)
     assert len(events) == 1

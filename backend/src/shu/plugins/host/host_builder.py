@@ -59,7 +59,7 @@ def parse_host_context(host_context: dict[str, Any] | None) -> HostContext:
         if isinstance(kb_ctx, dict):
             ids = kb_ctx.get("knowledge_base_ids")
             if isinstance(ids, list):
-                valid_ids = [str(i) for i in ids if isinstance(i, str) and i]
+                valid_ids = [i for i in ids if isinstance(i, str) and i]
                 knowledge_base_ids = valid_ids if valid_ids else None
     except Exception:
         knowledge_base_ids = None

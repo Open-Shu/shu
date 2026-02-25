@@ -201,7 +201,7 @@ class BaseProviderAdapter:
             JSON string of the plugin's return value.
 
         """
-        if self.knowledge_base_ids:
+        if self.knowledge_base_ids is not None:
             host = dict(args_dict.get("__host") or {})
             kb = dict(host.get("kb") or {})
             kb["knowledge_base_ids"] = self.knowledge_base_ids

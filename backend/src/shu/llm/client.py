@@ -460,7 +460,7 @@ class UnifiedLLMClient:
         if request_timeout is not None:
             stream_kwargs["timeout"] = self._build_timeout(request_timeout, stream=True)
 
-        final_event: ProviderFinalEventResult = None
+        final_event: ProviderFinalEventResult | None = None
 
         try:
             async with self.client.stream("POST", endpoint, json=payload, **stream_kwargs) as response:

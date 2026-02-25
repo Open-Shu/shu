@@ -162,10 +162,12 @@ class ResponsesAdapter(BaseProviderAdapter):
             # a reasoning summary item after the message, making output[-1] point to it instead.
             final_text: str | None = None
             for item in reversed((chunk.get("response") or {}).get("output") or []):
-                if item.get("type") == "message":
+                if isinstance(item, dict) and item.get("type") == "message":
                     content_list = item.get("content") or []
-                    if content_list:
-                        final_text = content_list[-1].get("text")
+                    for content_item in reversed(content_list):
+                        if isinstance(content_item, dict) and "text" in content_item:
+                            final_text = content_item.get("text")
+                            break
                     break
 
             # Fallback: reconstruct from streamed deltas when the output array is missing/malformed.
@@ -277,55 +279,63 @@ class ResponsesAdapter(BaseProviderAdapter):
         - ``"const"`` is not supported; use ``"enum"`` with one value instead.
         - ``"default"`` is stripped (informational only, not part of the wire schema).
         """
+        if not isinstance(schema, dict):
+            return {}
 
-        def _clean(obj: Any) -> dict[str, Any]:
-            if not isinstance(obj, dict):
-                return {}
+        result: dict[str, Any] = {}
 
-            result: dict[str, Any] = {}
+        # Flatten array types: ["string", "null"] → "string".
+        # Note: a standalone "type": "null" (or an all-null list) produces no
+        # "type" key in result, yielding {} which gets filtered from properties.
+        # This is a known limitation; no current plugin schema uses null-only types.
+        t = schema.get("type")
+        if isinstance(t, list):
+            t = next((x for x in t if isinstance(x, str) and x != "null"), None)
+        if isinstance(t, str):
+            result["type"] = t
 
-            # Flatten array types: ["string", "null"] → "string"
-            t = obj.get("type")
-            if isinstance(t, list):
-                t = next((x for x in t if isinstance(x, str) and x != "null"), None)
-            if isinstance(t, str):
-                result["type"] = t
+        if "description" in schema:
+            result["description"] = schema["description"]
 
-            if "description" in obj:
-                result["description"] = obj["description"]
+        if "enum" in schema:
+            result["enum"] = schema["enum"]
+        elif "const" in schema:
+            # "const" is not supported by the Responses API; convert to single-value enum.
+            result["enum"] = [schema["const"]]
 
-            if "enum" in obj:
-                result["enum"] = obj["enum"]
-            # "const" is not supported — already covered by single-value "enum" above
+        if "minimum" in schema:
+            result["minimum"] = schema["minimum"]
+        if "maximum" in schema:
+            result["maximum"] = schema["maximum"]
 
-            if "minimum" in obj:
-                result["minimum"] = obj["minimum"]
-            if "maximum" in obj:
-                result["maximum"] = obj["maximum"]
+        if result.get("type") == "array" and "items" in schema:
+            cleaned = self._sanitize_schema_for_responses_api(schema["items"])
+            if cleaned:
+                result["items"] = cleaned
 
-            if result.get("type") == "array" and "items" in obj:
-                cleaned = _clean(obj["items"])
-                if cleaned:
-                    result["items"] = cleaned
+        if result.get("type") == "object":
+            self._sanitize_object_schema(result, schema)
 
-            if result.get("type") == "object":
-                if "properties" in obj and isinstance(obj["properties"], dict):
-                    cleaned_props = {k: _clean(v) for k, v in obj["properties"].items() if isinstance(v, dict)}
-                    cleaned_props = {k: v for k, v in cleaned_props.items() if v}
-                    if cleaned_props:
-                        result["properties"] = cleaned_props
+        return result
 
-                if "required" in obj and isinstance(obj["required"], list):
-                    req = [r for r in obj["required"] if isinstance(r, str)]
-                    if req:
-                        result["required"] = req
+    def _sanitize_object_schema(self, result: dict[str, Any], schema: dict[str, Any]) -> None:
+        if "properties" in schema and isinstance(schema["properties"], dict):
+            cleaned_props = {
+                k: self._sanitize_schema_for_responses_api(v)
+                for k, v in schema["properties"].items()
+                if isinstance(v, dict)
+            }
+            cleaned_props = {k: v for k, v in cleaned_props.items() if v}
+            if cleaned_props:
+                result["properties"] = cleaned_props
 
-                if "additionalProperties" in obj:
-                    result["additionalProperties"] = obj["additionalProperties"]
+        if "required" in schema and isinstance(schema["required"], list):
+            req = [r for r in schema["required"] if isinstance(r, str)]
+            if req:
+                result["required"] = req
 
-            return result
-
-        return _clean(schema)
+        if "additionalProperties" in schema:
+            result["additionalProperties"] = schema["additionalProperties"]
 
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         res: list[dict[str, Any]] = []

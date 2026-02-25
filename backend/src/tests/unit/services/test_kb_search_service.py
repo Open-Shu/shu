@@ -217,6 +217,7 @@ class TestSearchChunks:
         result = await service.search_chunks(["kb-1"], "content", "eq", "hello", page=2)
         assert result["page"] == 2
         assert result["total_results"] == 25
+        assert result["results"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -336,19 +337,21 @@ class TestGetDocument:
 
     @pytest.mark.asyncio
     async def test_document_in_unbound_kb(self, service, mock_db):
-        """Should return error when document's KB is not in bound list."""
-        mock_doc = MagicMock()
-        mock_doc.knowledge_base_id = "kb-other"
+        """Should return not_found when document's KB is not in the bound list.
 
+        Access control is enforced at the SQL level (WHERE knowledge_base_id IN ...),
+        so a document in an unbound KB is filtered out by the query and appears
+        identical to a non-existent document.
+        """
         result_mock = MagicMock()
-        result_mock.one_or_none.return_value = (mock_doc, "Other KB")
+        result_mock.one_or_none.return_value = None  # filtered out by SQL WHERE clause
         mock_db.execute = AsyncMock(return_value=result_mock)
 
         result = await service.get_document(["kb-1"], "doc-1")
 
         assert result["status"] == "error"
-        assert result["error"]["code"] == "access_denied"
-        assert "not bound" in result["error"]["message"]
+        assert result["error"]["code"] == "not_found"
+        assert "not found" in result["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_successful_retrieval_includes_content(self, service, mock_db):

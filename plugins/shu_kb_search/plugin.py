@@ -34,7 +34,7 @@ class _Result:
         details: dict[str, Any] | None = None,
     ) -> "_Result":
         """Return an error result."""
-        return cls("error", error={"code": code, "message": message, "details": (details or {})})
+        return cls("error", data={}, error={"code": code, "message": message, "details": (details or {})})
 
 
 @dataclass
@@ -415,8 +415,13 @@ class KbSearchPlugin:
         field = params.get("field")
         operator = params.get("operator")
         value = params.get("value")
-        page = int(params.get("page") or 1)
+        try:
+            page = int(params.get("page") or 1)
+        except (ValueError, TypeError):
+            page = 1
         sort_order = params.get("sort_order") or "asc"
+        if sort_order not in ("asc", "desc"):
+            sort_order = "asc"
 
         if not field:
             return _Result.err(
@@ -470,11 +475,11 @@ class KbSearchPlugin:
 
         field, operator, value = parsed.field, parsed.operator, parsed.value
 
-        # value must be a string for all text fields; dicts are only valid for capability_manifest.
-        if isinstance(value, dict) and field != "capability_manifest":
+        # value must be a plain string for text fields; dicts are only valid for capability_manifest.
+        if field != "capability_manifest" and isinstance(value, (dict, list)):
             return _Result.err(
                 f"value must be a plain string when field is '{field}'. "
-                "Dicts are only valid for the 'capability_manifest' field.",
+                "Dicts and lists are not valid for this field.",
                 code="invalid_parameter",
             )
 
@@ -527,6 +532,8 @@ class KbSearchPlugin:
             ``_Result.ok(result)`` on success or ``_Result.err(...)`` on error.
 
         """
+        if result is None:
+            return _Result.err("Not found", code="not_found")
         if isinstance(result, dict) and result.get("status") == "error":
             err = result.get("error") or {}
             return _Result.err(

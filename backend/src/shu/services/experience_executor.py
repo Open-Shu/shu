@@ -682,11 +682,13 @@ class ExperienceExecutor:
 
         params = self._render_params(step.params_template, context)
 
-        # Inject KB IDs into __host overlay so KbCapability receives them
+        # Inject KB IDs into __host overlay so KbCapability receives them.
+        # setdefault at every level: a step template may supply its own
+        # knowledge_base_ids to narrow the KB scope for that step.
         if knowledge_base_ids:
             host_overlay = params.setdefault("__host", {})
             kb_overlay = host_overlay.setdefault("kb", {})
-            kb_overlay["knowledge_base_ids"] = knowledge_base_ids
+            kb_overlay.setdefault("knowledge_base_ids", knowledge_base_ids)
 
         # Note: execute_plugin expects the operation argument explicitly
         op = step.plugin_op

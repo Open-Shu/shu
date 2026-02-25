@@ -9,7 +9,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import Text, func, select
+from sqlalchemy import Text, cast, func, select
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,10 @@ from ..models.knowledge_base import KnowledgeBase
 
 logger = get_logger(__name__)
 
-# Type alias for a function that converts a (row, kb_name) tuple to a dict.
+# Type alias for the common serializer signature used by _field_search.
+# Callers always invoke serializer(row, kb_name) with no extra kwargs, so this
+# alias is accurate even though _serialize_document_row also accepts an optional
+# include_content kwarg (only used by get_document, not via _field_search).
 RowSerializer = Callable[[Any, str], dict[str, Any]]
 
 # ---------------------------------------------------------------------------
@@ -38,16 +41,29 @@ TEXT_OPERATORS: dict[str, Any] = {
     "icontains": lambda col, val: col.icontains(val),
 }
 
+
+def _jsonb_array_contains(col: Any, val: Any) -> Any:
+    if not isinstance(val, list):
+        raise TypeError(f"'contains' requires a list value, got {type(val).__name__}")
+    return col.op("@>")(cast(json.dumps(val), JSONB))
+
+
+def _jsonb_object_contains(col: Any, val: Any) -> Any:
+    if not isinstance(val, dict):
+        raise TypeError(f"'contains' requires a dict value, got {type(val).__name__}")
+    return col.op("@>")(cast(json.dumps(val), JSONB))
+
+
 JSONB_ARRAY_OPERATORS: dict[str, Any] = {
-    "contains": lambda col, val: col.op("@>")(func.cast(json.dumps(val), JSONB)),
+    "contains": _jsonb_array_contains,
     "has_key": lambda col, val: col.op("?")(val),
-    "has_any": lambda col, val: col.op("?|")(func.cast(val, ARRAY(Text))),
+    "has_any": lambda col, val: col.op("?|")(cast(val, ARRAY(Text))),
 }
 
 # NOTE: The path_contains lambda uses late binding — KbSearchService is
 # resolved at call time, not at dict-creation time.
 JSONB_OBJECT_OPERATORS: dict[str, Any] = {
-    "contains": lambda col, val: col.op("@>")(func.cast(json.dumps(val), JSONB)),
+    "contains": _jsonb_object_contains,
     "has_key": lambda col, val: col.op("?")(val),
     "path_contains": lambda col, val: KbSearchService._build_path_contains(col, val),
 }
@@ -110,7 +126,7 @@ class KbSearchService:
         """
         path = val["path"]
         value = val["value"]
-        return col[path].op("@>")(func.cast(json.dumps(value), JSONB))
+        return col[path].op("@>")(cast(json.dumps(value), JSONB))
 
     @staticmethod
     def _get_operator_fn(field_type: str, operator: str) -> Any | None:
@@ -289,8 +305,9 @@ class KbSearchService:
         total_results: int = count_result.scalar() or 0
 
         # Paginate — order by the searched field in the requested direction
-        order_clause = column.desc() if sort_order == "desc" else column.asc()
-        offset = (max(page, 1) - 1) * PAGE_SIZE
+        sanitized_page = max(page, 1)
+        order_clause = column.desc() if (sort_order or "").lower() == "desc" else column.asc()
+        offset = (sanitized_page - 1) * PAGE_SIZE
         rows_query = base_query.order_by(order_clause).offset(offset).limit(PAGE_SIZE)
         rows_result = await self.db.execute(rows_query)
         rows = rows_result.all()
@@ -302,7 +319,7 @@ class KbSearchService:
             extra={
                 "field": field,
                 "operator": operator,
-                "page": page,
+                "page": sanitized_page,
                 "total_results": total_results,
                 "returned": len(results),
             },
@@ -311,7 +328,7 @@ class KbSearchService:
         return {
             "results": results,
             "total_results": total_results,
-            "page": page,
+            "page": sanitized_page,
             "page_size": PAGE_SIZE,
         }
 
@@ -410,6 +427,7 @@ class KbSearchService:
             select(Document, KnowledgeBase.name.label("knowledge_base_name"))
             .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
             .where(Document.id == document_id)
+            .where(Document.knowledge_base_id.in_(knowledge_base_ids))
         )
         result = await self.db.execute(query)
         row = result.one_or_none()
@@ -421,13 +439,6 @@ class KbSearchService:
             )
 
         doc, kb_name = row
-
-        # Verify the document's KB is in the bound set
-        if doc.knowledge_base_id not in knowledge_base_ids:
-            return self._error_dict(
-                "access_denied",
-                f"Document '{document_id}' belongs to a knowledge base " "not bound to the current execution context.",
-            )
 
         logger.info(
             "Document retrieved",

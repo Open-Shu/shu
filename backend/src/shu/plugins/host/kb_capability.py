@@ -13,19 +13,17 @@ from ...services.ingestion_service import ingest_text as _host_ingest_text
 from ...services.ingestion_service import ingest_thread as _host_ingest_thread
 from ...services.knowledge_object_service import delete_ko_by_external_id as _host_delete_ko_by_external_id
 from ...services.knowledge_object_service import delete_kos_by_external_ids as _host_delete_kos_by_external_ids
-from ...services.kb_search_service import KbSearchService
 from ...services.knowledge_object_service import upsert_knowledge_object as _host_upsert_knowledge_object
 from .base import ImmutableCapabilityMixin
 
 logger = logging.getLogger(__name__)
 
-# Explicit dispatch table for KB search operations.  Keyed by op name so that
-# _with_search_service never uses getattr — only methods listed here are callable.
-_SEARCH_OPS: dict[str, Any] = {
-    "search_chunks": KbSearchService.search_chunks,
-    "search_documents": KbSearchService.search_documents,
-    "get_document": KbSearchService.get_document,
-}
+# Dispatch table for KB search operations.  Populated lazily on first call to
+# _with_search_service to avoid the circular import chain that arises when
+# kb_capability is imported via shu.plugins.host.__init__ before
+# kb_search_service is fully initialised.  Only methods explicitly listed here
+# are callable — getattr is never used for dispatch.
+_SEARCH_OPS: dict[str, Any] = {}
 
 
 class KbCapability(ImmutableCapabilityMixin):
@@ -362,6 +360,29 @@ class KbCapability(ImmutableCapabilityMixin):
                     "message": "No knowledge bases are bound to this execution context.",
                 },
             }
+
+        # Deferred import: avoids circular import when kb_capability is loaded
+        # through shu.plugins.host.__init__ before kb_search_service is ready.
+        from ...services.kb_search_service import KbSearchService
+
+        if not _SEARCH_OPS:
+            _SEARCH_OPS.update(
+                {
+                    "search_chunks": KbSearchService.search_chunks,
+                    "search_documents": KbSearchService.search_documents,
+                    "get_document": KbSearchService.get_document,
+                }
+            )
+
+        if op_name not in _SEARCH_OPS:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "invalid_op",
+                    "message": f"Unknown search operation: '{op_name}'.",
+                },
+            }
+
         db = await get_db_session()
         try:
             access_error = await self._check_kb_access(db)
@@ -371,8 +392,9 @@ class KbCapability(ImmutableCapabilityMixin):
             svc = KbSearchService(db)
             op = _SEARCH_OPS[op_name]
             return await op(svc, knowledge_base_ids=self._knowledge_base_ids, **kwargs)
-        except Exception as exc:
-            return {"status": "error", "error": {"code": f"{op_name}_error", "message": str(exc)}}
+        except Exception:
+            logger.exception("KB search operation '%s' failed", op_name)
+            return {"status": "error", "error": {"code": f"{op_name}_error", "message": "An internal error occurred"}}
         finally:
             try:
                 await db.close()
