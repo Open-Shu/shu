@@ -37,12 +37,14 @@ class ProfilingMode(str, Enum):
 class CapabilityManifest(BaseModel):
     """Structured declaration of what a document can answer.
 
-    Used for capability-aware retrieval filtering.
+    Used for capability-aware retrieval filtering. The answers_questions_about
+    field should contain SPECIFIC, DISTINGUISHING details - not generic categories.
     """
 
     answers_questions_about: list[str] = Field(
         default_factory=list,
-        description="Topics/subjects the document addresses",
+        description="SPECIFIC topics with named entities, dates, figures. "
+        "E.g., 'Acme Corp Q3 2024 revenue', not 'financial performance'",
     )
     provides_information_type: list[str] = Field(
         default_factory=list,

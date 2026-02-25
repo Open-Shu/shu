@@ -35,23 +35,29 @@ logger = structlog.get_logger(__name__)
 # Placeholders: {query_intro}, {queries_json}, {queries_guidelines}
 # When queries disabled: all placeholders are empty strings
 # When queries enabled: placeholders contain the query-specific content
-UNIFIED_PROFILING_PROMPT_TEMPLATE = """You are a document profiling assistant. Analyze the document and generate a complete profile including document-level metadata and per-chunk summaries{query_intro}.
+UNIFIED_PROFILING_PROMPT_TEMPLATE = """You are profiling documents for an AI-powered retrieval system.
+
+PURPOSE: An AI agent will use your output to decide whether to retrieve this document when users ask questions. Generic descriptions like "security measures" or "strategic vision" are USELESS - they match every document. Your job is to extract SPECIFIC, DISTINGUISHING details that help the agent know EXACTLY what this document contains{query_intro}.
 
 Generate a JSON response with this exact structure:
 {{
-    "synopsis": "A 2-4 sentence summary capturing the document's essence, main topics, and purpose.",
+    "synopsis": "A 2-4 sentence summary with SPECIFIC details: names, dates, figures, decisions. Not 'discusses financial performance' but 'Reports Q3 2024 revenue of $4.2M for Acme Corp, up 12% YoY.'",
     "chunks": [
         {{
             "index": 0,
-            "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
-            "summary": "Longer description of what this chunk contains",
-            "keywords": ["specific", "extractable", "terms"],
-            "topics": ["conceptual", "categories"]
+            "one_liner": "Condensed summary (~50-80 chars) with specific content",
+            "summary": "Detailed description including names, figures, dates mentioned",
+            "keywords": ["Acme Corp", "Q3 2024", "$4.2M", "John Smith"],
+            "topics": ["quarterly earnings", "revenue growth"]
         }}
     ],
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
-        "answers_questions_about": ["list of specific topics the document addresses"],
+        "answers_questions_about": [
+            "SPECIFIC topics with named entities, dates, and concrete details",
+            "Example: 'Acme Corp Q3 2024 revenue and profit margins'",
+            "Example: 'Security vulnerabilities in authentication module v2.3'"
+        ],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
@@ -59,33 +65,57 @@ Generate a JSON response with this exact structure:
     }}{queries_json}
 }}
 
+CRITICAL - answers_questions_about:
+BAD (too generic, matches everything):
+  - "security measures"
+  - "strategic vision"
+  - "project updates"
+  - "financial information"
+
+GOOD (specific, distinguishes this document):
+  - "OAuth2 token refresh vulnerability in auth-service v2.3"
+  - "Q3 2024 board decision to acquire TechStart Inc"
+  - "Project Atlas milestones for Phase 2 (Jan-Mar 2025)"
+  - "Sarah Chen's performance review feedback from Mike Torres"
+
 Guidelines:
-- one_liner: Start with action verb when possible ("Explains...", "Covers...", "Lists..."). Capture specific information, not just topic.
-- synopsis: Capture strategic narrative and cross-chunk themes.{queries_guidelines}
-- keywords: Specific extractable terms (names, numbers, dates, technical terms).
-- topics: Broader conceptual categories."""
+- one_liner: Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject, not just the category.
+- synopsis: Lead with the most important SPECIFIC facts. What names, dates, decisions, or figures would someone search for?{queries_guidelines}
+- keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
+- topics: Broader categories, but still specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases")."""
 
 # Legacy prompt for chunk-only profiling (used in batch processing for large docs)
-CHUNK_PROFILE_SYSTEM_PROMPT = """You are a document chunk profiling assistant. Analyze text chunks and generate metadata for retrieval indexing.
+CHUNK_PROFILE_SYSTEM_PROMPT = """You are profiling document chunks for an AI retrieval system.
 
-For each chunk, generate a JSON response with:
+PURPOSE: An AI agent scans these profiles to decide which chunks to retrieve. Generic descriptions are useless. Extract SPECIFIC, DISTINGUISHING details.
+
+For each chunk, generate:
 {
-    "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
-    "summary": "Longer description of what this chunk contains",
-    "keywords": ["specific", "extractable", "terms", "names", "numbers", "dates"],
-    "topics": ["conceptual", "categories", "themes"]
+    "one_liner": "~50-80 chars with SPECIFIC content (names, figures, dates)",
+    "summary": "Detailed description - what specific information can be found here?",
+    "keywords": ["extract", "every", "proper noun", "date", "version", "amount"],
+    "topics": ["specific categories", "not just 'database' but 'PostgreSQL indexing'"]
 }
 
+Examples:
+BAD one_liner: "Discusses security configuration"
+GOOD one_liner: "Configures OAuth2 scopes for admin API endpoints"
+
+BAD keywords: ["security", "configuration", "settings"]
+GOOD keywords: ["OAuth2", "admin API", "read:users scope", "JWT expiry"]
+
 Guidelines:
-- one_liner: Start with action verb ("Explains...", "Covers...", "Lists..."). Capture specific information.
-- summary: More detailed description for retrieval ranking.
-- keywords: Specific extractable terms from the text.
-- topics: Broader conceptual categories.
-Limit to 5-10 keywords and 3-5 topics."""
+- one_liner: Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
+- summary: What specific facts, names, dates, or figures does this chunk contain?
+- keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
+- topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
+Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
 
 # Final batch prompt template with conditional query synthesis sections
 # Same placeholder pattern as unified prompt
-FINAL_BATCH_PROMPT_TEMPLATE = """You are a document profiling assistant. You are processing the FINAL batch of chunks for a large document.
+FINAL_BATCH_PROMPT_TEMPLATE = """You are profiling documents for an AI-powered retrieval system. You are processing the FINAL batch of chunks for a large document.
+
+PURPOSE: An AI agent will use your output to decide whether to retrieve this document. Generic descriptions are USELESS. Extract SPECIFIC, DISTINGUISHING details.
 
 You have two tasks:
 1. Profile the chunks in this batch (same as previous batches)
@@ -96,16 +126,19 @@ Generate a JSON response with this exact structure:
     "chunks": [
         {{
             "index": 0,
-            "one_liner": "Condensed summary (~50-80 chars) for quick scanning",
-            "summary": "Longer description of what this chunk contains",
-            "keywords": ["specific", "extractable", "terms"],
-            "topics": ["conceptual", "categories"]
+            "one_liner": "~50-80 chars with SPECIFIC content (names, figures, dates)",
+            "summary": "Detailed description - what specific information can be found here?",
+            "keywords": ["Acme Corp", "Q3 2024", "$4.2M", "John Smith"],
+            "topics": ["quarterly earnings", "revenue growth"]
         }}
     ],
-    "synopsis": "A 2-4 sentence summary synthesizing ALL chunk one-liners into a cohesive document overview.",
+    "synopsis": "2-4 sentences with SPECIFIC details synthesized from ALL chunks. Include names, dates, figures, decisions.",
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
-        "answers_questions_about": ["consolidated list of topics from all chunks"],
+        "answers_questions_about": [
+            "SPECIFIC topics consolidated from all chunks with named entities and dates",
+            "Example: 'Acme Corp Q3 2024 revenue and profit margins'"
+        ],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
         "authority_level": "primary, secondary, or commentary",
         "completeness": "complete, partial, or reference",
@@ -113,33 +146,50 @@ Generate a JSON response with this exact structure:
     }}{queries_json}
 }}
 
+CRITICAL - answers_questions_about:
+BAD (too generic): "security measures", "strategic vision", "project updates"
+GOOD (specific): "OAuth2 vulnerability in auth-service v2.3", "Q3 2024 board decision to acquire TechStart Inc"
+
 Guidelines:
-- one_liner: Start with action verb ("Explains...", "Covers...", "Lists..."). Capture specific information.
-- synopsis: Synthesize the accumulated one-liners into a strategic narrative. Capture cross-chunk themes.{queries_guidelines}
-- keywords: Specific extractable terms from the text.
-- topics: Broader conceptual categories."""
+- one_liner: Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
+- synopsis: Lead with the most important SPECIFIC facts from across the document.{queries_guidelines}
+- keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
+- topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases")."""
 
 # Query synthesis additions - injected into templates when enable_query_synthesis=True
 QUERY_INTRO_ADDITION = ", and hypothetical queries"
 
 QUERIES_JSON_ADDITION = """,
     "synthesized_queries": [
-        "What is the main topic of this document?",
-        "How does X work?",
-        "Tell me about Y"
+        "What was Acme Corp's Q3 2024 revenue?",
+        "Who approved the TechStart acquisition?",
+        "How do I configure OAuth2 scopes for the admin API?"
     ]"""
 
 QUERIES_GUIDELINES_TEMPLATE = """
-- synthesized_queries: Generate {min_queries}-{max_queries} queries that this document can answer.
-  PURPOSE: These queries will be embedded and matched against user searches to help find this document.
-  Include specific details (names, dates, topics, unique terms) that distinguish this document from others.
-  AVOID generic queries like "What were the results?" - instead use "What were the results of the Q3 2024 marketing analysis?"
-  Balance specificity with discoverability - queries should be specific enough to identify this document but general enough to match natural user questions.
-  Scaling rules:
-  - Generate at least one query per distinct topic in answers_questions_about
-  - Include a mix of interrogative ("What is...?"), imperative ("Tell me about..."), and keyword searches
-  - Simple single-topic documents: closer to {min_queries}
-  - Complex multi-topic documents with many domains: closer to {max_queries}"""
+- synthesized_queries: Generate {min_queries}-{max_queries} queries this document can answer.
+  PURPOSE: These queries will be embedded and matched against user searches.
+
+  CRITICAL: Include SPECIFIC details from the document:
+  BAD: "What were the results?" (matches any document with results)
+  GOOD: "What were the Q3 2024 sales results for the EMEA region?"
+
+  BAD: "How does authentication work?" (matches any auth doc)
+  GOOD: "How does OAuth2 token refresh work in auth-service?"
+
+  Include in your queries:
+  - Named entities (people, companies, projects, products)
+  - Dates and time periods
+  - Version numbers, amounts, metrics
+  - Specific technical terms unique to this document
+
+  Query types to include:
+  - Factual: "What is X's Y?" "How much did Z cost?"
+  - Procedural: "How do I configure X?" "What are the steps for Y?"
+  - Comparative: "What changed between v1 and v2?"
+  - Entity-focused: "What did [Person] say about [Topic]?"
+
+  Scale: {min_queries} for simple docs, {max_queries} for complex multi-topic docs."""
 
 
 class ProfilingService:

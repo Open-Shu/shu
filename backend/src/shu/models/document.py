@@ -29,9 +29,10 @@ class CapabilityManifest(TypedDict, total=False):
     """Structure for document capability manifest JSONB field.
 
     All fields are optional (total=False) since manifests may be partial.
+    The answers_questions_about field should contain SPECIFIC, DISTINGUISHING details.
     """
 
-    answers_questions_about: list[str]  # Topics the document can inform about
+    answers_questions_about: list[str]  # SPECIFIC topics with named entities, dates, figures
     provides_information_type: list[str]  # e.g., "facts", "opinions", "decisions"
     authority_level: str  # e.g., "primary", "secondary", "commentary"
     completeness: str  # e.g., "complete", "partial", "reference"

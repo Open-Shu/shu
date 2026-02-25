@@ -108,9 +108,9 @@ class TestUnifiedProfiling:
         assert "API design" in unified.capability_manifest.answers_questions_about
         mock_side_call_service.call.assert_called_once()
         call_kwargs = mock_side_call_service.call.call_args[1]
-        # Verify prompt uses configured query limits
+        # Verify prompt uses configured query limits and RAG framing
         assert "3-20 queries" in call_kwargs["system_prompt"]
-        assert "document profiling assistant" in call_kwargs["system_prompt"]
+        assert "AI-powered retrieval system" in call_kwargs["system_prompt"]
 
     @pytest.mark.asyncio
     async def test_unified_profiling_with_metadata(self, profiling_service, mock_side_call_service):
