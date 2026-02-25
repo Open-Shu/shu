@@ -248,6 +248,7 @@ const ExperienceDetailPage = () => {
                       onClick={() => handleStartConversation(initialQuestion.trim())}
                       disabled={!initialQuestion.trim() || isCreatingConversation}
                       color="primary"
+                      aria-label={isCreatingConversation ? 'Sending…' : 'Send question'}
                     >
                       {isCreatingConversation ? <CircularProgress size={20} /> : <SendIcon />}
                     </IconButton>
