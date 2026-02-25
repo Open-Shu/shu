@@ -26,7 +26,6 @@ class ProfileParser:
     """Parses LLM responses into profile data structures."""
 
     # Limits for truncation
-    MAX_ONE_LINER_LENGTH = 100
     MAX_SUMMARY_LENGTH = 500
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
@@ -41,8 +40,40 @@ class ProfileParser:
         """
         self.max_queries = max_queries if max_queries is not None else self.DEFAULT_MAX_QUERIES
 
+    @staticmethod
+    def _coerce_string(value: str | None) -> str:
+        """Safely coerce a value to string, handling None.
+
+        Args:
+            value: Value that may be a string or None
+
+        Returns:
+            Empty string if None, otherwise str(value)
+
+        """
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _coerce_list(value: list | None) -> list:
+        """Safely coerce a value to list, handling None and non-list types.
+
+        Args:
+            value: Value that may be a list, None, or other type
+
+        Returns:
+            Empty list if None or not a list, otherwise the list
+
+        """
+        if value is None or not isinstance(value, list):
+            return []
+        return value
+
     def _parse_capability_manifest(self, data: dict) -> CapabilityManifest:
         """Parse capability manifest from JSON data.
+
+        Handles None values gracefully by coercing to appropriate defaults.
 
         Args:
             data: Raw JSON data containing capability_manifest key
@@ -51,17 +82,20 @@ class ProfileParser:
             CapabilityManifest with parsed or default values
 
         """
-        manifest_data = data.get("capability_manifest", {})
+        manifest_data = data.get("capability_manifest") or {}
         return CapabilityManifest(
-            answers_questions_about=manifest_data.get("answers_questions_about", []),
-            provides_information_type=manifest_data.get("provides_information_type", []),
-            authority_level=manifest_data.get("authority_level", "secondary"),
-            completeness=manifest_data.get("completeness", "partial"),
-            question_domains=manifest_data.get("question_domains", []),
+            answers_questions_about=self._coerce_list(manifest_data.get("answers_questions_about")),
+            provides_information_type=self._coerce_list(manifest_data.get("provides_information_type")),
+            authority_level=self._coerce_string(manifest_data.get("authority_level")) or "secondary",
+            completeness=self._coerce_string(manifest_data.get("completeness")) or "partial",
+            question_domains=self._coerce_list(manifest_data.get("question_domains")),
         )
 
     def _parse_chunks(self, chunks_data: list) -> list[UnifiedChunkProfile]:
         """Parse chunk profiles from JSON data.
+
+        Handles None values and non-list types gracefully by coercing to
+        appropriate defaults before truncation.
 
         Args:
             chunks_data: List of chunk dictionaries from JSON
@@ -70,6 +104,7 @@ class ProfileParser:
             List of UnifiedChunkProfile with truncated fields
 
         """
+
         chunks = []
         for pos, chunk_data in enumerate(chunks_data):
             raw_index = chunk_data.get("index")
@@ -77,13 +112,16 @@ class ProfileParser:
                 index = int(raw_index) if raw_index is not None else pos
             except (ValueError, TypeError):
                 index = pos
+            # Coerce values to handle LLM returning null instead of missing keys
+            summary = self._coerce_string(chunk_data.get("summary"))
+            keywords = self._coerce_list(chunk_data.get("keywords"))
+            topics = self._coerce_list(chunk_data.get("topics"))
             chunks.append(
                 UnifiedChunkProfile(
                     index=index,
-                    one_liner=chunk_data.get("one_liner", "")[: self.MAX_ONE_LINER_LENGTH],
-                    summary=chunk_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
-                    keywords=chunk_data.get("keywords", [])[: self.MAX_KEYWORDS],
-                    topics=chunk_data.get("topics", [])[: self.MAX_TOPICS],
+                    summary=summary[: self.MAX_SUMMARY_LENGTH],
+                    keywords=keywords[: self.MAX_KEYWORDS],
+                    topics=topics[: self.MAX_TOPICS],
                 )
             )
         return chunks
@@ -178,6 +216,9 @@ class ProfileParser:
     def parse_chunk_profiles(self, content: str, chunks: list[ChunkData]) -> list[ChunkProfileResult]:
         """Parse LLM response into ChunkProfileResults.
 
+        Handles None values and non-list types gracefully by coercing to
+        appropriate defaults before truncation.
+
         Args:
             content: Raw LLM response content
             chunks: Original chunks for ID/index mapping
@@ -194,15 +235,27 @@ class ProfileParser:
             if isinstance(data, dict):
                 data = [data]
 
+            # Log mismatch between chunks requested and profiles returned
+            if len(data) != len(chunks):
+                logger.warning(
+                    "chunk_profile_count_mismatch",
+                    chunks_requested=len(chunks),
+                    profiles_returned=len(data),
+                    content_length=len(content),
+                )
+
             results = []
             for i, chunk in enumerate(chunks):
                 if i < len(data):
                     profile_data = data[i]
+                    # Coerce values to handle LLM returning null instead of missing keys
+                    summary = self._coerce_string(profile_data.get("summary"))
+                    keywords = self._coerce_list(profile_data.get("keywords"))
+                    topics = self._coerce_list(profile_data.get("topics"))
                     profile = ChunkProfile(
-                        one_liner=profile_data.get("one_liner", "")[: self.MAX_ONE_LINER_LENGTH],
-                        summary=profile_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
-                        keywords=profile_data.get("keywords", [])[: self.MAX_KEYWORDS],
-                        topics=profile_data.get("topics", [])[: self.MAX_TOPICS],
+                        summary=summary[: self.MAX_SUMMARY_LENGTH],
+                        keywords=keywords[: self.MAX_KEYWORDS],
+                        topics=topics[: self.MAX_TOPICS],
                     )
                     results.append(
                         ChunkProfileResult(
@@ -254,7 +307,7 @@ class ProfileParser:
         return ChunkProfileResult(
             chunk_id=chunk.chunk_id,
             chunk_index=chunk.chunk_index,
-            profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
+            profile=ChunkProfile(summary="", keywords=[], topics=[]),
             success=False,
             error=error,
         )

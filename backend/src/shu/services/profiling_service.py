@@ -5,8 +5,8 @@ It is a pure LLM-facing service with no database access. The profiling
 orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
-- Generate unified profiles (synopsis, one-liners, chunk profiles, queries) for small docs
-- Generate chunk profiles (one-liner, summary, keywords, topics) for batch processing
+- Generate unified profiles (synopsis, chunk summaries, queries) for small docs
+- Generate chunk profiles (summary, keywords, topics) for batch processing
 - Generate document metadata in final batch for large documents (incremental profiling)
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
@@ -45,8 +45,7 @@ Generate a JSON response with this exact structure:
     "chunks": [
         {{
             "index": 0,
-            "one_liner": "Condensed summary (~50-80 chars) with specific content",
-            "summary": "Detailed description including names, figures, dates mentioned",
+            "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
             "keywords": ["Acme Corp", "Q3 2024", "$4.2M", "John Smith"],
             "topics": ["quarterly earnings", "revenue growth"]
         }}
@@ -79,34 +78,36 @@ GOOD (specific, distinguishes this document):
   - "Sarah Chen's performance review feedback from Mike Torres"
 
 Guidelines:
-- one_liner: Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject, not just the category.
+- summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject, not just the category.
 - synopsis: Lead with the most important SPECIFIC facts. What names, dates, decisions, or figures would someone search for?{queries_guidelines}
 - keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
-- topics: Broader categories, but still specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases")."""
+- topics: Broader categories, but still specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
 
-# Legacy prompt for chunk-only profiling (used in batch processing for large docs)
+Examples:
+BAD summary: "Discusses security configuration"
+GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings\""""
+
+# Prompt for chunk-only profiling (used in batch processing for large docs)
 CHUNK_PROFILE_SYSTEM_PROMPT = """You are profiling document chunks for an AI retrieval system.
 
 PURPOSE: An AI agent scans these profiles to decide which chunks to retrieve. Generic descriptions are useless. Extract SPECIFIC, DISTINGUISHING details.
 
 For each chunk, generate:
 {
-    "one_liner": "~50-80 chars with SPECIFIC content (names, figures, dates)",
-    "summary": "Detailed description - what specific information can be found here?",
+    "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
     "keywords": ["extract", "every", "proper noun", "date", "version", "amount"],
     "topics": ["specific categories", "not just 'database' but 'PostgreSQL indexing'"]
 }
 
 Examples:
-BAD one_liner: "Discusses security configuration"
-GOOD one_liner: "Configures OAuth2 scopes for admin API endpoints"
+BAD summary: "Discusses security configuration"
+GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings"
 
 BAD keywords: ["security", "configuration", "settings"]
 GOOD keywords: ["OAuth2", "admin API", "read:users scope", "JWT expiry"]
 
 Guidelines:
-- one_liner: Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
-- summary: What specific facts, names, dates, or figures does this chunk contain?
+- summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
 - keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
 - topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
 Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
@@ -119,15 +120,14 @@ PURPOSE: An AI agent will use your output to decide whether to retrieve this doc
 
 You have two tasks:
 1. Profile the chunks in this batch (same as previous batches)
-2. Generate document-level metadata using the accumulated one-liners from ALL previous chunks
+2. Generate document-level metadata using the accumulated summaries from ALL previous chunks
 
 Generate a JSON response with this exact structure:
 {{
     "chunks": [
         {{
             "index": 0,
-            "one_liner": "~50-80 chars with SPECIFIC content (names, figures, dates)",
-            "summary": "Detailed description - what specific information can be found here?",
+            "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
             "keywords": ["Acme Corp", "Q3 2024", "$4.2M", "John Smith"],
             "topics": ["quarterly earnings", "revenue growth"]
         }}
@@ -151,10 +151,14 @@ BAD (too generic): "security measures", "strategic vision", "project updates"
 GOOD (specific): "OAuth2 vulnerability in auth-service v2.3", "Q3 2024 board decision to acquire TechStart Inc"
 
 Guidelines:
-- one_liner: Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
+- summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
 - synopsis: Lead with the most important SPECIFIC facts from across the document.{queries_guidelines}
 - keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
-- topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases")."""
+- topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
+
+Examples:
+BAD summary: "Discusses security configuration"
+GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings\""""
 
 # Query synthesis additions - injected into templates when enable_query_synthesis=True
 QUERY_INTRO_ADDITION = ", and hypothetical queries"
@@ -298,8 +302,8 @@ class ProfilingService:
         """Generate a complete unified profile for a small document.
 
         This is the primary method for small documents. It generates synopsis,
-        per-chunk one-liners and profiles, capability manifest, and synthesized
-        queries in a single LLM call.
+        per-chunk summaries, capability manifest, and synthesized queries in a
+        single LLM call.
 
         Args:
             chunks: List of chunk data with content (contains full document)
@@ -360,8 +364,7 @@ class ProfilingService:
         """Generate profiles for multiple chunks.
 
         Processes chunks in batches for efficiency. Each chunk gets:
-        - one_liner: Condensed summary for agent scanning
-        - summary: Longer description for retrieval ranking
+        - summary: One-line description for agent scanning and retrieval
         - keywords: Specific extractable terms
         - topics: Conceptual categories
 
@@ -410,7 +413,7 @@ class ProfilingService:
             f"Profile the following {len(chunks)} chunks:\n\n"
             + "\n\n".join(chunks_text)
             + "\n\nRespond with a JSON array of profiles, one per chunk, in order. "
-            + "Each profile must include: one_liner, summary, keywords, topics."
+            + "Each profile must include: summary, keywords, topics."
         )
 
         # Validate input doesn't exceed max tokens
@@ -454,7 +457,7 @@ class ProfilingService:
 
         This method eliminates the separate aggregation LLM call by having the final
         batch generate document-level metadata (synopsis, capability_manifest, queries)
-        from accumulated one-liners.
+        from accumulated summaries.
 
         Args:
             chunks: List of chunk data to profile
@@ -474,7 +477,7 @@ class ProfilingService:
         )
         batch_size = self.settings.chunk_profiling_batch_size
         all_results: list[ChunkProfileResult] = []
-        accumulated_one_liners: list[str] = []
+        accumulated_summaries: list[str] = []
         total_tokens = 0
 
         # Calculate batch boundaries
@@ -490,7 +493,7 @@ class ProfilingService:
                 # Final batch: generate chunk profiles AND document metadata
                 batch_results, doc_profile, queries, tokens = await self._profile_final_batch(
                     batch,
-                    accumulated_one_liners,
+                    accumulated_summaries,
                     document_metadata,
                     final_batch_timeout,
                 )
@@ -502,10 +505,10 @@ class ProfilingService:
             all_results.extend(batch_results)
             total_tokens += tokens
 
-            # Accumulate one-liners for final batch
+            # Accumulate summaries for final batch
             for result in batch_results:
-                if result.success and result.profile.one_liner:
-                    accumulated_one_liners.append(f"Chunk {result.chunk_index}: {result.profile.one_liner}")
+                if result.success and result.profile.summary:
+                    accumulated_summaries.append(f"Chunk {result.chunk_index}: {result.profile.summary}")
 
         # Should not reach here, but handle edge case
         return all_results, None, [], total_tokens
@@ -513,7 +516,7 @@ class ProfilingService:
     async def _profile_final_batch(
         self,
         chunks: list[ChunkData],
-        accumulated_one_liners: list[str],
+        accumulated_summaries: list[str],
         document_metadata: dict | None,
         timeout_ms: int,
     ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int]:
@@ -521,7 +524,7 @@ class ProfilingService:
 
         Args:
             chunks: Chunks in this final batch
-            accumulated_one_liners: One-liners from all previous batches
+            accumulated_summaries: Summaries from all previous batches
             document_metadata: Optional document metadata
             timeout_ms: Timeout for LLM call
 
@@ -536,9 +539,9 @@ class ProfilingService:
 
         user_content = "This is the FINAL batch of chunks for this document.\n\n"
 
-        if accumulated_one_liners:
-            user_content += "One-liners from previous chunks:\n"
-            user_content += "\n".join(accumulated_one_liners)
+        if accumulated_summaries:
+            user_content += "Summaries from previous chunks:\n"
+            user_content += "\n".join(accumulated_summaries)
             user_content += "\n\n"
 
         user_content += f"Profile these final {len(chunks)} chunks:\n\n"
@@ -547,8 +550,8 @@ class ProfilingService:
         # Build response instructions - only request queries if enabled
         user_content += (
             "\n\nRespond with a JSON object containing:\n"
-            "1. 'chunks': array of profiles for these chunks (index, one_liner, summary, keywords, topics)\n"
-            "2. 'synopsis': 2-4 sentence summary of the ENTIRE document based on all one-liners\n"
+            "1. 'chunks': array of profiles for these chunks (index, summary, keywords, topics)\n"
+            "2. 'synopsis': 2-4 sentence summary of the ENTIRE document based on all summaries\n"
             "3. 'document_type': narrative, transactional, technical, or conversational\n"
             "4. 'capability_manifest': what questions this document can answer"
         )
@@ -563,7 +566,7 @@ class ProfilingService:
 
         # Validate input doesn't exceed max tokens
         error_result = self._validate_input_tokens(
-            user_content, f"final batch ({len(chunks)} chunks, {len(accumulated_one_liners)} accumulated)"
+            user_content, f"final batch ({len(chunks)} chunks, {len(accumulated_summaries)} accumulated)"
         )
         if error_result:
             failed_results = [
@@ -613,7 +616,6 @@ class ProfilingService:
                 response_chunk = final_response.chunks[i]
             if response_chunk:
                 profile = ChunkProfile(
-                    one_liner=response_chunk.one_liner,
                     summary=response_chunk.summary,
                     keywords=response_chunk.keywords,
                     topics=response_chunk.topics,

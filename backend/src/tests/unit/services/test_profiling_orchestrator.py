@@ -83,8 +83,13 @@ def create_mock_chunk(chunk_id: str, index: int, content: str):
 
 
 class TestProfilingModeSelection:
-    """Tests for profiling mode selection logic."""
+    """Tests for profiling mode selection logic.
 
+    NOTE: Unified profiling is temporarily disabled (see TODO in _choose_profiling_mode).
+    Tests that expect FULL_DOCUMENT mode are skipped until re-enabled.
+    """
+
+    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
     def test_small_document_uses_full_doc(self, orchestrator, mock_settings):
         """Documents under threshold use full-document profiling."""
         mock_settings.profiling_full_doc_max_tokens = 4000
@@ -97,6 +102,7 @@ class TestProfilingModeSelection:
         mode = orchestrator._choose_profiling_mode(5000)
         assert mode == ProfilingMode.CHUNK_AGGREGATION
 
+    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
     def test_exactly_threshold_uses_full_doc(self, orchestrator, mock_settings):
         """Documents at exactly threshold use full-document."""
         mock_settings.profiling_full_doc_max_tokens = 4000
@@ -137,6 +143,7 @@ class TestRunForDocument:
         assert "not found" in result.error
         assert result.document_id == "nonexistent-id"
 
+    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
     @pytest.mark.asyncio
     async def test_unified_profiling_success(self, orchestrator, mock_db, mock_settings):
         """Test successful unified profiling path for small documents."""
@@ -157,15 +164,13 @@ class TestRunForDocument:
             chunks=[
                 UnifiedChunkProfile(
                     index=0,
-                    one_liner="Explains short content",
-                    summary="Detailed summary of chunk 1",
+                    summary="Explains short content with specific details",
                     keywords=["short", "content"],
                     topics=["testing"],
                 ),
                 UnifiedChunkProfile(
                     index=1,
-                    one_liner="Covers more content",
-                    summary="Detailed summary of chunk 2",
+                    summary="Covers more content with examples",
                     keywords=["more", "content"],
                     topics=["testing"],
                 ),
@@ -205,7 +210,7 @@ class TestRunForDocument:
 
         Large documents use profile_chunks_incremental() which eliminates
         the separate aggregation LLM call by having the final batch generate
-        document-level metadata from accumulated one-liners.
+        document-level metadata from accumulated summaries.
         """
         doc = create_mock_document()
         chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}") for i in range(20)]
@@ -216,7 +221,7 @@ class TestRunForDocument:
         mock_db.execute.return_value = mock_result
 
         doc_profile = DocumentProfile(
-            synopsis="Incremental synopsis from one-liners",
+            synopsis="Incremental synopsis from accumulated summaries",
             document_type=DocumentType.NARRATIVE,
             capability_manifest=CapabilityManifest(),
         )
@@ -225,8 +230,7 @@ class TestRunForDocument:
                 chunk_id=f"c{i}",
                 chunk_index=i,
                 profile=ChunkProfile(
-                    one_liner=f"One-liner {i}",
-                    summary=f"Summary {i}",
+                    summary=f"Summary {i} with specific details",
                     keywords=[],
                     topics=[],
                 ),
@@ -246,7 +250,7 @@ class TestRunForDocument:
 
         assert result.success is True
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
-        assert result.document_profile.synopsis == "Incremental synopsis from one-liners"
+        assert result.document_profile.synopsis == "Incremental synopsis from accumulated summaries"
         # Verify queries were persisted
         assert mock_db.add.call_count == 2
 
@@ -269,8 +273,8 @@ class TestPersistResults:
     """Tests for result persistence."""
 
     @pytest.mark.asyncio
-    async def test_persist_success_with_one_liner(self, orchestrator, mock_db):
-        """Test persisting successful profiling results including one_liner."""
+    async def test_persist_success(self, orchestrator, mock_db):
+        """Test persisting successful profiling results."""
         doc = create_mock_document()
         chunks = [
             create_mock_chunk("c1", 0, "Content 1"),
@@ -289,8 +293,7 @@ class TestPersistResults:
                 chunk_id="c1",
                 chunk_index=0,
                 profile=ChunkProfile(
-                    one_liner="Explains API basics",
-                    summary="Sum1",
+                    summary="Explains API basics with OAuth examples",
                     keywords=["k1"],
                     topics=["t1"],
                 ),
@@ -300,8 +303,7 @@ class TestPersistResults:
                 chunk_id="c2",
                 chunk_index=1,
                 profile=ChunkProfile(
-                    one_liner="Covers advanced usage",
-                    summary="Sum2",
+                    summary="Covers advanced usage patterns",
                     keywords=["k2"],
                     topics=["t2"],
                 ),
@@ -316,15 +318,14 @@ class TestPersistResults:
         assert call_kwargs["synopsis"] == "Test synopsis"
         assert call_kwargs["document_type"] == "technical"
 
-        # Verify one_liner is passed to set_profile
+        # Verify summary is passed to set_profile
         chunks[0].set_profile.assert_called_once()
         c1_call_kwargs = chunks[0].set_profile.call_args[1]
-        assert c1_call_kwargs["one_liner"] == "Explains API basics"
-        assert c1_call_kwargs["summary"] == "Sum1"
+        assert c1_call_kwargs["summary"] == "Explains API basics with OAuth examples"
 
         chunks[1].set_profile.assert_called_once()
         c2_call_kwargs = chunks[1].set_profile.call_args[1]
-        assert c2_call_kwargs["one_liner"] == "Covers advanced usage"
+        assert c2_call_kwargs["summary"] == "Covers advanced usage patterns"
 
         mock_db.commit.assert_called_once()
 
@@ -342,7 +343,7 @@ class TestPersistResults:
             ChunkProfileResult(
                 chunk_id="c1",
                 chunk_index=0,
-                profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
+                profile=ChunkProfile(summary="", keywords=[], topics=[]),
                 success=False,
                 error="Failed",
             ),
@@ -477,15 +478,13 @@ class TestUnifiedToChunkResults:
             chunks=[
                 UnifiedChunkProfile(
                     index=0,
-                    one_liner="First chunk summary",
-                    summary="Detailed first",
+                    summary="First chunk explains OAuth2 flow",
                     keywords=["k1"],
                     topics=["t1"],
                 ),
                 UnifiedChunkProfile(
                     index=1,
-                    one_liner="Second chunk summary",
-                    summary="Detailed second",
+                    summary="Second chunk covers token refresh",
                     keywords=["k2"],
                     topics=["t2"],
                 ),
@@ -504,10 +503,10 @@ class TestUnifiedToChunkResults:
 
         assert len(results) == 2
         assert results[0].chunk_id == "c1"
-        assert results[0].profile.one_liner == "First chunk summary"
+        assert results[0].profile.summary == "First chunk explains OAuth2 flow"
         assert results[0].success is True
         assert results[1].chunk_id == "c2"
-        assert results[1].profile.one_liner == "Second chunk summary"
+        assert results[1].profile.summary == "Second chunk covers token refresh"
 
     def test_unified_to_chunk_results_missing_chunk(self, orchestrator):
         """Test handling when unified response is missing a chunk."""
@@ -518,8 +517,7 @@ class TestUnifiedToChunkResults:
             chunks=[
                 UnifiedChunkProfile(
                     index=0,
-                    one_liner="Only first",
-                    summary="First",
+                    summary="Only first chunk has profile",
                     keywords=[],
                     topics=[],
                 ),
@@ -576,6 +574,7 @@ class TestHelperMethods:
 class TestQuerySynthesisDisabled:
     """Tests for query synthesis disabled scenarios."""
 
+    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
     @pytest.mark.asyncio
     async def test_queries_not_persisted_when_disabled(self, orchestrator, mock_db, mock_settings):
         """Test that queries are not persisted when query synthesis is disabled."""
@@ -594,8 +593,7 @@ class TestQuerySynthesisDisabled:
             chunks=[
                 UnifiedChunkProfile(
                     index=0,
-                    one_liner="One liner",
-                    summary="Summary",
+                    summary="Summary with specific details",
                     keywords=[],
                     topics=[],
                 ),

@@ -60,15 +60,13 @@ class TestUnifiedProfiling:
             "chunks": [
                 {
                     "index": 0,
-                    "one_liner": "Explains REST API basics",
-                    "summary": "Introduction to REST API design",
+                    "summary": "Explains REST API basics",
                     "keywords": ["REST", "API"],
                     "topics": ["web development"],
                 },
                 {
                     "index": 1,
-                    "one_liner": "Covers authentication methods",
-                    "summary": "Authentication and authorization patterns",
+                    "summary": "Covers authentication methods",
                     "keywords": ["OAuth", "JWT"],
                     "topics": ["security"],
                 },
@@ -102,8 +100,8 @@ class TestUnifiedProfiling:
         assert unified is not None
         assert unified.synopsis == "A technical document about API design patterns."
         assert len(unified.chunks) == 2
-        assert unified.chunks[0].one_liner == "Explains REST API basics"
-        assert unified.chunks[1].one_liner == "Covers authentication methods"
+        assert unified.chunks[0].summary == "Explains REST API basics"
+        assert unified.chunks[1].summary == "Covers authentication methods"
         assert len(unified.synthesized_queries) == 2
         assert "API design" in unified.capability_manifest.answers_questions_about
         mock_side_call_service.call.assert_called_once()
@@ -179,17 +177,15 @@ class TestChunkProfiling:
 
     @pytest.mark.asyncio
     async def test_profile_chunks_success(self, profiling_service, mock_side_call_service):
-        """Test successful chunk profiling with one_liner."""
+        """Test successful chunk profiling with summary."""
         llm_response = json.dumps([
             {
-                "one_liner": "Covers user authentication",
-                "summary": "First chunk about users",
+                "summary": "Covers user authentication",
                 "keywords": ["user", "auth"],
                 "topics": ["security"],
             },
             {
-                "one_liner": "Explains API endpoints",
-                "summary": "Second chunk about APIs",
+                "summary": "Explains API endpoints",
                 "keywords": ["REST", "HTTP"],
                 "topics": ["integration"],
             },
@@ -208,11 +204,10 @@ class TestChunkProfiling:
         assert len(results) == 2
         assert results[0].success is True
         assert results[0].chunk_id == "c1"
-        assert results[0].profile.one_liner == "Covers user authentication"
-        assert results[0].profile.summary == "First chunk about users"
+        assert results[0].profile.summary == "Covers user authentication"
         assert "user" in results[0].profile.keywords
         assert results[1].success is True
-        assert results[1].profile.one_liner == "Explains API endpoints"
+        assert results[1].profile.summary == "Explains API endpoints"
         mock_side_call_service.call.assert_called_once()
         call_kwargs = mock_side_call_service.call.call_args[1]
         assert call_kwargs["system_prompt"] == CHUNK_PROFILE_SYSTEM_PROMPT
@@ -232,7 +227,7 @@ class TestChunkProfiling:
 
         def make_response(call_count):
             profiles = [
-                {"one_liner": f"One-liner {i}", "summary": f"Profile {i}", "keywords": [], "topics": []}
+                {"summary": f"Profile {i}", "keywords": [], "topics": []}
                 for i in range(2)
             ]
             return SideCallResult(content=json.dumps(profiles), success=True, tokens_used=100)
@@ -271,13 +266,11 @@ class TestChunkProfiling:
         assert tokens_used == 0
 
     @pytest.mark.asyncio
-    async def test_profile_chunks_truncates_long_data(self, profiling_service, mock_side_call_service):
-        """Test that excessively long profile data is truncated."""
-        long_one_liner = "x" * 200
+    async def test_profile_chunks_truncates_long_lists(self, profiling_service, mock_side_call_service):
+        """Test that excessively long keywords/topics lists are truncated."""
         long_summary = "y" * 1000
         long_keywords = [f"kw{i}" for i in range(50)]
         llm_response = json.dumps([{
-            "one_liner": long_one_liner,
             "summary": long_summary,
             "keywords": long_keywords,
             "topics": [f"t{i}" for i in range(20)],
@@ -287,13 +280,11 @@ class TestChunkProfiling:
         )
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
-        results, tokens_used = await profiling_service.profile_chunks(chunks)
+        results, _ = await profiling_service.profile_chunks(chunks)
 
-        assert len(results[0].profile.one_liner) <= 100
         assert len(results[0].profile.summary) <= 500
         assert len(results[0].profile.keywords) <= 15
         assert len(results[0].profile.topics) <= 10
-        assert tokens_used == 500
 
 
 class TestInputValidation:
@@ -339,7 +330,7 @@ class TestIncrementalProfiling:
     """Tests for profile_chunks_incremental method (SHU-582).
 
     This method eliminates the separate aggregation LLM call by having
-    the final batch generate document-level metadata from accumulated one-liners.
+    the final batch generate document-level metadata from accumulated summaries.
     """
 
     @pytest.mark.asyncio
@@ -353,15 +344,13 @@ class TestIncrementalProfiling:
             "chunks": [
                 {
                     "index": 0,
-                    "one_liner": "Explains OAuth2 flow",
-                    "summary": "OAuth2 authorization code flow details",
+                    "summary": "Explains OAuth2 flow",
                     "keywords": ["OAuth2", "PKCE"],
                     "topics": ["authentication"],
                 },
                 {
                     "index": 1,
-                    "one_liner": "Covers token refresh",
-                    "summary": "Token refresh and rotation patterns",
+                    "summary": "Covers token refresh",
                     "keywords": ["refresh_token"],
                     "topics": ["token_management"],
                 },
@@ -398,8 +387,8 @@ class TestIncrementalProfiling:
 
         assert len(chunk_results) == 2
         assert chunk_results[0].success is True
-        assert chunk_results[0].profile.one_liner == "Explains OAuth2 flow"
-        assert chunk_results[1].profile.one_liner == "Covers token refresh"
+        assert chunk_results[0].profile.summary == "Explains OAuth2 flow"
+        assert chunk_results[1].profile.summary == "Covers token refresh"
 
         assert doc_profile is not None
         assert doc_profile.synopsis == "Technical guide covering OAuth2 authentication."
@@ -422,14 +411,12 @@ class TestIncrementalProfiling:
         # First batch response (regular batch)
         batch1_response = json.dumps([
             {
-                "one_liner": "Batch 1 chunk 0",
-                "summary": "Summary 0",
+                "summary": "Batch 1 chunk 0",
                 "keywords": ["k0"],
                 "topics": ["t0"],
             },
             {
-                "one_liner": "Batch 1 chunk 1",
-                "summary": "Summary 1",
+                "summary": "Batch 1 chunk 1",
                 "keywords": ["k1"],
                 "topics": ["t1"],
             },
@@ -440,8 +427,7 @@ class TestIncrementalProfiling:
             "chunks": [
                 {
                     "index": 2,
-                    "one_liner": "Final batch chunk",
-                    "summary": "Summary 2",
+                    "summary": "Final batch chunk",
                     "keywords": ["k2"],
                     "topics": ["t2"],
                 },
@@ -470,9 +456,9 @@ class TestIncrementalProfiling:
         )
 
         assert len(chunk_results) == 3
-        assert chunk_results[0].profile.one_liner == "Batch 1 chunk 0"
-        assert chunk_results[1].profile.one_liner == "Batch 1 chunk 1"
-        assert chunk_results[2].profile.one_liner == "Final batch chunk"
+        assert chunk_results[0].profile.summary == "Batch 1 chunk 0"
+        assert chunk_results[1].profile.summary == "Batch 1 chunk 1"
+        assert chunk_results[2].profile.summary == "Final batch chunk"
 
         assert doc_profile is not None
         assert doc_profile.synopsis == "Synopsis from accumulated one-liners."
@@ -482,20 +468,20 @@ class TestIncrementalProfiling:
         assert mock_side_call_service.call.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_incremental_profiling_accumulates_one_liners(
+    async def test_incremental_profiling_accumulates_summaries(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test that one-liners are accumulated and passed to final batch."""
+        """Test that summaries are accumulated and passed to final batch."""
         mock_settings.chunk_profiling_batch_size = 2
 
         batch1_response = json.dumps([
-            {"one_liner": "First one-liner", "summary": "S1", "keywords": [], "topics": []},
-            {"one_liner": "Second one-liner", "summary": "S2", "keywords": [], "topics": []},
+            {"summary": "First summary", "keywords": [], "topics": []},
+            {"summary": "Second summary", "keywords": [], "topics": []},
         ])
 
         final_batch_response = json.dumps({
             "chunks": [
-                {"index": 2, "one_liner": "Third", "summary": "S3", "keywords": [], "topics": []},
+                {"index": 2, "summary": "Third", "keywords": [], "topics": []},
             ],
             "synopsis": "Test",
             "document_type": "narrative",
@@ -515,11 +501,11 @@ class TestIncrementalProfiling:
 
         await profiling_service.profile_chunks_incremental(chunks=chunks)
 
-        # Check that final batch call includes accumulated one-liners
+        # Check that final batch call includes accumulated summaries
         final_call = mock_side_call_service.call.call_args_list[1]
         user_content = final_call[1]["message_sequence"][0]["content"]
-        assert "First one-liner" in user_content
-        assert "Second one-liner" in user_content
+        assert "First summary" in user_content
+        assert "Second summary" in user_content
         assert "Chunk 0:" in user_content
         assert "Chunk 1:" in user_content
 
@@ -546,8 +532,8 @@ class TestIncrementalProfiling:
         mock_settings.chunk_profiling_batch_size = 2
 
         batch1_response = json.dumps([
-            {"one_liner": "One-liner 0", "summary": "S0", "keywords": [], "topics": []},
-            {"one_liner": "One-liner 1", "summary": "S1", "keywords": [], "topics": []},
+            {"summary": "Summary 0", "keywords": [], "topics": []},
+            {"summary": "Summary 1", "keywords": [], "topics": []},
         ])
 
         mock_side_call_service.call.side_effect = [
@@ -604,7 +590,7 @@ class TestIncrementalProfiling:
     ):
         """Test handling when a regular (non-final) batch fails.
 
-        Failed batches should not contribute one-liners to the accumulated context,
+        Failed batches should not contribute summaries to the accumulated context,
         but processing should continue to the final batch.
         """
         mock_settings.chunk_profiling_batch_size = 2
@@ -613,7 +599,7 @@ class TestIncrementalProfiling:
         # Final batch succeeds
         final_batch_response = json.dumps({
             "chunks": [
-                {"index": 2, "one_liner": "Final chunk", "summary": "S2", "keywords": [], "topics": []},
+                {"index": 2, "summary": "Final chunk", "keywords": [], "topics": []},
             ],
             "synopsis": "Synopsis from limited context.",
             "document_type": "narrative",
@@ -642,7 +628,7 @@ class TestIncrementalProfiling:
 
         # Final batch succeeded
         assert chunk_results[2].success is True
-        assert chunk_results[2].profile.one_liner == "Final chunk"
+        assert chunk_results[2].profile.summary == "Final chunk"
 
         # Document profile should still be generated (from limited context)
         assert doc_profile is not None
@@ -662,7 +648,7 @@ class TestFinalBatchPrompt:
 
         mock_side_call_service.call.return_value = SideCallResult(
             content=json.dumps({
-                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
                 "synopsis": "Test",
                 "document_type": "narrative",
                 "capability_manifest": {},
@@ -689,7 +675,7 @@ class TestFinalBatchPrompt:
 
         mock_side_call_service.call.return_value = SideCallResult(
             content=json.dumps({
-                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
                 "synopsis": "Test",
                 "document_type": "narrative",
                 "capability_manifest": {},
@@ -724,7 +710,7 @@ class TestQuerySynthesisToggle:
         mock_side_call_service.call.return_value = SideCallResult(
             content=json.dumps({
                 "synopsis": "Test",
-                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
                 "document_type": "narrative",
                 "capability_manifest": {},
             }),
@@ -750,7 +736,7 @@ class TestQuerySynthesisToggle:
         mock_side_call_service.call.return_value = SideCallResult(
             content=json.dumps({
                 "synopsis": "Test",
-                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
                 "document_type": "narrative",
                 "capability_manifest": {},
                 "synthesized_queries": ["Query 1"],
@@ -777,7 +763,7 @@ class TestQuerySynthesisToggle:
 
         mock_side_call_service.call.return_value = SideCallResult(
             content=json.dumps({
-                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
                 "synopsis": "Test",
                 "document_type": "narrative",
                 "capability_manifest": {},
@@ -809,7 +795,7 @@ class TestQuerySynthesisToggle:
 
         mock_side_call_service.call.return_value = SideCallResult(
             content=json.dumps({
-                "chunks": [{"index": 0, "one_liner": "Test", "summary": "S", "keywords": [], "topics": []}],
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
                 "synopsis": "Test",
                 "document_type": "narrative",
                 "capability_manifest": {},
@@ -831,3 +817,103 @@ class TestQuerySynthesisToggle:
         assert "3-20 queries" in system_prompt
         # User content should ask for queries
         assert "synthesized_queries" in user_content
+
+
+class TestProfileParserNullHandling:
+    """Tests for ProfileParser handling of null values from LLM responses (SHU-586)."""
+
+    @pytest.mark.asyncio
+    async def test_chunk_profiles_handles_null_values(self, profiling_service, mock_side_call_service):
+        """Test that chunk profiling handles null values in LLM response gracefully."""
+        # LLM returns explicit null values instead of missing keys
+        llm_response = json.dumps([
+            {
+                "index": 0,
+                "summary": None,
+                "keywords": None,
+                "topics": None,
+            },
+            {
+                "index": 1,
+                "summary": "Valid summary",
+                "keywords": ["keyword1"],
+                "topics": ["topic1"],
+            },
+        ])
+
+        mock_side_call_service.call.return_value = SideCallResult(
+            content=llm_response,
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [
+            ChunkData(chunk_id="c0", chunk_index=0, content="Content 0"),
+            ChunkData(chunk_id="c1", chunk_index=1, content="Content 1"),
+        ]
+
+        results, _ = await profiling_service.profile_chunks(chunks=chunks)
+
+        # Both chunks should succeed - null values coerced to empty strings/lists
+        assert len(results) == 2
+        assert all(r.success for r in results)
+
+        # First chunk should have empty values
+        assert results[0].profile.summary == ""
+        assert results[0].profile.keywords == []
+        assert results[0].profile.topics == []
+
+        # Second chunk should have actual values
+        assert results[1].profile.summary == "Valid summary"
+        assert results[1].profile.keywords == ["keyword1"]
+        assert results[1].profile.topics == ["topic1"]
+
+    @pytest.mark.asyncio
+    async def test_unified_profiling_handles_null_values(self, profiling_service, mock_side_call_service):
+        """Test that unified profiling handles null values in LLM response gracefully."""
+        # LLM returns explicit null values for some fields
+        llm_response = json.dumps({
+            "synopsis": "Valid synopsis",
+            "chunks": [
+                {
+                    "index": 0,
+                    "summary": None,
+                    "keywords": None,
+                    "topics": None,
+                },
+            ],
+            "document_type": "technical",
+            "capability_manifest": {
+                "answers_questions_about": None,
+                "provides_information_type": None,
+                "authority_level": None,
+                "completeness": None,
+                "question_domains": None,
+            },
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call.return_value = SideCallResult(
+            content=llm_response,
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+
+        result, _ = await profiling_service.profile_document_unified(chunks=chunks)
+
+        # Should succeed despite null values
+        assert result is not None
+        assert result.synopsis == "Valid synopsis"
+
+        # Chunk should have empty values
+        assert len(result.chunks) == 1
+        assert result.chunks[0].summary == ""
+        assert result.chunks[0].keywords == []
+        assert result.chunks[0].topics == []
+
+        # Capability manifest should use defaults
+        assert result.capability_manifest.answers_questions_about == []
+        assert result.capability_manifest.authority_level == "secondary"
+        assert result.capability_manifest.completeness == "partial"

@@ -70,13 +70,10 @@ class ChunkProfile(BaseModel):
     Used for retrieval-time filtering and LLM-scannable indexing.
     """
 
-    one_liner: str = Field(
-        default="",
-        description="Condensed summary (~50-80 chars) for agent scanning",
-    )
     summary: str = Field(
         ...,
-        description="Longer description of chunk content for retrieval ranking",
+        description="One-line summary with SPECIFIC content (names, figures, dates). "
+        "Used for agent scanning and synopsis accumulation.",
     )
     keywords: list[str] = Field(
         default_factory=list,
@@ -146,8 +143,11 @@ class UnifiedChunkProfile(BaseModel):
     """
 
     index: int = Field(..., description="Chunk index within the document")
-    one_liner: str = Field(..., description="Condensed summary (~50-80 chars) for agent scanning")
-    summary: str = Field(..., description="Longer description for retrieval ranking")
+    summary: str = Field(
+        ...,
+        description="One-line summary with SPECIFIC content (names, figures, dates). "
+        "Used for agent scanning and synopsis accumulation.",
+    )
     keywords: list[str] = Field(default_factory=list, description="Specific extractable terms")
     topics: list[str] = Field(default_factory=list, description="Conceptual categories")
 
@@ -180,7 +180,7 @@ class FinalBatchResponse(BaseModel):
     """
 
     chunks: list[UnifiedChunkProfile] = Field(default_factory=list, description="Per-chunk profiles for this batch")
-    synopsis: str = Field(..., description="2-4 sentence document summary derived from accumulated one-liners")
+    synopsis: str = Field(..., description="2-4 sentence document summary derived from accumulated summaries")
     document_type: str = Field(..., description="narrative, transactional, technical, conversational")
     capability_manifest: CapabilityManifest = Field(
         default_factory=CapabilityManifest,

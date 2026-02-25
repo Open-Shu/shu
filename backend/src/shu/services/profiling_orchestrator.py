@@ -218,6 +218,16 @@ class ProfilingOrchestrator:
 
     def _unified_to_chunk_results(self, unified, chunk_data: list[ChunkData]) -> list[ChunkProfileResult]:
         """Convert UnifiedProfilingResponse chunks to ChunkProfileResults."""
+        # Log warning if LLM returned fewer profiles than expected
+        if len(unified.chunks) < len(chunk_data):
+            returned_indices = sorted([c.index for c in unified.chunks])
+            logger.warning(
+                "unified_profile_count_mismatch",
+                chunks_expected=len(chunk_data),
+                profiles_returned=len(unified.chunks),
+                returned_indices=returned_indices,
+            )
+
         # Build index map from unified chunks
         unified_chunks_by_index = {c.index: c for c in unified.chunks}
 
@@ -234,7 +244,6 @@ class ProfilingOrchestrator:
                 unified_chunk = unified.chunks[i]
             if unified_chunk:
                 profile = ChunkProfile(
-                    one_liner=unified_chunk.one_liner,
                     summary=unified_chunk.summary,
                     keywords=unified_chunk.keywords,
                     topics=unified_chunk.topics,
@@ -252,7 +261,7 @@ class ProfilingOrchestrator:
                     ChunkProfileResult(
                         chunk_id=chunk.chunk_id,
                         chunk_index=chunk.chunk_index,
-                        profile=ChunkProfile(one_liner="", summary="", keywords=[], topics=[]),
+                        profile=ChunkProfile(summary="", keywords=[], topics=[]),
                         success=False,
                         error="No profile in unified response",
                     )
@@ -308,8 +317,10 @@ class ProfilingOrchestrator:
             ProfilingMode indicating which approach to use
 
         """
-        if doc_tokens <= self.settings.profiling_full_doc_max_tokens:
-            return ProfilingMode.FULL_DOCUMENT
+        # TODO(SHU-XXX): Temporarily disabled unified profiling to test incremental
+        # path with smaller batch sizes. Original logic:
+        # if doc_tokens <= self.settings.profiling_full_doc_max_tokens:
+        #     return ProfilingMode.FULL_DOCUMENT
         return ProfilingMode.CHUNK_AGGREGATION
 
     def _assemble_document_text(self, chunks: list[DocumentChunk]) -> str:
@@ -347,7 +358,6 @@ class ProfilingOrchestrator:
                     summary=result.profile.summary,
                     keywords=result.profile.keywords,
                     topics=result.profile.topics,
-                    one_liner=result.profile.one_liner,
                 )
 
         await self.db.commit()
