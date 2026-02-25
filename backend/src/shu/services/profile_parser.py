@@ -104,7 +104,6 @@ class ProfileParser:
             List of UnifiedChunkProfile with truncated fields
 
         """
-
         chunks = []
         for pos, chunk_data in enumerate(chunks_data):
             raw_index = chunk_data.get("index")
