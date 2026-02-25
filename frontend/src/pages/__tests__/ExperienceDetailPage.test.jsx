@@ -94,7 +94,7 @@ describe('ExperienceDetailPage', () => {
     api.extractDataFromResponse.mockReturnValue(responseData);
   };
 
-  test('Run button renders alongside Start Conversation when can_run=true', async () => {
+  test('Run button renders alongside follow-up question input when can_run=true', async () => {
     const experience = makeExperience({ can_run: true, result_preview: 'Some content' });
     setupWithExperiences([experience]);
 
@@ -109,9 +109,8 @@ describe('ExperienceDetailPage', () => {
     expect(runButton).toBeInTheDocument();
     expect(runButton).not.toBeDisabled();
 
-    // Start Conversation button should also be rendered
-    const conversationButton = screen.getByRole('button', { name: /start conversation/i });
-    expect(conversationButton).toBeInTheDocument();
+    // Follow-up question input should be rendered in place of the old Start Conversation button
+    expect(screen.getByPlaceholderText(/what would you like to know about this/i)).toBeInTheDocument();
   });
 
   test('Run button is disabled when can_run=false', async () => {
