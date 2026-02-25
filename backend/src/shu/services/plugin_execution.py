@@ -108,19 +108,21 @@ def _coerce_params(plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
         for key, value in params.items():
             if key in props and isinstance(value, str):
                 prop_def = props[key]
-                prop_type = prop_def.get("type")
+                raw_type = prop_def.get("type")
+                # Normalize to a list to handle both "integer" and ["integer", "null"]
+                prop_types = raw_type if isinstance(raw_type, list) else [raw_type]
 
-                if prop_type == "integer":
+                if "integer" in prop_types:
                     # Handle pure digits
                     if value.lstrip("-").isdigit():
                         coerced[key] = int(value)
-                elif prop_type == "number":
+                elif "number" in prop_types:
                     # Handle float format
                     try:
                         coerced[key] = float(value)
                     except ValueError:
                         pass
-                elif prop_type == "boolean":
+                elif "boolean" in prop_types:
                     # Handle string booleans
                     if value.lower() == "true":
                         coerced[key] = True

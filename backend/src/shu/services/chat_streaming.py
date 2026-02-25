@@ -447,11 +447,18 @@ class EnsembleStreamingHelper:
                         variant_index=variant_index,
                         tools_enabled=tools_enabled,
                     )
-                    # We only break if the adapters returned a final messages and no additional messages that need to be processed in another cycle.
-                    if final_message_event and final_message_event.content and not additional_messages:
+                    # Break as soon as we have a final answer — regardless of whether tool calls also
+                    # occurred in the same cycle. Reasoning models (e.g. Grok 4) can emit function
+                    # call items alongside their final message; continuing the loop would feed those
+                    # results back and cause infinite cycling.
+                    if final_message_event and final_message_event.content:
                         break
-                    if additional_messages:
-                        call_messages.messages += additional_messages
+                    # Safety: if the model produced neither a final answer nor any tool calls, stop
+                    # to avoid spinning indefinitely.
+                    if not additional_messages:
+                        break
+
+                    call_messages.messages += additional_messages
 
                 if final_message_event is None:
                     # This should not happen now that _stream_response raises exceptions,

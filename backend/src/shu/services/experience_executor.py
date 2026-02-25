@@ -682,11 +682,6 @@ class ExperienceExecutor:
 
         params = self._render_params(step.params_template, context)
 
-        # TODO: We need to change the way this plugin call is presented in the frontend:
-        #       - First we now have per-operation definitinons.
-        #       - Some parameters are not showing up.
-        #       - For actual retrievals, we need to have an LLM do the tool calls, which requires a new step type.
-
         # Inject KB IDs into __host overlay so KbCapability receives them
         if knowledge_base_ids:
             host_overlay = params.setdefault("__host", {})

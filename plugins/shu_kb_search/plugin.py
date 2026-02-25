@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -33,6 +35,17 @@ class _Result:
     ) -> "_Result":
         """Return an error result."""
         return cls("error", error={"code": code, "message": message, "details": (details or {})})
+
+
+@dataclass
+class _SearchParams:
+    """Validated, extracted parameters shared by search_chunks and search_documents."""
+
+    field: str
+    operator: str
+    value: Any
+    page: int
+    sort_order: str
 
 
 class KbSearchPlugin:
@@ -174,6 +187,7 @@ class KbSearchPlugin:
                 },
                 "value": {
                     "type": ["string", "array", "object", "null"],
+                    "items": {"type": "string"},
                     "description": (
                         "The search value. "
                         "String for 'eq', 'contains', 'icontains', 'has_key'. "
@@ -240,8 +254,6 @@ class KbSearchPlugin:
             ),
         }
 
-        # TODO: We need to change this so we don't have to redefine the overlap.
-
         if op == "search_chunks":
             return {
                 "type": "object",
@@ -269,7 +281,8 @@ class KbSearchPlugin:
                         ),
                     },
                     "value": {
-                        "type": ["string", "array", "null"],
+                        "type": ["string", "array"],
+                        "items": {"type": "string"},
                         "description": (
                             "String for 'eq', 'contains', 'icontains', 'has_key'. "
                             "List of strings for 'has_any'."
@@ -316,10 +329,14 @@ class KbSearchPlugin:
                         ),
                     },
                     "value": {
-                        "type": ["string", "object", "null"],
+                        "type": "string",
                         "description": (
-                            "String for 'eq', 'contains', 'icontains', 'has_key'. "
-                            "Dict for 'contains' or 'path_contains' on capability_manifest."
+                            "The search value. "
+                            "Always a plain string for text fields (title, content, synopsis) with any operator. "
+                            "For 'capability_manifest' with 'contains': a JSON-encoded dict string representing the subset to match. "
+                            "For 'capability_manifest' with 'path_contains': a JSON-encoded dict string with 'path' and 'value' keys, "
+                            "e.g. '{\"path\": \"answers_questions_about\", \"value\": [\"newsletter\"]}'. "
+                            "For 'capability_manifest' with 'has_key': the top-level key name as a plain string."
                         ),
                     },
                     "page": _page,
@@ -381,7 +398,37 @@ class KbSearchPlugin:
     # Private op handlers
     # ------------------------------------------------------------------
 
-    # TODO: Refactor re-used code.
+    def _parse_search_params(
+        self, params: dict[str, Any], op_name: str, valid_fields: str
+    ) -> "_SearchParams | _Result":
+        """Extract and validate the common search parameters shared by search_chunks and search_documents.
+
+        Args:
+            params: Raw plugin invocation parameters.
+            op_name: Operation name used in error messages.
+            valid_fields: Human-readable list of valid field names for error messages.
+
+        Returns:
+            ``_SearchParams`` on success, or a ``_Result`` error if validation fails.
+
+        """
+        field = params.get("field")
+        operator = params.get("operator")
+        value = params.get("value")
+        page = int(params.get("page") or 1)
+        sort_order = params.get("sort_order") or "asc"
+
+        if not field:
+            return _Result.err(
+                f"field is required for {op_name}. Valid fields: {valid_fields}.",
+                code="missing_parameter",
+            )
+        if not operator:
+            return _Result.err(f"operator is required for {op_name}.", code="missing_parameter")
+        if value is None:
+            return _Result.err(f"value is required for {op_name}.", code="missing_parameter")
+
+        return _SearchParams(field=field, operator=operator, value=value, page=page, sort_order=sort_order)
 
     async def _search_chunks(self, host: Any, params: dict[str, Any]) -> _Result:
         """Handle the search_chunks operation.
@@ -394,30 +441,14 @@ class KbSearchPlugin:
             Search results or a structured error.
 
         """
-        field = params.get("field")
-        operator = params.get("operator")
-        value = params.get("value")
-        page = int(params.get("page") or 1)
-        sort_order = params.get("sort_order") or "asc"
+        parsed = self._parse_search_params(params, "search_chunks", "content, summary, keywords, topics")
+        if isinstance(parsed, _Result):
+            return parsed
 
-        if not field:
-            return _Result.err(
-                "field is required for search_chunks. "
-                "Valid fields: content, summary, keywords, topics.",
-                code="missing_parameter",
-            )
-        if not operator:
-            return _Result.err(
-                "operator is required for search_chunks.",
-                code="missing_parameter",
-            )
-        if value is None:
-            return _Result.err(
-                "value is required for search_chunks.",
-                code="missing_parameter",
-            )
-
-        result = await host.kb.search_chunks(field=field, operator=operator, value=value, page=page, sort_order=sort_order)
+        result = await host.kb.search_chunks(
+            field=parsed.field, operator=parsed.operator, value=parsed.value,
+            page=parsed.page, sort_order=parsed.sort_order,
+        )
         return self._wrap_host_result(result)
 
     async def _search_documents(self, host: Any, params: dict[str, Any]) -> _Result:
@@ -431,30 +462,33 @@ class KbSearchPlugin:
             Search results or a structured error.
 
         """
-        field = params.get("field")
-        operator = params.get("operator")
-        value = params.get("value")
-        page = int(params.get("page") or 1)
-        sort_order = params.get("sort_order") or "asc"
+        parsed = self._parse_search_params(
+            params, "search_documents", "title, content, synopsis, capability_manifest"
+        )
+        if isinstance(parsed, _Result):
+            return parsed
 
-        if not field:
+        field, operator, value = parsed.field, parsed.operator, parsed.value
+
+        # value must be a string for all text fields; dicts are only valid for capability_manifest.
+        if isinstance(value, dict) and field != "capability_manifest":
             return _Result.err(
-                "field is required for search_documents. "
-                "Valid fields: title, content, synopsis, capability_manifest.",
-                code="missing_parameter",
-            )
-        if not operator:
-            return _Result.err(
-                "operator is required for search_documents.",
-                code="missing_parameter",
-            )
-        if value is None:
-            return _Result.err(
-                "value is required for search_documents.",
-                code="missing_parameter",
+                f"value must be a plain string when field is '{field}'. "
+                "Dicts are only valid for the 'capability_manifest' field.",
+                code="invalid_parameter",
             )
 
-        result = await host.kb.search_documents(field=field, operator=operator, value=value, page=page, sort_order=sort_order)
+        # For capability_manifest operators that expect a dict, accept a JSON-encoded string.
+        if field == "capability_manifest" and operator in ("contains", "path_contains") and isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                pass  # leave as string; backend will surface the error
+
+        result = await host.kb.search_documents(
+            field=field, operator=operator, value=value,
+            page=parsed.page, sort_order=parsed.sort_order,
+        )
         return self._wrap_host_result(result)
 
     async def _get_document(self, host: Any, params: dict[str, Any]) -> _Result:

@@ -153,7 +153,7 @@ async def test_completion_flow(responses_adapter, patch_plugin_calls):
     _evaluate_tool_call_events(events[0])
 
     final_event = events[1]
-    assert final_event.content == []  # empty events are ignored
+    assert final_event.content is None  # no message item in output — ignored by caller
 
     events = await responses_adapter.handle_provider_completion(OPENAI_COMPLETE_OUTPUT_PAYLOAD)
     assert len(events) == 1
@@ -213,121 +213,42 @@ async def test_inject_functions(responses_adapter):
                 "type": "function",
                 "name": "gmail_digest__list",
                 "description": "List emails",
-                "function": {
-                    "name": "gmail_digest__list",
-                    "description": "List emails",
-                    "parameters": {
-                        "$schema": "http://json-schema.org/draft-07/schema#",
-                        "type": "object",
-                        "properties": {
-                            "since_hours": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 3360,
-                                "default": 48,
-                                "x-ui": {
-                                    "help": "Look-back window in hours; used to build newer_than:Xd when query_filter is empty."
-                                },
-                            },
-                            "query_filter": {
-                                "type": ["string", "null"],
-                                "x-ui": {
-                                    "help": "Gmail search query (e.g., from:me is:unread). Requires appropriate Gmail read access. Leave blank to use newer_than derived from since_hours."
-                                },
-                            },
-                            "max_results": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 500,
-                                "default": 50,
-                                "x-ui": {"help": "Max messages to inspect (capped at 500)."},
-                            },
-                            "op": {
-                                "type": "string",
-                                "enum": ["list"],
-                                "const": "list",
-                                "default": "list",
-                            },
-                            "message_ids": {
-                                "type": ["array", "null"],
-                                "items": {"type": "string"},
-                                "x-ui": {"help": "For actions, provide Gmail message ids to modify."},
-                            },
-                            "preview": {
-                                "type": ["boolean", "null"],
-                                "default": None,
-                                "x-ui": {"help": "When true with approve=false, returns a plan without side effects."},
-                            },
-                            "approve": {
-                                "type": ["boolean", "null"],
-                                "default": None,
-                                "x-ui": {"help": "Set to true (with or without preview) to perform the action."},
-                            },
-                            "kb_id": {
-                                "type": ["string", "null"],
-                                "description": "Knowledge base ID to upsert digest KO into (required for op=digest)",
-                                "x-ui": {
-                                    "hidden": True,
-                                    "help": "Target Knowledge Base for digest output.",
-                                },
-                            },
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "since_hours": {"type": "integer", "minimum": 1, "maximum": 3360},
+                        "query_filter": {"type": "string"},
+                        "max_results": {"type": "integer", "minimum": 1, "maximum": 500},
+                        "op": {"type": "string", "enum": ["list"]},
+                        "message_ids": {"type": "array", "items": {"type": "string"}},
+                        "preview": {"type": "boolean"},
+                        "approve": {"type": "boolean"},
+                        "kb_id": {
+                            "type": "string",
+                            "description": "Knowledge base ID to upsert digest KO into (required for op=digest)",
                         },
-                        "required": ["op"],
-                        "additionalProperties": True,
                     },
+                    "required": ["op"],
+                    "additionalProperties": True,
                 },
             },
             {
                 "type": "function",
                 "name": "calendar_events__list",
                 "description": "Run calendar_events:list",
-                "function": {
-                    "name": "calendar_events__list",
-                    "description": "Run calendar_events:list",
-                    "parameters": {
-                        "$schema": "http://json-schema.org/draft-07/schema#",
-                        "type": "object",
-                        "properties": {
-                            "op": {
-                                "type": "string",
-                                "enum": ["list"],
-                                "const": "list",
-                                "default": "list",
-                            },
-                            "calendar_id": {
-                                "type": ["string", "null"],
-                                "default": "primary",
-                                "x-ui": {"help": "Calendar ID (default: primary)"},
-                            },
-                            "since_hours": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 336,
-                                "default": 48,
-                                "x-ui": {"help": "Look-back window in hours when no syncToken is present."},
-                            },
-                            "time_min": {
-                                "type": ["string", "null"],
-                                "x-ui": {"help": "ISO timeMin override (UTC)."},
-                            },
-                            "time_max": {
-                                "type": ["string", "null"],
-                                "x-ui": {"help": "ISO timeMax override (UTC)."},
-                            },
-                            "max_results": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 250,
-                                "default": 50,
-                            },
-                            "kb_id": {
-                                "type": ["string", "null"],
-                                "x-ui": {"hidden": True},
-                            },
-                        },
-                        "required": ["op"],
-                        "additionalProperties": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "op": {"type": "string", "enum": ["list"]},
+                        "calendar_id": {"type": "string"},
+                        "since_hours": {"type": "integer", "minimum": 1, "maximum": 336},
+                        "time_min": {"type": "string"},
+                        "time_max": {"type": "string"},
+                        "max_results": {"type": "integer", "minimum": 1, "maximum": 250},
+                        "kb_id": {"type": "string"},
                     },
+                    "required": ["op"],
+                    "additionalProperties": True,
                 },
             },
         ],

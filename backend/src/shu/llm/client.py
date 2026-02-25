@@ -543,7 +543,8 @@ class UnifiedLLMClient:
                     continue
                 yield provider_event
 
-            yield final_event
+            if final_event is not None:
+                yield final_event
 
         except (httpcore.RemoteProtocolError, httpx.RemoteProtocolError) as e:
             # Provider closed the stream early - this is often recoverable
