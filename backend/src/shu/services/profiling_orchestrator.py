@@ -1,31 +1,27 @@
-"""Document Profiling Orchestrator (SHU-343).
+"""Document Profiling Orchestrator.
 
 DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Loads document and chunk records from the database
-- Computes document token count for routing decisions
 - Manages profiling_status transitions (pending -> in_progress -> complete/failed)
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
-
-SHU-344 (ingestion integration) calls this orchestrator rather than
-re-implementing status or persistence logic.
+- Uses incremental profiling: batches produce chunk profiles, final batch generates doc metadata
 """
 
 import time
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
-from ..models.document import Document, DocumentChunk
+from ..models.document import Document, DocumentChunk, DocumentQuery
 from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
     ProfilingMode,
     ProfilingResult,
 )
-from ..utils.tokenization import estimate_tokens
 from .profiling_service import ProfilingService
 from .side_call_service import SideCallService
 
@@ -48,7 +44,10 @@ class ProfilingOrchestrator:
     async def run_for_document(self, document_id: str) -> ProfilingResult:
         """Run profiling for a document and its chunks.
 
-        This is the main entry point called by ingestion integration (SHU-344).
+        This is the main entry point called by ingestion integration.
+
+        Uses incremental profiling: batches produce chunk profiles, final batch
+        generates document-level metadata from accumulated summaries.
 
         Args:
             document_id: ID of the document to profile
@@ -68,7 +67,7 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 document_profile=None,
                 chunk_profiles=[],
-                profiling_mode=ProfilingMode.FULL_DOCUMENT,
+                profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=False,
                 error=f"Document {document_id} not found",
             )
@@ -87,22 +86,13 @@ class ProfilingOrchestrator:
             result = await self.db.execute(stmt)
             chunks = list(result.scalars().all())
 
-            # Get full document text for token counting
-            full_text = self._assemble_document_text(chunks)
-            doc_tokens = estimate_tokens(full_text)
-
-            # Determine profiling mode
-            mode = self._choose_profiling_mode(doc_tokens)
-
             logger.info(
                 "starting_document_profiling",
                 document_id=document_id,
-                doc_tokens=doc_tokens,
                 chunk_count=len(chunks),
-                mode=mode.value,
             )
 
-            # Always profile chunks (for retrieval)
+            # Prepare chunk data
             chunk_data = [
                 ChunkData(
                     chunk_id=c.id,
@@ -111,34 +101,47 @@ class ProfilingOrchestrator:
                 )
                 for c in chunks
             ]
-            chunk_results, chunk_tokens = await self.profiling_service.profile_chunks(chunk_data)
-            total_tokens += chunk_tokens
 
-            # Profile document based on mode
-            if mode == ProfilingMode.FULL_DOCUMENT:
-                doc_profile, llm_result = await self.profiling_service.profile_document(
-                    document_text=full_text,
-                    document_metadata={"title": document.title},
-                )
-                total_tokens += llm_result.tokens_used
-            else:
-                # Aggregate from chunk profiles
-                doc_profile, llm_result = await self.profiling_service.aggregate_chunk_profiles(
-                    chunk_profiles=chunk_results,
-                    document_metadata={"title": document.title},
-                )
-                total_tokens += llm_result.tokens_used
+            # Incremental profiling: batches produce chunk profiles,
+            # final batch generates document-level metadata from accumulated summaries
+            (
+                chunk_results,
+                doc_profile,
+                synthesized_queries,
+                tokens,
+            ) = await self.profiling_service.profile_chunks_incremental(
+                chunks=chunk_data,
+                document_metadata={"title": document.title},
+            )
+            total_tokens += tokens
 
             # Persist results
             await self._persist_results(document, chunks, doc_profile, chunk_results)
 
+            # Persist synthesized queries if enabled (even if empty, to delete stale queries on re-profile)
+            # Isolated from main try block so query failures don't mark profiling as failed
+            queries_created = 0
+            if doc_profile and self.settings.enable_query_synthesis:
+                try:
+                    queries_created = await self._persist_queries(document, synthesized_queries)
+                except Exception as e:
+                    logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
+
             duration_ms = int((time.time() - start_time) * 1000)
+
+            logger.info(
+                "profiling_complete",
+                document_id=document_id,
+                tokens_used=total_tokens,
+                queries_created=queries_created,
+                duration_ms=duration_ms,
+            )
 
             return ProfilingResult(
                 document_id=document_id,
                 document_profile=doc_profile,
                 chunk_profiles=chunk_results,
-                profiling_mode=mode,
+                profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=doc_profile is not None,
                 error=None if doc_profile else "Failed to generate document profile",
                 tokens_used=total_tokens,
@@ -154,29 +157,50 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 document_profile=None,
                 chunk_profiles=[],
-                profiling_mode=ProfilingMode.FULL_DOCUMENT,
+                profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=False,
                 error=str(e),
                 duration_ms=int((time.time() - start_time) * 1000),
             )
 
-    def _choose_profiling_mode(self, doc_tokens: int) -> ProfilingMode:
-        """Determine whether to use full-doc or chunk-aggregation profiling.
+    async def _persist_queries(self, document: Document, queries: list[str]) -> int:
+        """Persist synthesized queries to the database.
+
+        Deletes any existing queries for this document before creating new ones
+        to handle re-profiling scenarios.
 
         Args:
-            doc_tokens: Estimated token count of the full document
+            document: The document being profiled
+            queries: List of query strings
 
         Returns:
-            ProfilingMode indicating which approach to use
+            Number of queries created
 
         """
-        if doc_tokens <= self.settings.profiling_full_doc_max_tokens:
-            return ProfilingMode.FULL_DOCUMENT
-        return ProfilingMode.CHUNK_AGGREGATION
+        # Delete existing queries for this document (re-profiling case)
+        await self.db.execute(delete(DocumentQuery).where(DocumentQuery.document_id == document.id))
 
-    def _assemble_document_text(self, chunks: list[DocumentChunk]) -> str:
-        """Assemble full document text from chunks."""
-        return "\n\n".join(c.content for c in chunks)
+        queries_created = 0
+        for query_text in queries:
+            if query_text.strip():  # Skip empty queries
+                doc_query = DocumentQuery.create_for_document(
+                    document_id=document.id,
+                    knowledge_base_id=document.knowledge_base_id,
+                    query_text=query_text.strip(),
+                )
+                self.db.add(doc_query)
+                queries_created += 1
+
+        # Always commit to flush the DELETE even if no new queries were created
+        await self.db.commit()
+        if queries_created > 0:
+            logger.info(
+                "queries_persisted",
+                document_id=document.id,
+                queries_created=queries_created,
+            )
+
+        return queries_created
 
     async def _persist_results(
         self,

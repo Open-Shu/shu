@@ -96,6 +96,16 @@ async def _get_side_call_model_id(side_call_service: SideCallService) -> str | N
     return side_call_model.id if side_call_model else None
 
 
+async def _get_profiling_model_id(side_call_service: SideCallService) -> str | None:
+    """Return the dedicated profiling model ID, if any.
+
+    Uses get_dedicated_profiling_model() (not get_profiling_model()) to avoid
+    showing the "Profiling" indicator when falling back to the side-call model.
+    """
+    profiling_model = await side_call_service.get_dedicated_profiling_model()
+    return profiling_model.id if profiling_model else None
+
+
 def _apply_side_call_flag(
     configs: ModelConfigurationResponse | Iterable[ModelConfigurationResponse] | None,
     side_call_model_id: str | None,
@@ -111,6 +121,23 @@ def _apply_side_call_flag(
     for config in configs:
         if config is not None:
             config.is_side_call = config.id == side_call_model_id
+
+
+def _apply_profiling_flag(
+    configs: ModelConfigurationResponse | Iterable[ModelConfigurationResponse] | None,
+    profiling_model_id: str | None,
+) -> None:
+    """Mark configuration response objects with the is_profiling flag."""
+    if not configs:
+        return
+
+    if isinstance(configs, ModelConfigurationResponse):
+        configs.is_profiling = configs.id == profiling_model_id
+        return
+
+    for cfg in configs:
+        if cfg is not None:
+            cfg.is_profiling = cfg.id == profiling_model_id
 
 
 async def _handle_test_file_upload(
@@ -185,14 +212,20 @@ async def create_model_configuration(
         if getattr(config_data, "is_side_call_model", False):
             await side_call_service.set_side_call_model(config.id, current_user.id)
 
+        # If this model is marked for profiling, update the system setting
+        if getattr(config_data, "is_profiling_model", False):
+            await side_call_service.set_profiling_model(config.id, current_user.id)
+
         # Reload with relationships for response serialization
         config_with_relationships = await service.get_model_configuration(config.id, include_relationships=True)
 
         side_call_model_id = await _get_side_call_model_id(side_call_service)
+        profiling_model_id = await _get_profiling_model_id(side_call_service)
 
         # Convert to response format
         response_data = service._to_response(config_with_relationships)
         _apply_side_call_flag(response_data, side_call_model_id)
+        _apply_profiling_flag(response_data, profiling_model_id)
 
         # Use ShuResponse to ensure single-wrapped JSON envelope
         return ShuResponse.created(response_data)
@@ -251,8 +284,10 @@ async def list_model_configurations(
         )
 
         side_call_model_id = await _get_side_call_model_id(side_call_service)
+        profiling_model_id = await _get_profiling_model_id(side_call_service)
         if hasattr(result, "items"):
             _apply_side_call_flag(result.items, side_call_model_id)
+            _apply_profiling_flag(result.items, profiling_model_id)
             if not is_power_user:
                 for cfg in result.items:
                     if cfg is None:
@@ -307,7 +342,9 @@ async def get_model_configuration(
         side_call_service = _create_side_call_service(db)
         response_data = service._to_response(config)
         side_call_model_id = await _get_side_call_model_id(side_call_service)
+        profiling_model_id = await _get_profiling_model_id(side_call_service)
         _apply_side_call_flag(response_data, side_call_model_id)
+        _apply_profiling_flag(response_data, profiling_model_id)
 
         return SuccessResponse(data=response_data)
 
@@ -341,9 +378,10 @@ async def update_model_configuration(
         service = ModelConfigurationService(db)
         side_call_service = _create_side_call_service(db)
 
-        # Capture current side-call model before applying updates so we can
+        # Capture current model designations before applying updates so we can
         # decide whether this update should clear the designation.
         existing_side_call_model_id = await _get_side_call_model_id(side_call_service)
+        existing_profiling_model_id = await _get_profiling_model_id(side_call_service)
 
         config = await service.update_model_configuration(config_id, update_data)
 
@@ -367,12 +405,28 @@ async def update_model_configuration(
         ):
             await side_call_service.clear_side_call_model(current_user.id)
 
+        is_profiling_flag = getattr(update_data, "is_profiling_model", None)
+
+        # If this model is marked for profiling, update the system setting
+        if is_profiling_flag is True:
+            await side_call_service.set_profiling_model(config_id, current_user.id)
+        # If the flag is explicitly False and this config is currently the
+        # profiling model, clear the designation.
+        elif (
+            is_profiling_flag is False
+            and existing_profiling_model_id is not None
+            and existing_profiling_model_id == config_id
+        ):
+            await side_call_service.clear_profiling_model(current_user.id)
+
         # Reload with relationships to ensure they're available for serialization
         config_with_relationships = await service.get_model_configuration(config_id, include_relationships=True)
 
         response_data = service._to_response(config_with_relationships)
         side_call_model_id = await _get_side_call_model_id(side_call_service)
+        profiling_model_id = await _get_profiling_model_id(side_call_service)
         _apply_side_call_flag(response_data, side_call_model_id)
+        _apply_profiling_flag(response_data, profiling_model_id)
 
         return SuccessResponse(data=response_data)
 

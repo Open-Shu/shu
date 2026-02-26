@@ -29,9 +29,10 @@ class CapabilityManifest(TypedDict, total=False):
     """Structure for document capability manifest JSONB field.
 
     All fields are optional (total=False) since manifests may be partial.
+    The answers_questions_about field should contain SPECIFIC, DISTINGUISHING details.
     """
 
-    answers_questions_about: list[str]  # Topics the document can inform about
+    answers_questions_about: list[str]  # SPECIFIC topics with named entities, dates, figures
     provides_information_type: list[str]  # e.g., "facts", "opinions", "decisions"
     authority_level: str  # e.g., "primary", "secondary", "commentary"
     completeness: str  # e.g., "complete", "partial", "reference"
@@ -356,7 +357,7 @@ class DocumentChunk(BaseModel):
     chunk_metadata = Column(JSON, nullable=True)  # Flexible metadata storage for chunk-specific data
 
     # Shu RAG Chunk Profile (SHU-342)
-    # Summary: One-line description of chunk content for LLM-scannable index
+    # Summary: One-line description with specific content for agent scanning and retrieval
     summary = Column(Text, nullable=True)
     # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
     keywords = Column(JSONB, nullable=True)
@@ -408,7 +409,14 @@ class DocumentChunk(BaseModel):
         keywords: list[str],
         topics: list[str],
     ) -> None:
-        """Set the chunk profile data."""
+        """Set the chunk profile data.
+
+        Args:
+            summary: One-line description with specific content for agent scanning and retrieval.
+            keywords: Specific extractable terms (names, numbers, dates, technical terms).
+            topics: Conceptual categories the chunk relates to (broader themes, domains).
+
+        """
         self.summary = summary
         self.keywords = keywords
         self.topics = topics

@@ -1,7 +1,9 @@
 """
-Unit tests for ProfilingService (SHU-343).
+Unit tests for ProfilingService (SHU-343, SHU-582, SHU-589).
 
 Tests the pure LLM logic for document and chunk profiling, mocking the SideCallService.
+SHU-582 added incremental profiling for large documents.
+SHU-589 removed unified profiling, consolidating on incremental profiling only.
 """
 
 import json
@@ -11,12 +13,10 @@ import pytest
 
 from shu.schemas.profiling import (
     ChunkData,
-    ChunkProfile,
     DocumentType,
 )
 from shu.services.profiling_service import (
-    AGGREGATE_PROFILE_SYSTEM_PROMPT,
-    DOCUMENT_PROFILE_SYSTEM_PROMPT,
+    CHUNK_PROFILE_SYSTEM_PROMPT,
     ProfilingService,
 )
 from shu.services.side_call_service import SideCallResult
@@ -26,17 +26,26 @@ from shu.services.side_call_service import SideCallResult
 def mock_settings():
     """Mock settings with profiling configuration."""
     settings = MagicMock()
-    settings.profiling_timeout_seconds = 60
+    settings.profiling_timeout_seconds = 180
+    settings.query_synthesis_timeout_seconds = 240
     settings.chunk_profiling_batch_size = 5
-    settings.profiling_full_doc_max_tokens = 4000
     settings.profiling_max_input_tokens = 8000
+    settings.query_synthesis_min_queries = 3
+    settings.query_synthesis_max_queries = 20
+    settings.enable_query_synthesis = True  # Explicit default for tests
     return settings
 
 
 @pytest.fixture
 def mock_side_call_service():
-    """Mock SideCallService for unit testing."""
-    return AsyncMock()
+    """Mock SideCallService for unit testing.
+
+    Mocks call_for_profiling which is the dedicated profiling method.
+    """
+    mock = AsyncMock()
+    # Ensure call_for_profiling is properly mocked
+    mock.call_for_profiling = AsyncMock()
+    return mock
 
 
 @pytest.fixture
@@ -45,130 +54,27 @@ def profiling_service(mock_side_call_service, mock_settings):
     return ProfilingService(mock_side_call_service, mock_settings)
 
 
-class TestDocumentProfiling:
-    """Tests for profile_document method."""
-
-    @pytest.mark.asyncio
-    async def test_profile_document_success(self, profiling_service, mock_side_call_service):
-        """Test successful document profiling."""
-        llm_response = json.dumps(
-            {
-                "synopsis": "A technical document about API design patterns.",
-                "document_type": "technical",
-                "capability_manifest": {
-                    "answers_questions_about": ["API design", "REST conventions"],
-                    "provides_information_type": ["instructions", "facts"],
-                    "authority_level": "primary",
-                    "completeness": "complete",
-                    "question_domains": ["what", "how"],
-                },
-            }
-        )
-        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=150)
-
-        profile, result = await profiling_service.profile_document("Sample document text")
-
-        assert result.success is True
-        assert profile is not None
-        assert profile.synopsis == "A technical document about API design patterns."
-        assert profile.document_type == DocumentType.TECHNICAL
-        assert "API design" in profile.capability_manifest.answers_questions_about
-        mock_side_call_service.call.assert_called_once()
-        call_kwargs = mock_side_call_service.call.call_args[1]
-        assert call_kwargs["system_prompt"] == DOCUMENT_PROFILE_SYSTEM_PROMPT
-
-    @pytest.mark.asyncio
-    async def test_profile_document_with_metadata(self, profiling_service, mock_side_call_service):
-        """Test profiling includes document metadata."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content='{"synopsis":"Test","document_type":"narrative","capability_manifest":{}}',
-            success=True,
-            tokens_used=100,
-        )
-
-        await profiling_service.profile_document(
-            "Document text",
-            document_metadata={"title": "My Doc", "source": "email"},
-        )
-
-        call_kwargs = mock_side_call_service.call.call_args[1]
-        user_message = call_kwargs["message_sequence"][0]["content"]
-        assert "My Doc" in user_message
-        assert "email" in user_message
-
-    @pytest.mark.asyncio
-    async def test_profile_document_llm_failure(self, profiling_service, mock_side_call_service):
-        """Test handling of LLM call failure."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content="", success=False, error_message="Rate limited"
-        )
-
-        profile, result = await profiling_service.profile_document("Document text")
-
-        assert result.success is False
-        assert profile is None
-        assert result.error_message == "Rate limited"
-
-    @pytest.mark.asyncio
-    async def test_profile_document_invalid_json(self, profiling_service, mock_side_call_service):
-        """Test handling of invalid JSON response."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content="This is not valid JSON", success=True, tokens_used=50
-        )
-
-        profile, result = await profiling_service.profile_document("Document text")
-
-        assert result.success is True  # LLM call succeeded
-        assert profile is None  # But parsing failed
-
-    @pytest.mark.asyncio
-    async def test_profile_document_markdown_json(self, profiling_service, mock_side_call_service):
-        """Test parsing JSON wrapped in markdown code blocks."""
-        llm_response = """```json
-{"synopsis":"Wrapped in code blocks","document_type":"narrative","capability_manifest":{}}
-```"""
-        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=100)
-
-        profile, result = await profiling_service.profile_document("Document text")
-
-        assert profile is not None
-        assert profile.synopsis == "Wrapped in code blocks"
-
-    @pytest.mark.asyncio
-    async def test_profile_document_unknown_type_defaults(self, profiling_service, mock_side_call_service):
-        """Test fallback to NARRATIVE for unknown document types."""
-        mock_side_call_service.call.return_value = SideCallResult(
-            content='{"synopsis":"Test","document_type":"unknown_type","capability_manifest":{}}',
-            success=True,
-            tokens_used=50,
-        )
-
-        profile, _ = await profiling_service.profile_document("Document text")
-
-        assert profile.document_type == DocumentType.NARRATIVE
-
-
 class TestChunkProfiling:
     """Tests for profile_chunks method."""
 
     @pytest.mark.asyncio
     async def test_profile_chunks_success(self, profiling_service, mock_side_call_service):
-        """Test successful chunk profiling."""
-        llm_response = json.dumps(
-            [
-                {
-                    "summary": "First chunk about users",
-                    "keywords": ["user", "auth"],
-                    "topics": ["security"],
-                },
-                {
-                    "summary": "Second chunk about APIs",
-                    "keywords": ["REST", "HTTP"],
-                    "topics": ["integration"],
-                },
-            ]
+        """Test successful chunk profiling with summary."""
+        llm_response = json.dumps([
+            {
+                "summary": "Covers user authentication",
+                "keywords": ["user", "auth"],
+                "topics": ["security"],
+            },
+            {
+                "summary": "Explains API endpoints",
+                "keywords": ["REST", "HTTP"],
+                "topics": ["integration"],
+            },
+        ])
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=llm_response, success=True, tokens_used=200
         )
-        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=200)
 
         chunks = [
             ChunkData(chunk_id="c1", chunk_index=0, content="User auth content"),
@@ -180,10 +86,13 @@ class TestChunkProfiling:
         assert len(results) == 2
         assert results[0].success is True
         assert results[0].chunk_id == "c1"
-        assert results[0].profile.summary == "First chunk about users"
+        assert results[0].profile.summary == "Covers user authentication"
         assert "user" in results[0].profile.keywords
         assert results[1].success is True
-        assert results[1].chunk_id == "c2"
+        assert results[1].profile.summary == "Explains API endpoints"
+        mock_side_call_service.call_for_profiling.assert_called_once()
+        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
+        assert call_kwargs["system_prompt"] == CHUNK_PROFILE_SYSTEM_PROMPT
 
     @pytest.mark.asyncio
     async def test_profile_chunks_empty_list(self, profiling_service, mock_side_call_service):
@@ -191,36 +100,43 @@ class TestChunkProfiling:
         results, tokens_used = await profiling_service.profile_chunks([])
         assert results == []
         assert tokens_used == 0
-        mock_side_call_service.call.assert_not_called()
+        mock_side_call_service.call_for_profiling.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_profile_chunks_batching(self, profiling_service, mock_side_call_service, mock_settings):
         """Test that chunks are processed in batches."""
         mock_settings.chunk_profiling_batch_size = 2
 
-        # Mock returns profiles for batch
         def make_response(call_count):
-            profiles = [{"summary": f"Profile {i}", "keywords": [], "topics": []} for i in range(2)]
+            profiles = [
+                {"summary": f"Profile {i}", "keywords": [], "topics": []}
+                for i in range(2)
+            ]
             return SideCallResult(content=json.dumps(profiles), success=True, tokens_used=100)
 
-        mock_side_call_service.call.side_effect = [
+        mock_side_call_service.call_for_profiling.side_effect = [
             make_response(0),
             make_response(1),
             make_response(2),
         ]
 
-        chunks = [ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}") for i in range(5)]
+        chunks = [
+            ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}")
+            for i in range(5)
+        ]
         results, tokens_used = await profiling_service.profile_chunks(chunks)
 
         # Should have 3 calls: 2+2+1 chunks
-        assert mock_side_call_service.call.call_count == 3
+        assert mock_side_call_service.call_for_profiling.call_count == 3
         assert len(results) == 5
         assert tokens_used == 300  # 100 per batch * 3 batches
 
     @pytest.mark.asyncio
     async def test_profile_chunks_llm_failure(self, profiling_service, mock_side_call_service):
         """Test handling of LLM failure during chunk profiling."""
-        mock_side_call_service.call.return_value = SideCallResult(content="", success=False, error_message="Timeout")
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content="", success=False, error_message="Timeout"
+        )
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
         results, tokens_used = await profiling_service.profile_chunks(chunks)
@@ -229,113 +145,535 @@ class TestChunkProfiling:
         assert results[0].success is False
         assert results[0].error == "Timeout"
         assert results[0].profile.summary == ""
-        assert tokens_used == 0  # No tokens used on failure
+        assert tokens_used == 0
 
     @pytest.mark.asyncio
-    async def test_profile_chunks_truncates_long_data(self, profiling_service, mock_side_call_service):
-        """Test that excessively long profile data is truncated."""
-        long_summary = "x" * 1000
+    async def test_profile_chunks_truncates_long_lists(self, profiling_service, mock_side_call_service):
+        """Test that excessively long keywords/topics lists are truncated."""
+        long_summary = "y" * 1000
         long_keywords = [f"kw{i}" for i in range(50)]
-        llm_response = json.dumps(
-            [
-                {
-                    "summary": long_summary,
-                    "keywords": long_keywords,
-                    "topics": [f"t{i}" for i in range(20)],
-                }
-            ]
+        llm_response = json.dumps([{
+            "summary": long_summary,
+            "keywords": long_keywords,
+            "topics": [f"t{i}" for i in range(20)],
+        }])
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=llm_response, success=True, tokens_used=500
         )
-        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=500)
 
         chunks = [ChunkData(chunk_id="c1", chunk_index=0, content="Content")]
-        results, tokens_used = await profiling_service.profile_chunks(chunks)
+        results, _ = await profiling_service.profile_chunks(chunks)
 
         assert len(results[0].profile.summary) <= 500
         assert len(results[0].profile.keywords) <= 15
         assert len(results[0].profile.topics) <= 10
-        assert tokens_used == 500
 
 
-class TestAggregateProfiles:
-    """Tests for aggregate_chunk_profiles method."""
+class TestInputValidation:
+    """Tests for input token validation."""
 
     @pytest.mark.asyncio
-    async def test_aggregate_profiles_success(self, profiling_service, mock_side_call_service):
-        """Test successful aggregation of chunk profiles."""
-        from shu.schemas.profiling import ChunkProfileResult
+    async def test_chunk_profiling_rejects_oversized_batch(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test that oversized chunk batch is rejected."""
+        mock_settings.profiling_max_input_tokens = 100
 
-        llm_response = json.dumps(
-            {
-                "synopsis": "Aggregated document about APIs and security.",
-                "document_type": "technical",
-                "capability_manifest": {
-                    "answers_questions_about": ["APIs", "security"],
-                    "provides_information_type": ["instructions"],
-                    "authority_level": "primary",
-                    "completeness": "complete",
-                    "question_domains": ["how"],
+        large_content = "word " * 500
+        chunks = [ChunkData(chunk_id="c1", chunk_index=0, content=large_content)]
+        results, tokens_used = await profiling_service.profile_chunks(chunks)
+
+        assert len(results) == 1
+        assert results[0].success is False
+        assert "too large" in results[0].error.lower() or "exceeds" in results[0].error.lower()
+        assert tokens_used == 0
+
+
+class TestIncrementalProfiling:
+    """Tests for profile_chunks_incremental method (SHU-582).
+
+    This method eliminates the separate aggregation LLM call by having
+    the final batch generate document-level metadata from accumulated summaries.
+    """
+
+    @pytest.mark.asyncio
+    async def test_incremental_profiling_single_batch(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test incremental profiling with a single batch (becomes final batch)."""
+        mock_settings.chunk_profiling_batch_size = 10  # All chunks fit in one batch
+
+        llm_response = json.dumps({
+            "chunks": [
+                {
+                    "index": 0,
+                    "summary": "Explains OAuth2 flow",
+                    "keywords": ["OAuth2", "PKCE"],
+                    "topics": ["authentication"],
                 },
-            }
+                {
+                    "index": 1,
+                    "summary": "Covers token refresh",
+                    "keywords": ["refresh_token"],
+                    "topics": ["token_management"],
+                },
+            ],
+            "synopsis": "Technical guide covering OAuth2 authentication.",
+            "document_type": "technical",
+            "capability_manifest": {
+                "answers_questions_about": ["OAuth2", "authentication"],
+                "provides_information_type": ["instructions"],
+                "authority_level": "primary",
+                "completeness": "complete",
+                "question_domains": ["how", "what"],
+            },
+            "synthesized_queries": [
+                "How does OAuth2 PKCE flow work?",
+                "What is token refresh rotation?",
+            ],
+        })
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=llm_response, success=True, tokens_used=300
         )
-        mock_side_call_service.call.return_value = SideCallResult(content=llm_response, success=True, tokens_used=300)
 
-        chunk_profiles = [
-            ChunkProfileResult(
-                chunk_id="c1",
-                chunk_index=0,
-                profile=ChunkProfile(summary="About APIs", keywords=["REST"], topics=["integration"]),
-                success=True,
-            ),
-            ChunkProfileResult(
-                chunk_id="c2",
-                chunk_index=1,
-                profile=ChunkProfile(summary="About security", keywords=["auth"], topics=["security"]),
-                success=True,
-            ),
+        chunks = [
+            ChunkData(chunk_id="c1", chunk_index=0, content="OAuth2 content"),
+            ChunkData(chunk_id="c2", chunk_index=1, content="Token content"),
         ]
 
-        profile, result = await profiling_service.aggregate_chunk_profiles(chunk_profiles)
+        chunk_results, doc_profile, queries, tokens = (
+            await profiling_service.profile_chunks_incremental(
+                chunks=chunks,
+                document_metadata={"title": "Auth Guide"},
+            )
+        )
 
-        assert result.success is True
-        assert profile is not None
-        assert "APIs" in profile.synopsis or "Aggregated" in profile.synopsis
-        call_kwargs = mock_side_call_service.call.call_args[1]
-        assert call_kwargs["system_prompt"] == AGGREGATE_PROFILE_SYSTEM_PROMPT
-        # Check that chunk summaries are included in the request
-        user_content = call_kwargs["message_sequence"][0]["content"]
-        assert "About APIs" in user_content
-        assert "About security" in user_content
+        assert len(chunk_results) == 2
+        assert chunk_results[0].success is True
+        assert chunk_results[0].profile.summary == "Explains OAuth2 flow"
+        assert chunk_results[1].profile.summary == "Covers token refresh"
+
+        assert doc_profile is not None
+        assert doc_profile.synopsis == "Technical guide covering OAuth2 authentication."
+        assert doc_profile.document_type == DocumentType.TECHNICAL
+
+        assert len(queries) == 2
+        assert "OAuth2 PKCE" in queries[0]
+
+        assert tokens == 300
+        # Only one LLM call (final batch)
+        assert mock_side_call_service.call_for_profiling.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_aggregate_ignores_failed_chunks(self, profiling_service, mock_side_call_service):
-        """Test that failed chunk profiles are excluded from aggregation."""
-        from shu.schemas.profiling import ChunkProfileResult
+    async def test_incremental_profiling_multiple_batches(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test incremental profiling with multiple batches."""
+        mock_settings.chunk_profiling_batch_size = 2
 
-        mock_side_call_service.call.return_value = SideCallResult(
-            content='{"synopsis":"Test","document_type":"narrative","capability_manifest":{}}',
+        # First batch response (regular batch)
+        batch1_response = json.dumps([
+            {
+                "summary": "Batch 1 chunk 0",
+                "keywords": ["k0"],
+                "topics": ["t0"],
+            },
+            {
+                "summary": "Batch 1 chunk 1",
+                "keywords": ["k1"],
+                "topics": ["t1"],
+            },
+        ])
+
+        # Final batch response (includes doc metadata)
+        final_batch_response = json.dumps({
+            "chunks": [
+                {
+                    "index": 2,
+                    "summary": "Final batch chunk",
+                    "keywords": ["k2"],
+                    "topics": ["t2"],
+                },
+            ],
+            "synopsis": "Synopsis from accumulated one-liners.",
+            "document_type": "narrative",
+            "capability_manifest": {
+                "answers_questions_about": ["topic1", "topic2"],
+            },
+            "synthesized_queries": ["Query 1", "Query 2"],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=batch1_response, success=True, tokens_used=100),
+            SideCallResult(content=final_batch_response, success=True, tokens_used=200),
+        ]
+
+        chunks = [
+            ChunkData(chunk_id="c0", chunk_index=0, content="Content 0"),
+            ChunkData(chunk_id="c1", chunk_index=1, content="Content 1"),
+            ChunkData(chunk_id="c2", chunk_index=2, content="Content 2"),
+        ]
+
+        chunk_results, doc_profile, queries, tokens = (
+            await profiling_service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        assert len(chunk_results) == 3
+        assert chunk_results[0].profile.summary == "Batch 1 chunk 0"
+        assert chunk_results[1].profile.summary == "Batch 1 chunk 1"
+        assert chunk_results[2].profile.summary == "Final batch chunk"
+
+        assert doc_profile is not None
+        assert doc_profile.synopsis == "Synopsis from accumulated one-liners."
+
+        assert len(queries) == 2
+        assert tokens == 300  # 100 + 200
+        assert mock_side_call_service.call_for_profiling.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_incremental_profiling_accumulates_summaries(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test that summaries are accumulated and passed to final batch."""
+        mock_settings.chunk_profiling_batch_size = 2
+
+        batch1_response = json.dumps([
+            {"summary": "First summary", "keywords": [], "topics": []},
+            {"summary": "Second summary", "keywords": [], "topics": []},
+        ])
+
+        final_batch_response = json.dumps({
+            "chunks": [
+                {"index": 2, "summary": "Third", "keywords": [], "topics": []},
+            ],
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=batch1_response, success=True, tokens_used=100),
+            SideCallResult(content=final_batch_response, success=True, tokens_used=100),
+        ]
+
+        chunks = [
+            ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}")
+            for i in range(3)
+        ]
+
+        await profiling_service.profile_chunks_incremental(chunks=chunks)
+
+        # Check that final batch call includes accumulated summaries
+        final_call = mock_side_call_service.call_for_profiling.call_args_list[1]
+        user_content = final_call[1]["message_sequence"][0]["content"]
+        assert "First summary" in user_content
+        assert "Second summary" in user_content
+        assert "Chunk 0:" in user_content
+        assert "Chunk 1:" in user_content
+
+    @pytest.mark.asyncio
+    async def test_incremental_profiling_empty_chunks(
+        self, profiling_service, mock_side_call_service
+    ):
+        """Test incremental profiling with empty chunk list."""
+        chunk_results, doc_profile, queries, tokens = (
+            await profiling_service.profile_chunks_incremental(chunks=[])
+        )
+
+        assert chunk_results == []
+        assert doc_profile is None
+        assert queries == []
+        assert tokens == 0
+        mock_side_call_service.call_for_profiling.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_incremental_profiling_final_batch_failure(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test handling when final batch LLM call fails."""
+        mock_settings.chunk_profiling_batch_size = 2
+
+        batch1_response = json.dumps([
+            {"summary": "Summary 0", "keywords": [], "topics": []},
+            {"summary": "Summary 1", "keywords": [], "topics": []},
+        ])
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=batch1_response, success=True, tokens_used=100),
+            SideCallResult(content="", success=False, error_message="Rate limited"),
+        ]
+
+        chunks = [
+            ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}")
+            for i in range(3)
+        ]
+
+        chunk_results, doc_profile, queries, tokens = (
+            await profiling_service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        # First batch succeeded
+        assert chunk_results[0].success is True
+        assert chunk_results[1].success is True
+        # Final batch failed
+        assert chunk_results[2].success is False
+        assert "Rate limited" in chunk_results[2].error
+
+        # No document profile when final batch fails
+        assert doc_profile is None
+        assert queries == []
+
+    @pytest.mark.asyncio
+    async def test_incremental_profiling_parse_failure(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test handling when final batch response cannot be parsed."""
+        mock_settings.chunk_profiling_batch_size = 10
+
+        # Invalid JSON response
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content="not valid json", success=True, tokens_used=100
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+
+        chunk_results, doc_profile, queries, tokens = (
+            await profiling_service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        assert len(chunk_results) == 1
+        assert chunk_results[0].success is False
+        assert doc_profile is None
+        assert queries == []
+
+    @pytest.mark.asyncio
+    async def test_incremental_profiling_regular_batch_failure(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test handling when a regular (non-final) batch fails.
+
+        Failed batches should not contribute summaries to the accumulated context,
+        but processing should continue to the final batch.
+        """
+        mock_settings.chunk_profiling_batch_size = 2
+
+        # First batch fails
+        # Final batch succeeds
+        final_batch_response = json.dumps({
+            "chunks": [
+                {"index": 2, "summary": "Final chunk", "keywords": [], "topics": []},
+            ],
+            "synopsis": "Synopsis from limited context.",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": ["Query 1"],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content="", success=False, error_message="Timeout"),
+            SideCallResult(content=final_batch_response, success=True, tokens_used=200),
+        ]
+
+        chunks = [
+            ChunkData(chunk_id=f"c{i}", chunk_index=i, content=f"Content {i}")
+            for i in range(3)
+        ]
+
+        chunk_results, doc_profile, queries, tokens = (
+            await profiling_service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        # First batch failed
+        assert chunk_results[0].success is False
+        assert chunk_results[1].success is False
+        assert "Timeout" in chunk_results[0].error
+
+        # Final batch succeeded
+        assert chunk_results[2].success is True
+        assert chunk_results[2].profile.summary == "Final chunk"
+
+        # Document profile should still be generated (from limited context)
+        assert doc_profile is not None
+        assert doc_profile.synopsis == "Synopsis from limited context."
+        assert len(queries) == 1
+
+
+class TestFinalBatchPrompt:
+    """Tests for final batch prompt construction."""
+
+    @pytest.mark.asyncio
+    async def test_final_batch_uses_correct_prompt(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test that final batch uses dynamically built prompt with configured query limits."""
+        mock_settings.chunk_profiling_batch_size = 10
+
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=json.dumps({
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
+                "synopsis": "Test",
+                "document_type": "narrative",
+                "capability_manifest": {},
+                "synthesized_queries": [],
+            }),
             success=True,
             tokens_used=100,
         )
 
-        chunk_profiles = [
-            ChunkProfileResult(
-                chunk_id="c1",
-                chunk_index=0,
-                profile=ChunkProfile(summary="Good profile", keywords=["key"], topics=["topic"]),
-                success=True,
-            ),
-            ChunkProfileResult(
-                chunk_id="c2",
-                chunk_index=1,
-                profile=ChunkProfile(summary="", keywords=[], topics=[]),
-                success=False,
-                error="Failed to profile",
-            ),
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await profiling_service.profile_chunks_incremental(chunks=chunks)
+
+        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
+        # Verify prompt uses configured query limits (min=3, max=20 from mock_settings)
+        assert "3-20 queries" in call_kwargs["system_prompt"]
+        assert "FINAL batch" in call_kwargs["system_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_final_batch_includes_document_metadata(
+        self, profiling_service, mock_side_call_service, mock_settings
+    ):
+        """Test that document metadata is included in final batch prompt."""
+        mock_settings.chunk_profiling_batch_size = 10
+
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=json.dumps({
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
+                "synopsis": "Test",
+                "document_type": "narrative",
+                "capability_manifest": {},
+                "synthesized_queries": [],
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await profiling_service.profile_chunks_incremental(
+            chunks=chunks,
+            document_metadata={"title": "My Document", "source": "email"},
+        )
+
+        user_content = mock_side_call_service.call_for_profiling.call_args[1]["message_sequence"][0]["content"]
+        assert "My Document" in user_content
+        assert "email" in user_content
+
+
+class TestQuerySynthesisToggle:
+    """Tests for enable_query_synthesis controlling prompt content."""
+
+    @pytest.mark.asyncio
+    async def test_final_batch_prompt_excludes_queries_when_disabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """When enable_query_synthesis=False, final batch prompt should NOT ask for queries."""
+        mock_settings.enable_query_synthesis = False
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=json.dumps({
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
+                "synopsis": "Test",
+                "document_type": "narrative",
+                "capability_manifest": {},
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_chunks_incremental(chunks=chunks)
+
+        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
+        system_prompt = call_kwargs["system_prompt"]
+        user_content = call_kwargs["message_sequence"][0]["content"]
+
+        # System prompt should not mention queries
+        assert "synthesized_queries" not in system_prompt
+        # User content should not ask for queries
+        assert "synthesized_queries" not in user_content
+
+    @pytest.mark.asyncio
+    async def test_final_batch_prompt_includes_queries_when_enabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """When enable_query_synthesis=True, final batch prompt SHOULD ask for queries."""
+        mock_settings.enable_query_synthesis = True
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=json.dumps({
+                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
+                "synopsis": "Test",
+                "document_type": "narrative",
+                "capability_manifest": {},
+                "synthesized_queries": ["Query 1"],
+            }),
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_chunks_incremental(chunks=chunks)
+
+        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
+        system_prompt = call_kwargs["system_prompt"]
+        user_content = call_kwargs["message_sequence"][0]["content"]
+
+        # System prompt should mention queries
+        assert "synthesized_queries" in system_prompt
+        assert "3-20 queries" in system_prompt
+        # User content should ask for queries
+        assert "synthesized_queries" in user_content
+
+
+class TestProfileParserNullHandling:
+    """Tests for ProfileParser handling of null values from LLM responses (SHU-586)."""
+
+    @pytest.mark.asyncio
+    async def test_chunk_profiles_handles_null_values(self, profiling_service, mock_side_call_service):
+        """Test that chunk profiling handles null values in LLM response gracefully."""
+        # LLM returns explicit null values instead of missing keys
+        llm_response = json.dumps([
+            {
+                "index": 0,
+                "summary": None,
+                "keywords": None,
+                "topics": None,
+            },
+            {
+                "index": 1,
+                "summary": "Valid summary",
+                "keywords": ["keyword1"],
+                "topics": ["topic1"],
+            },
+        ])
+
+        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
+            content=llm_response,
+            success=True,
+            tokens_used=100,
+        )
+
+        chunks = [
+            ChunkData(chunk_id="c0", chunk_index=0, content="Content 0"),
+            ChunkData(chunk_id="c1", chunk_index=1, content="Content 1"),
         ]
 
-        await profiling_service.aggregate_chunk_profiles(chunk_profiles)
+        results, _ = await profiling_service.profile_chunks(chunks=chunks)
 
-        user_content = mock_side_call_service.call.call_args[1]["message_sequence"][0]["content"]
-        assert "Good profile" in user_content
-        # Failed chunk summary should not appear (empty string)
-        assert "Chunk 1:" not in user_content  # Only successful chunks included
+        # Both chunks should succeed - null values coerced to empty strings/lists
+        assert len(results) == 2
+        assert all(r.success for r in results)
+
+        # First chunk should have empty values
+        assert results[0].profile.summary == ""
+        assert results[0].profile.keywords == []
+        assert results[0].profile.topics == []
+
+        # Second chunk should have actual values
+        assert results[1].profile.summary == "Valid summary"
+        assert results[1].profile.keywords == ["keyword1"]
+        assert results[1].profile.topics == ["topic1"]

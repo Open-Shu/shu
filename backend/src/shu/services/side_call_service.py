@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Constants for side-call configuration
 SIDE_CALL_MODEL_SETTING_KEY = "side_call_model_config_id"
+PROFILING_MODEL_SETTING_KEY = "profiling_model_config_id"
 
 
 class SideCallResult:
@@ -112,22 +113,21 @@ class SideCallService:
 
             chat_ctx = ChatContext.from_dicts(messages, system_prompt)
 
+            # Build model overrides - copy to avoid mutating model_config.parameter_overrides
+            raw_overrides = model_config.parameter_overrides
+            base_overrides: dict = raw_overrides if isinstance(raw_overrides, dict) else {}
+            model_overrides = {**base_overrides, **(config_overrides or {})}
+
             llm_params = {
                 "messages": chat_ctx,
                 "model": model.model_name,
                 "stream": False,
-                "model_overrides": model_config.parameter_overrides or None,
+                "model_overrides": model_overrides or None,
                 "llm_params": None,
             }
 
             # Convert timeout to per-request timeout seconds
             request_timeout = (timeout_ms / 1000.0) if timeout_ms else None
-
-            # Apply per-call configuration overrides
-            if config_overrides:
-                if not llm_params["model_overrides"]:
-                    llm_params["model_overrides"] = {}
-                llm_params["model_overrides"].update(config_overrides)
 
             # Make the LLM call
             responses = await client.chat_completion(**llm_params, request_timeout=request_timeout)
@@ -404,6 +404,246 @@ class SideCallService:
         except Exception as e:
             logger.error(f"Failed to clear side-call model by user {user_id}: {e}")
             return False
+
+    # Profiling Model Configuration
+    # Profiling uses a dedicated model to allow different timeout/cost tradeoffs
+    # than interactive side-calls. Falls back to side-call model if not configured.
+
+    async def get_dedicated_profiling_model(self) -> ModelConfiguration | None:
+        """Get the explicitly configured profiling model (without fallback).
+
+        This is used for UI display purposes - to show the "Profiling" indicator
+        only when a dedicated profiling model is configured, not when falling back
+        to the side-call model.
+
+        Returns:
+            ModelConfiguration if a dedicated profiling model is configured and active,
+            None otherwise (even if a side-call model exists).
+
+        """
+        try:
+            setting = await self.system_settings_service.get_setting(PROFILING_MODEL_SETTING_KEY)
+            if setting and setting.value.get("model_config_id"):
+                model_config_id = setting.value["model_config_id"]
+                logger.debug(f"Found profiling model setting: {model_config_id}")
+                model_config = await self.model_config_service.get_model_configuration(
+                    model_config_id, include_relationships=True
+                )
+                if model_config and model_config.is_active:
+                    return model_config
+                logger.warning(f"Profiling model {model_config_id} not found or inactive")
+            else:
+                logger.debug("No profiling model configured in system settings")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get dedicated profiling model: {e}")
+            return None
+
+    async def get_profiling_model(self) -> ModelConfiguration | None:
+        """Get the model configuration designated for profiling.
+
+        Falls back to the side-call model if no profiling-specific model is configured.
+
+        Returns:
+            ModelConfiguration for profiling, or None if neither profiling nor
+            side-call model is configured.
+
+        """
+        try:
+            # First, try to get the dedicated profiling model
+            profiling_model = await self.get_dedicated_profiling_model()
+            if profiling_model:
+                return profiling_model
+
+            # Fall back to side-call model
+            return await self.get_side_call_model()
+
+        except Exception as e:
+            logger.error(f"Failed to get profiling model: {e}")
+            return None
+
+    async def set_profiling_model(self, model_config_id: str, user_id: str) -> bool:
+        """Set the designated profiling model configuration.
+
+        Args:
+            model_config_id: ID of the model configuration to designate
+            user_id: ID of the user making the change
+
+        Returns:
+            True if successful, False otherwise
+
+        """
+        try:
+            # Verify the model configuration exists and is suitable
+            model_config = await self.model_config_service.get_model_configuration(
+                model_config_id, include_relationships=True
+            )
+
+            if not model_config or not model_config.is_active:
+                logger.error(f"Model configuration {model_config_id} not found or inactive")
+                return False
+
+            # Update the system setting
+            await self.system_settings_service.upsert(
+                PROFILING_MODEL_SETTING_KEY,
+                {
+                    "model_config_id": model_config_id,
+                    "updated_by": user_id,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                },
+            )
+
+            logger.info(f"Profiling model set to {model_config_id} by user {user_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set profiling model {model_config_id}: {e}")
+            return False
+
+    async def clear_profiling_model(self, user_id: str) -> bool:
+        """Clear the designated profiling model configuration.
+
+        When cleared, profiling falls back to using the side-call model.
+
+        Args:
+            user_id: ID of the user making the change
+
+        Returns:
+            True if successful, False otherwise
+
+        """
+        try:
+            await self.system_settings_service.delete(PROFILING_MODEL_SETTING_KEY)
+            logger.info(f"Profiling model cleared by user {user_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to clear profiling model by user {user_id}: {e}")
+            return False
+
+    async def call_for_profiling(
+        self,
+        message_sequence: list[dict[str, str]],
+        system_prompt: str | None = None,
+        config_overrides: dict | None = None,
+        timeout_ms: int | None = None,
+    ) -> SideCallResult:
+        """Make an LLM call optimized for document profiling.
+
+        Uses the dedicated profiling model if configured, otherwise falls back
+        to the side-call model. Profiling calls are background tasks that can
+        tolerate longer timeouts than interactive side-calls.
+
+        Args:
+            message_sequence: Chat-style sequence of messages ({"role", "content"})
+            system_prompt: Optional system prompt injected ahead of the sequence
+            config_overrides: Optional configuration overrides for this call
+            timeout_ms: Optional timeout override in milliseconds
+
+        Returns:
+            SideCallResult with the response or error
+
+        """
+        start_time = time.time()
+
+        if not message_sequence:
+            raise ValueError("message_sequence must contain at least one message")
+
+        try:
+            # Check if a dedicated profiling model is configured
+            dedicated_profiling_model = await self.get_dedicated_profiling_model()
+            is_dedicated_profiling_model = dedicated_profiling_model is not None
+
+            # Get the designated profiling model (falls back to side-call model)
+            model_config = dedicated_profiling_model or await self.get_side_call_model()
+
+            # Log which model is being used for profiling
+            if is_dedicated_profiling_model:
+                logger.info(f"Profiling using dedicated model: {model_config.name} ({model_config.model_name})")
+            elif model_config:
+                logger.info(
+                    f"Profiling falling back to side-call model: {model_config.name} ({model_config.model_name})"
+                )
+
+            if not model_config:
+                return SideCallResult(
+                    content="",
+                    success=False,
+                    error_message="No profiling or side-call model configured",
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                )
+
+            # Build the message sequence (handles system prompt injection)
+            final_system_prompt, messages = await self._build_sequence_messages(
+                sequence=message_sequence,
+                system_prompt=system_prompt,
+                model_config=model_config,
+            )
+
+            # Get LLM client
+            client = await self.llm_service.get_client(model_config.llm_provider_id)
+
+            # Find the model
+            model = await self._find_model_for_config(model_config)
+
+            chat_ctx = ChatContext.from_dicts(messages, final_system_prompt)
+
+            # Build model overrides - copy to avoid mutating model_config.parameter_overrides
+            raw_overrides = model_config.parameter_overrides
+            base_overrides: dict = raw_overrides if isinstance(raw_overrides, dict) else {}
+            model_overrides = {**base_overrides, **(config_overrides or {})}
+
+            llm_params = {
+                "messages": chat_ctx,
+                "model": model.model_name,
+                "stream": False,
+                "model_overrides": model_overrides or None,
+                "llm_params": None,
+            }
+
+            # Convert timeout to per-request timeout seconds
+            request_timeout = (timeout_ms / 1000.0) if timeout_ms else None
+
+            # Make the LLM call
+            responses = await client.chat_completion(**llm_params, request_timeout=request_timeout)
+
+            # Calculate metrics
+            response_time_ms = int((time.time() - start_time) * 1000)
+            event_metadata = responses[-1].metadata or {}
+            tokens_used = (event_metadata.get("usage", {}) or {}).get("total_tokens", 0)
+
+            # Record usage (no user_id for profiling - it's a system operation)
+            await self._record_usage(
+                model_config=model_config,
+                model=model,
+                user_id=None,
+                tokens_used=tokens_used,
+                response_time_ms=response_time_ms,
+                success=True,
+            )
+
+            return SideCallResult(
+                content=responses[-1].content or "",
+                success=True,
+                tokens_used=tokens_used,
+                response_time_ms=response_time_ms,
+                metadata={
+                    "model_config_id": model_config.id,
+                    "model_name": model_config.model_name,
+                    "is_dedicated_profiling_model": is_dedicated_profiling_model,
+                },
+            )
+
+        except Exception as e:
+            response_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"Profiling call failed: {e}")
+
+            return SideCallResult(
+                content="",
+                success=False,
+                error_message=str(e),
+                response_time_ms=response_time_ms,
+            )
 
     async def redact_sensitive_content(self, content: str) -> str:
         """Redact sensitive content from prompts before sending to LLM.

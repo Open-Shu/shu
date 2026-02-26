@@ -226,17 +226,24 @@ class Settings(BaseSettings):
 
     # Shu RAG Document Profiling (SHU-343)
     enable_document_profiling: bool = Field(False, alias="SHU_ENABLE_DOCUMENT_PROFILING")
-    # Routing threshold: docs at or below this size use full-doc profiling;
-    # larger docs use chunk-first aggregation
-    profiling_full_doc_max_tokens: int = Field(4000, alias="SHU_PROFILING_FULL_DOC_MAX_TOKENS")
-    # Hard ceiling on any single profiling LLM call (full-doc or aggregate)
+    # Hard ceiling on any single profiling LLM call (batch or final-batch aggregate)
     profiling_max_input_tokens: int = Field(8000, alias="SHU_PROFILING_MAX_INPUT_TOKENS")
-    profiling_timeout_seconds: int = Field(60, alias="SHU_PROFILING_TIMEOUT_SECONDS")
+    # Timeout for profiling LLM calls (longer than chat since it's a background task)
+    profiling_timeout_seconds: int = Field(180, alias="SHU_PROFILING_TIMEOUT_SECONDS")
     # Process chunks in batches for efficiency
     chunk_profiling_batch_size: int = Field(10, alias="SHU_CHUNK_PROFILING_BATCH_SIZE")
     # Max concurrent profiling tasks to prevent LLM rate-limit storms during bulk imports
     # Tasks beyond this limit queue in memory; see SHU-211 for persistent queue migration
     profiling_max_concurrent_tasks: int = Field(5, alias="SHU_PROFILING_MAX_CONCURRENT_TASKS")
+
+    # Shu RAG Query Synthesis (SHU-353)
+    enable_query_synthesis: bool = Field(False, alias="SHU_ENABLE_QUERY_SYNTHESIS")
+    # Upper bound on queries per document (cost control)
+    query_synthesis_max_queries: int = Field(20, alias="SHU_QUERY_SYNTHESIS_MAX_QUERIES")
+    # Minimum queries for any document
+    query_synthesis_min_queries: int = Field(3, alias="SHU_QUERY_SYNTHESIS_MIN_QUERIES")
+    # Timeout for final batch LLM calls that include query synthesis (longer due to more output)
+    query_synthesis_timeout_seconds: int = Field(240, alias="SHU_QUERY_SYNTHESIS_TIMEOUT_SECONDS")
 
     @staticmethod
     def _repo_root_from_this_file() -> Path:

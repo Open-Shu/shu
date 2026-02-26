@@ -1,8 +1,10 @@
 """
-Unit tests for ProfilingOrchestrator (SHU-343).
+Unit tests for ProfilingOrchestrator (SHU-343, SHU-581, SHU-589).
 
 Tests the DB-aware orchestration layer that coordinates profiling,
 manages status transitions, and persists results.
+
+SHU-589 removed unified profiling, consolidating on incremental profiling only.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,11 +26,11 @@ from shu.services.profiling_orchestrator import ProfilingOrchestrator
 def mock_settings():
     """Mock settings with profiling configuration."""
     settings = MagicMock()
-    settings.profiling_timeout_seconds = 60
+    settings.profiling_timeout_seconds = 180
     settings.chunk_profiling_batch_size = 5
-    settings.profiling_full_doc_max_tokens = 4000
     settings.profiling_max_input_tokens = 8000
     settings.enable_document_profiling = True
+    settings.enable_query_synthesis = True
     return settings
 
 
@@ -57,6 +59,7 @@ def create_mock_document(doc_id: str = "doc-123", title: str = "Test Doc"):
     doc = MagicMock()
     doc.id = doc_id
     doc.title = title
+    doc.knowledge_base_id = "kb-123"
     doc.profiling_status = "pending"
     doc.mark_profiling_started = MagicMock()
     doc.mark_profiling_complete = MagicMock()
@@ -74,47 +77,6 @@ def create_mock_chunk(chunk_id: str, index: int, content: str):
     return chunk
 
 
-class TestProfilingModeSelection:
-    """Tests for profiling mode selection logic."""
-
-    def test_small_document_uses_full_doc(self, orchestrator, mock_settings):
-        """Documents under threshold use full-document profiling."""
-        mock_settings.profiling_full_doc_max_tokens = 4000
-        mode = orchestrator._choose_profiling_mode(3000)
-        assert mode == ProfilingMode.FULL_DOCUMENT
-
-    def test_large_document_uses_aggregation(self, orchestrator, mock_settings):
-        """Documents over threshold use chunk aggregation."""
-        mock_settings.profiling_full_doc_max_tokens = 4000
-        mode = orchestrator._choose_profiling_mode(5000)
-        assert mode == ProfilingMode.CHUNK_AGGREGATION
-
-    def test_exactly_threshold_uses_full_doc(self, orchestrator, mock_settings):
-        """Documents at exactly threshold use full-document."""
-        mock_settings.profiling_full_doc_max_tokens = 4000
-        mode = orchestrator._choose_profiling_mode(4000)
-        assert mode == ProfilingMode.FULL_DOCUMENT
-
-
-class TestDocumentTextAssembly:
-    """Tests for assembling document text from chunks."""
-
-    def test_assemble_document_text(self, orchestrator):
-        """Test joining chunk content."""
-        chunks = [
-            create_mock_chunk("c1", 0, "First chunk"),
-            create_mock_chunk("c2", 1, "Second chunk"),
-            create_mock_chunk("c3", 2, "Third chunk"),
-        ]
-        text = orchestrator._assemble_document_text(chunks)
-        assert text == "First chunk\n\nSecond chunk\n\nThird chunk"
-
-    def test_assemble_empty_chunks(self, orchestrator):
-        """Test with empty chunk list."""
-        text = orchestrator._assemble_document_text([])
-        assert text == ""
-
-
 class TestRunForDocument:
     """Tests for the main run_for_document method."""
 
@@ -130,66 +92,13 @@ class TestRunForDocument:
         assert result.document_id == "nonexistent-id"
 
     @pytest.mark.asyncio
-    async def test_full_doc_profiling_success(self, orchestrator, mock_db, mock_settings):
-        """Test successful full-document profiling path."""
-        # Setup mock document and chunks
-        doc = create_mock_document()
-        chunks = [
-            create_mock_chunk("c1", 0, "Short content"),
-            create_mock_chunk("c2", 1, "More short content"),
-        ]
-        mock_db.get.return_value = doc
-
-        # Mock chunk query
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = chunks
-        mock_db.execute.return_value = mock_result
-
-        # Mock profiling service responses
-        doc_profile = DocumentProfile(
-            synopsis="Test synopsis",
-            document_type=DocumentType.TECHNICAL,
-            capability_manifest=CapabilityManifest(),
-        )
-        chunk_results = [
-            ChunkProfileResult(
-                chunk_id="c1",
-                chunk_index=0,
-                profile=ChunkProfile(summary="Chunk 1", keywords=[], topics=[]),
-                success=True,
-            ),
-            ChunkProfileResult(
-                chunk_id="c2",
-                chunk_index=1,
-                profile=ChunkProfile(summary="Chunk 2", keywords=[], topics=[]),
-                success=True,
-            ),
-        ]
-
-        with patch.object(
-            orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 50)
-        ) as mock_chunks:
-            with patch.object(
-                orchestrator.profiling_service,
-                "profile_document",
-                return_value=(doc_profile, MagicMock(tokens_used=100)),
-            ) as mock_doc:
-                # Use small token count to force full-doc mode
-                with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
-                    result = await orchestrator.run_for_document("doc-123")
-
-        assert result.success is True
-        assert result.profiling_mode == ProfilingMode.FULL_DOCUMENT
-        assert result.document_profile is not None
-        assert len(result.chunk_profiles) == 2
-        doc.mark_profiling_started.assert_called_once()
-        doc.mark_profiling_complete.assert_called_once()
-        mock_chunks.assert_called_once()
-        mock_doc.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_chunk_aggregation_profiling(self, orchestrator, mock_db, mock_settings):
-        """Test chunk aggregation profiling path for large documents."""
+        """Test incremental profiling path for large documents (SHU-582).
+
+        Large documents use profile_chunks_incremental() which eliminates
+        the separate aggregation LLM call by having the final batch generate
+        document-level metadata from accumulated summaries.
+        """
         doc = create_mock_document()
         chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}") for i in range(20)]
         mock_db.get.return_value = doc
@@ -199,7 +108,7 @@ class TestRunForDocument:
         mock_db.execute.return_value = mock_result
 
         doc_profile = DocumentProfile(
-            synopsis="Aggregated synopsis",
+            synopsis="Incremental synopsis from accumulated summaries",
             document_type=DocumentType.NARRATIVE,
             capability_manifest=CapabilityManifest(),
         )
@@ -207,24 +116,29 @@ class TestRunForDocument:
             ChunkProfileResult(
                 chunk_id=f"c{i}",
                 chunk_index=i,
-                profile=ChunkProfile(summary=f"Summary {i}", keywords=[], topics=[]),
+                profile=ChunkProfile(
+                    summary=f"Summary {i} with specific details",
+                    keywords=[],
+                    topics=[],
+                ),
                 success=True,
             )
             for i in range(20)
         ]
+        synthesized_queries = ["What is this about?", "How does it work?"]
 
-        with patch.object(orchestrator.profiling_service, "profile_chunks", return_value=(chunk_results, 100)):
-            with patch.object(
-                orchestrator.profiling_service,
-                "aggregate_chunk_profiles",
-                return_value=(doc_profile, MagicMock(tokens_used=200)),
-            ):
-                # Large token count to force aggregation mode
-                with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=10000):
-                    result = await orchestrator.run_for_document("doc-123")
+        with patch.object(
+            orchestrator.profiling_service,
+            "profile_chunks_incremental",
+            new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300)),
+        ):
+            result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
+        assert result.document_profile.synopsis == "Incremental synopsis from accumulated summaries"
+        # Verify queries were persisted
+        assert mock_db.add.call_count == 2
 
     @pytest.mark.asyncio
     async def test_exception_marks_failed(self, orchestrator, mock_db):
@@ -238,7 +152,7 @@ class TestRunForDocument:
         assert result.success is False
         assert "Database error" in result.error
         doc.mark_profiling_failed.assert_called_once()
-        mock_db.commit.assert_called()  # Should commit the failed status
+        mock_db.commit.assert_called()
 
 
 class TestPersistResults:
@@ -264,13 +178,21 @@ class TestPersistResults:
             ChunkProfileResult(
                 chunk_id="c1",
                 chunk_index=0,
-                profile=ChunkProfile(summary="Sum1", keywords=["k1"], topics=["t1"]),
+                profile=ChunkProfile(
+                    summary="Explains API basics with OAuth examples",
+                    keywords=["k1"],
+                    topics=["t1"],
+                ),
                 success=True,
             ),
             ChunkProfileResult(
                 chunk_id="c2",
                 chunk_index=1,
-                profile=ChunkProfile(summary="Sum2", keywords=["k2"], topics=["t2"]),
+                profile=ChunkProfile(
+                    summary="Covers advanced usage patterns",
+                    keywords=["k2"],
+                    topics=["t2"],
+                ),
                 success=True,
             ),
         ]
@@ -281,8 +203,16 @@ class TestPersistResults:
         call_kwargs = doc.mark_profiling_complete.call_args[1]
         assert call_kwargs["synopsis"] == "Test synopsis"
         assert call_kwargs["document_type"] == "technical"
+
+        # Verify summary is passed to set_profile
         chunks[0].set_profile.assert_called_once()
+        c1_call_kwargs = chunks[0].set_profile.call_args[1]
+        assert c1_call_kwargs["summary"] == "Explains API basics with OAuth examples"
+
         chunks[1].set_profile.assert_called_once()
+        c2_call_kwargs = chunks[1].set_profile.call_args[1]
+        assert c2_call_kwargs["summary"] == "Covers advanced usage patterns"
+
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -307,7 +237,6 @@ class TestPersistResults:
 
         await orchestrator._persist_results(doc, chunks, doc_profile, chunk_results)
 
-        # Chunk profile should NOT be set for failed chunk
         chunks[0].set_profile.assert_not_called()
         doc.mark_profiling_complete.assert_called_once()
 
@@ -321,6 +250,70 @@ class TestPersistResults:
 
         doc.mark_profiling_failed.assert_called_once()
         doc.mark_profiling_complete.assert_not_called()
+
+
+class TestPersistQueries:
+    """Tests for query persistence."""
+
+    @pytest.mark.asyncio
+    async def test_persist_queries_success(self, orchestrator, mock_db):
+        """Test persisting synthesized queries."""
+        doc = create_mock_document()
+        mock_db.execute = AsyncMock()  # Mock the delete execute
+
+        queries_created = await orchestrator._persist_queries(
+            doc,
+            ["What is X?", "How does Y work?", "Show me Z"],
+        )
+
+        assert queries_created == 3
+        # 1 execute for delete + 3 adds
+        mock_db.execute.assert_called_once()  # Delete existing queries
+        assert mock_db.add.call_count == 3
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_queries_skips_empty(self, orchestrator, mock_db):
+        """Test that empty queries are skipped."""
+        doc = create_mock_document()
+        mock_db.execute = AsyncMock()
+
+        queries_created = await orchestrator._persist_queries(
+            doc,
+            ["Valid query", "", "  ", "Another valid"],
+        )
+
+        assert queries_created == 2
+        assert mock_db.add.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_persist_queries_empty_list(self, orchestrator, mock_db):
+        """Test handling empty query list."""
+        doc = create_mock_document()
+        mock_db.execute = AsyncMock()
+
+        queries_created = await orchestrator._persist_queries(doc, [])
+
+        assert queries_created == 0
+        # Delete is still called even for empty list (clears old queries)
+        mock_db.execute.assert_called_once()
+        mock_db.add.assert_not_called()
+        # Commit is called to flush the DELETE even with no new queries
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_queries_deletes_existing(self, orchestrator, mock_db):
+        """Test that existing queries are deleted before creating new ones (re-profiling)."""
+        doc = create_mock_document()
+        mock_db.execute = AsyncMock()
+
+        await orchestrator._persist_queries(doc, ["New query"])
+
+        # Verify delete was called with correct document_id filter
+        mock_db.execute.assert_called_once()
+        delete_call = mock_db.execute.call_args[0][0]
+        # The delete statement should target document_queries table
+        assert "document_queries" in str(delete_call) or "DocumentQuery" in str(delete_call)
 
 
 class TestHelperMethods:

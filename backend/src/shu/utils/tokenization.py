@@ -1,7 +1,7 @@
 """Tokenization utilities for LLM context management.
 
 Provides consistent token counting across the codebase for:
-- Document profiling routing decisions (full-doc vs chunk-aggregation)
+- Document profiling input validation
 - Context window management
 - Input validation before LLM calls
 

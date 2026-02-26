@@ -1,10 +1,11 @@
-"""Profile parsing utilities for document and chunk profiling (SHU-343).
+"""Profile parsing utilities for document and chunk profiling.
 
 Extracted from ProfilingService to adhere to Single Responsibility Principle.
 This module handles JSON parsing and validation of LLM profile responses.
 """
 
 import json
+import re
 
 import structlog
 
@@ -13,8 +14,8 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfile,
     ChunkProfileResult,
-    DocumentProfile,
-    DocumentType,
+    FinalBatchResponse,
+    UnifiedChunkProfile,
 )
 
 logger = structlog.get_logger(__name__)
@@ -27,53 +28,165 @@ class ProfileParser:
     MAX_SUMMARY_LENGTH = 500
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
+    DEFAULT_MAX_QUERIES = 20
 
-    def parse_document_profile(self, content: str) -> DocumentProfile | None:
-        """Parse LLM response into DocumentProfile.
+    def __init__(self, max_queries: int | None = None) -> None:
+        """Initialize parser with configurable limits.
+
+        Args:
+            max_queries: Maximum number of synthesized queries to keep (default: 20)
+
+        """
+        self.max_queries = max_queries if max_queries is not None else self.DEFAULT_MAX_QUERIES
+
+    @staticmethod
+    def _coerce_string(value: str | None) -> str:
+        """Safely coerce a value to string, handling None.
+
+        Args:
+            value: Value that may be a string or None
+
+        Returns:
+            Empty string if None, otherwise str(value)
+
+        """
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _coerce_list(value: list | None) -> list:
+        """Safely coerce a value to list, handling None and non-list types.
+
+        Args:
+            value: Value that may be a list, None, or other type
+
+        Returns:
+            Empty list if None or not a list, otherwise the list
+
+        """
+        if value is None or not isinstance(value, list):
+            return []
+        return value
+
+    def _parse_capability_manifest(self, data: dict) -> CapabilityManifest:
+        """Parse capability manifest from JSON data.
+
+        Handles None values gracefully by coercing to appropriate defaults.
+
+        Args:
+            data: Raw JSON data containing capability_manifest key
+
+        Returns:
+            CapabilityManifest with parsed or default values
+
+        """
+        manifest_data = data.get("capability_manifest") or {}
+        return CapabilityManifest(
+            answers_questions_about=self._coerce_list(manifest_data.get("answers_questions_about")),
+            provides_information_type=self._coerce_list(manifest_data.get("provides_information_type")),
+            authority_level=self._coerce_string(manifest_data.get("authority_level")) or "secondary",
+            completeness=self._coerce_string(manifest_data.get("completeness")) or "partial",
+            question_domains=self._coerce_list(manifest_data.get("question_domains")),
+        )
+
+    def _parse_chunks(self, chunks_data: list) -> list[UnifiedChunkProfile]:
+        """Parse chunk profiles from JSON data.
+
+        Handles None values and non-list types gracefully by coercing to
+        appropriate defaults before truncation.
+
+        Args:
+            chunks_data: List of chunk dictionaries from JSON
+
+        Returns:
+            List of UnifiedChunkProfile with truncated fields
+
+        """
+        chunks = []
+        for pos, chunk_data in enumerate(chunks_data):
+            raw_index = chunk_data.get("index")
+            try:
+                index = int(raw_index) if raw_index is not None else pos
+            except (ValueError, TypeError):
+                index = pos
+            # Coerce values to handle LLM returning null instead of missing keys
+            summary = self._coerce_string(chunk_data.get("summary"))
+            keywords = self._coerce_list(chunk_data.get("keywords"))
+            topics = self._coerce_list(chunk_data.get("topics"))
+            chunks.append(
+                UnifiedChunkProfile(
+                    index=index,
+                    summary=summary[: self.MAX_SUMMARY_LENGTH],
+                    keywords=keywords[: self.MAX_KEYWORDS],
+                    topics=topics[: self.MAX_TOPICS],
+                )
+            )
+        return chunks
+
+    def _parse_synthesized_queries(self, queries: list) -> list[str]:
+        """Parse synthesized queries, handling both string and object formats.
+
+        Args:
+            queries: List of queries (strings or dicts with query_text)
+
+        Returns:
+            List of non-empty query strings, capped at configured max_queries
+
+        """
+        if not queries:
+            return []
+        result = []
+        for q in queries:
+            if q is None:
+                continue
+            if isinstance(q, dict):
+                value = q.get("query_text")
+                if value is None:
+                    continue
+                text = str(value).strip()
+            else:
+                text = str(q).strip()
+            if text:
+                result.append(text)
+        return result[: self.max_queries]
+
+    def parse_final_batch_response(self, content: str) -> FinalBatchResponse | None:
+        """Parse final batch profiling LLM response.
+
+        The final batch includes both chunk profiles AND document-level metadata.
 
         Args:
             content: Raw LLM response content
 
         Returns:
-            DocumentProfile if parsing succeeds, None otherwise
+            FinalBatchResponse if parsing succeeds, None otherwise
 
         """
         try:
             json_str = self.extract_json(content)
             data = json.loads(json_str)
 
-            # Parse capability manifest
-            manifest_data = data.get("capability_manifest", {})
-            manifest = CapabilityManifest(
-                answers_questions_about=manifest_data.get("answers_questions_about", []),
-                provides_information_type=manifest_data.get("provides_information_type", []),
-                authority_level=manifest_data.get("authority_level", "secondary"),
-                completeness=manifest_data.get("completeness", "partial"),
-                question_domains=manifest_data.get("question_domains", []),
-            )
-
-            # Parse document type with fallback
-            doc_type_str = data.get("document_type", "narrative").lower()
-            try:
-                doc_type = DocumentType(doc_type_str)
-            except ValueError:
-                doc_type = DocumentType.NARRATIVE
-
-            return DocumentProfile(
+            return FinalBatchResponse(
+                chunks=self._parse_chunks(data.get("chunks", [])),
                 synopsis=data.get("synopsis", ""),
-                document_type=doc_type,
-                capability_manifest=manifest,
+                document_type=(data.get("document_type") or "narrative").lower(),
+                capability_manifest=self._parse_capability_manifest(data),
+                synthesized_queries=self._parse_synthesized_queries(data.get("synthesized_queries", [])),
             )
         except Exception as e:
             logger.warning(
-                "failed_to_parse_document_profile",
+                "failed_to_parse_final_batch_response",
                 error=str(e),
-                content=content[:500] if content else "",
+                content_length=len(content) if content else 0,
             )
             return None
 
     def parse_chunk_profiles(self, content: str, chunks: list[ChunkData]) -> list[ChunkProfileResult]:
         """Parse LLM response into ChunkProfileResults.
+
+        Handles None values and non-list types gracefully by coercing to
+        appropriate defaults before truncation.
 
         Args:
             content: Raw LLM response content
@@ -91,14 +204,27 @@ class ProfileParser:
             if isinstance(data, dict):
                 data = [data]
 
+            # Log mismatch between chunks requested and profiles returned
+            if len(data) != len(chunks):
+                logger.warning(
+                    "chunk_profile_count_mismatch",
+                    chunks_requested=len(chunks),
+                    profiles_returned=len(data),
+                    content_length=len(content),
+                )
+
             results = []
             for i, chunk in enumerate(chunks):
                 if i < len(data):
                     profile_data = data[i]
+                    # Coerce values to handle LLM returning null instead of missing keys
+                    summary = self._coerce_string(profile_data.get("summary"))
+                    keywords = self._coerce_list(profile_data.get("keywords"))
+                    topics = self._coerce_list(profile_data.get("topics"))
                     profile = ChunkProfile(
-                        summary=profile_data.get("summary", "")[: self.MAX_SUMMARY_LENGTH],
-                        keywords=profile_data.get("keywords", [])[: self.MAX_KEYWORDS],
-                        topics=profile_data.get("topics", [])[: self.MAX_TOPICS],
+                        summary=summary[: self.MAX_SUMMARY_LENGTH],
+                        keywords=keywords[: self.MAX_KEYWORDS],
+                        topics=topics[: self.MAX_TOPICS],
                     )
                     results.append(
                         ChunkProfileResult(
@@ -114,7 +240,7 @@ class ProfileParser:
             return results
 
         except Exception as e:
-            logger.warning(f"failed_to_parse_chunk_profiles: {e}")
+            logger.warning("failed_to_parse_chunk_profiles", error=str(e))
             return [self.create_failed_chunk_result(c, str(e)) for c in chunks]
 
     def extract_json(self, content: str) -> str:
@@ -128,12 +254,11 @@ class ProfileParser:
 
         """
         content = content.strip()
-        # Handle ```json ... ``` blocks
-        if content.startswith("```"):
-            lines = content.split("\n")
-            # Remove first and last lines (code fence)
-            lines = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
-            content = "\n".join(lines)
+        # Scan for a fenced code block anywhere in the response
+        # Allow optional whitespace/newline after the opening fence
+        match = re.search(r"```(?:\w+)?\s*(.*?)```", content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
         return content.strip()
 
     @staticmethod
