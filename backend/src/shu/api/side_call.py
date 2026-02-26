@@ -73,6 +73,7 @@ async def get_side_call_config(
 
     Args:
         model_type: Type of side-call model (default, profiling). Defaults to "default".
+
     """
     try:
         # Get the designated model based on type
@@ -117,6 +118,7 @@ async def set_side_call_config(
         model_type: Type of side-call model (default, profiling). Defaults to "default".
 
     Requires admin privileges.
+
     """
     try:
         # Set the model based on type
@@ -170,6 +172,7 @@ async def clear_side_call_config(
         model_type: Type of side-call model to clear (default, profiling).
 
     Requires admin privileges.
+
     """
     try:
         # Clear the model based on type
@@ -187,9 +190,7 @@ async def clear_side_call_config(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        return ShuResponse.success(
-            _build_config_response(None, success_msg, model_type=model_type)
-        )
+        return ShuResponse.success(_build_config_response(None, success_msg, model_type=model_type))
 
     except Exception as e:
         logger.error(f"Failed to clear side-call config for {model_type}: {e}")
