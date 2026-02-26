@@ -122,10 +122,8 @@ async def test_event_handling(completions_adapter, patch_plugin_calls):
     await completions_adapter.handle_provider_event(COMPLETIONS_IGNORED_FUNCTION_CALL_COMPLETION_PAYLOAD)
 
     events = await completions_adapter.finalize_provider_events()
-    assert len(events) == 2
+    assert len(events) == 1
     _evaluate_tool_call_events(events[0])
-    assert isinstance(events[1], ProviderFinalEventResult)
-    assert not events[1].content
 
     event = await completions_adapter.handle_provider_event(COMPLETIONS_ACTIONABLE_OUTPUT_DELTA1)
     assert isinstance(event, ProviderContentDeltaEventResult)
@@ -157,14 +155,8 @@ async def test_event_handling(completions_adapter, patch_plugin_calls):
 async def test_completion_flow(completions_adapter, patch_plugin_calls):
     events = await completions_adapter.handle_provider_completion(COMPLETIONS_COMPLETE_FUNCTION_CALL_PAYLOAD)
 
-    # We get two events here, the first one is the tool call, the second is an empty final message.
-    # Empty final messages are ignored.
-    assert len(events) == 2
-
+    assert len(events) == 1
     _evaluate_tool_call_events(events[0])
-
-    final_event = events[1]
-    assert final_event.content is None  # empty events are ignored
 
     events = await completions_adapter.handle_provider_completion(COMPLETIONS_COMPLETE_OUTPUT_PAYLOAD)
     assert len(events) == 1

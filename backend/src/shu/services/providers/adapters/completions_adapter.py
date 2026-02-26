@@ -214,7 +214,6 @@ class CompletionsAdapter(BaseProviderAdapter):
                 additional_messages=[self._transform_function_messages(function_call_messages), *result_messages],
                 content="",
             ),
-            final_event,
         ]
 
     async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
@@ -228,13 +227,11 @@ class CompletionsAdapter(BaseProviderAdapter):
         # Extract usage for this cycle and add to previous cycles
         self._extract_usage("usage", data)
 
-        final_messages = [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})]
-
         function_call_messages = (
             jmespath.search("object == 'chat.completion' && choices[0].message.tool_calls", data) or []
         )
         if not function_call_messages:
-            return final_messages
+            return [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})]
 
         tool_calls = list(map(self._tool_call_to_instructions, function_call_messages))
         result_messages = [
@@ -249,7 +246,6 @@ class CompletionsAdapter(BaseProviderAdapter):
         additional_messages = [self._transform_function_messages(function_call_messages), *result_messages]
         return [
             ProviderToolCallEventResult(tool_calls=tool_calls, additional_messages=additional_messages, content=""),
-            *final_messages,
         ]
 
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:

@@ -30,6 +30,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         super().__init__(context)
         self.function_call_messages: list[dict[str, Any]] = []
         self.function_call_reasoning_messages: list[dict[str, Any]] = []
+        self._streamed_text: list[str] = []
 
     # General provider information
     def get_provider_information(self) -> ProviderInformation:
@@ -147,24 +148,42 @@ class ResponsesAdapter(BaseProviderAdapter):
 
         content_delta = jmespath.search("type=='response.output_text.delta' && delta", chunk)
         if content_delta:
+            self._streamed_text.append(content_delta)
             return ProviderContentDeltaEventResult(content=content_delta)
 
         reasoning_delta = jmespath.search("type=='response.reasoning_summary_text.delta' && delta", chunk)
         if reasoning_delta:
             return ProviderReasoningDeltaEventResult(content=reasoning_delta)
 
-        # Extract usage for this cycle and add to previous cycles
-        completion_message = jmespath.search("type=='response.completed'", chunk)
-        if completion_message:
+        if chunk.get("type") == "response.completed":
             self._extract_usage("response.usage", chunk)
 
-        final_message = jmespath.search("type=='response.completed' && response.output[-1].content[-1].text", chunk)
-        if final_message:
-            return ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})
+            # Scan output items for the message regardless of position — reasoning models may place
+            # a reasoning summary item after the message, making output[-1] point to it instead.
+            final_text: str | None = None
+            for item in reversed((chunk.get("response") or {}).get("output") or []):
+                if isinstance(item, dict) and item.get("type") == "message":
+                    content_list = item.get("content") or []
+                    for content_item in reversed(content_list):
+                        if isinstance(content_item, dict) and "text" in content_item:
+                            final_text = content_item.get("text")
+                            break
+                    break
+
+            # Fallback: reconstruct from streamed deltas when the output array is missing/malformed.
+            if not final_text and self._streamed_text:
+                final_text = "".join(self._streamed_text)
+
+            self._streamed_text = []
+
+            if final_text:
+                return ProviderFinalEventResult(content=final_text, metadata={"usage": self.usage})
+
         return None
 
     async def finalize_provider_events(self) -> list[ProviderEventResult]:
         if not self.function_call_messages:
+            self.function_call_reasoning_messages = []
             return []
 
         function_call_reasoning_messages = self.function_call_reasoning_messages
@@ -183,6 +202,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         ]
         self.function_call_reasoning_messages = []
         self.function_call_messages = []
+        self._streamed_text = []
         additional_messages = [
             ChatMessage.build(
                 role=msg.get("role", "") or "assistant",
@@ -214,8 +234,10 @@ class ResponsesAdapter(BaseProviderAdapter):
         # Extract usage for this cycle and add to previous cycles
         self._extract_usage("usage", data)
 
-        final_message = jmespath.search("output[?type=='message'] && output[-1].content[-1].text", data)
-        final_messages = [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})]
+        final_message = jmespath.search("output[?type=='message'] | [-1].content[-1].text", data)
+        final_messages = (
+            [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})] if final_message else []
+        )
 
         function_call_messages = jmespath.search("output[?type=='function_call']", data) or []
         if not function_call_messages:
@@ -248,8 +270,73 @@ class ResponsesAdapter(BaseProviderAdapter):
         ] + result_messages
         return [
             ProviderToolCallEventResult(tool_calls=tool_calls, additional_messages=additional_messages, content=""),
-            *final_messages,
         ]
+
+    def _sanitize_schema_for_responses_api(self, schema: dict[str, Any]) -> dict[str, Any]:
+        """Coerce a JSON Schema to the subset accepted by the OpenAI Responses API.
+
+        The Responses API rejects several standard JSON Schema features:
+        - ``"type"`` as a list (e.g. ``["string", "null"]``) must be a single string.
+        - ``"const"`` is not supported; use ``"enum"`` with one value instead.
+        - ``"default"`` is stripped (informational only, not part of the wire schema).
+        """
+        if not isinstance(schema, dict):
+            return {}
+
+        result: dict[str, Any] = {}
+
+        # Flatten array types: ["string", "null"] → "string".
+        # Note: a standalone "type": "null" (or an all-null list) produces no
+        # "type" key in result, yielding {} which gets filtered from properties.
+        # This is a known limitation; no current plugin schema uses null-only types.
+        t = schema.get("type")
+        if isinstance(t, list):
+            t = next((x for x in t if isinstance(x, str) and x != "null"), None)
+        if isinstance(t, str):
+            result["type"] = t
+
+        if "description" in schema:
+            result["description"] = schema["description"]
+
+        if "enum" in schema:
+            result["enum"] = schema["enum"]
+        elif "const" in schema:
+            # "const" is not supported by the Responses API; convert to single-value enum.
+            result["enum"] = [schema["const"]]
+
+        if "minimum" in schema:
+            result["minimum"] = schema["minimum"]
+        if "maximum" in schema:
+            result["maximum"] = schema["maximum"]
+
+        if result.get("type") == "array" and "items" in schema:
+            cleaned = self._sanitize_schema_for_responses_api(schema["items"])
+            if cleaned:
+                result["items"] = cleaned
+
+        if result.get("type") == "object":
+            self._sanitize_object_schema(result, schema)
+
+        return result
+
+    def _sanitize_object_schema(self, result: dict[str, Any], schema: dict[str, Any]) -> None:
+        if "properties" in schema and isinstance(schema["properties"], dict):
+            cleaned_props = {
+                k: self._sanitize_schema_for_responses_api(v)
+                for k, v in schema["properties"].items()
+                if isinstance(v, dict)
+            }
+            cleaned_props = {k: v for k, v in cleaned_props.items() if v}
+            if cleaned_props:
+                result["properties"] = cleaned_props
+
+        if "required" in schema and isinstance(schema["required"], list):
+            req = [r for r in schema["required"] if isinstance(r, str)]
+            if req:
+                result["required"] = req
+
+        if "additionalProperties" in schema:
+            result["additionalProperties"] = schema["additionalProperties"]
 
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         res: list[dict[str, Any]] = []
@@ -271,24 +358,23 @@ class ResponsesAdapter(BaseProviderAdapter):
             props["op"] = {
                 "type": "string",
                 "enum": [tool.op],
-                "const": tool.op,
-                "default": tool.op,
             }
             if isinstance(op_schema.get("required"), list):
                 if "op" not in op_schema["required"]:
                     op_schema["required"].append("op")
             else:
                 op_schema["required"] = ["op"]
+
+            sanitized = self._sanitize_schema_for_responses_api(op_schema)
+
             description = title or f"Run {tool.name}:{tool.op}"
+            # Responses API uses a flat tool format: name/description/parameters at the top level.
+            # (Unlike Chat Completions API which nests them under a "function" key.)
             tool_entry = {
                 "type": "function",
                 "name": fname,
                 "description": description,
-                "function": {
-                    "name": fname,
-                    "description": description,
-                    "parameters": op_schema,
-                },
+                "parameters": sanitized,
             }
             res.append(tool_entry)
         payload["tools"] = payload.get("tools", []) + res

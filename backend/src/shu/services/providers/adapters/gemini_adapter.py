@@ -572,9 +572,8 @@ class GeminiAdapter(BaseProviderAdapter):
         self._latest_usage_event = None
 
         final_text = "".join(self._stream_content)
-        final_event = [ProviderFinalEventResult(content=final_text, metadata={"usage": self.usage})]
         if not self._stream_tool_calls:
-            return final_event
+            return [ProviderFinalEventResult(content=final_text, metadata={"usage": self.usage})]
 
         sorted_calls = [self._stream_tool_calls[k] for k in sorted(self._stream_tool_calls.keys())]
         tool_calls = [self._tool_call_from_raw(tc) for tc in sorted_calls]
@@ -590,7 +589,6 @@ class GeminiAdapter(BaseProviderAdapter):
                 additional_messages=[m for m in [assistant_message, *result_messages] if m],
                 content="",
             ),
-            *final_event,
         ]
 
     async def handle_provider_completion(self, data: dict[str, Any]) -> list[ProviderEventResult]:
@@ -621,19 +619,17 @@ class GeminiAdapter(BaseProviderAdapter):
 
         assistant_message, result_messages = await self._build_assistant_and_result_messages(raw_tool_calls, tool_calls)
 
-        events: list[ProviderEventResult] = []
         if tool_calls:
             additional_messages = [m for m in [assistant_message, *result_messages] if m]
-            events.append(
+            return [
                 ProviderToolCallEventResult(
                     tool_calls=tool_calls,
                     additional_messages=additional_messages,
                     content="",
                 )
-            )
+            ]
 
-        events.append(ProviderFinalEventResult(content=content_text, metadata={"usage": self.usage}))
-        return events
+        return [ProviderFinalEventResult(content=content_text, metadata={"usage": self.usage})]
 
 
 register_adapter("gemini", GeminiAdapter)

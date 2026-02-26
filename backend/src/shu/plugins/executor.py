@@ -234,7 +234,10 @@ class Executor:
     def _validate(self, plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
         """Validate the provided params against the plugin's input schema and return the params if validation succeeds.
 
-        If the plugin exposes no schema, the params are returned unchanged. If jsonschema is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required" field are present and raise an HTTPException 422 identifying a missing key if not.
+        If the plugin exposes no schema, the params are returned unchanged (with stripped None values). If jsonschema
+        is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail
+        on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required"
+        field are present and raise an HTTPException 422 identifying a missing key if not.
 
         Parameters
         ----------
@@ -257,11 +260,16 @@ class Executor:
             logger.exception("Plugin.get_schema failed for %s", getattr(plugin, "name", "?"))
         if not schema:
             return params
+
+        # Strip None values so optional params sent as null by OLLAMA don't fail schema validation.
+        # Models sometimes call {..., "param": None, ...} which fails validation, so we strip them.
+        clean_params = {k: v for k, v in params.items() if v is not None}
+
         # If jsonschema is available, perform full validation; otherwise minimal required check
         if jsonschema is not None:
             try:
-                jsonschema.validate(instance=params, schema=schema)  # type: ignore[attr-defined]
-                return params
+                jsonschema.validate(instance=clean_params, schema=schema)  # type: ignore[attr-defined]
+                return clean_params
             except Exception as e:
                 # Normalize error surface
                 raise HTTPException(
@@ -274,9 +282,9 @@ class Executor:
         # Fallback: minimal check
         required = (schema or {}).get("required", [])
         for k in required:
-            if k not in params:
+            if k not in clean_params:
                 raise HTTPException(status_code=422, detail={"error": "validation_error", "missing": k})
-        return params
+        return clean_params
 
     def _validate_output(self, plugin: Plugin, data: dict[str, Any] | None) -> None:
         schema = None

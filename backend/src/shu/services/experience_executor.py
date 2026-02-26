@@ -199,8 +199,9 @@ class ExperienceExecutor:
                 context = await self._build_initial_context(experience, user_id, current_user, input_params)
 
                 # Execute steps
+                kb_ids = model_config.knowledge_base_ids if model_config else None
                 async for event in self._execute_steps_loop(
-                    experience, context, user_id, current_user, step_states, step_outputs
+                    experience, context, user_id, current_user, step_states, step_outputs, kb_ids
                 ):
                     yield event
 
@@ -313,6 +314,7 @@ class ExperienceExecutor:
         current_user: User,
         step_states: dict[str, Any],
         step_outputs: dict[str, Any],
+        knowledge_base_ids: list[str] | None = None,
     ) -> AsyncGenerator[ExperienceEvent, None]:
         """Iterate and execute all experience steps."""
         for step in experience.steps:
@@ -338,7 +340,7 @@ class ExperienceExecutor:
                 continue
 
             try:
-                output = await self._execute_step(step, context, user_id, current_user)
+                output = await self._execute_step(step, context, user_id, current_user, knowledge_base_ids)
                 step_end = datetime.now(UTC)
 
                 # Update context
@@ -655,10 +657,11 @@ class ExperienceExecutor:
         context: dict[str, Any],
         user_id: str,
         current_user: User,
+        knowledge_base_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Execute a single step (plugin, KB, or decision_control)."""
         if step.step_type == "plugin":
-            return await self._execute_plugin_step(step, context, user_id)
+            return await self._execute_plugin_step(step, context, user_id, knowledge_base_ids)
         if step.step_type == "knowledge_base":
             return await self._execute_kb_step(step, context, current_user)
         if step.step_type == "decision_control":
@@ -670,6 +673,7 @@ class ExperienceExecutor:
         step: ExperienceStep,
         context: dict[str, Any],
         user_id: str,
+        knowledge_base_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Execute plugin reusing the shared service logic."""
         plugin_name = step.plugin_name
@@ -677,6 +681,14 @@ class ExperienceExecutor:
             raise ValueError(f"Step {step.step_key} missing plugin_name")
 
         params = self._render_params(step.params_template, context)
+
+        # Inject KB IDs into __host overlay so KbCapability receives them.
+        # setdefault at every level: a step template may supply its own
+        # knowledge_base_ids to narrow the KB scope for that step.
+        if knowledge_base_ids:
+            host_overlay = params.setdefault("__host", {})
+            kb_overlay = host_overlay.setdefault("kb", {})
+            kb_overlay.setdefault("knowledge_base_ids", knowledge_base_ids)
 
         # Note: execute_plugin expects the operation argument explicitly
         op = step.plugin_op

@@ -22,6 +22,7 @@ class HostContext:
     auth: dict[str, Any]
     schedule_id: str | None
     ocr_mode: str | None
+    knowledge_base_ids: list[str] | None = None
 
 
 def parse_host_context(host_context: dict[str, Any] | None) -> HostContext:
@@ -51,7 +52,18 @@ def parse_host_context(host_context: dict[str, Any] | None) -> HostContext:
                 ocr_mode = mm if mm in {"auto", "always", "never", "fallback"} else None
     except Exception:
         ocr_mode = None
-    return HostContext(auth=auth_ctx, schedule_id=schedule_id, ocr_mode=ocr_mode)
+    # kb.knowledge_base_ids
+    knowledge_base_ids: list[str] | None = None
+    try:
+        kb_ctx = ctx.get("kb") if isinstance(ctx, dict) else None
+        if isinstance(kb_ctx, dict):
+            ids = kb_ctx.get("knowledge_base_ids")
+            if isinstance(ids, list):
+                valid_ids = [i for i in ids if isinstance(i, str) and i]
+                knowledge_base_ids = valid_ids if valid_ids else None
+    except Exception:
+        knowledge_base_ids = None
+    return HostContext(auth=auth_ctx, schedule_id=schedule_id, ocr_mode=ocr_mode, knowledge_base_ids=knowledge_base_ids)
 
 
 class Host:
@@ -168,6 +180,7 @@ def make_host(
             user_id=user_id,
             ocr_mode=parsed.ocr_mode,
             schedule_id=parsed.schedule_id,
+            knowledge_base_ids=parsed.knowledge_base_ids,
         )
 
     if "secrets" in caps:

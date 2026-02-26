@@ -181,11 +181,15 @@ class UnifiedLLMClient:
         provider: LLMProvider,
         conversation_owner_id: str | None = None,
         settings: Any | None = None,
+        knowledge_base_ids: list[str] | None = None,
     ) -> None:
         self.provider = provider
         self.conversation_owner_id = conversation_owner_id
+        self.knowledge_base_ids = knowledge_base_ids
         self.db_session = db_session
-        self.provider_adapter = get_adapter_from_provider(db_session, provider, self.conversation_owner_id)
+        self.provider_adapter = get_adapter_from_provider(
+            db_session, provider, self.conversation_owner_id, knowledge_base_ids=knowledge_base_ids
+        )
 
         # Inject settings instance for testability
         self.settings = settings if settings is not None else get_settings_instance()
@@ -456,7 +460,7 @@ class UnifiedLLMClient:
         if request_timeout is not None:
             stream_kwargs["timeout"] = self._build_timeout(request_timeout, stream=True)
 
-        final_event: ProviderFinalEventResult = None
+        final_event: ProviderFinalEventResult | None = None
 
         try:
             async with self.client.stream("POST", endpoint, json=payload, **stream_kwargs) as response:
@@ -539,7 +543,8 @@ class UnifiedLLMClient:
                     continue
                 yield provider_event
 
-            yield final_event
+            if final_event is not None:
+                yield final_event
 
         except (httpcore.RemoteProtocolError, httpx.RemoteProtocolError) as e:
             # Provider closed the stream early - this is often recoverable
