@@ -270,8 +270,8 @@ class ProfilingService:
         user_content = (
             f"Profile the following {len(chunks)} chunks:\n\n"
             + "\n\n".join(chunks_text)
-            + "\n\nRespond with a JSON array of profiles, one per chunk, in order. "
-            + "Each profile must include: summary, keywords, topics."
+            + f"\n\nIMPORTANT: Return a JSON array with EXACTLY {len(chunks)} profiles, one per chunk, in the same order. "
+            + "Do NOT skip, merge, or add extra profiles. Each profile must include: summary, keywords, topics."
         )
 
         # Validate input doesn't exceed max tokens

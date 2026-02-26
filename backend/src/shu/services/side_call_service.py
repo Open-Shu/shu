@@ -425,11 +425,15 @@ class SideCallService:
             setting = await self.system_settings_service.get_setting(PROFILING_MODEL_SETTING_KEY)
             if setting and setting.value.get("model_config_id"):
                 model_config_id = setting.value["model_config_id"]
+                logger.debug(f"Found profiling model setting: {model_config_id}")
                 model_config = await self.model_config_service.get_model_configuration(
                     model_config_id, include_relationships=True
                 )
                 if model_config and model_config.is_active:
                     return model_config
+                logger.warning(f"Profiling model {model_config_id} not found or inactive")
+            else:
+                logger.debug("No profiling model configured in system settings")
             return None
         except Exception as e:
             logger.error(f"Failed to get dedicated profiling model: {e}")
@@ -552,6 +556,13 @@ class SideCallService:
 
             # Get the designated profiling model (falls back to side-call model)
             model_config = dedicated_profiling_model or await self.get_side_call_model()
+
+            # Log which model is being used for profiling
+            if is_dedicated_profiling_model:
+                logger.info(f"Profiling using dedicated model: {model_config.name} ({model_config.model_name})")
+            elif model_config:
+                logger.info(f"Profiling falling back to side-call model: {model_config.name} ({model_config.model_name})")
+
             if not model_config:
                 return SideCallResult(
                     content="",
