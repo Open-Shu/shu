@@ -113,22 +113,21 @@ class SideCallService:
 
             chat_ctx = ChatContext.from_dicts(messages, system_prompt)
 
+            # Build model overrides - copy to avoid mutating model_config.parameter_overrides
+            raw_overrides = model_config.parameter_overrides
+            base_overrides: dict = raw_overrides if isinstance(raw_overrides, dict) else {}
+            model_overrides = {**base_overrides, **(config_overrides or {})}
+
             llm_params = {
                 "messages": chat_ctx,
                 "model": model.model_name,
                 "stream": False,
-                "model_overrides": model_config.parameter_overrides or None,
+                "model_overrides": model_overrides or None,
                 "llm_params": None,
             }
 
             # Convert timeout to per-request timeout seconds
             request_timeout = (timeout_ms / 1000.0) if timeout_ms else None
-
-            # Apply per-call configuration overrides
-            if config_overrides:
-                if not llm_params["model_overrides"]:
-                    llm_params["model_overrides"] = {}
-                llm_params["model_overrides"].update(config_overrides)
 
             # Make the LLM call
             responses = await client.chat_completion(**llm_params, request_timeout=request_timeout)
@@ -419,7 +418,7 @@ class SideCallService:
 
         Returns:
             ModelConfiguration if a dedicated profiling model is configured and active,
-            None otherwise (even if side-call model exists as fallback).
+            None otherwise (even if a side-call model exists).
 
         """
         try:
@@ -448,9 +447,9 @@ class SideCallService:
         """
         try:
             # First, try to get the dedicated profiling model
-            dedicated = await self.get_dedicated_profiling_model()
-            if dedicated:
-                return dedicated
+            profiling_model = await self.get_dedicated_profiling_model()
+            if profiling_model:
+                return profiling_model
 
             # Fall back to side-call model
             return await self.get_side_call_model()
@@ -547,8 +546,12 @@ class SideCallService:
             raise ValueError("message_sequence must contain at least one message")
 
         try:
+            # Check if a dedicated profiling model is configured
+            dedicated_profiling_model = await self.get_dedicated_profiling_model()
+            is_dedicated_profiling_model = dedicated_profiling_model is not None
+
             # Get the designated profiling model (falls back to side-call model)
-            model_config = await self.get_profiling_model()
+            model_config = dedicated_profiling_model or await self.get_side_call_model()
             if not model_config:
                 return SideCallResult(
                     content="",
@@ -572,22 +575,21 @@ class SideCallService:
 
             chat_ctx = ChatContext.from_dicts(messages, final_system_prompt)
 
+            # Build model overrides - copy to avoid mutating model_config.parameter_overrides
+            raw_overrides = model_config.parameter_overrides
+            base_overrides: dict = raw_overrides if isinstance(raw_overrides, dict) else {}
+            model_overrides = {**base_overrides, **(config_overrides or {})}
+
             llm_params = {
                 "messages": chat_ctx,
                 "model": model.model_name,
                 "stream": False,
-                "model_overrides": model_config.parameter_overrides or None,
+                "model_overrides": model_overrides or None,
                 "llm_params": None,
             }
 
             # Convert timeout to per-request timeout seconds
             request_timeout = (timeout_ms / 1000.0) if timeout_ms else None
-
-            # Apply per-call configuration overrides
-            if config_overrides:
-                if not llm_params["model_overrides"]:
-                    llm_params["model_overrides"] = {}
-                llm_params["model_overrides"].update(config_overrides)
 
             # Make the LLM call
             responses = await client.chat_completion(**llm_params, request_timeout=request_timeout)
@@ -615,7 +617,7 @@ class SideCallService:
                 metadata={
                     "model_config_id": model_config.id,
                     "model_name": model_config.model_name,
-                    "is_profiling_model": True,
+                    "is_dedicated_profiling_model": is_dedicated_profiling_model,
                 },
             )
 
