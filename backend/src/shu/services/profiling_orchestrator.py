@@ -2,12 +2,10 @@
 
 DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Loads document and chunk records from the database
-- Computes document token count for routing decisions
 - Manages profiling_status transitions (pending -> in_progress -> complete/failed)
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
-- For small docs: Uses unified profiling (synopsis + chunks + queries in one call)
-- For large docs: Uses incremental profiling (batches + final batch generates doc metadata)
+- Uses incremental profiling: batches produce chunk profiles, final batch generates doc metadata
 """
 
 import time
@@ -20,14 +18,10 @@ from ..core.config import Settings
 from ..models.document import Document, DocumentChunk, DocumentQuery
 from ..schemas.profiling import (
     ChunkData,
-    ChunkProfile,
     ChunkProfileResult,
-    DocumentProfile,
-    DocumentType,
     ProfilingMode,
     ProfilingResult,
 )
-from ..utils.tokenization import estimate_tokens
 from .profiling_service import ProfilingService
 from .side_call_service import SideCallService
 
@@ -52,14 +46,8 @@ class ProfilingOrchestrator:
 
         This is the main entry point called by ingestion integration.
 
-        For small documents (≤ PROFILING_FULL_DOC_MAX_TOKENS):
-        - Uses unified profiling: one LLM call produces synopsis, chunk profiles,
-          capability manifest, and synthesized queries.
-
-        For large documents:
-        - Uses incremental profiling: batches produce chunk profiles, final batch
-          generates document-level metadata from accumulated one-liners.
-        - Eliminates the separate aggregation LLM call for efficiency.
+        Uses incremental profiling: batches produce chunk profiles, final batch
+        generates document-level metadata from accumulated summaries.
 
         Args:
             document_id: ID of the document to profile
@@ -79,7 +67,7 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 document_profile=None,
                 chunk_profiles=[],
-                profiling_mode=ProfilingMode.FULL_DOCUMENT,
+                profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=False,
                 error=f"Document {document_id} not found",
             )
@@ -98,19 +86,10 @@ class ProfilingOrchestrator:
             result = await self.db.execute(stmt)
             chunks = list(result.scalars().all())
 
-            # Get full document text for token counting
-            full_text = self._assemble_document_text(chunks)
-            doc_tokens = estimate_tokens(full_text)
-
-            # Determine profiling mode
-            mode = self._choose_profiling_mode(doc_tokens)
-
             logger.info(
                 "starting_document_profiling",
                 document_id=document_id,
-                doc_tokens=doc_tokens,
                 chunk_count=len(chunks),
-                mode=mode.value,
             )
 
             # Prepare chunk data
@@ -123,36 +102,18 @@ class ProfilingOrchestrator:
                 for c in chunks
             ]
 
-            doc_profile: DocumentProfile | None = None
-            chunk_results: list[ChunkProfileResult] = []
-            synthesized_queries: list[str] = []
-
-            if mode == ProfilingMode.FULL_DOCUMENT:
-                # Unified profiling: one LLM call for everything
-                unified_result, llm_result = await self.profiling_service.profile_document_unified(
-                    chunks=chunk_data,
-                    document_metadata={"title": document.title},
-                )
-                total_tokens += llm_result.tokens_used
-
-                if unified_result:
-                    # Convert unified response to standard structures
-                    doc_profile = self._unified_to_document_profile(unified_result)
-                    chunk_results = self._unified_to_chunk_results(unified_result, chunk_data)
-                    synthesized_queries = unified_result.synthesized_queries
-            else:
-                # Large document: incremental profiling with final batch generating doc metadata
-                # This eliminates the separate aggregation LLM call (SHU-582)
-                (
-                    chunk_results,
-                    doc_profile,
-                    synthesized_queries,
-                    tokens,
-                ) = await self.profiling_service.profile_chunks_incremental(
-                    chunks=chunk_data,
-                    document_metadata={"title": document.title},
-                )
-                total_tokens += tokens
+            # Incremental profiling: batches produce chunk profiles,
+            # final batch generates document-level metadata from accumulated summaries
+            (
+                chunk_results,
+                doc_profile,
+                synthesized_queries,
+                tokens,
+            ) = await self.profiling_service.profile_chunks_incremental(
+                chunks=chunk_data,
+                document_metadata={"title": document.title},
+            )
+            total_tokens += tokens
 
             # Persist results
             await self._persist_results(document, chunks, doc_profile, chunk_results)
@@ -171,7 +132,6 @@ class ProfilingOrchestrator:
             logger.info(
                 "profiling_complete",
                 document_id=document_id,
-                profiling_mode=mode.value,
                 tokens_used=total_tokens,
                 queries_created=queries_created,
                 duration_ms=duration_ms,
@@ -181,7 +141,7 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 document_profile=doc_profile,
                 chunk_profiles=chunk_results,
-                profiling_mode=mode,
+                profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=doc_profile is not None,
                 error=None if doc_profile else "Failed to generate document profile",
                 tokens_used=total_tokens,
@@ -197,76 +157,11 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 document_profile=None,
                 chunk_profiles=[],
-                profiling_mode=ProfilingMode.FULL_DOCUMENT,  # code could fail before mode is determined, so return full doc as default
+                profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=False,
                 error=str(e),
                 duration_ms=int((time.time() - start_time) * 1000),
             )
-
-    def _unified_to_document_profile(self, unified) -> DocumentProfile:
-        """Convert UnifiedProfilingResponse to DocumentProfile."""
-        try:
-            doc_type = DocumentType((unified.document_type or "narrative").lower())
-        except (ValueError, AttributeError):
-            doc_type = DocumentType.NARRATIVE
-
-        return DocumentProfile(
-            synopsis=unified.synopsis,
-            document_type=doc_type,
-            capability_manifest=unified.capability_manifest,
-        )
-
-    def _unified_to_chunk_results(self, unified, chunk_data: list[ChunkData]) -> list[ChunkProfileResult]:
-        """Convert UnifiedProfilingResponse chunks to ChunkProfileResults."""
-        # Log warning if LLM returned fewer profiles than expected
-        if len(unified.chunks) < len(chunk_data):
-            returned_indices = sorted([c.index for c in unified.chunks])
-            logger.warning(
-                "unified_profile_count_mismatch",
-                chunks_expected=len(chunk_data),
-                profiles_returned=len(unified.chunks),
-                returned_indices=returned_indices,
-            )
-
-        # Build index map from unified chunks
-        unified_chunks_by_index = {c.index: c for c in unified.chunks}
-
-        results = []
-        for i, chunk in enumerate(chunk_data):
-            unified_chunk = unified_chunks_by_index.get(chunk.chunk_index)
-            if not unified_chunk and i < len(unified.chunks):
-                # Fallback: LLM may have returned batch-relative (0-based) indices
-                logger.debug(
-                    "using_positional_fallback_for_unified_chunk",
-                    expected_index=chunk.chunk_index,
-                    position=i,
-                )
-                unified_chunk = unified.chunks[i]
-            if unified_chunk:
-                profile = ChunkProfile(
-                    summary=unified_chunk.summary,
-                    keywords=unified_chunk.keywords,
-                    topics=unified_chunk.topics,
-                )
-                results.append(
-                    ChunkProfileResult(
-                        chunk_id=chunk.chunk_id,
-                        chunk_index=chunk.chunk_index,
-                        profile=profile,
-                        success=True,
-                    )
-                )
-            else:
-                results.append(
-                    ChunkProfileResult(
-                        chunk_id=chunk.chunk_id,
-                        chunk_index=chunk.chunk_index,
-                        profile=ChunkProfile(summary="", keywords=[], topics=[]),
-                        success=False,
-                        error="No profile in unified response",
-                    )
-                )
-        return results
 
     async def _persist_queries(self, document: Document, queries: list[str]) -> int:
         """Persist synthesized queries to the database.
@@ -306,26 +201,6 @@ class ProfilingOrchestrator:
             )
 
         return queries_created
-
-    def _choose_profiling_mode(self, doc_tokens: int) -> ProfilingMode:
-        """Determine whether to use full-doc or chunk-aggregation profiling.
-
-        Args:
-            doc_tokens: Estimated token count of the full document
-
-        Returns:
-            ProfilingMode indicating which approach to use
-
-        """
-        # TODO(SHU-XXX): Temporarily disabled unified profiling to test incremental
-        # path with smaller batch sizes. Original logic:
-        # if doc_tokens <= self.settings.profiling_full_doc_max_tokens:
-        #     return ProfilingMode.FULL_DOCUMENT
-        return ProfilingMode.CHUNK_AGGREGATION
-
-    def _assemble_document_text(self, chunks: list[DocumentChunk]) -> str:
-        """Assemble full document text from chunks."""
-        return "\n\n".join(c.content for c in chunks)
 
     async def _persist_results(
         self,

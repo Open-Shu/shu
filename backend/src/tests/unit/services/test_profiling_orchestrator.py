@@ -1,12 +1,10 @@
 """
-Unit tests for ProfilingOrchestrator (SHU-343, SHU-581).
+Unit tests for ProfilingOrchestrator (SHU-343, SHU-581, SHU-589).
 
 Tests the DB-aware orchestration layer that coordinates profiling,
 manages status transitions, and persists results.
 
-SHU-581 consolidated query synthesis into the profiling flow:
-- Small docs: Unified profiling generates synopsis, chunks, queries in one call
-- Large docs: Batch chunk profiling + aggregation generates queries
+SHU-589 removed unified profiling, consolidating on incremental profiling only.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,8 +18,6 @@ from shu.schemas.profiling import (
     DocumentProfile,
     DocumentType,
     ProfilingMode,
-    UnifiedChunkProfile,
-    UnifiedProfilingResponse,
 )
 from shu.services.profiling_orchestrator import ProfilingOrchestrator
 
@@ -30,9 +26,8 @@ from shu.services.profiling_orchestrator import ProfilingOrchestrator
 def mock_settings():
     """Mock settings with profiling configuration."""
     settings = MagicMock()
-    settings.profiling_timeout_seconds = 60
+    settings.profiling_timeout_seconds = 180
     settings.chunk_profiling_batch_size = 5
-    settings.profiling_full_doc_max_tokens = 4000
     settings.profiling_max_input_tokens = 8000
     settings.enable_document_profiling = True
     settings.enable_query_synthesis = True
@@ -82,53 +77,6 @@ def create_mock_chunk(chunk_id: str, index: int, content: str):
     return chunk
 
 
-class TestProfilingModeSelection:
-    """Tests for profiling mode selection logic.
-
-    NOTE: Unified profiling is temporarily disabled (see TODO in _choose_profiling_mode).
-    Tests that expect FULL_DOCUMENT mode are skipped until re-enabled.
-    """
-
-    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
-    def test_small_document_uses_full_doc(self, orchestrator, mock_settings):
-        """Documents under threshold use full-document profiling."""
-        mock_settings.profiling_full_doc_max_tokens = 4000
-        mode = orchestrator._choose_profiling_mode(3000)
-        assert mode == ProfilingMode.FULL_DOCUMENT
-
-    def test_large_document_uses_aggregation(self, orchestrator, mock_settings):
-        """Documents over threshold use chunk aggregation."""
-        mock_settings.profiling_full_doc_max_tokens = 4000
-        mode = orchestrator._choose_profiling_mode(5000)
-        assert mode == ProfilingMode.CHUNK_AGGREGATION
-
-    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
-    def test_exactly_threshold_uses_full_doc(self, orchestrator, mock_settings):
-        """Documents at exactly threshold use full-document."""
-        mock_settings.profiling_full_doc_max_tokens = 4000
-        mode = orchestrator._choose_profiling_mode(4000)
-        assert mode == ProfilingMode.FULL_DOCUMENT
-
-
-class TestDocumentTextAssembly:
-    """Tests for assembling document text from chunks."""
-
-    def test_assemble_document_text(self, orchestrator):
-        """Test joining chunk content."""
-        chunks = [
-            create_mock_chunk("c1", 0, "First chunk"),
-            create_mock_chunk("c2", 1, "Second chunk"),
-            create_mock_chunk("c3", 2, "Third chunk"),
-        ]
-        text = orchestrator._assemble_document_text(chunks)
-        assert text == "First chunk\n\nSecond chunk\n\nThird chunk"
-
-    def test_assemble_empty_chunks(self, orchestrator):
-        """Test with empty chunk list."""
-        text = orchestrator._assemble_document_text([])
-        assert text == ""
-
-
 class TestRunForDocument:
     """Tests for the main run_for_document method."""
 
@@ -142,67 +90,6 @@ class TestRunForDocument:
         assert result.success is False
         assert "not found" in result.error
         assert result.document_id == "nonexistent-id"
-
-    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
-    @pytest.mark.asyncio
-    async def test_unified_profiling_success(self, orchestrator, mock_db, mock_settings):
-        """Test successful unified profiling path for small documents."""
-        doc = create_mock_document()
-        chunks = [
-            create_mock_chunk("c1", 0, "Short content"),
-            create_mock_chunk("c2", 1, "More short content"),
-        ]
-        mock_db.get.return_value = doc
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = chunks
-        mock_db.execute.return_value = mock_result
-
-        # Mock unified profiling response
-        unified_response = UnifiedProfilingResponse(
-            synopsis="Test synopsis for the document",
-            chunks=[
-                UnifiedChunkProfile(
-                    index=0,
-                    summary="Explains short content with specific details",
-                    keywords=["short", "content"],
-                    topics=["testing"],
-                ),
-                UnifiedChunkProfile(
-                    index=1,
-                    summary="Covers more content with examples",
-                    keywords=["more", "content"],
-                    topics=["testing"],
-                ),
-            ],
-            document_type="technical",
-            capability_manifest=CapabilityManifest(
-                answers_questions_about=["testing"],
-            ),
-            synthesized_queries=[
-                "What is the short content about?",
-                "How does the content work?",
-            ],
-        )
-
-        with patch.object(
-            orchestrator.profiling_service,
-            "profile_document_unified",
-            new=AsyncMock(return_value=(unified_response, MagicMock(tokens_used=200))),
-        ) as mock_unified:
-            with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
-                result = await orchestrator.run_for_document("doc-123")
-
-        assert result.success is True
-        assert result.profiling_mode == ProfilingMode.FULL_DOCUMENT
-        assert result.document_profile is not None
-        assert result.document_profile.synopsis == "Test synopsis for the document"
-        assert len(result.chunk_profiles) == 2
-        doc.mark_profiling_started.assert_called_once()
-        doc.mark_profiling_complete.assert_called_once()
-        mock_unified.assert_called_once()
-        # Verify queries were persisted (2 queries)
-        assert mock_db.add.call_count == 2
 
     @pytest.mark.asyncio
     async def test_chunk_aggregation_profiling(self, orchestrator, mock_db, mock_settings):
@@ -245,8 +132,7 @@ class TestRunForDocument:
             "profile_chunks_incremental",
             new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300)),
         ):
-            with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=10000):
-                result = await orchestrator.run_for_document("doc-123")
+            result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
@@ -430,116 +316,6 @@ class TestPersistQueries:
         assert "document_queries" in str(delete_call) or "DocumentQuery" in str(delete_call)
 
 
-class TestUnifiedToDocumentProfile:
-    """Tests for converting unified response to DocumentProfile."""
-
-    def test_unified_to_document_profile(self, orchestrator):
-        """Test conversion of unified response to DocumentProfile."""
-        unified = UnifiedProfilingResponse(
-            synopsis="Test synopsis",
-            chunks=[],
-            document_type="technical",
-            capability_manifest=CapabilityManifest(
-                answers_questions_about=["APIs", "authentication"],
-            ),
-            synthesized_queries=[],
-        )
-
-        profile = orchestrator._unified_to_document_profile(unified)
-
-        assert profile.synopsis == "Test synopsis"
-        assert profile.document_type == DocumentType.TECHNICAL
-        assert profile.capability_manifest.answers_questions_about == ["APIs", "authentication"]
-
-    def test_unified_to_document_profile_invalid_type(self, orchestrator):
-        """Test fallback for invalid document type."""
-        unified = UnifiedProfilingResponse(
-            synopsis="Test",
-            chunks=[],
-            document_type="invalid_type",
-            capability_manifest=CapabilityManifest(),
-            synthesized_queries=[],
-        )
-
-        profile = orchestrator._unified_to_document_profile(unified)
-
-        assert profile.document_type == DocumentType.NARRATIVE  # Fallback
-
-
-class TestUnifiedToChunkResults:
-    """Tests for converting unified response chunks to ChunkProfileResults."""
-
-    def test_unified_to_chunk_results(self, orchestrator):
-        """Test conversion of unified chunks to ChunkProfileResults."""
-        from shu.schemas.profiling import ChunkData
-
-        unified = UnifiedProfilingResponse(
-            synopsis="Test",
-            chunks=[
-                UnifiedChunkProfile(
-                    index=0,
-                    summary="First chunk explains OAuth2 flow",
-                    keywords=["k1"],
-                    topics=["t1"],
-                ),
-                UnifiedChunkProfile(
-                    index=1,
-                    summary="Second chunk covers token refresh",
-                    keywords=["k2"],
-                    topics=["t2"],
-                ),
-            ],
-            document_type="narrative",
-            capability_manifest=CapabilityManifest(),
-            synthesized_queries=[],
-        )
-
-        chunk_data = [
-            ChunkData(chunk_id="c1", chunk_index=0, content="Content 1"),
-            ChunkData(chunk_id="c2", chunk_index=1, content="Content 2"),
-        ]
-
-        results = orchestrator._unified_to_chunk_results(unified, chunk_data)
-
-        assert len(results) == 2
-        assert results[0].chunk_id == "c1"
-        assert results[0].profile.summary == "First chunk explains OAuth2 flow"
-        assert results[0].success is True
-        assert results[1].chunk_id == "c2"
-        assert results[1].profile.summary == "Second chunk covers token refresh"
-
-    def test_unified_to_chunk_results_missing_chunk(self, orchestrator):
-        """Test handling when unified response is missing a chunk."""
-        from shu.schemas.profiling import ChunkData
-
-        unified = UnifiedProfilingResponse(
-            synopsis="Test",
-            chunks=[
-                UnifiedChunkProfile(
-                    index=0,
-                    summary="Only first chunk has profile",
-                    keywords=[],
-                    topics=[],
-                ),
-            ],
-            document_type="narrative",
-            capability_manifest=CapabilityManifest(),
-            synthesized_queries=[],
-        )
-
-        chunk_data = [
-            ChunkData(chunk_id="c1", chunk_index=0, content="Content 1"),
-            ChunkData(chunk_id="c2", chunk_index=1, content="Content 2"),
-        ]
-
-        results = orchestrator._unified_to_chunk_results(unified, chunk_data)
-
-        assert len(results) == 2
-        assert results[0].success is True
-        assert results[1].success is False
-        assert "No profile in unified response" in results[1].error
-
-
 class TestHelperMethods:
     """Tests for helper methods."""
 
@@ -569,48 +345,3 @@ class TestHelperMethods:
 
         status = await orchestrator.get_profiling_status("nonexistent")
         assert status is None
-
-
-class TestQuerySynthesisDisabled:
-    """Tests for query synthesis disabled scenarios."""
-
-    @pytest.mark.skip(reason="Unified profiling temporarily disabled - see TODO in _choose_profiling_mode")
-    @pytest.mark.asyncio
-    async def test_queries_not_persisted_when_disabled(self, orchestrator, mock_db, mock_settings):
-        """Test that queries are not persisted when query synthesis is disabled."""
-        mock_settings.enable_query_synthesis = False
-
-        doc = create_mock_document()
-        chunks = [create_mock_chunk("c1", 0, "Content")]
-        mock_db.get.return_value = doc
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = chunks
-        mock_db.execute.return_value = mock_result
-
-        unified_response = UnifiedProfilingResponse(
-            synopsis="Test synopsis",
-            chunks=[
-                UnifiedChunkProfile(
-                    index=0,
-                    summary="Summary with specific details",
-                    keywords=[],
-                    topics=[],
-                ),
-            ],
-            document_type="technical",
-            capability_manifest=CapabilityManifest(),
-            synthesized_queries=["Query 1", "Query 2"],  # Queries in response
-        )
-
-        with patch.object(
-            orchestrator.profiling_service,
-            "profile_document_unified",
-            new=AsyncMock(return_value=(unified_response, MagicMock(tokens_used=100))),
-        ):
-            with patch("shu.services.profiling_orchestrator.estimate_tokens", return_value=100):
-                result = await orchestrator.run_for_document("doc-123")
-
-        assert result.success is True
-        # No queries should be added to DB
-        mock_db.add.assert_not_called()

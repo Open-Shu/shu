@@ -5,9 +5,8 @@ It is a pure LLM-facing service with no database access. The profiling
 orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
-- Generate unified profiles (synopsis, chunk summaries, queries) for small docs
 - Generate chunk profiles (summary, keywords, topics) for batch processing
-- Generate document metadata in final batch for large documents (incremental profiling)
+- Generate document metadata in final batch (incremental profiling)
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
 
@@ -22,7 +21,6 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     DocumentProfile,
     DocumentType,
-    UnifiedProfilingResponse,
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
@@ -31,63 +29,7 @@ from .side_call_service import SideCallResult, SideCallService
 logger = structlog.get_logger(__name__)
 
 
-# Unified profiling prompt template with conditional query synthesis sections
-# Placeholders: {query_intro}, {queries_json}, {queries_guidelines}
-# When queries disabled: all placeholders are empty strings
-# When queries enabled: placeholders contain the query-specific content
-UNIFIED_PROFILING_PROMPT_TEMPLATE = """You are profiling documents for an AI-powered retrieval system.
-
-PURPOSE: An AI agent will use your output to decide whether to retrieve this document when users ask questions. Generic descriptions like "security measures" or "strategic vision" are USELESS - they match every document. Your job is to extract SPECIFIC, DISTINGUISHING details that help the agent know EXACTLY what this document contains{query_intro}.
-
-Generate a JSON response with this exact structure:
-{{
-    "synopsis": "A 2-4 sentence summary with SPECIFIC details: names, dates, figures, decisions. Not 'discusses financial performance' but 'Reports Q3 2024 revenue of $4.2M for Acme Corp, up 12% YoY.'",
-    "chunks": [
-        {{
-            "index": 0,
-            "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
-            "keywords": ["Acme Corp", "Q3 2024", "$4.2M", "John Smith"],
-            "topics": ["quarterly earnings", "revenue growth"]
-        }}
-    ],
-    "document_type": "One of: narrative, transactional, technical, conversational",
-    "capability_manifest": {{
-        "answers_questions_about": [
-            "SPECIFIC topics with named entities, dates, and concrete details",
-            "Example: 'Acme Corp Q3 2024 revenue and profit margins'",
-            "Example: 'Security vulnerabilities in authentication module v2.3'"
-        ],
-        "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
-        "authority_level": "primary, secondary, or commentary",
-        "completeness": "complete, partial, or reference",
-        "question_domains": ["who", "what", "when", "where", "why", "how"]
-    }}{queries_json}
-}}
-
-CRITICAL - answers_questions_about:
-BAD (too generic, matches everything):
-  - "security measures"
-  - "strategic vision"
-  - "project updates"
-  - "financial information"
-
-GOOD (specific, distinguishes this document):
-  - "OAuth2 token refresh vulnerability in auth-service v2.3"
-  - "Q3 2024 board decision to acquire TechStart Inc"
-  - "Project Atlas milestones for Phase 2 (Jan-Mar 2025)"
-  - "Sarah Chen's performance review feedback from Mike Torres"
-
-Guidelines:
-- summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject, not just the category.
-- synopsis: Lead with the most important SPECIFIC facts. What names, dates, decisions, or figures would someone search for?{queries_guidelines}
-- keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
-- topics: Broader categories, but still specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
-
-Examples:
-BAD summary: "Discusses security configuration"
-GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings\""""
-
-# Prompt for chunk-only profiling (used in batch processing for large docs)
+# Prompt for chunk-only profiling (used in batch processing)
 CHUNK_PROFILE_SYSTEM_PROMPT = """You are profiling document chunks for an AI retrieval system.
 
 PURPOSE: An AI agent scans these profiles to decide which chunks to retrieve. Generic descriptions are useless. Extract SPECIFIC, DISTINGUISHING details.
@@ -223,27 +165,6 @@ class ProfilingService:
             return self.settings.query_synthesis_timeout_seconds * 1000
         return self.settings.profiling_timeout_seconds * 1000
 
-    def _build_unified_profiling_prompt(self) -> str:
-        """Build unified profiling system prompt.
-
-        Injects query synthesis sections when enable_query_synthesis is True.
-        """
-        if self.settings.enable_query_synthesis:
-            queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
-                min_queries=self.settings.query_synthesis_min_queries,
-                max_queries=self.settings.query_synthesis_max_queries,
-            )
-            return UNIFIED_PROFILING_PROMPT_TEMPLATE.format(
-                query_intro=QUERY_INTRO_ADDITION,
-                queries_json=QUERIES_JSON_ADDITION,
-                queries_guidelines=queries_guidelines,
-            )
-        return UNIFIED_PROFILING_PROMPT_TEMPLATE.format(
-            query_intro="",
-            queries_json="",
-            queries_guidelines="",
-        )
-
     def _build_final_batch_prompt(self) -> str:
         """Build final batch system prompt.
 
@@ -292,69 +213,6 @@ class ProfilingService:
                 error_message=error_msg,
             )
         return None
-
-    async def profile_document_unified(
-        self,
-        chunks: list[ChunkData],
-        document_metadata: dict | None = None,
-        timeout_ms: int | None = None,
-    ) -> tuple[UnifiedProfilingResponse | None, SideCallResult]:
-        """Generate a complete unified profile for a small document.
-
-        This is the primary method for small documents. It generates synopsis,
-        per-chunk summaries, capability manifest, and synthesized queries in a
-        single LLM call.
-
-        Args:
-            chunks: List of chunk data with content (contains full document)
-            document_metadata: Optional metadata (title, source, etc.)
-            timeout_ms: Optional timeout override
-
-        Returns:
-            Tuple of (UnifiedProfilingResponse or None if failed, SideCallResult)
-
-        """
-        timeout = self._resolve_timeout_ms(timeout_ms, for_query_synthesis=self.settings.enable_query_synthesis)
-
-        # Build the user message with chunk structure only
-        # The chunks contain the full document content - no need to duplicate
-        chunks_text = []
-        for chunk in chunks:
-            chunks_text.append(f"[CHUNK {chunk.chunk_index}]\n{chunk.content}\n[/CHUNK]")
-
-        user_content = f"Analyze this document with {len(chunks)} chunks:\n\n"
-        user_content += "\n\n".join(chunks_text)
-
-        if document_metadata:
-            meta_str = json.dumps(document_metadata, indent=2)
-            user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
-
-        # Validate input doesn't exceed max tokens
-        error_result = self._validate_input_tokens(user_content, "unified profiling")
-        if error_result:
-            return None, error_result
-
-        message_sequence = [{"role": "user", "content": user_content}]
-
-        result = await self.side_call.call(
-            message_sequence=message_sequence,
-            system_prompt=self._build_unified_profiling_prompt(),
-            user_id=None,  # System operation
-            timeout_ms=timeout,
-        )
-
-        if not result.success:
-            logger.warning(
-                "unified_profiling_failed",
-                error=result.error_message,
-            )
-            return None, result
-
-        # Parse the unified response
-        unified_response = self.parser.parse_unified_response(result.content)
-        if not unified_response:
-            logger.warning("failed_to_parse_unified_profiling_response")
-        return unified_response, result
 
     async def profile_chunks(
         self,
@@ -428,10 +286,9 @@ class ProfilingService:
 
         message_sequence = [{"role": "user", "content": user_content}]
 
-        result = await self.side_call.call(
+        result = await self.side_call.call_for_profiling(
             message_sequence=message_sequence,
             system_prompt=CHUNK_PROFILE_SYSTEM_PROMPT,
-            user_id=None,  # System operation
             timeout_ms=timeout_ms,
         )
 
@@ -577,10 +434,9 @@ class ProfilingService:
 
         message_sequence = [{"role": "user", "content": user_content}]
 
-        result = await self.side_call.call(
+        result = await self.side_call.call_for_profiling(
             message_sequence=message_sequence,
             system_prompt=self._build_final_batch_prompt(),
-            user_id=None,
             timeout_ms=timeout_ms,
         )
 

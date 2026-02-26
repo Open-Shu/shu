@@ -16,7 +16,6 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     FinalBatchResponse,
     UnifiedChunkProfile,
-    UnifiedProfilingResponse,
 )
 
 logger = structlog.get_logger(__name__)
@@ -151,35 +150,6 @@ class ProfileParser:
             if text:
                 result.append(text)
         return result[: self.max_queries]
-
-    def parse_unified_response(self, content: str) -> UnifiedProfilingResponse | None:
-        """Parse unified profiling LLM response.
-
-        Args:
-            content: Raw LLM response content
-
-        Returns:
-            UnifiedProfilingResponse if parsing succeeds, None otherwise
-
-        """
-        try:
-            json_str = self.extract_json(content)
-            data = json.loads(json_str)
-
-            return UnifiedProfilingResponse(
-                synopsis=data.get("synopsis", ""),
-                chunks=self._parse_chunks(data.get("chunks", [])),
-                document_type=(data.get("document_type") or "narrative").lower(),
-                capability_manifest=self._parse_capability_manifest(data),
-                synthesized_queries=self._parse_synthesized_queries(data.get("synthesized_queries", [])),
-            )
-        except Exception as e:
-            logger.warning(
-                "failed_to_parse_unified_response",
-                error=str(e),
-                content_length=len(content) if content else 0,
-            )
-            return None
 
     def parse_final_batch_response(self, content: str) -> FinalBatchResponse | None:
         """Parse final batch profiling LLM response.
