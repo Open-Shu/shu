@@ -561,7 +561,9 @@ class SideCallService:
             if is_dedicated_profiling_model:
                 logger.info(f"Profiling using dedicated model: {model_config.name} ({model_config.model_name})")
             elif model_config:
-                logger.info(f"Profiling falling back to side-call model: {model_config.name} ({model_config.model_name})")
+                logger.info(
+                    f"Profiling falling back to side-call model: {model_config.name} ({model_config.model_name})"
+                )
 
             if not model_config:
                 return SideCallResult(
