@@ -14,8 +14,7 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfile,
     ChunkProfileResult,
-    FinalBatchResponse,
-    UnifiedChunkProfile,
+    DocumentMetadataResponse,
 )
 
 logger = structlog.get_logger(__name__)
@@ -90,40 +89,6 @@ class ProfileParser:
             question_domains=self._coerce_list(manifest_data.get("question_domains")),
         )
 
-    def _parse_chunks(self, chunks_data: list) -> list[UnifiedChunkProfile]:
-        """Parse chunk profiles from JSON data.
-
-        Handles None values and non-list types gracefully by coercing to
-        appropriate defaults before truncation.
-
-        Args:
-            chunks_data: List of chunk dictionaries from JSON
-
-        Returns:
-            List of UnifiedChunkProfile with truncated fields
-
-        """
-        chunks = []
-        for pos, chunk_data in enumerate(chunks_data):
-            raw_index = chunk_data.get("index")
-            try:
-                index = int(raw_index) if raw_index is not None else pos
-            except (ValueError, TypeError):
-                index = pos
-            # Coerce values to handle LLM returning null instead of missing keys
-            summary = self._coerce_string(chunk_data.get("summary"))
-            keywords = self._coerce_list(chunk_data.get("keywords"))
-            topics = self._coerce_list(chunk_data.get("topics"))
-            chunks.append(
-                UnifiedChunkProfile(
-                    index=index,
-                    summary=summary[: self.MAX_SUMMARY_LENGTH],
-                    keywords=keywords[: self.MAX_KEYWORDS],
-                    topics=topics[: self.MAX_TOPICS],
-                )
-            )
-        return chunks
-
     def _parse_synthesized_queries(self, queries: list) -> list[str]:
         """Parse synthesized queries, handling both string and object formats.
 
@@ -151,24 +116,24 @@ class ProfileParser:
                 result.append(text)
         return result[: self.max_queries]
 
-    def parse_final_batch_response(self, content: str) -> FinalBatchResponse | None:
-        """Parse final batch profiling LLM response.
+    def parse_document_metadata_response(self, content: str) -> DocumentMetadataResponse | None:
+        """Parse document metadata synthesis LLM response.
 
-        The final batch includes both chunk profiles AND document-level metadata.
+        This parses responses from the dedicated document metadata generation call,
+        which contains only document-level metadata (no chunk profiles).
 
         Args:
             content: Raw LLM response content
 
         Returns:
-            FinalBatchResponse if parsing succeeds, None otherwise
+            DocumentMetadataResponse if parsing succeeds, None otherwise
 
         """
         try:
             json_str = self.extract_json(content)
             data = json.loads(json_str)
 
-            return FinalBatchResponse(
-                chunks=self._parse_chunks(data.get("chunks", [])),
+            return DocumentMetadataResponse(
                 synopsis=data.get("synopsis", ""),
                 document_type=(data.get("document_type") or "narrative").lower(),
                 capability_manifest=self._parse_capability_manifest(data),
@@ -176,7 +141,7 @@ class ProfileParser:
             )
         except Exception as e:
             logger.warning(
-                "failed_to_parse_final_batch_response",
+                "failed_to_parse_document_metadata_response",
                 error=str(e),
                 content_length=len(content) if content else 0,
             )
