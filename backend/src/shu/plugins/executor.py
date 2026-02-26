@@ -257,11 +257,16 @@ class Executor:
             logger.exception("Plugin.get_schema failed for %s", getattr(plugin, "name", "?"))
         if not schema:
             return params
+
+        # Strip None values so optional params sent as null by OLLAMA don't fail schema validation.
+        # Models sometimes call {..., "param": None, ...} which fails validation, so we strip them.
+        clean_params = {k: v for k, v in params.items() if v is not None}
+
         # If jsonschema is available, perform full validation; otherwise minimal required check
         if jsonschema is not None:
             try:
-                jsonschema.validate(instance=params, schema=schema)  # type: ignore[attr-defined]
-                return params
+                jsonschema.validate(instance=clean_params, schema=schema)  # type: ignore[attr-defined]
+                return clean_params
             except Exception as e:
                 # Normalize error surface
                 raise HTTPException(
@@ -274,9 +279,9 @@ class Executor:
         # Fallback: minimal check
         required = (schema or {}).get("required", [])
         for k in required:
-            if k not in params:
+            if k not in clean_params:
                 raise HTTPException(status_code=422, detail={"error": "validation_error", "missing": k})
-        return params
+        return clean_params
 
     def _validate_output(self, plugin: Plugin, data: dict[str, Any] | None) -> None:
         schema = None

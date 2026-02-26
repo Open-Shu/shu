@@ -235,7 +235,9 @@ class ResponsesAdapter(BaseProviderAdapter):
         self._extract_usage("usage", data)
 
         final_message = jmespath.search("output[?type=='message'] | [-1].content[-1].text", data)
-        final_messages = [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})]
+        final_messages = (
+            [ProviderFinalEventResult(content=final_message, metadata={"usage": self.usage})] if final_message else []
+        )
 
         function_call_messages = jmespath.search("output[?type=='function_call']", data) or []
         if not function_call_messages:
@@ -268,7 +270,6 @@ class ResponsesAdapter(BaseProviderAdapter):
         ] + result_messages
         return [
             ProviderToolCallEventResult(tool_calls=tool_calls, additional_messages=additional_messages, content=""),
-            *final_messages,
         ]
 
     def _sanitize_schema_for_responses_api(self, schema: dict[str, Any]) -> dict[str, Any]:

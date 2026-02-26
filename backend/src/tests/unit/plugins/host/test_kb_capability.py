@@ -395,7 +395,7 @@ class TestExceptionHandling:
 
         assert result["status"] == "error"
         assert result["error"]["code"] == "search_chunks_error"
-        assert "DB exploded" in result["error"]["message"]
+        assert result["error"]["message"] == "An internal error occurred"
 
     @pytest.mark.asyncio
     async def test_search_documents_exception_returns_structured_error(self, cap_with_kbs, mock_db):
@@ -410,7 +410,7 @@ class TestExceptionHandling:
 
         assert result["status"] == "error"
         assert result["error"]["code"] == "search_documents_error"
-        assert "bad value" in result["error"]["message"]
+        assert result["error"]["message"] == "An internal error occurred"
 
     @pytest.mark.asyncio
     async def test_get_document_exception_returns_structured_error(self, cap_with_kbs, mock_db):
@@ -425,7 +425,7 @@ class TestExceptionHandling:
 
         assert result["status"] == "error"
         assert result["error"]["code"] == "get_document_error"
-        assert "timeout" in result["error"]["message"]
+        assert result["error"]["message"] == "An internal error occurred"
 
     @pytest.mark.asyncio
     async def test_exception_still_closes_db(self, cap_with_kbs, mock_db):

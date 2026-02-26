@@ -127,10 +127,8 @@ async def test_event_handling(gemini_adapter, patch_plugin_calls):
     assert await gemini_adapter.handle_provider_event(GEMINI_IGNORED_RESPONSE_COMPLETE) is None
 
     events = await gemini_adapter.finalize_provider_events()
-    assert len(events) == 2  # tool call + final message
+    assert len(events) == 1  # tool call only — no final message when no text content
     _evaluate_tool_call_events(events[0])
-    final_event = events[1]
-    assert isinstance(final_event, ProviderFinalEventResult)
 
     # Streaming text deltas accumulate
     event = await gemini_adapter.handle_provider_event(GEMINI_ACTIONABLE_OUTPUT_DELTA1)
@@ -162,10 +160,8 @@ async def test_event_handling(gemini_adapter, patch_plugin_calls):
 @pytest.mark.asyncio
 async def test_completion_flow(gemini_adapter, patch_plugin_calls):
     events = await gemini_adapter.handle_provider_completion(GEMINI_COMPLETE_FUNCTION_CALL_PAYLOAD)
-    assert len(events) == 2  # tool call + final (empty)
+    assert len(events) == 1  # tool call only — no final message when no text content
     _evaluate_tool_call_events(events[0])
-    assert isinstance(events[1], ProviderFinalEventResult)
-    assert not events[1].content
 
     events = await gemini_adapter.handle_provider_completion(GEMINI_COMPLETE_OUTPUT_PAYLOAD)
     assert len(events) == 1

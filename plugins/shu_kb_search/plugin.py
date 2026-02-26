@@ -270,10 +270,10 @@ class KbSearchPlugin:
                     },
                     "operator": {
                         "type": "string",
-                        "enum": ["eq", "contains", "icontains", "has_key", "has_any"],
+                        "enum": ["eq", "icontains", "has_key", "has_any"],
                         "description": (
                             "For text fields (content, summary): "
-                            "'eq' exact match, 'contains' case-sensitive substring, 'icontains' case-insensitive substring. "
+                            "'eq' exact match, 'icontains' case-insensitive substring. "
                             "For JSON array fields (keywords, topics): "
                             "'has_key' element exists in array, "
                             "'has_any' array contains any of a list of strings (value must be a list), "
@@ -284,7 +284,7 @@ class KbSearchPlugin:
                         "type": ["string", "array"],
                         "items": {"type": "string"},
                         "description": (
-                            "String for 'eq', 'contains', 'icontains', 'has_key'. "
+                            "String for 'eq', 'icontains', 'has_key'. "
                             "List of strings for 'has_any'."
                         ),
                     },
@@ -317,10 +317,10 @@ class KbSearchPlugin:
                     },
                     "operator": {
                         "type": "string",
-                        "enum": ["eq", "contains", "icontains", "has_key", "path_contains"],
+                        "enum": ["eq", "icontains", "has_key", "path_contains"],
                         "description": (
                             "For text fields (title, content, synopsis): "
-                            "'eq' exact match, 'contains' case-sensitive substring, 'icontains' case-insensitive substring. "
+                            "'eq' exact match, 'icontains' case-insensitive substring. "
                             "For 'capability_manifest' (JSON object): "
                             "'has_key' top-level key exists, "
                             "'contains' object contains a dict subset, "
