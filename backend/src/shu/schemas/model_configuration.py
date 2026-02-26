@@ -71,6 +71,7 @@ class ModelConfigurationCreate(ModelConfigurationBase):
     )
     functionalities: dict[str, Any] | None = Field(None, description="Enabled functionalities for the given model")
     is_side_call_model: bool = Field(False, description="Whether this model is designated for side-calls")
+    is_profiling_model: bool = Field(False, description="Whether this model is designated for document profiling")
 
     kb_prompt_assignments: list[ModelConfigKBPromptAssignment] = Field(
         default_factory=list, description="KB-specific prompt assignments"
@@ -97,6 +98,7 @@ class ModelConfigurationUpdate(BaseModel):
     )
     functionalities: dict[str, Any] | None = Field(None, description="Enabled functionalities for the given model")
     is_side_call_model: bool | None = Field(None, description="Whether this model is designated for side-calls")
+    is_profiling_model: bool | None = Field(None, description="Whether this model is designated for document profiling")
 
     @field_validator("name")
     @classmethod
@@ -150,6 +152,7 @@ class ModelConfigurationResponse(ModelConfigurationBase):
 
     functionalities: dict[str, Any] = Field(default_factory=dict, description="Enabled functionalities for this model")
     is_side_call: bool = Field(False, description="Whether this model is designated for side-calls")
+    is_profiling: bool = Field(False, description="Whether this model is designated for document profiling")
 
 
 class ModelConfigurationList(BaseModel):

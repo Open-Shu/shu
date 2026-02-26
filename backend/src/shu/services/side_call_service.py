@@ -410,6 +410,32 @@ class SideCallService:
     # Profiling uses a dedicated model to allow different timeout/cost tradeoffs
     # than interactive side-calls. Falls back to side-call model if not configured.
 
+    async def get_dedicated_profiling_model(self) -> ModelConfiguration | None:
+        """Get the explicitly configured profiling model (without fallback).
+
+        This is used for UI display purposes - to show the "Profiling" indicator
+        only when a dedicated profiling model is configured, not when falling back
+        to the side-call model.
+
+        Returns:
+            ModelConfiguration if a dedicated profiling model is configured and active,
+            None otherwise (even if side-call model exists as fallback).
+
+        """
+        try:
+            setting = await self.system_settings_service.get_setting(PROFILING_MODEL_SETTING_KEY)
+            if setting and setting.value.get("model_config_id"):
+                model_config_id = setting.value["model_config_id"]
+                model_config = await self.model_config_service.get_model_configuration(
+                    model_config_id, include_relationships=True
+                )
+                if model_config and model_config.is_active:
+                    return model_config
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get dedicated profiling model: {e}")
+            return None
+
     async def get_profiling_model(self) -> ModelConfiguration | None:
         """Get the model configuration designated for profiling.
 
@@ -421,16 +447,10 @@ class SideCallService:
 
         """
         try:
-            # First, try to get the profiling-specific model
-            setting = await self.system_settings_service.get_setting(PROFILING_MODEL_SETTING_KEY)
-            if setting and setting.value.get("model_config_id"):
-                model_config_id = setting.value["model_config_id"]
-                model_config = await self.model_config_service.get_model_configuration(
-                    model_config_id, include_relationships=True
-                )
-                if model_config and model_config.is_active:
-                    return model_config
-                logger.warning(f"Profiling model {model_config_id} not found or inactive, falling back to side-call model")
+            # First, try to get the dedicated profiling model
+            dedicated = await self.get_dedicated_profiling_model()
+            if dedicated:
+                return dedicated
 
             # Fall back to side-call model
             return await self.get_side_call_model()

@@ -19,6 +19,7 @@ from ..schemas.side_call import (
     SideCallConfigRequest,
     SideCallConfigResponse,
     SideCallModelResponse,
+    SideCallModelType,
 )
 from ..services.chat_service import ChatService
 from ..services.conversation_automation_service import ConversationAutomationService
@@ -37,12 +38,17 @@ def get_side_call_service(
     return SideCallService(db, config_manager)
 
 
-def _build_config_response(model_config, message: str) -> SideCallConfigResponse:
+def _build_config_response(
+    model_config, message: str, model_type: SideCallModelType = SideCallModelType.DEFAULT
+) -> SideCallConfigResponse:
     """Build a consistent config response."""
     if not model_config:
-        return SideCallConfigResponse(configured=False, side_call_model_config=None, message=message)
+        return SideCallConfigResponse(
+            model_type=model_type, configured=False, side_call_model_config=None, message=message
+        )
 
     return SideCallConfigResponse(
+        model_type=model_type,
         configured=True,
         side_call_model_config=SideCallModelResponse(
             id=model_config.id,
@@ -57,65 +63,139 @@ def _build_config_response(model_config, message: str) -> SideCallConfigResponse
 
 
 @router.get("/config", response_model=SideCallConfigResponse)
+@router.get("/config/{model_type}", response_model=SideCallConfigResponse)
 async def get_side_call_config(
+    model_type: SideCallModelType = SideCallModelType.DEFAULT,
     current_user: User = Depends(require_admin),
     side_call_service: SideCallService = Depends(get_side_call_service),
 ):
-    """Get the current side-call configuration."""
+    """Get the current side-call configuration for a given model type.
+
+    Args:
+        model_type: Type of side-call model (default, profiling). Defaults to "default".
+    """
     try:
-        # Get the designated side-call model
-        model_config = await side_call_service.get_side_call_model()
+        # Get the designated model based on type
+        if model_type == SideCallModelType.PROFILING:
+            model_config = await side_call_service.get_profiling_model()
+            not_configured_msg = "No profiling model is currently configured (falls back to default)"
+            configured_msg = "Profiling model is configured"
+        else:
+            model_config = await side_call_service.get_side_call_model()
+            not_configured_msg = "No side-call model is currently configured"
+            configured_msg = "Side-call model is configured"
 
         return ShuResponse.success(
             _build_config_response(
                 model_config,
-                ("No side-call model is currently configured" if not model_config else "Side-call model is configured"),
+                not_configured_msg if not model_config else configured_msg,
+                model_type=model_type,
             )
         )
 
     except Exception as e:
-        logger.error(f"Failed to get side-call config: {e}")
+        logger.error(f"Failed to get side-call config for {model_type}: {e}")
         return create_error_response(
             code="INTERNAL_ERROR",
-            message="Failed to retrieve side-call configuration",
+            message=f"Failed to retrieve side-call configuration for {model_type}",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
 @router.post("/config", response_model=SideCallConfigResponse)
+@router.post("/config/{model_type}", response_model=SideCallConfigResponse)
 async def set_side_call_config(
     request: SideCallConfigRequest,
+    model_type: SideCallModelType = SideCallModelType.DEFAULT,
     current_user: User = Depends(require_admin),
     side_call_service: SideCallService = Depends(get_side_call_service),
     db: AsyncSession = Depends(get_db),
 ):
     """Set the designated side-call model configuration.
 
+    Args:
+        model_type: Type of side-call model (default, profiling). Defaults to "default".
+
     Requires admin privileges.
     """
     try:
-        # Set the side-call model
-        success = await side_call_service.set_side_call_model(
-            model_config_id=request.model_config_id, user_id=current_user.id
-        )
+        # Set the model based on type
+        if model_type == SideCallModelType.PROFILING:
+            success = await side_call_service.set_profiling_model(
+                model_config_id=request.model_config_id, user_id=current_user.id
+            )
+            error_msg = "Failed to set profiling model. Verify the model exists and is active."
+            success_msg = "Profiling model configured successfully"
+            get_model = side_call_service.get_profiling_model
+        else:
+            success = await side_call_service.set_side_call_model(
+                model_config_id=request.model_config_id, user_id=current_user.id
+            )
+            error_msg = "Failed to set side-call model. Verify the model exists and is designated for side-calls."
+            success_msg = "Side-call model configured successfully"
+            get_model = side_call_service.get_side_call_model
 
         if not success:
             return create_error_response(
                 code="VALIDATION_ERROR",
-                message=("Failed to set side-call model. Verify the model exists and is designated for side-calls."),
+                message=error_msg,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         # Get the updated configuration
-        model_config = await side_call_service.get_side_call_model()
+        model_config = await get_model()
 
-        return ShuResponse.success(_build_config_response(model_config, "Side-call model configured successfully"))
+        return ShuResponse.success(_build_config_response(model_config, success_msg, model_type=model_type))
 
     except Exception as e:
-        logger.error(f"Failed to set side-call config: {e}")
+        logger.error(f"Failed to set side-call config for {model_type}: {e}")
         return create_error_response(
             code="INTERNAL_ERROR",
-            message="Failed to configure side-call model",
+            message=f"Failed to configure {model_type} model",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@router.delete("/config/{model_type}", response_model=SideCallConfigResponse)
+async def clear_side_call_config(
+    model_type: SideCallModelType,
+    current_user: User = Depends(require_admin),
+    side_call_service: SideCallService = Depends(get_side_call_service),
+):
+    """Clear the designated side-call model configuration.
+
+    For profiling model type, clearing causes it to fall back to the default side-call model.
+
+    Args:
+        model_type: Type of side-call model to clear (default, profiling).
+
+    Requires admin privileges.
+    """
+    try:
+        # Clear the model based on type
+        if model_type == SideCallModelType.PROFILING:
+            success = await side_call_service.clear_profiling_model(user_id=current_user.id)
+            success_msg = "Profiling model cleared (will fall back to default)"
+        else:
+            success = await side_call_service.clear_side_call_model(user_id=current_user.id)
+            success_msg = "Side-call model cleared"
+
+        if not success:
+            return create_error_response(
+                code="INTERNAL_ERROR",
+                message=f"Failed to clear {model_type} model",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return ShuResponse.success(
+            _build_config_response(None, success_msg, model_type=model_type)
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to clear side-call config for {model_type}: {e}")
+        return create_error_response(
+            code="INTERNAL_ERROR",
+            message=f"Failed to clear {model_type} model",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 

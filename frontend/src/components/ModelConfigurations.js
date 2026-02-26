@@ -73,6 +73,7 @@ const ModelConfigurations = () => {
     is_active: true,
     functionalities: {},
     is_side_call_model: false,
+    is_profiling_model: false,
   });
 
   // Advanced parameters state
@@ -99,8 +100,8 @@ const ModelConfigurations = () => {
     }
   );
 
-  //Fetch current side-call model configuration
-  const { data: sideCallConfig = null } = useQuery('side-call-config', () => sideCallsAPI.getConfig(), {
+  // Fetch current side-call model configuration (default)
+  const { data: sideCallConfig = null } = useQuery('side-call-config', () => sideCallsAPI.getConfig('default'), {
     enabled: canManagePromptsAndModels(),
     select: (data) => data ?? null,
     onError: (err) => {
@@ -108,6 +109,19 @@ const ModelConfigurations = () => {
         handleAuthError();
       } else {
         log.error('ModelConfigurations - Failed to fetch side-call config:', err);
+      }
+    },
+  });
+
+  // Fetch profiling model configuration (separate from default side-call)
+  const { data: profilingConfig = null } = useQuery('profiling-config', () => sideCallsAPI.getConfig('profiling'), {
+    enabled: canManagePromptsAndModels(),
+    select: (data) => data ?? null,
+    onError: (err) => {
+      if (err.response?.status === 401) {
+        handleAuthError();
+      } else {
+        log.error('ModelConfigurations - Failed to fetch profiling config:', err);
       }
     },
   });
@@ -187,6 +201,10 @@ const ModelConfigurations = () => {
       if (variables.is_side_call_model) {
         queryClient.invalidateQueries('side-call-config');
       }
+      // Invalidate profiling config query if this model is marked for profiling
+      if (variables.is_profiling_model) {
+        queryClient.invalidateQueries('profiling-config');
+      }
       setCreateDialogOpen(false);
       resetForm();
       setError(null);
@@ -211,6 +229,15 @@ const ModelConfigurations = () => {
 
       if (isSideCallFlagProvided || isCurrentlySideCallModel) {
         queryClient.invalidateQueries('side-call-config');
+      }
+
+      // Handle profiling model changes
+      const isProfilingFlagProvided = Object.prototype.hasOwnProperty.call(payload, 'is_profiling_model');
+      const isCurrentlyProfilingModel =
+        profilingConfig?.side_call_model_config?.id && profilingConfig.side_call_model_config.id === variables?.id;
+
+      if (isProfilingFlagProvided || isCurrentlyProfilingModel) {
+        queryClient.invalidateQueries('profiling-config');
       }
 
       setEditDialogOpen(false);
@@ -264,6 +291,7 @@ const ModelConfigurations = () => {
   );
 
   const sideCallConfigId = sideCallConfig?.side_call_model_config?.id ?? null;
+  const profilingConfigId = profilingConfig?.side_call_model_config?.id ?? null;
 
   // Debug logging for prompts
   log.debug('ModelConfigurations - prompts:', prompts);
@@ -336,6 +364,7 @@ const ModelConfigurations = () => {
       is_active: true,
       functionalities: {},
       is_side_call_model: false,
+      is_profiling_model: false,
     });
   };
 
@@ -373,6 +402,7 @@ const ModelConfigurations = () => {
       is_active: config.is_active,
       functionalities: config.functionalities,
       is_side_call_model: config.id === sideCallConfigId,
+      is_profiling_model: config.id === profilingConfigId,
     };
 
     setFormData(newFormData);
@@ -499,8 +529,9 @@ const ModelConfigurations = () => {
       ) : (
         <Grid container spacing={3}>
           {configurations.map((config) => {
-            // Mark if this is the current side-call model
+            // Mark if this is the current side-call or profiling model
             const isSideCallModel = config.id === sideCallConfigId;
+            const isProfilingModel = config.id === profilingConfigId;
 
             return (
               <Grid item xs={12} md={6} lg={4} key={config.id}>
@@ -577,13 +608,16 @@ const ModelConfigurations = () => {
                         alignItems: 'center',
                       }}
                     >
-                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                         <Chip
                           label={config.is_active ? 'Active' : 'Inactive'}
                           color={config.is_active ? 'success' : 'default'}
                           size="small"
                         />
                         {isSideCallModel && <Chip icon={<CallIcon />} label="Side Call" color="info" size="small" />}
+                        {isProfilingModel && (
+                          <Chip icon={<SettingsIcon />} label="Profiling" color="secondary" size="small" />
+                        )}
                       </Box>
                       {testResults[config.id] && (
                         <Chip

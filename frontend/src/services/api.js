@@ -444,12 +444,16 @@ export const userPermissionsAPI = {
 };
 
 // Side-calls API endpoints
+// Model types: 'default' (general side-calls), 'profiling' (document profiling)
 export const sideCallsAPI = {
   generateSummary: (conversationId, data = {}) => api.post(`/side-calls/summary/${conversationId}`, data),
   autoRename: (conversationId, data = {}) => api.post(`/side-calls/auto-rename/${conversationId}`, data),
   unlockAutoRename: (conversationId) => api.post(`/side-calls/auto-rename/${conversationId}/unlock`),
-  getConfig: () => api.get('/side-calls/config').then(extractDataFromResponse),
-  setConfig: (data) => api.post('/side-calls/config', data).then(extractDataFromResponse),
+  // Config endpoints now support model_type parameter
+  getConfig: (modelType = 'default') => api.get(`/side-calls/config/${modelType}`).then(extractDataFromResponse),
+  setConfig: (data, modelType = 'default') =>
+    api.post(`/side-calls/config/${modelType}`, data).then(extractDataFromResponse),
+  clearConfig: (modelType) => api.delete(`/side-calls/config/${modelType}`).then(extractDataFromResponse),
 };
 
 // Host Auth endpoints (generic)

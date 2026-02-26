@@ -1,8 +1,20 @@
 """Pydantic schemas for LLM Side-Call API."""
 
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class SideCallModelType(str, Enum):
+    """Type of side-call model configuration.
+
+    Side-calls are system-level LLM operations that don't require user interaction.
+    Different types can have different model assignments for cost/performance optimization.
+    """
+
+    DEFAULT = "default"  # General side-calls (summaries, auto-rename, etc.)
+    PROFILING = "profiling"  # Document profiling (can use cheaper/faster model)
 
 
 class SideCallModelResponse(BaseModel):
@@ -25,6 +37,9 @@ class SideCallConfigRequest(BaseModel):
 class SideCallConfigResponse(BaseModel):
     """Response schema for side-call configuration."""
 
+    model_type: SideCallModelType = Field(
+        SideCallModelType.DEFAULT, description="Type of side-call model (default, profiling, etc.)"
+    )
     configured: bool = Field(..., description="Whether a side-call model is configured")
     side_call_model_config: SideCallModelResponse | None = Field(None, description="The configured side-call model")
     message: str = Field(..., description="Status message")
