@@ -74,7 +74,7 @@ class KbSearchPlugin:
     version = "1"
 
     def get_schema(self) -> dict[str, Any] | None:
-        """Return the JSON schema covering all four search operations.
+        """Return the JSON schema covering all three search operations.
 
         ``chat_plugins.py`` deep-copies this schema and pins the ``op`` field for each
         chat-callable op so the LLM receives a schema with only one valid operation
@@ -116,12 +116,12 @@ class KbSearchPlugin:
                         "enum_help": {
                             "search_chunks": (
                                 "Search document chunks by field value. "
-                                "Text fields (eq/contains/icontains): content, summary. "
+                                "Text fields (eq/icontains): content, summary. "
                                 "JSONB array fields (contains/has_key/has_any): keywords, topics."
                             ),
                             "search_documents": (
                                 "Search document records by field value. "
-                                "Text fields (eq/contains/icontains): title, content, synopsis. "
+                                "Text fields (eq/icontains): title, content, synopsis. "
                                 "JSONB object field (contains/has_key/path_contains): capability_manifest."
                             ),
                             "get_document": (
@@ -171,8 +171,7 @@ class KbSearchPlugin:
                     "description": (
                         "Operator to apply to the field. "
                         "Text fields (content, summary, title, synopsis): "
-                        "'eq' (exact match), 'contains' (case-sensitive substring), "
-                        "'icontains' (case-insensitive substring). "
+                        "'eq' (exact match), 'icontains' (case-insensitive substring). "
                         "JSONB array fields (keywords, topics): "
                         "'contains' (array contains the value), "
                         "'has_key' (array element exists), "
@@ -190,7 +189,8 @@ class KbSearchPlugin:
                     "items": {"type": "string"},
                     "description": (
                         "The search value. "
-                        "String for 'eq', 'contains', 'icontains', 'has_key'. "
+                        "String for 'eq', 'icontains', 'has_key'. "
+                        "List for 'contains' on array fields; dict for 'contains' on capability_manifest. "
                         "List of strings for 'has_any'. "
                         "Dict with 'path' and 'value' keys for 'path_contains'. "
                     ),
@@ -276,8 +276,7 @@ class KbSearchPlugin:
                             "'eq' exact match, 'icontains' case-insensitive substring. "
                             "For JSON array fields (keywords, topics): "
                             "'has_key' element exists in array, "
-                            "'has_any' array contains any of a list of strings (value must be a list), "
-                            "'contains' array contains the exact value."
+                            "'has_any' array contains any of a list of strings (value must be a list)."
                         ),
                     },
                     "value": {
@@ -323,7 +322,6 @@ class KbSearchPlugin:
                             "'eq' exact match, 'icontains' case-insensitive substring. "
                             "For 'capability_manifest' (JSON object): "
                             "'has_key' top-level key exists, "
-                            "'contains' object contains a dict subset, "
                             "'path_contains' nested path containment — value must be a dict with 'path' and 'value' keys "
                             "(e.g. {\"path\": \"answers_questions_about\", \"value\": [\"newsletter\"]})."
                         ),
@@ -333,7 +331,6 @@ class KbSearchPlugin:
                         "description": (
                             "The search value. "
                             "Always a plain string for text fields (title, content, synopsis) with any operator. "
-                            "For 'capability_manifest' with 'contains': a JSON-encoded dict string representing the subset to match. "
                             "For 'capability_manifest' with 'path_contains': a JSON-encoded dict string with 'path' and 'value' keys, "
                             "e.g. '{\"path\": \"answers_questions_about\", \"value\": [\"newsletter\"]}'. "
                             "For 'capability_manifest' with 'has_key': the top-level key name as a plain string."

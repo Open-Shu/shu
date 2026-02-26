@@ -124,6 +124,14 @@ class KbSearchService:
                 Generates: ``col->'answers_questions_about' @> '["newsletter"]'::jsonb``
 
         """
+        if not isinstance(val, dict):
+            raise TypeError(f"_build_path_contains: val must be a dict, got {type(val).__name__!r}")
+        if "path" not in val or "value" not in val:
+            raise ValueError(
+                "_build_path_contains: val must contain 'path' and 'value' keys; " f"got keys: {list(val.keys())}"
+            )
+        if not isinstance(val["path"], str):
+            raise TypeError(f"_build_path_contains: val['path'] must be a str, got {type(val['path']).__name__!r}")
         path = val["path"]
         value = val["value"]
         return col[path].op("@>")(cast(json.dumps(value), JSONB))

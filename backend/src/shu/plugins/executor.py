@@ -234,7 +234,10 @@ class Executor:
     def _validate(self, plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
         """Validate the provided params against the plugin's input schema and return the params if validation succeeds.
 
-        If the plugin exposes no schema, the params are returned unchanged. If jsonschema is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required" field are present and raise an HTTPException 422 identifying a missing key if not.
+        If the plugin exposes no schema, the params are returned unchanged (with stripped None values). If jsonschema
+        is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail
+        on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required"
+        field are present and raise an HTTPException 422 identifying a missing key if not.
 
         Parameters
         ----------
