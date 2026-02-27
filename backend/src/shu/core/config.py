@@ -235,6 +235,8 @@ class Settings(BaseSettings):
     # Max concurrent profiling tasks to prevent LLM rate-limit storms during bulk imports
     # Tasks beyond this limit queue in memory; see SHU-211 for persistent queue migration
     profiling_max_concurrent_tasks: int = Field(5, alias="SHU_PROFILING_MAX_CONCURRENT_TASKS")
+    # Maximum retry attempts for failed chunk profiles (0 = no retries)
+    profiling_max_retries: int = Field(1, alias="SHU_PROFILING_MAX_RETRIES")
 
     # Shu RAG Query Synthesis (SHU-353)
     enable_query_synthesis: bool = Field(False, alias="SHU_ENABLE_QUERY_SYNTHESIS")

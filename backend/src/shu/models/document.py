@@ -144,6 +144,8 @@ class Document(BaseModel):
     # Profiling status: pending, in_progress, complete, failed
     profiling_status = Column(String(20), nullable=True, default="pending")
     profiling_error = Column(Text, nullable=True)
+    # Coverage percentage: tracks what fraction of chunks were successfully profiled
+    profiling_coverage_percent = Column(Float, nullable=True)
 
     # Shu RAG Relational Context (SHU-355)
     # Denormalized summary of participants and projects for query-time access
@@ -176,6 +178,7 @@ class Document(BaseModel):
                 "capability_manifest": self.capability_manifest,
                 "profiling_status": self.profiling_status,
                 "profiling_error": self.profiling_error,
+                "profiling_coverage_percent": self.profiling_coverage_percent,
                 "has_synopsis_embedding": self.synopsis_embedding is not None,
                 # Relational context (SHU-355)
                 "relational_context": self.relational_context,
@@ -210,6 +213,7 @@ class Document(BaseModel):
             "chunk_count": self.chunk_count,
             "document_type": self.document_type,
             "profiling_status": self.profiling_status,
+            "profiling_coverage_percent": self.profiling_coverage_percent,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "processed_at": self.processed_at.isoformat() if self.processed_at else None,
@@ -287,6 +291,7 @@ class Document(BaseModel):
         document_type: str,
         capability_manifest: dict[str, Any],
         synopsis_embedding: list[float] | None = None,
+        coverage_percent: float = 100.0,
     ) -> None:
         """Mark document profiling as complete with profile data.
 
@@ -295,6 +300,7 @@ class Document(BaseModel):
             document_type: Must be one of: narrative, transactional, technical, conversational
             capability_manifest: Dict describing what queries this document can satisfy
             synopsis_embedding: Optional vector embedding for synopsis
+            coverage_percent: Percentage of chunks successfully profiled (0-100)
 
         Raises:
             ValueError: If document_type is not a valid type
@@ -311,6 +317,7 @@ class Document(BaseModel):
         self.document_type = document_type
         self.capability_manifest = capability_manifest
         self.synopsis_embedding = synopsis_embedding
+        self.profiling_coverage_percent = coverage_percent
         self.profiling_status = "complete"
         self.profiling_error = None  # Clear any previous error
 

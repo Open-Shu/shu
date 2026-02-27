@@ -130,13 +130,14 @@ class TestRunForDocument:
         with patch.object(
             orchestrator.profiling_service,
             "profile_chunks_incremental",
-            new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300)),
+            new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300, 100.0)),
         ):
             result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
         assert result.document_profile.synopsis == "Incremental synopsis from accumulated summaries"
+        assert result.chunk_coverage_percent == 100.0
         # Verify queries were persisted
         assert mock_db.add.call_count == 2
 
@@ -239,6 +240,47 @@ class TestPersistResults:
 
         chunks[0].set_profile.assert_not_called()
         doc.mark_profiling_complete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_skips_empty_summary_chunks(self, orchestrator, mock_db):
+        """Test that chunks with success=True but empty summary are NOT persisted.
+
+        This matches the failure detection in ProfilingService._is_chunk_profile_failed()
+        which considers empty summaries as failures for coverage calculation.
+        """
+        doc = create_mock_document()
+        chunks = [
+            create_mock_chunk("c1", 0, "Content 1"),
+            create_mock_chunk("c2", 1, "Content 2"),
+        ]
+        doc_profile = DocumentProfile(
+            synopsis="Test",
+            document_type=DocumentType.NARRATIVE,
+            capability_manifest=CapabilityManifest(),
+        )
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="", keywords=["k1"], topics=["t1"]),  # Empty summary
+                success=True,  # success=True but empty summary should NOT be persisted
+            ),
+            ChunkProfileResult(
+                chunk_id="c2",
+                chunk_index=1,
+                profile=ChunkProfile(summary="Valid summary", keywords=["k2"], topics=["t2"]),
+                success=True,
+            ),
+        ]
+
+        await orchestrator._persist_results(doc, chunks, doc_profile, chunk_results)
+
+        # Chunk with empty summary should NOT have set_profile called
+        chunks[0].set_profile.assert_not_called()
+        # Chunk with valid summary SHOULD have set_profile called
+        chunks[1].set_profile.assert_called_once()
+        c2_call_kwargs = chunks[1].set_profile.call_args[1]
+        assert c2_call_kwargs["summary"] == "Valid summary"
 
     @pytest.mark.asyncio
     async def test_persist_no_doc_profile(self, orchestrator, mock_db):
