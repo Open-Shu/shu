@@ -317,7 +317,8 @@ class Document(BaseModel):
         self.document_type = document_type
         self.capability_manifest = capability_manifest
         self.synopsis_embedding = synopsis_embedding
-        self.profiling_coverage_percent = coverage_percent
+        # Clamp coverage to valid range [0, 100] for data integrity
+        self.profiling_coverage_percent = max(0.0, min(100.0, coverage_percent))
         self.profiling_status = "complete"
         self.profiling_error = None  # Clear any previous error
 

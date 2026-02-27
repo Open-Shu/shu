@@ -188,7 +188,7 @@ async def test_worker_rejects_failed_jobs():
         raise ValueError("Simulated failure")
 
     # Enqueue a job with max_attempts=2
-    job = await enqueue_job(backend, WorkloadType.INGESTION, payload={"action": "test"}, max_attempts=2)
+    await enqueue_job(backend, WorkloadType.INGESTION, payload={"action": "test"}, max_attempts=2)
 
     # Create and run worker
     config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
@@ -231,8 +231,8 @@ async def test_worker_handles_multiple_workload_types():
         processed_jobs.append(job)
 
     # Enqueue jobs for different workload types
-    job1 = await enqueue_job(backend, WorkloadType.INGESTION, payload={"type": "ingestion"})
-    job2 = await enqueue_job(backend, WorkloadType.PROFILING, payload={"type": "profiling"})
+    await enqueue_job(backend, WorkloadType.INGESTION, payload={"type": "ingestion"})
+    await enqueue_job(backend, WorkloadType.PROFILING, payload={"type": "profiling"})
 
     # Create worker that handles both types
     config = WorkerConfig(workload_types={WorkloadType.INGESTION, WorkloadType.PROFILING}, poll_interval=0.1)
@@ -408,7 +408,7 @@ async def test_worker_graceful_shutdown_no_new_jobs():
     worker._running = False
 
     # Enqueue second job (should not be processed)
-    job2 = await enqueue_job(backend, WorkloadType.INGESTION, payload={"action": "second"})
+    await enqueue_job(backend, WorkloadType.INGESTION, payload={"action": "second"})
 
     # Allow first job to complete
     job_should_complete.set()
@@ -440,7 +440,7 @@ async def test_worker_skips_queue_at_capacity():
     When a workload type is at capacity (active jobs >= limit), the worker
     should skip that queue and try the next available queue.
     """
-    from unittest.mock import patch
+    from shu.core.worker import WorkloadCapacityLimiter
 
     backend = InMemoryQueueBackend()
     processed_jobs: list[Job] = []
@@ -457,50 +457,46 @@ async def test_worker_skips_queue_at_capacity():
     await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"type": "ocr"})
     await enqueue_job(backend, WorkloadType.INGESTION, payload={"type": "ingestion"})
 
-    # Configure worker to handle both types with OCR limit of 1
+    # Create shared capacity limiter with OCR limit of 1
+    limiter = WorkloadCapacityLimiter(limits={WorkloadType.INGESTION_OCR: 1})
+
+    # Configure worker to handle both types
     config = WorkerConfig(
         workload_types={WorkloadType.INGESTION_OCR, WorkloadType.INGESTION},
         poll_interval=0.1
     )
-    worker = Worker(backend, config, slow_handler)
+    worker = Worker(backend, config, slow_handler, capacity_limiter=limiter)
 
-    # Mock the OCR limit to be 1
-    def mock_get_limit(work_type):
-        if work_type == WorkloadType.INGESTION_OCR:
-            return 1
-        return 0  # Unlimited for other types
+    worker_task = asyncio.create_task(worker.run())
 
-    with patch.object(worker, "_get_limit", mock_get_limit):
-        worker_task = asyncio.create_task(worker.run())
+    # Wait for first job (OCR) to start
+    await asyncio.wait_for(processing_started.wait(), timeout=2.0)
 
-        # Wait for first job (OCR) to start
-        await asyncio.wait_for(processing_started.wait(), timeout=2.0)
+    # At this point, OCR queue should be at capacity (1 active job)
+    # The worker should now skip OCR queue and process INGESTION
 
-        # At this point, OCR queue should be at capacity (1 active job)
-        # The worker should now skip OCR queue and process INGESTION
+    # Enqueue another OCR job - it should NOT be processed while first is active
+    await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"type": "ocr2"})
 
-        # Enqueue another OCR job - it should NOT be processed while first is active
-        await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"type": "ocr2"})
+    # Reset event for next job
+    processing_started.clear()
 
-        # Reset event for next job
-        processing_started.clear()
+    # Allow first job to complete
+    should_complete.set()
 
-        # Allow first job to complete
-        should_complete.set()
+    # Wait for second job to be processed
+    await asyncio.sleep(0.5)
 
-        # Wait for second job to be processed
-        await asyncio.sleep(0.5)
-
-        # Stop worker
-        worker._running = False
+    # Stop worker
+    worker._running = False
+    try:
+        await asyncio.wait_for(worker_task, timeout=2.0)
+    except TimeoutError:
+        worker_task.cancel()
         try:
-            await asyncio.wait_for(worker_task, timeout=2.0)
-        except TimeoutError:
-            worker_task.cancel()
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                pass
+            await worker_task
+        except asyncio.CancelledError:
+            pass
 
     # Verify both OCR jobs and the ingestion job were processed
     # The order should be: OCR1, then either INGESTION or OCR2
@@ -510,28 +506,33 @@ async def test_worker_skips_queue_at_capacity():
 
 
 @pytest.mark.asyncio
-async def test_worker_capacity_tracking_increments_and_decrements():
+async def test_worker_capacity_tracking_with_shared_limiter():
     """
-    Test that active job counter increments on dequeue and decrements on completion.
+    Test that capacity is properly tracked via the shared limiter.
 
-    Validates: SHU-596 capacity tracking
+    Validates: SHU-596 process-level capacity tracking
 
-    The worker must increment _active_jobs when starting a job and decrement
-    it in the finally block, even if the job fails.
+    The shared limiter must track capacity across all workers in a process,
+    acquiring on dequeue and releasing on job completion.
     """
+    from shu.core.worker import WorkloadCapacityLimiter
+
     backend = InMemoryQueueBackend()
 
     async def simple_handler(job: Job) -> None:
         pass
 
+    # Create shared limiter with OCR limit of 2
+    limiter = WorkloadCapacityLimiter(limits={WorkloadType.INGESTION_OCR: 2})
+
     # Enqueue a job
     await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"test": True})
 
     config = WorkerConfig(workload_types={WorkloadType.INGESTION_OCR}, poll_interval=0.1)
-    worker = Worker(backend, config, simple_handler)
+    worker = Worker(backend, config, simple_handler, capacity_limiter=limiter)
 
-    # Verify counter starts at 0
-    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+    # Verify limiter starts with full capacity
+    assert limiter.get_available(WorkloadType.INGESTION_OCR) == 2
 
     # Run worker briefly to process the job
     worker_task = asyncio.create_task(worker.run())
@@ -547,33 +548,38 @@ async def test_worker_capacity_tracking_increments_and_decrements():
         except asyncio.CancelledError:
             pass
 
-    # Verify counter is back to 0 after job completes
-    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+    # Verify capacity is restored after job completes
+    assert limiter.get_available(WorkloadType.INGESTION_OCR) == 2
 
 
 @pytest.mark.asyncio
-async def test_worker_capacity_tracking_decrements_on_failure():
+async def test_worker_capacity_released_on_failure():
     """
-    Test that active job counter decrements even when job processing fails.
+    Test that capacity is released even when job processing fails.
 
     Validates: SHU-596 capacity tracking
 
-    The counter must decrement in the finally block, ensuring capacity is
+    Capacity must be released in the finally block, ensuring resources are
     freed even when jobs fail.
     """
+    from shu.core.worker import WorkloadCapacityLimiter
+
     backend = InMemoryQueueBackend()
 
     async def failing_handler(job: Job) -> None:
         raise ValueError("Simulated failure")
 
+    # Create shared limiter with OCR limit of 1
+    limiter = WorkloadCapacityLimiter(limits={WorkloadType.INGESTION_OCR: 1})
+
     # Enqueue a job with max_attempts=1 so it doesn't retry
     await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"test": True}, max_attempts=1)
 
     config = WorkerConfig(workload_types={WorkloadType.INGESTION_OCR}, poll_interval=0.1)
-    worker = Worker(backend, config, failing_handler)
+    worker = Worker(backend, config, failing_handler, capacity_limiter=limiter)
 
-    # Verify counter starts at 0
-    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+    # Verify limiter starts with full capacity
+    assert limiter.get_available(WorkloadType.INGESTION_OCR) == 1
 
     # Run worker briefly to process the job
     worker_task = asyncio.create_task(worker.run())
@@ -589,21 +595,20 @@ async def test_worker_capacity_tracking_decrements_on_failure():
         except asyncio.CancelledError:
             pass
 
-    # Verify counter is back to 0 after job fails
-    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+    # Verify capacity is restored after job fails
+    assert limiter.get_available(WorkloadType.INGESTION_OCR) == 1
 
 
 @pytest.mark.asyncio
-async def test_worker_unlimited_capacity_with_zero_limit():
+async def test_worker_unlimited_capacity_with_no_limiter():
     """
-    Test that a limit of 0 means unlimited (no capacity checking).
+    Test that workers without a capacity limiter process all jobs.
 
-    Validates: SHU-596 0 = unlimited behavior
+    Validates: SHU-596 backwards compatibility
 
-    When the configured limit is 0, the worker should never skip the queue.
+    When no capacity limiter is provided, the worker should process all jobs
+    without any concurrency restrictions.
     """
-    from unittest.mock import patch
-
     backend = InMemoryQueueBackend()
     processed_jobs: list[Job] = []
 
@@ -615,34 +620,100 @@ async def test_worker_unlimited_capacity_with_zero_limit():
         await enqueue_job(backend, WorkloadType.INGESTION, payload={"index": i})
 
     config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+    # No capacity_limiter provided - unlimited
     worker = Worker(backend, config, handler)
 
-    # Mock the limit to be 0 (unlimited)
-    def mock_get_limit(work_type):
-        return 0
+    worker_task = asyncio.create_task(worker.run())
+    await asyncio.sleep(0.5)
+    worker._running = False
 
-    with patch.object(worker, "_get_limit", mock_get_limit):
-        # Manually set active jobs to a high number
-        worker._active_jobs[WorkloadType.INGESTION] = 1000
-
-        # Worker should still process jobs because limit=0 means unlimited
-        assert not worker._at_capacity(WorkloadType.INGESTION)
-
-        worker_task = asyncio.create_task(worker.run())
-        await asyncio.sleep(0.5)
-        worker._running = False
-
+    try:
+        await asyncio.wait_for(worker_task, timeout=1.0)
+    except TimeoutError:
+        worker_task.cancel()
         try:
-            await asyncio.wait_for(worker_task, timeout=1.0)
-        except TimeoutError:
-            worker_task.cancel()
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                pass
+            await worker_task
+        except asyncio.CancelledError:
+            pass
 
     # All jobs should be processed
     assert len(processed_jobs) == 3
+
+
+@pytest.mark.asyncio
+async def test_workload_capacity_limiter_shared_across_workers():
+    """
+    Test that multiple workers share the same capacity limiter.
+
+    Validates: SHU-596 process-level capacity enforcement
+
+    When multiple workers share a limiter, the total concurrent jobs across
+    all workers should not exceed the configured limit.
+    """
+    from shu.core.worker import WorkloadCapacityLimiter
+
+    backend = InMemoryQueueBackend()
+    jobs_in_progress = 0
+    max_concurrent_seen = 0
+    lock = asyncio.Lock()
+    all_done = asyncio.Event()
+    total_processed = 0
+
+    async def tracking_handler(job: Job) -> None:
+        nonlocal jobs_in_progress, max_concurrent_seen, total_processed
+        async with lock:
+            jobs_in_progress += 1
+            max_concurrent_seen = max(max_concurrent_seen, jobs_in_progress)
+
+        await asyncio.sleep(0.1)  # Simulate work
+
+        async with lock:
+            jobs_in_progress -= 1
+            total_processed += 1
+            if total_processed >= 5:
+                all_done.set()
+
+    # Create shared limiter with limit of 2
+    limiter = WorkloadCapacityLimiter(limits={WorkloadType.INGESTION_OCR: 2})
+
+    # Enqueue 5 jobs
+    for i in range(5):
+        await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"index": i})
+
+    config = WorkerConfig(workload_types={WorkloadType.INGESTION_OCR}, poll_interval=0.05)
+
+    # Create 3 workers sharing the same limiter
+    workers = [
+        Worker(backend, config, tracking_handler, worker_id=f"{i+1}/3", capacity_limiter=limiter)
+        for i in range(3)
+    ]
+
+    # Start all workers
+    worker_tasks = [asyncio.create_task(w.run()) for w in workers]
+
+    # Wait for all jobs to be processed
+    try:
+        await asyncio.wait_for(all_done.wait(), timeout=5.0)
+    except TimeoutError:
+        pass
+
+    # Stop all workers
+    for w in workers:
+        w._running = False
+
+    for task in worker_tasks:
+        try:
+            await asyncio.wait_for(task, timeout=1.0)
+        except TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    # Verify that we never exceeded the limit of 2 concurrent jobs
+    assert max_concurrent_seen <= 2, f"Max concurrent was {max_concurrent_seen}, expected <= 2"
+    assert total_processed == 5, f"Processed {total_processed} jobs, expected 5"
 
 
 @pytest.mark.asyncio
@@ -656,3 +727,80 @@ async def test_workload_type_from_queue_name():
     # Invalid queue name returns None
     assert WorkloadType.from_queue_name("invalid:queue") is None
     assert WorkloadType.from_queue_name("") is None
+
+
+class TestWorkloadCapacityLimiter:
+    """Tests for the WorkloadCapacityLimiter class."""
+
+    @pytest.mark.asyncio
+    async def test_limiter_acquire_and_release(self):
+        """Test basic acquire and release operations."""
+        from shu.core.worker import WorkloadCapacityLimiter
+
+        limiter = WorkloadCapacityLimiter(limits={WorkloadType.INGESTION_OCR: 2})
+
+        # Start with full capacity
+        assert limiter.get_available(WorkloadType.INGESTION_OCR) == 2
+
+        # Acquire first permit
+        assert await limiter.acquire(WorkloadType.INGESTION_OCR) is True
+        assert limiter.get_available(WorkloadType.INGESTION_OCR) == 1
+
+        # Acquire second permit
+        assert await limiter.acquire(WorkloadType.INGESTION_OCR) is True
+        assert limiter.get_available(WorkloadType.INGESTION_OCR) == 0
+
+        # Third acquire should fail (at capacity)
+        assert await limiter.acquire(WorkloadType.INGESTION_OCR) is False
+        assert limiter.get_available(WorkloadType.INGESTION_OCR) == 0
+
+        # Release one permit
+        limiter.release(WorkloadType.INGESTION_OCR)
+        assert limiter.get_available(WorkloadType.INGESTION_OCR) == 1
+
+        # Now acquire should succeed again
+        assert await limiter.acquire(WorkloadType.INGESTION_OCR) is True
+        assert limiter.get_available(WorkloadType.INGESTION_OCR) == 0
+
+    @pytest.mark.asyncio
+    async def test_limiter_unlimited_workload_types(self):
+        """Test that workload types without limits are always acquirable."""
+        from shu.core.worker import WorkloadCapacityLimiter
+
+        # Only limit OCR, not INGESTION
+        limiter = WorkloadCapacityLimiter(limits={WorkloadType.INGESTION_OCR: 1})
+
+        # INGESTION has no limit - should always return True
+        for _ in range(100):
+            assert await limiter.acquire(WorkloadType.INGESTION) is True
+
+        # get_available returns None for unlimited types
+        assert limiter.get_available(WorkloadType.INGESTION) is None
+        assert limiter.get_limit(WorkloadType.INGESTION) == 0
+
+    @pytest.mark.asyncio
+    async def test_limiter_get_limit(self):
+        """Test get_limit returns configured limits."""
+        from shu.core.worker import WorkloadCapacityLimiter
+
+        limiter = WorkloadCapacityLimiter(limits={
+            WorkloadType.INGESTION_OCR: 3,
+            WorkloadType.PROFILING: 5,
+        })
+
+        assert limiter.get_limit(WorkloadType.INGESTION_OCR) == 3
+        assert limiter.get_limit(WorkloadType.PROFILING) == 5
+        assert limiter.get_limit(WorkloadType.INGESTION) == 0  # Not configured
+
+    @pytest.mark.asyncio
+    async def test_limiter_empty_limits(self):
+        """Test limiter with no limits configured (all unlimited)."""
+        from shu.core.worker import WorkloadCapacityLimiter
+
+        limiter = WorkloadCapacityLimiter(limits={})
+
+        # All workload types should be unlimited
+        for wt in WorkloadType:
+            assert await limiter.acquire(wt) is True
+            assert limiter.get_available(wt) is None
+            assert limiter.get_limit(wt) == 0

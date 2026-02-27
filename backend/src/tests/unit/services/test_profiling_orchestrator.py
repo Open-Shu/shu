@@ -36,9 +36,21 @@ def mock_settings():
 
 @pytest.fixture
 def mock_db():
-    """Mock async database session."""
-    db = AsyncMock()
+    """Mock async database session.
+
+    Uses MagicMock as base to ensure sync methods like `add()` are not
+    accidentally async. Only explicitly async methods (execute, commit, get, etc.)
+    are set as AsyncMock.
+    """
+    db = MagicMock()
+    # Async methods on AsyncSession
+    db.execute = AsyncMock()
     db.commit = AsyncMock()
+    db.get = AsyncMock()
+    db.refresh = AsyncMock()
+    db.flush = AsyncMock()
+    db.rollback = AsyncMock()
+    # Sync methods like add(), delete() remain as MagicMock (default)
     return db
 
 
