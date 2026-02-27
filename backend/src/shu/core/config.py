@@ -232,9 +232,12 @@ class Settings(BaseSettings):
     profiling_timeout_seconds: int = Field(180, alias="SHU_PROFILING_TIMEOUT_SECONDS")
     # Process chunks in batches for efficiency
     chunk_profiling_batch_size: int = Field(10, alias="SHU_CHUNK_PROFILING_BATCH_SIZE")
-    # Max concurrent profiling tasks to prevent LLM rate-limit storms during bulk imports
-    # Tasks beyond this limit queue in memory; see SHU-211 for persistent queue migration
+    # Max concurrent profiling tasks per worker process to prevent LLM rate-limit storms
+    # during bulk imports. Workers skip the profiling queue when at capacity, allowing
+    # other work types to proceed. Set to 0 for unlimited (not recommended).
     profiling_max_concurrent_tasks: int = Field(5, alias="SHU_PROFILING_MAX_CONCURRENT_TASKS")
+    # Maximum retry attempts for failed chunk profiles (0 = no retries)
+    profiling_max_retries: int = Field(1, alias="SHU_PROFILING_MAX_RETRIES")
 
     # Shu RAG Query Synthesis (SHU-353)
     enable_query_synthesis: bool = Field(False, alias="SHU_ENABLE_QUERY_SYNTHESIS")
@@ -457,7 +460,9 @@ class Settings(BaseSettings):
     ocr_max_concurrent_jobs: int = Field(
         default=1,
         alias="SHU_OCR_MAX_CONCURRENT_JOBS",
-        description="Max concurrent OCR jobs. OCR is CPU/memory-intensive; limit to avoid OOM.",
+        description="Max concurrent OCR jobs per worker process. OCR is CPU/memory-intensive; "
+        "limit to avoid OOM. Workers skip the OCR queue when at capacity, allowing other work "
+        "types to proceed. Set to 0 for unlimited (not recommended).",
     )
     ocr_render_scale: float = Field(
         default=2.0,

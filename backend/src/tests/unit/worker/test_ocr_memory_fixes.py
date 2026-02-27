@@ -3,8 +3,10 @@ Unit tests for SHU-563 OCR memory fixes in TextExtractor.
 
 Covers:
 - img_array reference is released immediately after OCR thread start (Fix #1)
-- OCR semaphore is acquired before fitz.open() (Fix #2)
 - Render scale reads from config, not a hardcoded literal (Fix #3)
+
+Note: Fix #2 (semaphore before fitz.open) was superseded by SHU-596 which moved
+OCR concurrency limiting to the worker level via queue-level capacity tracking.
 """
 
 import asyncio
@@ -82,9 +84,6 @@ class TestImgArrayReleasedAfterThreadStart:
 
         mock_pil_image = Image.fromarray(real_array)
 
-        from shu.processors.text_extractor import TextExtractor
-        TextExtractor._ocr_semaphore = None
-
         with (
             patch.object(extractor, "get_ocr_instance", new=AsyncMock(return_value=mock_ocr)),
             patch.object(extractor, "is_job_cancelled", return_value=False),
@@ -113,49 +112,10 @@ class TestImgArrayReleasedAfterThreadStart:
 # ---------------------------------------------------------------------------
 # Fix #2 — semaphore acquired before fitz.open()
 # ---------------------------------------------------------------------------
-
-class TestSemaphoreBeforeFitzOpen:
-    """Semaphore must be acquired before fitz.open() so peak memory is bounded."""
-
-    @pytest.mark.asyncio
-    async def test_semaphore_held_during_fitz_open(self):
-        """
-        When _extract_pdf_ocr_direct is called, the semaphore must be acquired
-        before fitz.open() is called inside _extract_pdf_ocr_direct_inner.
-        """
-        from shu.processors.text_extractor import TextExtractor
-
-        TextExtractor._ocr_semaphore = None
-
-        # Single ordered list so we can assert acquire < inner_called
-        call_sequence = []
-
-        async def patched_inner(self_inner, file_path, file_content=None, progress_callback=None):
-            call_sequence.append("inner_called")
-            return ""
-
-        extractor = _make_extractor()
-
-        real_sem = asyncio.Semaphore(1)
-        original_acquire = real_sem.acquire
-
-        async def tracked_acquire():
-            call_sequence.append("acquire")
-            return await original_acquire()
-
-        real_sem.acquire = tracked_acquire
-
-        with (
-            patch.object(TextExtractor, "get_ocr_semaphore", return_value=real_sem),
-            patch.object(TextExtractor, "_extract_pdf_ocr_direct_inner", patched_inner),
-        ):
-            await extractor._extract_pdf_ocr_direct("test.pdf", b"fake")
-
-        assert "acquire" in call_sequence, "Semaphore was never acquired"
-        assert "inner_called" in call_sequence, "_extract_pdf_ocr_direct_inner was never called"
-        assert call_sequence.index("acquire") < call_sequence.index("inner_called"), (
-            f"Semaphore must be acquired before inner call, got: {call_sequence}"
-        )
+# NOTE: This test was removed because SHU-596 superseded the semaphore-based
+# concurrency limiting with worker-level queue capacity tracking. Workers now
+# skip the INGESTION_OCR queue when at capacity, so the semaphore is no longer
+# needed in TextExtractor.
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +173,6 @@ class TestRenderScaleFromConfig:
 
         dummy_array = np.zeros((10, 10, 3), dtype=np.uint8)
         mock_pil_image = Image.fromarray(dummy_array)
-
-        from shu.processors.text_extractor import TextExtractor
-        TextExtractor._ocr_semaphore = None
 
         with (
             patch.object(extractor, "get_ocr_instance", new=AsyncMock(return_value=mock_ocr)),

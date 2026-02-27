@@ -102,21 +102,22 @@ class ProfilingOrchestrator:
                 for c in chunks
             ]
 
-            # Two-phase profiling: all chunks profiled first,
-            # then document metadata generated from accumulated summaries in separate call
+            # Two-phase profiling with retry: all chunks profiled first,
+            # failed chunks retried with context, then document metadata generated
             (
                 chunk_results,
                 doc_profile,
                 synthesized_queries,
                 tokens,
+                coverage_percent,
             ) = await self.profiling_service.profile_chunks_incremental(
                 chunks=chunk_data,
                 document_metadata={"title": document.title},
             )
             total_tokens += tokens
 
-            # Persist results
-            await self._persist_results(document, chunks, doc_profile, chunk_results)
+            # Persist results (including coverage)
+            await self._persist_results(document, chunks, doc_profile, chunk_results, coverage_percent)
 
             # Persist synthesized queries if enabled (even if empty, to delete stale queries on re-profile)
             # Isolated from main try block so query failures don't mark profiling as failed
@@ -134,6 +135,7 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 tokens_used=total_tokens,
                 queries_created=queries_created,
+                coverage_percent=round(coverage_percent, 1),
                 duration_ms=duration_ms,
             )
 
@@ -146,6 +148,7 @@ class ProfilingOrchestrator:
                 error=None if doc_profile else "Failed to generate document profile",
                 tokens_used=total_tokens,
                 duration_ms=duration_ms,
+                chunk_coverage_percent=coverage_percent,
             )
 
         except Exception as e:
@@ -208,11 +211,20 @@ class ProfilingOrchestrator:
         chunks: list[DocumentChunk],
         doc_profile,
         chunk_results: list[ChunkProfileResult],
+        coverage_percent: float = 100.0,
     ) -> None:
         """Persist profiling results to the database.
 
         Updates Document with profile data and marks complete/failed.
         Updates DocumentChunks with their profiles.
+
+        Args:
+            document: The document being profiled
+            chunks: List of DocumentChunk records
+            doc_profile: DocumentProfile or None if generation failed
+            chunk_results: Results for each chunk
+            coverage_percent: Percentage of chunks successfully profiled
+
         """
         # Update document profile
         if doc_profile:
@@ -220,20 +232,31 @@ class ProfilingOrchestrator:
                 synopsis=doc_profile.synopsis,
                 document_type=doc_profile.document_type.value,
                 capability_manifest=doc_profile.capability_manifest.model_dump(),
+                coverage_percent=coverage_percent,
             )
         else:
             document.mark_profiling_failed("Failed to generate document profile")
 
         # Update chunk profiles
+        # Only persist profiles for chunks that succeeded AND have non-empty summaries
+        # (mirrors the failure detection in ProfilingService._is_chunk_profile_failed)
         chunk_map = {c.id: c for c in chunks}
+        chunks_persisted = 0
         for result in chunk_results:
             chunk = chunk_map.get(result.chunk_id)
-            if chunk and result.success:
+            if (
+                chunk
+                and result.success
+                and result.profile
+                and result.profile.summary
+                and result.profile.summary.strip()
+            ):
                 chunk.set_profile(
                     summary=result.profile.summary,
                     keywords=result.profile.keywords,
                     topics=result.profile.topics,
                 )
+                chunks_persisted += 1
 
         await self.db.commit()
 
@@ -241,8 +264,9 @@ class ProfilingOrchestrator:
             "profiling_results_persisted",
             document_id=document.id,
             doc_profile_success=doc_profile is not None,
-            chunks_profiled=sum(1 for r in chunk_results if r.success),
-            chunks_failed=sum(1 for r in chunk_results if not r.success),
+            chunks_persisted=chunks_persisted,
+            chunks_failed=len(chunk_results) - chunks_persisted,
+            coverage_percent=round(coverage_percent, 1),
         )
 
     async def is_profiling_enabled(self) -> bool:

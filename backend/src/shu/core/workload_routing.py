@@ -100,6 +100,29 @@ class WorkloadType(Enum):
         """
         return f"shu:{self.value}"
 
+    @classmethod
+    def from_queue_name(cls, queue_name: str) -> "WorkloadType | None":
+        """Get the WorkloadType for a given queue name.
+
+        Reverse lookup from queue name to WorkloadType. Returns None if the
+        queue name does not match any known workload type.
+
+        Args:
+            queue_name: The queue name (e.g., "shu:ingestion").
+
+        Returns:
+            The corresponding WorkloadType, or None if not found.
+
+        Example:
+            workload_type = WorkloadType.from_queue_name("shu:ingestion")
+            # Returns: WorkloadType.INGESTION
+
+        """
+        for wt in cls:
+            if wt.queue_name == queue_name:
+                return wt
+        return None
+
 
 async def enqueue_job(
     backend: QueueBackend,

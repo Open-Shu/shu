@@ -237,12 +237,16 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     try:
         if settings.workers_enabled:
             from .core.queue_backend import get_queue_backend
-            from .core.worker import Worker, WorkerConfig
+            from .core.worker import Worker, WorkerConfig, WorkloadCapacityLimiter
             from .core.workload_routing import WorkloadType
             from .worker import process_job
 
             # Get queue backend (shared by all workers)
             backend = await get_queue_backend()
+
+            # Create process-shared capacity limiter (ensures OCR/profiling limits
+            # are enforced across all workers, not per-worker)
+            capacity_limiter = WorkloadCapacityLimiter.from_settings()
 
             # Configure worker to consume all workload types
             config = WorkerConfig(
@@ -251,7 +255,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                 shutdown_timeout=settings.worker_shutdown_timeout,
             )
 
-            # Create N concurrent workers
+            # Create N concurrent workers sharing the same capacity limiter
             concurrency = max(1, settings.worker_concurrency)
             app.state.inline_worker_tasks = []
 
@@ -263,6 +267,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                     job_handler=process_job,
                     worker_id=worker_id,
                     install_signal_handlers=False,
+                    capacity_limiter=capacity_limiter,
                 )
 
                 async def run_inline_worker(w=worker, wid=worker_id):

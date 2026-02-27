@@ -256,6 +256,16 @@ class ProfilingService:
             + "Each object must have: summary, keywords, topics."
         )
 
+        # Add title chunk guidance when chunk 0 is in this batch
+        if self.settings.title_chunk_enabled_default and any(c.chunk_index == 0 for c in chunks):
+            user_content += (
+                "\n\nNOTE: Chunk 1 is the document title/subject. Use context from the other chunks "
+                "to infer what acronyms and identifiers in the title mean. For chunk 1's profile, "
+                "extract BOTH the original terms AND their expanded forms as keywords "
+                "(e.g., if title contains 'NHP' and body suggests it's a primate study, "
+                "include both 'NHP' and 'non-human primate' as keywords)."
+            )
+
         # Validate input doesn't exceed max tokens
         error_result = self._validate_input_tokens(user_content, f"chunk batch ({len(chunks)} chunks)")
         if error_result:
@@ -364,17 +374,124 @@ class ProfilingService:
 
         return doc_profile, metadata_response.synthesized_queries, result.tokens_used
 
+    def _is_chunk_profile_failed(self, result: ChunkProfileResult) -> bool:
+        """Check if a chunk profile result is considered failed.
+
+        A chunk is failed if:
+        - result.success is False (LLM error, parse error, etc.)
+        - result.profile.summary is empty (LLM returned no useful content)
+
+        Args:
+            result: The chunk profile result to check
+
+        Returns:
+            True if the profile should be retried, False if successful
+
+        """
+        if not result.success:
+            return True
+        return not result.profile.summary or not result.profile.summary.strip()
+
+    async def _retry_failed_chunks(
+        self,
+        failed_chunks: list[ChunkData],
+        successful_summaries: list[str],
+        document_title: str | None,
+        timeout_ms: int,
+    ) -> tuple[list[ChunkProfileResult], int]:
+        """Retry profiling for failed chunks with document context.
+
+        Provides context from successful chunk summaries to help the LLM
+        understand the document and generate better profiles for problematic chunks.
+
+        Args:
+            failed_chunks: Chunks that failed initial profiling
+            successful_summaries: Summaries from successfully profiled chunks
+            document_title: Optional document title for context
+            timeout_ms: Timeout for the retry LLM call
+
+        Returns:
+            Tuple of (retry results, tokens used)
+
+        """
+        if not failed_chunks:
+            return [], 0
+
+        # Build context from successful summaries (limit to avoid token overflow)
+        context_parts = []
+        if document_title:
+            context_parts.append(f"Document: {document_title}")
+
+        if successful_summaries:
+            # Limit context to first 10 summaries to avoid token overflow
+            limited_summaries = successful_summaries[:10]
+            context_parts.append("Context from successfully profiled chunks:")
+            context_parts.extend(limited_summaries)
+
+        context_str = "\n".join(context_parts) if context_parts else ""
+
+        # Build user message with context and failed chunks
+        chunks_text = []
+        for i, chunk in enumerate(failed_chunks):
+            chunks_text.append(f"### Chunk {i + 1} of {len(failed_chunks)}:\n{chunk.content}")
+
+        user_content = ""
+        if context_str:
+            user_content = f"{context_str}\n\n---\n\n"
+
+        user_content += (
+            f"Profile the following {len(failed_chunks)} chunks. "
+            f"You MUST return exactly {len(failed_chunks)} profiles.\n\n"
+            + "\n\n".join(chunks_text)
+            + f"\n\nReturn a JSON array with EXACTLY {len(failed_chunks)} objects in order. "
+            + "Each object must have: summary, keywords, topics."
+        )
+
+        # Validate input doesn't exceed max tokens
+        error_result = self._validate_input_tokens(user_content, f"retry batch ({len(failed_chunks)} chunks)")
+        if error_result:
+            failed_results = [
+                self.parser.create_failed_chunk_result(c, error_result.error_message or "Input too large")
+                for c in failed_chunks
+            ]
+            return failed_results, 0
+
+        message_sequence = [{"role": "user", "content": user_content}]
+
+        result = await self.side_call.call_for_profiling(
+            message_sequence=message_sequence,
+            system_prompt=CHUNK_PROFILE_SYSTEM_PROMPT,
+            timeout_ms=timeout_ms,
+        )
+
+        if not result.success:
+            logger.warning(
+                "chunk_retry_profiling_failed",
+                error=result.error_message,
+                chunk_count=len(failed_chunks),
+            )
+            failed_results = [
+                self.parser.create_failed_chunk_result(c, result.error_message or "Retry LLM call failed")
+                for c in failed_chunks
+            ]
+            return failed_results, result.tokens_used
+
+        # Parse the response
+        parsed_results = self.parser.parse_chunk_profiles(result.content, failed_chunks)
+        return parsed_results, result.tokens_used
+
     async def profile_chunks_incremental(
         self,
         chunks: list[ChunkData],
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
-    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int]:
+    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int, float]:
         """Profile chunks incrementally, then generate document metadata separately.
 
         This method separates chunk profiling from document metadata generation:
         1. All chunk batches are profiled uniformly using _profile_chunk_batch()
-        2. A separate focused LLM call generates document-level metadata from accumulated summaries
+        2. Failed chunks are retried with document context (if retries enabled)
+        3. A separate focused LLM call generates document-level metadata from accumulated summaries
 
         This separation improves reliability by reducing task complexity per LLM call.
 
@@ -384,11 +501,11 @@ class ProfilingService:
             timeout_ms: Optional timeout override per batch
 
         Returns:
-            Tuple of (chunk_results, document_profile, synthesized_queries, total_tokens)
+            Tuple of (chunk_results, document_profile, synthesized_queries, total_tokens, coverage_percent)
 
         """
         if not chunks:
-            return [], None, [], 0
+            return [], None, [], 0, 100.0
 
         timeout = self._resolve_timeout_ms(timeout_ms)
         metadata_timeout = self._resolve_timeout_ms(
@@ -396,8 +513,10 @@ class ProfilingService:
         )
         batch_size = self.settings.chunk_profiling_batch_size
         all_results: list[ChunkProfileResult] = []
-        accumulated_summaries: list[str] = []
         total_tokens = 0
+
+        # Build a map from chunk_id to original ChunkData for retry lookup
+        chunk_map = {c.chunk_id: c for c in chunks}
 
         # Phase 1: Profile ALL chunks in batches (uniform processing, no special cases)
         for i in range(0, len(chunks), batch_size):
@@ -406,12 +525,68 @@ class ProfilingService:
             all_results.extend(batch_results)
             total_tokens += tokens
 
-            # Accumulate summaries for document metadata generation
-            for result in batch_results:
-                if result.success and result.profile.summary:
-                    accumulated_summaries.append(f"Chunk {result.chunk_index}: {result.profile.summary}")
+        # Phase 2: Identify failures and retry (if enabled)
+        max_retries = self.settings.profiling_max_retries
+        for retry_attempt in range(max_retries):
+            # Find failed results and their corresponding chunk data
+            failed_indices = []
+            for i, result in enumerate(all_results):
+                if self._is_chunk_profile_failed(result):
+                    failed_indices.append(i)
 
-        # Phase 2: Generate document metadata from accumulated summaries (separate LLM call)
+            if not failed_indices:
+                break  # No failures to retry
+
+            # Get ChunkData for failed chunks
+            failed_chunks = [chunk_map[all_results[i].chunk_id] for i in failed_indices]
+
+            # Collect successful summaries for context
+            successful_summaries = [
+                f"Chunk {r.chunk_index}: {r.profile.summary}"
+                for r in all_results
+                if not self._is_chunk_profile_failed(r)
+            ]
+
+            # Get document title for context
+            doc_title = document_metadata.get("title") if document_metadata else None
+
+            logger.info(
+                "retrying_failed_chunk_profiles",
+                retry_attempt=retry_attempt + 1,
+                max_retries=max_retries,
+                failed_count=len(failed_chunks),
+                successful_context_count=len(successful_summaries),
+            )
+
+            # Retry failed chunks
+            retry_results, retry_tokens = await self._retry_failed_chunks(
+                failed_chunks=failed_chunks,
+                successful_summaries=successful_summaries,
+                document_title=doc_title,
+                timeout_ms=timeout,
+            )
+            total_tokens += retry_tokens
+
+            # Merge retry results back into all_results
+            for idx, retry_result in zip(failed_indices, retry_results, strict=True):
+                all_results[idx] = retry_result
+
+        # Phase 3: Calculate coverage and accumulate summaries for metadata
+        successful_count = sum(1 for r in all_results if not self._is_chunk_profile_failed(r))
+        coverage_percent = (successful_count / len(chunks)) * 100 if chunks else 100.0
+
+        accumulated_summaries = [
+            f"Chunk {r.chunk_index}: {r.profile.summary}" for r in all_results if not self._is_chunk_profile_failed(r)
+        ]
+
+        logger.info(
+            "chunk_profiling_coverage",
+            total_chunks=len(chunks),
+            successful_chunks=successful_count,
+            coverage_percent=round(coverage_percent, 1),
+        )
+
+        # Phase 4: Generate document metadata from accumulated summaries (separate LLM call)
         doc_profile, queries, metadata_tokens = await self._generate_document_metadata(
             accumulated_summaries,
             document_metadata,
@@ -419,4 +594,4 @@ class ProfilingService:
         )
         total_tokens += metadata_tokens
 
-        return all_results, doc_profile, queries, total_tokens
+        return all_results, doc_profile, queries, total_tokens, coverage_percent
