@@ -256,6 +256,16 @@ class ProfilingService:
             + "Each object must have: summary, keywords, topics."
         )
 
+        # Add title chunk guidance when chunk 0 is in this batch
+        if self.settings.title_chunk_enabled_default and any(c.chunk_index == 0 for c in chunks):
+            user_content += (
+                "\n\nNOTE: Chunk 1 is the document title/subject. Use context from the other chunks "
+                "to infer what acronyms and identifiers in the title mean. For chunk 1's profile, "
+                "extract BOTH the original terms AND their expanded forms as keywords "
+                "(e.g., if title contains 'NHP' and body suggests it's a primate study, "
+                "include both 'NHP' and 'non-human primate' as keywords)."
+            )
+
         # Validate input doesn't exceed max tokens
         error_result = self._validate_input_tokens(user_content, f"chunk batch ({len(chunks)} chunks)")
         if error_result:
