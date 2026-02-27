@@ -186,8 +186,12 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int) -> None:
+def _cleanup_old_log_archives(log_dir: Path, retention_days: int) -> None:
     """Remove archived log files older than the retention window.
+
+    Scans *all* ``shu_*.log.<date>*`` files in *log_dir*, regardless of
+    which hostname produced them.  This ensures archives are cleaned up
+    even when the hostname changes between container or process restarts.
 
     Handles both date-suffixed files (e.g., shu_host.log.2026-02-10)
     and startup-archived files (e.g., shu_host.log.2026-02-10_14-30-00).
@@ -199,17 +203,22 @@ def _cleanup_old_log_archives(log_dir: Path, hostname: str, retention_days: int)
     if retention_days <= 0:
         return
 
-    prefix = f"shu_{hostname}.log."
     # Compare on date boundaries, not exact timestamps, because archive
     # filenames only carry date precision.  retention_days=1 means "keep
     # yesterday's archives, delete anything older".
     cutoff_date = (datetime.now(UTC) - timedelta(days=retention_days)).date()
     try:
         for entry in os.scandir(log_dir):
-            if not entry.name.startswith(prefix) or not entry.is_file():
+            if not entry.is_file():
                 continue
-            # Extract the date portion (first 10 chars of the suffix: YYYY-MM-DD)
-            suffix = entry.name[len(prefix) :]  # pragma: allowlist secret
+            name = entry.name
+            # Match any shu log archive: shu_<anything>.log.<date-suffix>
+            # The active log file (shu_<host>.log) has no date suffix and
+            # won't match the ".log." + 10-char date extraction below.
+            dot_log_dot = name.find(".log.")
+            if dot_log_dot == -1 or not name.startswith("shu_"):
+                continue
+            suffix = name[dot_log_dot + 5 :]  # everything after ".log."
             date_part = suffix[:10]
             try:
                 file_date = datetime.strptime(date_part, "%Y-%m-%d").date()  # noqa: DTZ007 # tz irrelevant, only need date
@@ -233,22 +242,23 @@ class ManagedFileHandler(logging.FileHandler):
        If the UTC date has changed since the file was opened, the current
        file is archived with a date suffix and a new file is opened.
 
-    Retention cleanup also runs via rotate_if_needed(), pruning archived
-    files older than the configured retention window.
+    Retention cleanup is handled separately by the scheduler at a lower
+    frequency — see ``LogMaintenanceSource`` in scheduler_service.py.
     """
 
-    def __init__(self, filename: str, hostname: str, retention_days: int) -> None:
+    def __init__(self, filename: str, retention_days: int) -> None:
         super().__init__(filename, mode="a", encoding="utf-8")
-        self._hostname = hostname
         self._retention_days = retention_days
         self._log_dir = Path(filename).parent
         self._current_date = datetime.now(UTC).date()
         self._lock_rotate = threading.Lock()
 
     def rotate_if_needed(self) -> None:
-        """Check if midnight has passed and rotate if so, then prune old archives.
+        """Check if midnight has passed and rotate if so.
 
         Called by the unified scheduler on every tick. Thread-safe.
+        Archive cleanup is handled separately by the scheduler at a lower
+        frequency — see ``LogMaintenanceSource``.
         """
         today = datetime.now(UTC).date()
         if today != self._current_date:
@@ -257,8 +267,6 @@ class ManagedFileHandler(logging.FileHandler):
                 if today != self._current_date:
                     self._do_midnight_rotate()
                     self._current_date = today
-        # Always prune old archives (cheap filesystem scan)
-        _cleanup_old_log_archives(self._log_dir, self._hostname, self._retention_days)
 
     def _do_midnight_rotate(self) -> None:
         """Archive the current log file with a date suffix and open a fresh one.
@@ -299,6 +307,18 @@ _managed_file_handler: ManagedFileHandler | None = None
 def get_managed_file_handler() -> ManagedFileHandler | None:
     """Return the active ManagedFileHandler, if logging has been configured."""
     return _managed_file_handler
+
+
+def run_log_cleanup() -> None:
+    """Prune old log archives based on the configured retention window.
+
+    Called by ``LogMaintenanceSource`` on a throttled schedule (typically
+    once per hour).  Safe to call when logging is not yet configured — it
+    silently no-ops if no ``ManagedFileHandler`` has been created.
+    """
+    handler = _managed_file_handler
+    if handler is not None:
+        _cleanup_old_log_archives(handler._log_dir, handler._retention_days)
 
 
 # TODO: Refactor this function. It's too complex (number of branches and statements).
@@ -349,14 +369,13 @@ def setup_logging() -> None:  # noqa: PLR0915
 
     file_handler = ManagedFileHandler(
         log_file_path,
-        hostname=hostname,
         retention_days=settings.log_retention_days,
     )
     file_handler.setFormatter(formatter)
     _managed_file_handler = file_handler
 
     # Run an initial cleanup of old archives at startup
-    _cleanup_old_log_archives(log_dir, hostname, settings.log_retention_days)
+    _cleanup_old_log_archives(log_dir, settings.log_retention_days)
 
     # Immediately configure SQLAlchemy loggers to use our formatter
     # This prevents SQLAlchemy from setting up its own logging
