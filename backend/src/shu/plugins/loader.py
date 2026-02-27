@@ -84,9 +84,10 @@ class PluginLoader:
             "from httpx",
             "import urllib3",
             "urllib.request",
-            # Block host-internal imports from plugins
-            "import shu",
-            "from shu",
+            # Block host-internal imports from plugins.
+            # Use "shu." (with dot) so "from shu_plugin_sdk" is not matched.
+            "import shu.",
+            "from shu.",
         )
         try:
             for p in plugin_dir.rglob("*.py"):
