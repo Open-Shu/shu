@@ -144,7 +144,7 @@ class DocumentMetadataResponse(BaseModel):
     """
 
     synopsis: str = Field(..., description="2-4 sentence document summary synthesized from all chunk summaries")
-    document_type: str = Field(..., description="narrative, transactional, technical, conversational")
+    document_type: DocumentType = Field(..., description="Classification for retrieval optimization")
     capability_manifest: CapabilityManifest = Field(
         default_factory=CapabilityManifest,
         description="What questions this document can answer",

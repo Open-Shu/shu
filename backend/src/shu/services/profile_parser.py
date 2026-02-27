@@ -15,6 +15,7 @@ from ..schemas.profiling import (
     ChunkProfile,
     ChunkProfileResult,
     DocumentMetadataResponse,
+    DocumentType,
 )
 
 logger = structlog.get_logger(__name__)
@@ -133,9 +134,16 @@ class ProfileParser:
             json_str = self.extract_json(content)
             data = json.loads(json_str)
 
+            # Convert document_type string to enum with fallback
+            doc_type_str = (data.get("document_type") or "narrative").lower()
+            try:
+                doc_type = DocumentType(doc_type_str)
+            except ValueError:
+                doc_type = DocumentType.NARRATIVE
+
             return DocumentMetadataResponse(
                 synopsis=data.get("synopsis", ""),
-                document_type=(data.get("document_type") or "narrative").lower(),
+                document_type=doc_type,
                 capability_manifest=self._parse_capability_manifest(data),
                 synthesized_queries=self._parse_synthesized_queries(data.get("synthesized_queries", [])),
             )

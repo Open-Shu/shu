@@ -19,7 +19,6 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
     DocumentProfile,
-    DocumentType,
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
@@ -356,15 +355,10 @@ class ProfilingService:
             logger.warning("failed_to_parse_document_metadata_response")
             return None, [], result.tokens_used
 
-        # Build DocumentProfile from response
-        try:
-            doc_type = DocumentType((metadata_response.document_type or "narrative").lower())
-        except (ValueError, AttributeError):
-            doc_type = DocumentType.NARRATIVE
-
+        # Build DocumentProfile from response (document_type already validated by parser)
         doc_profile = DocumentProfile(
             synopsis=metadata_response.synopsis,
-            document_type=doc_type,
+            document_type=metadata_response.document_type,
             capability_manifest=metadata_response.capability_manifest,
         )
 
