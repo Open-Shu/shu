@@ -6,7 +6,7 @@ orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
 - Generate chunk profiles (summary, keywords, topics) for batch processing
-- Generate document metadata in final batch (incremental profiling)
+- Generate document metadata in a separate LLM call after all chunks are profiled
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
 
@@ -17,10 +17,8 @@ import structlog
 from ..core.config import Settings
 from ..schemas.profiling import (
     ChunkData,
-    ChunkProfile,
     ChunkProfileResult,
     DocumentProfile,
-    DocumentType,
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
@@ -54,27 +52,17 @@ Guidelines:
 - topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
 Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
 
-# Final batch prompt template with conditional query synthesis sections
-# Same placeholder pattern as unified prompt
-FINAL_BATCH_PROMPT_TEMPLATE = """You are profiling documents for an AI-powered retrieval system. You are processing the FINAL batch of chunks for a large document.
+# Document metadata prompt - focused solely on synthesizing document-level metadata
+# Used AFTER all chunks are profiled, receives accumulated summaries as input
+DOCUMENT_METADATA_PROMPT_TEMPLATE = """You are synthesizing document-level metadata from chunk summaries for an AI retrieval system.
 
 PURPOSE: An AI agent will use your output to decide whether to retrieve this document. Generic descriptions are USELESS. Extract SPECIFIC, DISTINGUISHING details.
 
-You have two tasks:
-1. Profile the chunks in this batch (same as previous batches)
-2. Generate document-level metadata using the accumulated summaries from ALL previous chunks
+You are given summaries from ALL chunks of a document. Generate metadata that synthesizes these into a cohesive document profile.
 
 Generate a JSON response with this exact structure:
 {{
-    "chunks": [
-        {{
-            "index": 0,
-            "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
-            "keywords": ["Acme Corp", "Q3 2024", "$4.2M", "John Smith"],
-            "topics": ["quarterly earnings", "revenue growth"]
-        }}
-    ],
-    "synopsis": "2-4 sentences with SPECIFIC details synthesized from ALL chunks. Include names, dates, figures, decisions.",
+    "synopsis": "2-4 sentences with SPECIFIC details synthesized from ALL chunk summaries. Include names, dates, figures, decisions.",
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
         "answers_questions_about": [
@@ -93,18 +81,10 @@ BAD (too generic): "security measures", "strategic vision", "project updates"
 GOOD (specific): "OAuth2 vulnerability in auth-service v2.3", "Q3 2024 board decision to acquire TechStart Inc"
 
 Guidelines:
-- summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
-- synopsis: Lead with the most important SPECIFIC facts from across the document.{queries_guidelines}
-- keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
-- topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
-
-Examples:
-BAD summary: "Discusses security configuration"
-GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings\""""
+- synopsis: Lead with the most important SPECIFIC facts from across the document. Synthesize, don't just list.{queries_guidelines}
+- capability_manifest: Consolidate themes from all chunks into specific, queryable topics."""
 
 # Query synthesis additions - injected into templates when enable_query_synthesis=True
-QUERY_INTRO_ADDITION = ", and hypothetical queries"
-
 QUERIES_JSON_ADDITION = """,
     "synthesized_queries": [
         "What was Acme Corp's Q3 2024 revenue?",
@@ -165,8 +145,8 @@ class ProfilingService:
             return self.settings.query_synthesis_timeout_seconds * 1000
         return self.settings.profiling_timeout_seconds * 1000
 
-    def _build_final_batch_prompt(self) -> str:
-        """Build final batch system prompt.
+    def _build_document_metadata_prompt(self) -> str:
+        """Build document metadata synthesis system prompt.
 
         Injects query synthesis sections when enable_query_synthesis is True.
         """
@@ -175,11 +155,11 @@ class ProfilingService:
                 min_queries=self.settings.query_synthesis_min_queries,
                 max_queries=self.settings.query_synthesis_max_queries,
             )
-            return FINAL_BATCH_PROMPT_TEMPLATE.format(
+            return DOCUMENT_METADATA_PROMPT_TEMPLATE.format(
                 queries_json=QUERIES_JSON_ADDITION,
                 queries_guidelines=queries_guidelines,
             )
-        return FINAL_BATCH_PROMPT_TEMPLATE.format(
+        return DOCUMENT_METADATA_PROMPT_TEMPLATE.format(
             queries_json="",
             queries_guidelines="",
         )
@@ -263,15 +243,17 @@ class ProfilingService:
 
         """
         # Build user message with all chunks
+        # Use batch-relative numbering (1 of N) to avoid confusion with document-level indices
         chunks_text = []
-        for chunk in chunks:
-            chunks_text.append(f"[CHUNK {chunk.chunk_index}]\n{chunk.content}\n[/CHUNK]")
+        for i, chunk in enumerate(chunks):
+            chunks_text.append(f"### Chunk {i + 1} of {len(chunks)}:\n{chunk.content}")
 
         user_content = (
-            f"Profile the following {len(chunks)} chunks:\n\n"
+            f"Profile the following {len(chunks)} chunks. You MUST return exactly {len(chunks)} profiles.\n\n"
             + "\n\n".join(chunks_text)
-            + f"\n\nIMPORTANT: Return a JSON array with EXACTLY {len(chunks)} profiles, one per chunk, in the same order. "
-            + "Do NOT skip, merge, or add extra profiles. Each profile must include: summary, keywords, topics."
+            + f"\n\nReturn a JSON array with EXACTLY {len(chunks)} objects in order: "
+            + f"[profile for chunk 1, profile for chunk 2, ... profile for chunk {len(chunks)}]. "
+            + "Each object must have: summary, keywords, topics."
         )
 
         # Validate input doesn't exceed max tokens
@@ -293,16 +275,94 @@ class ProfilingService:
         )
 
         if not result.success:
-            logger.warning(f"chunk_batch_profiling_failed: {result.error_message}")
-            # Return failed results for all chunks
+            logger.warning("chunk_batch_profiling_failed", error=result.error_message, chunk_count=len(chunks))
+            # Return failed results for all chunks, but preserve token count for cost tracking
             failed_results = [
                 self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks
             ]
-            return failed_results, 0
+            return failed_results, result.tokens_used
 
         # Parse the response using dedicated parser
         parsed_results = self.parser.parse_chunk_profiles(result.content, chunks)
         return parsed_results, result.tokens_used
+
+    async def _generate_document_metadata(
+        self,
+        accumulated_summaries: list[str],
+        document_metadata: dict | None,
+        timeout_ms: int,
+    ) -> tuple[DocumentProfile | None, list[str], int]:
+        """Generate document-level metadata from accumulated chunk summaries.
+
+        This is a separate, focused LLM call that synthesizes all chunk summaries
+        into document-level metadata (synopsis, capability_manifest, queries).
+
+        Args:
+            accumulated_summaries: Summaries from all profiled chunks
+            document_metadata: Optional document metadata (title, source, etc.)
+            timeout_ms: Timeout for LLM call
+
+        Returns:
+            Tuple of (document_profile, synthesized_queries, tokens_used)
+
+        """
+        if not accumulated_summaries:
+            logger.warning("generate_document_metadata_called_with_no_summaries")
+            return None, [], 0
+
+        # Build user message with accumulated summaries
+        user_content = "Synthesize document-level metadata from these chunk summaries:\n\n"
+        user_content += "\n".join(accumulated_summaries)
+
+        # Build response instructions - only request queries if enabled
+        user_content += (
+            "\n\nRespond with a JSON object containing:\n"
+            "1. 'synopsis': 2-4 sentence summary of the ENTIRE document\n"
+            "2. 'document_type': narrative, transactional, technical, or conversational\n"
+            "3. 'capability_manifest': what questions this document can answer"
+        )
+        if self.settings.enable_query_synthesis:
+            min_q = self.settings.query_synthesis_min_queries
+            max_q = self.settings.query_synthesis_max_queries
+            user_content += f"\n4. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
+
+        if document_metadata:
+            meta_str = json.dumps(document_metadata, indent=2, default=str)
+            user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
+
+        # Validate input doesn't exceed max tokens
+        error_result = self._validate_input_tokens(
+            user_content, f"document metadata ({len(accumulated_summaries)} summaries)"
+        )
+        if error_result:
+            return None, [], 0
+
+        message_sequence = [{"role": "user", "content": user_content}]
+
+        result = await self.side_call.call_for_profiling(
+            message_sequence=message_sequence,
+            system_prompt=self._build_document_metadata_prompt(),
+            timeout_ms=timeout_ms,
+        )
+
+        if not result.success:
+            logger.warning("document_metadata_generation_failed", error=result.error_message)
+            return None, [], result.tokens_used
+
+        # Parse the response using dedicated parser
+        metadata_response = self.parser.parse_document_metadata_response(result.content)
+        if not metadata_response:
+            logger.warning("failed_to_parse_document_metadata_response")
+            return None, [], result.tokens_used
+
+        # Build DocumentProfile from response (document_type already validated by parser)
+        doc_profile = DocumentProfile(
+            synopsis=metadata_response.synopsis,
+            document_type=metadata_response.document_type,
+            capability_manifest=metadata_response.capability_manifest,
+        )
+
+        return doc_profile, metadata_response.synthesized_queries, result.tokens_used
 
     async def profile_chunks_incremental(
         self,
@@ -310,11 +370,13 @@ class ProfilingService:
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
     ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int]:
-        """Profile chunks incrementally, with final batch generating document metadata.
+        """Profile chunks incrementally, then generate document metadata separately.
 
-        This method eliminates the separate aggregation LLM call by having the final
-        batch generate document-level metadata (synopsis, capability_manifest, queries)
-        from accumulated summaries.
+        This method separates chunk profiling from document metadata generation:
+        1. All chunk batches are profiled uniformly using _profile_chunk_batch()
+        2. A separate focused LLM call generates document-level metadata from accumulated summaries
+
+        This separation improves reliability by reducing task complexity per LLM call.
 
         Args:
             chunks: List of chunk data to profile
@@ -329,7 +391,7 @@ class ProfilingService:
             return [], None, [], 0
 
         timeout = self._resolve_timeout_ms(timeout_ms)
-        final_batch_timeout = self._resolve_timeout_ms(
+        metadata_timeout = self._resolve_timeout_ms(
             timeout_ms, for_query_synthesis=self.settings.enable_query_synthesis
         )
         batch_size = self.settings.chunk_profiling_batch_size
@@ -337,168 +399,24 @@ class ProfilingService:
         accumulated_summaries: list[str] = []
         total_tokens = 0
 
-        # Calculate batch boundaries
-        num_batches = (len(chunks) + batch_size - 1) // batch_size
-
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * batch_size
-            end_idx = min(start_idx + batch_size, len(chunks))
-            batch = chunks[start_idx:end_idx]
-            is_final_batch = batch_idx == num_batches - 1
-
-            if is_final_batch:
-                # Final batch: generate chunk profiles AND document metadata
-                batch_results, doc_profile, queries, tokens = await self._profile_final_batch(
-                    batch,
-                    accumulated_summaries,
-                    document_metadata,
-                    final_batch_timeout,
-                )
-                all_results.extend(batch_results)
-                total_tokens += tokens
-                return all_results, doc_profile, queries, total_tokens
-            # Regular batch: just chunk profiles
+        # Phase 1: Profile ALL chunks in batches (uniform processing, no special cases)
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
             batch_results, tokens = await self._profile_chunk_batch(batch, timeout)
             all_results.extend(batch_results)
             total_tokens += tokens
 
-            # Accumulate summaries for final batch
+            # Accumulate summaries for document metadata generation
             for result in batch_results:
                 if result.success and result.profile.summary:
                     accumulated_summaries.append(f"Chunk {result.chunk_index}: {result.profile.summary}")
 
-        # Should not reach here, but handle edge case
-        return all_results, None, [], total_tokens
-
-    async def _profile_final_batch(
-        self,
-        chunks: list[ChunkData],
-        accumulated_summaries: list[str],
-        document_metadata: dict | None,
-        timeout_ms: int,
-    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int]:
-        """Profile the final batch and generate document-level metadata.
-
-        Args:
-            chunks: Chunks in this final batch
-            accumulated_summaries: Summaries from all previous batches
-            document_metadata: Optional document metadata
-            timeout_ms: Timeout for LLM call
-
-        Returns:
-            Tuple of (chunk_results, document_profile, synthesized_queries, tokens_used)
-
-        """
-        # Build user message with chunks and accumulated context
-        chunks_text = []
-        for chunk in chunks:
-            chunks_text.append(f"[CHUNK {chunk.chunk_index}]\n{chunk.content}\n[/CHUNK]")
-
-        user_content = "This is the FINAL batch of chunks for this document.\n\n"
-
-        if accumulated_summaries:
-            user_content += "Summaries from previous chunks:\n"
-            user_content += "\n".join(accumulated_summaries)
-            user_content += "\n\n"
-
-        user_content += f"Profile these final {len(chunks)} chunks:\n\n"
-        user_content += "\n\n".join(chunks_text)
-
-        # Build response instructions - only request queries if enabled
-        user_content += (
-            "\n\nRespond with a JSON object containing:\n"
-            "1. 'chunks': array of profiles for these chunks (index, summary, keywords, topics)\n"
-            "2. 'synopsis': 2-4 sentence summary of the ENTIRE document based on all summaries\n"
-            "3. 'document_type': narrative, transactional, technical, or conversational\n"
-            "4. 'capability_manifest': what questions this document can answer"
+        # Phase 2: Generate document metadata from accumulated summaries (separate LLM call)
+        doc_profile, queries, metadata_tokens = await self._generate_document_metadata(
+            accumulated_summaries,
+            document_metadata,
+            metadata_timeout,
         )
-        if self.settings.enable_query_synthesis:
-            min_q = self.settings.query_synthesis_min_queries
-            max_q = self.settings.query_synthesis_max_queries
-            user_content += f"\n5. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
+        total_tokens += metadata_tokens
 
-        if document_metadata:
-            meta_str = json.dumps(document_metadata, indent=2)
-            user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
-
-        # Validate input doesn't exceed max tokens
-        error_result = self._validate_input_tokens(
-            user_content, f"final batch ({len(chunks)} chunks, {len(accumulated_summaries)} accumulated)"
-        )
-        if error_result:
-            failed_results = [
-                self.parser.create_failed_chunk_result(c, error_result.error_message or "Input too large")
-                for c in chunks
-            ]
-            return failed_results, None, [], 0
-
-        message_sequence = [{"role": "user", "content": user_content}]
-
-        result = await self.side_call.call_for_profiling(
-            message_sequence=message_sequence,
-            system_prompt=self._build_final_batch_prompt(),
-            timeout_ms=timeout_ms,
-        )
-
-        if not result.success:
-            logger.warning("final_batch_profiling_failed", error=result.error_message)
-            failed_results = [
-                self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks
-            ]
-            return failed_results, None, [], 0
-
-        # Parse the final batch response
-        final_response = self.parser.parse_final_batch_response(result.content)
-        if not final_response:
-            logger.warning("failed_to_parse_final_batch_response")
-            failed_results = [
-                self.parser.create_failed_chunk_result(c, "Failed to parse final batch response") for c in chunks
-            ]
-            return failed_results, None, [], result.tokens_used
-
-        # Convert FinalBatchResponse chunks to ChunkProfileResults
-        chunk_results = []
-        response_chunks_by_index = {rc.index: rc for rc in final_response.chunks}
-
-        for i, chunk in enumerate(chunks):
-            response_chunk = response_chunks_by_index.get(chunk.chunk_index)
-            if not response_chunk and i < len(final_response.chunks):
-                # Fallback: LLM may have returned batch-relative (0-based) indices
-                logger.debug(
-                    "using_positional_fallback_for_chunk",
-                    expected_index=chunk.chunk_index,
-                    position=i,
-                )
-                response_chunk = final_response.chunks[i]
-            if response_chunk:
-                profile = ChunkProfile(
-                    summary=response_chunk.summary,
-                    keywords=response_chunk.keywords,
-                    topics=response_chunk.topics,
-                )
-                chunk_results.append(
-                    ChunkProfileResult(
-                        chunk_id=chunk.chunk_id,
-                        chunk_index=chunk.chunk_index,
-                        profile=profile,
-                        success=True,
-                    )
-                )
-            else:
-                chunk_results.append(
-                    self.parser.create_failed_chunk_result(chunk, "No profile in final batch response")
-                )
-
-        # Build DocumentProfile from final response
-        try:
-            doc_type = DocumentType((final_response.document_type or "narrative").lower())
-        except (ValueError, AttributeError):
-            doc_type = DocumentType.NARRATIVE
-
-        doc_profile = DocumentProfile(
-            synopsis=final_response.synopsis,
-            document_type=doc_type,
-            capability_manifest=final_response.capability_manifest,
-        )
-
-        return chunk_results, doc_profile, final_response.synthesized_queries, result.tokens_used
+        return all_results, doc_profile, queries, total_tokens

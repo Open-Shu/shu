@@ -136,32 +136,15 @@ class ProfilingResult(BaseModel):
     duration_ms: int = Field(0, description="Total profiling duration in milliseconds")
 
 
-class UnifiedChunkProfile(BaseModel):
-    """Chunk profile from final batch LLM response.
+class DocumentMetadataResponse(BaseModel):
+    """Response from document metadata synthesis.
 
-    Includes chunk index for mapping back to chunks.
+    Generated from accumulated chunk summaries in a separate, focused LLM call.
+    Contains only document-level metadata - no chunk profiles.
     """
 
-    index: int = Field(..., description="Chunk index within the document")
-    summary: str = Field(
-        ...,
-        description="One-line summary with SPECIFIC content (names, figures, dates). "
-        "Used for agent scanning and synopsis accumulation.",
-    )
-    keywords: list[str] = Field(default_factory=list, description="Specific extractable terms")
-    topics: list[str] = Field(default_factory=list, description="Conceptual categories")
-
-
-class FinalBatchResponse(BaseModel):
-    """Response from final batch profiling for large documents.
-
-    The final batch produces both chunk profiles AND document-level metadata,
-    eliminating the need for a separate aggregation LLM call.
-    """
-
-    chunks: list[UnifiedChunkProfile] = Field(default_factory=list, description="Per-chunk profiles for this batch")
-    synopsis: str = Field(..., description="2-4 sentence document summary derived from accumulated summaries")
-    document_type: str = Field(..., description="narrative, transactional, technical, conversational")
+    synopsis: str = Field(..., description="2-4 sentence document summary synthesized from all chunk summaries")
+    document_type: DocumentType = Field(..., description="Classification for retrieval optimization")
     capability_manifest: CapabilityManifest = Field(
         default_factory=CapabilityManifest,
         description="What questions this document can answer",

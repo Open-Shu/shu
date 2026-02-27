@@ -190,34 +190,36 @@ class TestInputValidation:
 
 
 class TestIncrementalProfiling:
-    """Tests for profile_chunks_incremental method (SHU-582).
+    """Tests for profile_chunks_incremental method (SHU-582, SHU-594).
 
-    This method eliminates the separate aggregation LLM call by having
-    the final batch generate document-level metadata from accumulated summaries.
+    SHU-594 separated chunk profiling from document metadata generation:
+    - All chunks are profiled uniformly using _profile_chunk_batch()
+    - Document metadata is generated in a separate LLM call using _generate_document_metadata()
     """
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_single_batch(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test incremental profiling with a single batch (becomes final batch)."""
+        """Test incremental profiling with a single batch."""
         mock_settings.chunk_profiling_batch_size = 10  # All chunks fit in one batch
 
-        llm_response = json.dumps({
-            "chunks": [
-                {
-                    "index": 0,
-                    "summary": "Explains OAuth2 flow",
-                    "keywords": ["OAuth2", "PKCE"],
-                    "topics": ["authentication"],
-                },
-                {
-                    "index": 1,
-                    "summary": "Covers token refresh",
-                    "keywords": ["refresh_token"],
-                    "topics": ["token_management"],
-                },
-            ],
+        # First call: chunk profiling
+        chunk_response = json.dumps([
+            {
+                "summary": "Explains OAuth2 flow",
+                "keywords": ["OAuth2", "PKCE"],
+                "topics": ["authentication"],
+            },
+            {
+                "summary": "Covers token refresh",
+                "keywords": ["refresh_token"],
+                "topics": ["token_management"],
+            },
+        ])
+
+        # Second call: document metadata generation
+        metadata_response = json.dumps({
             "synopsis": "Technical guide covering OAuth2 authentication.",
             "document_type": "technical",
             "capability_manifest": {
@@ -232,9 +234,11 @@ class TestIncrementalProfiling:
                 "What is token refresh rotation?",
             ],
         })
-        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
-            content=llm_response, success=True, tokens_used=300
-        )
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=200),
+            SideCallResult(content=metadata_response, success=True, tokens_used=100),
+        ]
 
         chunks = [
             ChunkData(chunk_id="c1", chunk_index=0, content="OAuth2 content"),
@@ -260,9 +264,9 @@ class TestIncrementalProfiling:
         assert len(queries) == 2
         assert "OAuth2 PKCE" in queries[0]
 
-        assert tokens == 300
-        # Only one LLM call (final batch)
-        assert mock_side_call_service.call_for_profiling.call_count == 1
+        assert tokens == 300  # 200 for chunks + 100 for metadata
+        # Two LLM calls: one for chunks, one for metadata
+        assert mock_side_call_service.call_for_profiling.call_count == 2
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_multiple_batches(
@@ -271,7 +275,7 @@ class TestIncrementalProfiling:
         """Test incremental profiling with multiple batches."""
         mock_settings.chunk_profiling_batch_size = 2
 
-        # First batch response (regular batch)
+        # First batch response (chunks 0-1)
         batch1_response = json.dumps([
             {
                 "summary": "Batch 1 chunk 0",
@@ -285,17 +289,18 @@ class TestIncrementalProfiling:
             },
         ])
 
-        # Final batch response (includes doc metadata)
-        final_batch_response = json.dumps({
-            "chunks": [
-                {
-                    "index": 2,
-                    "summary": "Final batch chunk",
-                    "keywords": ["k2"],
-                    "topics": ["t2"],
-                },
-            ],
-            "synopsis": "Synopsis from accumulated one-liners.",
+        # Second batch response (chunk 2)
+        batch2_response = json.dumps([
+            {
+                "summary": "Batch 2 chunk",
+                "keywords": ["k2"],
+                "topics": ["t2"],
+            },
+        ])
+
+        # Third call: document metadata generation
+        metadata_response = json.dumps({
+            "synopsis": "Synopsis from accumulated summaries.",
             "document_type": "narrative",
             "capability_manifest": {
                 "answers_questions_about": ["topic1", "topic2"],
@@ -305,7 +310,8 @@ class TestIncrementalProfiling:
 
         mock_side_call_service.call_for_profiling.side_effect = [
             SideCallResult(content=batch1_response, success=True, tokens_used=100),
-            SideCallResult(content=final_batch_response, success=True, tokens_used=200),
+            SideCallResult(content=batch2_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=150),
         ]
 
         chunks = [
@@ -321,20 +327,21 @@ class TestIncrementalProfiling:
         assert len(chunk_results) == 3
         assert chunk_results[0].profile.summary == "Batch 1 chunk 0"
         assert chunk_results[1].profile.summary == "Batch 1 chunk 1"
-        assert chunk_results[2].profile.summary == "Final batch chunk"
+        assert chunk_results[2].profile.summary == "Batch 2 chunk"
 
         assert doc_profile is not None
-        assert doc_profile.synopsis == "Synopsis from accumulated one-liners."
+        assert doc_profile.synopsis == "Synopsis from accumulated summaries."
 
         assert len(queries) == 2
-        assert tokens == 300  # 100 + 200
-        assert mock_side_call_service.call_for_profiling.call_count == 2
+        assert tokens == 300  # 100 + 50 + 150
+        # Three LLM calls: two chunk batches + metadata
+        assert mock_side_call_service.call_for_profiling.call_count == 3
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_accumulates_summaries(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test that summaries are accumulated and passed to final batch."""
+        """Test that summaries are accumulated and passed to document metadata generation."""
         mock_settings.chunk_profiling_batch_size = 2
 
         batch1_response = json.dumps([
@@ -342,10 +349,11 @@ class TestIncrementalProfiling:
             {"summary": "Second summary", "keywords": [], "topics": []},
         ])
 
-        final_batch_response = json.dumps({
-            "chunks": [
-                {"index": 2, "summary": "Third", "keywords": [], "topics": []},
-            ],
+        batch2_response = json.dumps([
+            {"summary": "Third summary", "keywords": [], "topics": []},
+        ])
+
+        metadata_response = json.dumps({
             "synopsis": "Test",
             "document_type": "narrative",
             "capability_manifest": {},
@@ -354,7 +362,8 @@ class TestIncrementalProfiling:
 
         mock_side_call_service.call_for_profiling.side_effect = [
             SideCallResult(content=batch1_response, success=True, tokens_used=100),
-            SideCallResult(content=final_batch_response, success=True, tokens_used=100),
+            SideCallResult(content=batch2_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
         ]
 
         chunks = [
@@ -364,13 +373,15 @@ class TestIncrementalProfiling:
 
         await profiling_service.profile_chunks_incremental(chunks=chunks)
 
-        # Check that final batch call includes accumulated summaries
-        final_call = mock_side_call_service.call_for_profiling.call_args_list[1]
-        user_content = final_call[1]["message_sequence"][0]["content"]
+        # Check that metadata generation call includes all accumulated summaries
+        metadata_call = mock_side_call_service.call_for_profiling.call_args_list[2]
+        user_content = metadata_call[1]["message_sequence"][0]["content"]
         assert "First summary" in user_content
         assert "Second summary" in user_content
+        assert "Third summary" in user_content
         assert "Chunk 0:" in user_content
         assert "Chunk 1:" in user_content
+        assert "Chunk 2:" in user_content
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_empty_chunks(
@@ -388,10 +399,14 @@ class TestIncrementalProfiling:
         mock_side_call_service.call_for_profiling.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_incremental_profiling_final_batch_failure(
+    async def test_incremental_profiling_metadata_generation_failure(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test handling when final batch LLM call fails."""
+        """Test handling when document metadata generation fails.
+
+        All chunk profiling succeeds, but the separate metadata generation call fails.
+        Chunks should still have their profiles, but document profile should be None.
+        """
         mock_settings.chunk_profiling_batch_size = 2
 
         batch1_response = json.dumps([
@@ -399,8 +414,13 @@ class TestIncrementalProfiling:
             {"summary": "Summary 1", "keywords": [], "topics": []},
         ])
 
+        batch2_response = json.dumps([
+            {"summary": "Summary 2", "keywords": [], "topics": []},
+        ])
+
         mock_side_call_service.call_for_profiling.side_effect = [
             SideCallResult(content=batch1_response, success=True, tokens_used=100),
+            SideCallResult(content=batch2_response, success=True, tokens_used=50),
             SideCallResult(content="", success=False, error_message="Rate limited"),
         ]
 
@@ -413,16 +433,18 @@ class TestIncrementalProfiling:
             await profiling_service.profile_chunks_incremental(chunks=chunks)
         )
 
-        # First batch succeeded
+        # All chunk profiling succeeded
         assert chunk_results[0].success is True
         assert chunk_results[1].success is True
-        # Final batch failed
-        assert chunk_results[2].success is False
-        assert "Rate limited" in chunk_results[2].error
+        assert chunk_results[2].success is True
+        assert chunk_results[0].profile.summary == "Summary 0"
+        assert chunk_results[2].profile.summary == "Summary 2"
 
-        # No document profile when final batch fails
+        # Document metadata generation failed
         assert doc_profile is None
         assert queries == []
+        # Tokens from successful chunk batches still counted
+        assert tokens == 150  # 100 + 50, metadata call returned 0
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_parse_failure(
@@ -451,19 +473,22 @@ class TestIncrementalProfiling:
     async def test_incremental_profiling_regular_batch_failure(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test handling when a regular (non-final) batch fails.
+        """Test handling when a chunk batch fails.
 
         Failed batches should not contribute summaries to the accumulated context,
-        but processing should continue to the final batch.
+        but processing should continue. Document metadata generation should still
+        proceed with whatever summaries were accumulated.
         """
         mock_settings.chunk_profiling_batch_size = 2
 
         # First batch fails
-        # Final batch succeeds
-        final_batch_response = json.dumps({
-            "chunks": [
-                {"index": 2, "summary": "Final chunk", "keywords": [], "topics": []},
-            ],
+        # Second batch succeeds
+        batch2_response = json.dumps([
+            {"summary": "Second batch chunk", "keywords": [], "topics": []},
+        ])
+
+        # Metadata generation succeeds with limited context
+        metadata_response = json.dumps({
             "synopsis": "Synopsis from limited context.",
             "document_type": "narrative",
             "capability_manifest": {},
@@ -472,7 +497,8 @@ class TestIncrementalProfiling:
 
         mock_side_call_service.call_for_profiling.side_effect = [
             SideCallResult(content="", success=False, error_message="Timeout"),
-            SideCallResult(content=final_batch_response, success=True, tokens_used=200),
+            SideCallResult(content=batch2_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=100),
         ]
 
         chunks = [
@@ -489,9 +515,9 @@ class TestIncrementalProfiling:
         assert chunk_results[1].success is False
         assert "Timeout" in chunk_results[0].error
 
-        # Final batch succeeded
+        # Second batch succeeded
         assert chunk_results[2].success is True
-        assert chunk_results[2].profile.summary == "Final chunk"
+        assert chunk_results[2].profile.summary == "Second batch chunk"
 
         # Document profile should still be generated (from limited context)
         assert doc_profile is not None
@@ -499,54 +525,64 @@ class TestIncrementalProfiling:
         assert len(queries) == 1
 
 
-class TestFinalBatchPrompt:
-    """Tests for final batch prompt construction."""
+class TestDocumentMetadataPrompt:
+    """Tests for document metadata prompt construction (SHU-594)."""
 
     @pytest.mark.asyncio
-    async def test_final_batch_uses_correct_prompt(
+    async def test_metadata_generation_uses_correct_prompt(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test that final batch uses dynamically built prompt with configured query limits."""
+        """Test that metadata generation uses dynamically built prompt with configured query limits."""
         mock_settings.chunk_profiling_batch_size = 10
 
-        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
-            content=json.dumps({
-                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
-                "synopsis": "Test",
-                "document_type": "narrative",
-                "capability_manifest": {},
-                "synthesized_queries": [],
-            }),
-            success=True,
-            tokens_used=100,
-        )
+        chunk_response = json.dumps([
+            {"summary": "Test chunk", "keywords": [], "topics": []},
+        ])
+
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
 
         chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
         await profiling_service.profile_chunks_incremental(chunks=chunks)
 
-        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
+        # Check the second call (metadata generation)
+        metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
         # Verify prompt uses configured query limits (min=3, max=20 from mock_settings)
-        assert "3-20 queries" in call_kwargs["system_prompt"]
-        assert "FINAL batch" in call_kwargs["system_prompt"]
+        assert "3-20 queries" in metadata_call_kwargs["system_prompt"]
+        # Should be focused on synthesis, not FINAL batch
+        assert "synthesizing" in metadata_call_kwargs["system_prompt"].lower()
 
     @pytest.mark.asyncio
-    async def test_final_batch_includes_document_metadata(
+    async def test_metadata_generation_includes_document_metadata(
         self, profiling_service, mock_side_call_service, mock_settings
     ):
-        """Test that document metadata is included in final batch prompt."""
+        """Test that document metadata is included in metadata generation prompt."""
         mock_settings.chunk_profiling_batch_size = 10
 
-        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
-            content=json.dumps({
-                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
-                "synopsis": "Test",
-                "document_type": "narrative",
-                "capability_manifest": {},
-                "synthesized_queries": [],
-            }),
-            success=True,
-            tokens_used=100,
-        )
+        chunk_response = json.dumps([
+            {"summary": "Test chunk", "keywords": [], "topics": []},
+        ])
+
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
 
         chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
         await profiling_service.profile_chunks_incremental(
@@ -554,7 +590,9 @@ class TestFinalBatchPrompt:
             document_metadata={"title": "My Document", "source": "email"},
         )
 
-        user_content = mock_side_call_service.call_for_profiling.call_args[1]["message_sequence"][0]["content"]
+        # Check the second call (metadata generation)
+        metadata_call = mock_side_call_service.call_for_profiling.call_args_list[1]
+        user_content = metadata_call[1]["message_sequence"][0]["content"]
         assert "My Document" in user_content
         assert "email" in user_content
 
@@ -563,31 +601,36 @@ class TestQuerySynthesisToggle:
     """Tests for enable_query_synthesis controlling prompt content."""
 
     @pytest.mark.asyncio
-    async def test_final_batch_prompt_excludes_queries_when_disabled(
+    async def test_metadata_prompt_excludes_queries_when_disabled(
         self, mock_side_call_service, mock_settings
     ):
-        """When enable_query_synthesis=False, final batch prompt should NOT ask for queries."""
+        """When enable_query_synthesis=False, metadata prompt should NOT ask for queries."""
         mock_settings.enable_query_synthesis = False
         mock_settings.chunk_profiling_batch_size = 10
         service = ProfilingService(mock_side_call_service, mock_settings)
 
-        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
-            content=json.dumps({
-                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
-                "synopsis": "Test",
-                "document_type": "narrative",
-                "capability_manifest": {},
-            }),
-            success=True,
-            tokens_used=100,
-        )
+        chunk_response = json.dumps([
+            {"summary": "Test chunk", "keywords": [], "topics": []},
+        ])
+
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
 
         chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
         await service.profile_chunks_incremental(chunks=chunks)
 
-        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
-        system_prompt = call_kwargs["system_prompt"]
-        user_content = call_kwargs["message_sequence"][0]["content"]
+        # Check the metadata generation call (second call)
+        metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
+        system_prompt = metadata_call_kwargs["system_prompt"]
+        user_content = metadata_call_kwargs["message_sequence"][0]["content"]
 
         # System prompt should not mention queries
         assert "synthesized_queries" not in system_prompt
@@ -595,32 +638,37 @@ class TestQuerySynthesisToggle:
         assert "synthesized_queries" not in user_content
 
     @pytest.mark.asyncio
-    async def test_final_batch_prompt_includes_queries_when_enabled(
+    async def test_metadata_prompt_includes_queries_when_enabled(
         self, mock_side_call_service, mock_settings
     ):
-        """When enable_query_synthesis=True, final batch prompt SHOULD ask for queries."""
+        """When enable_query_synthesis=True, metadata prompt SHOULD ask for queries."""
         mock_settings.enable_query_synthesis = True
         mock_settings.chunk_profiling_batch_size = 10
         service = ProfilingService(mock_side_call_service, mock_settings)
 
-        mock_side_call_service.call_for_profiling.return_value = SideCallResult(
-            content=json.dumps({
-                "chunks": [{"index": 0, "summary": "Test", "keywords": [], "topics": []}],
-                "synopsis": "Test",
-                "document_type": "narrative",
-                "capability_manifest": {},
-                "synthesized_queries": ["Query 1"],
-            }),
-            success=True,
-            tokens_used=100,
-        )
+        chunk_response = json.dumps([
+            {"summary": "Test chunk", "keywords": [], "topics": []},
+        ])
+
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": ["Query 1"],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
 
         chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
         await service.profile_chunks_incremental(chunks=chunks)
 
-        call_kwargs = mock_side_call_service.call_for_profiling.call_args[1]
-        system_prompt = call_kwargs["system_prompt"]
-        user_content = call_kwargs["message_sequence"][0]["content"]
+        # Check the metadata generation call (second call)
+        metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
+        system_prompt = metadata_call_kwargs["system_prompt"]
+        user_content = metadata_call_kwargs["message_sequence"][0]["content"]
 
         # System prompt should mention queries
         assert "synthesized_queries" in system_prompt

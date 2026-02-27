@@ -5,7 +5,7 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Manages profiling_status transitions (pending -> in_progress -> complete/failed)
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
-- Uses incremental profiling: batches produce chunk profiles, final batch generates doc metadata
+- Uses two-phase profiling: all chunks profiled first, then document metadata generated separately
 """
 
 import time
@@ -46,8 +46,8 @@ class ProfilingOrchestrator:
 
         This is the main entry point called by ingestion integration.
 
-        Uses incremental profiling: batches produce chunk profiles, final batch
-        generates document-level metadata from accumulated summaries.
+        Uses two-phase profiling: all chunks are profiled first in batches,
+        then document metadata is generated from accumulated summaries in a separate call.
 
         Args:
             document_id: ID of the document to profile
@@ -102,8 +102,8 @@ class ProfilingOrchestrator:
                 for c in chunks
             ]
 
-            # Incremental profiling: batches produce chunk profiles,
-            # final batch generates document-level metadata from accumulated summaries
+            # Two-phase profiling: all chunks profiled first,
+            # then document metadata generated from accumulated summaries in separate call
             (
                 chunk_results,
                 doc_profile,
