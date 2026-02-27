@@ -7,8 +7,9 @@ This template demonstrates the recommended plugin structure including both
 It intentionally exercises two common host capabilities so the bundled tests
 show real ``FakeHostBuilder`` patterns:
   - ``echo`` op  — uses ``host.log`` (simple, no external calls)
-  - ``fetch`` op — reads an API key from ``host.secrets`` then calls
-                   ``host.http.fetch()``, showing the secret + HTTP pattern
+  - ``fetch`` op — reads an API key from ``host.secrets``, calls
+                   ``host.http.fetch()`` with ``@with_retry``, showing the
+                   secret + HTTP + retry pattern
 
 Steps to create your own plugin from this template:
 1. Copy the entire ``_cookiecutter/`` directory to ``plugins/<your_plugin>/``
@@ -23,22 +24,14 @@ from __future__ import annotations
 
 from typing import Any
 
-
-# ---------------------------------------------------------------------------
-# Minimal result shim — no shu.* imports required in plugin code.
-# The real Executor wraps your return value; using this shim keeps the plugin
-# decoupled from the Shu backend and unit-testable in isolation.
-# ---------------------------------------------------------------------------
-
-class _Result:
-    """Minimal stand-in for PluginResult used within this standalone template.
-
-    The Shu Executor accepts any object with ``status`` and ``data`` attributes.
-    """
-
-    def __init__(self, status: str = "success", data: dict[str, Any] | None = None) -> None:
-        self.status = status
-        self.data = data or {}
+from shu_plugin_sdk import (
+    HttpRequestFailed,
+    NonRetryableError,
+    PluginResult,
+    RetryableError,
+    RetryConfig,
+    with_retry,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +147,7 @@ class EchoPlugin:
         params: dict[str, Any],
         context: Any,
         host: Any,
-    ) -> _Result:
+    ) -> PluginResult:
         """Execute the requested op and return a result.
 
         Args:
@@ -164,15 +157,15 @@ class EchoPlugin:
                   ``host.secrets``, etc. to access platform services.
 
         Returns:
-            A ``_Result`` with ``status="success"`` and a ``data`` dict whose
-            shape matches ``get_output_schema()``.
+            A ``PluginResult`` with ``status="success"`` and a ``data`` dict
+            whose shape matches ``get_output_schema()``.
         """
         op = params.get("op")
 
         if op == "echo":
             message = params.get("message", "")
             await host.log.info(f"EchoPlugin.execute: echoing {message!r}")
-            return _Result(status="success", data={"echo": message})
+            return PluginResult.ok(data={"echo": message})
 
         if op == "fetch":
             url = params["url"]
@@ -180,17 +173,24 @@ class EchoPlugin:
             api_key = await host.secrets.get("api_key")
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             await host.log.info(f"EchoPlugin.fetch: GET {url}")
-            response = await host.http.fetch("GET", url, headers=headers)
-            return _Result(
-                status="success",
-                data={
-                    "status_code": response.get("status_code"),
-                    "body": response.get("body"),
-                },
-            )
+
+            # Wrap the HTTP call in a retryable inner function.
+            # RetryableError  → retry with backoff (transient: 429, 5xx)
+            # NonRetryableError → fail immediately   (permanent: 4xx)
+            @with_retry(RetryConfig(max_retries=3, base_delay=1.0))
+            async def _do_fetch() -> dict[str, Any]:
+                try:
+                    return await host.http.fetch("GET", url, headers=headers)
+                except HttpRequestFailed as e:
+                    if e.is_retryable:
+                        raise RetryableError(str(e)) from e
+                    raise NonRetryableError(str(e)) from e
+
+            response = await _do_fetch()
+            return PluginResult.ok(data={
+                "status_code": response.get("status_code"),
+                "body": response.get("body"),
+            })
 
         # MUST UPDATE: add your own op handlers here
-        return _Result(
-            status="error",
-            data={"error": f"Unknown op: {op!r}"},
-        )
+        return PluginResult.err(f"Unknown op: {op!r}")

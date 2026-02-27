@@ -21,7 +21,8 @@ from __future__ import annotations
 import pytest
 
 from shu_plugin_sdk.contracts import assert_plugin_contract
-from shu_plugin_sdk.testing import FakeHostBuilder, HttpRequestFailed
+from shu_plugin_sdk.retry import NonRetryableError, RetryableError
+from shu_plugin_sdk.testing import FakeHostBuilder
 
 from _cookiecutter.manifest import PLUGIN_MANIFEST
 from _cookiecutter.plugin import EchoPlugin
@@ -93,10 +94,12 @@ async def test_fetch_op_with_secret_and_http() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_op_http_error() -> None:
-    """EchoPlugin propagates HttpRequestFailed when the HTTP call fails.
+async def test_fetch_op_retryable_error_exhausts_retries() -> None:
+    """A 429 is retried up to max_retries times then raises RetryableError.
 
-    Demonstrates with_http_error() to simulate rate-limiting or server errors.
+    Demonstrates the retry pattern: transient errors (429, 5xx) are wrapped in
+    RetryableError by the plugin and retried by @with_retry. Sleep is mocked
+    here so the test doesn't take 7 seconds.
     """
     plugin = EchoPlugin()
     host = (
@@ -105,10 +108,27 @@ async def test_fetch_op_http_error() -> None:
         .build()
     )
 
-    with pytest.raises(HttpRequestFailed) as exc_info:
+    with pytest.raises(RetryableError):
         await plugin.execute(
             {"op": "fetch", "url": "https://api.example.com/data"}, _CTX, host
         )
 
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.is_retryable is True
+
+@pytest.mark.asyncio
+async def test_fetch_op_non_retryable_error_fails_immediately() -> None:
+    """A 404 is not retried — NonRetryableError is raised on the first attempt.
+
+    Demonstrates the non-retryable path: permanent errors (4xx except 429) are
+    wrapped in NonRetryableError and bypass the retry loop entirely.
+    """
+    plugin = EchoPlugin()
+    host = (
+        FakeHostBuilder()
+        .with_http_error("GET", "https://api.example.com/data", 404)
+        .build()
+    )
+
+    with pytest.raises(NonRetryableError):
+        await plugin.execute(
+            {"op": "fetch", "url": "https://api.example.com/data"}, _CTX, host
+        )

@@ -9,7 +9,27 @@ can be installed and used without a local Shu backend checkout.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Generator
+
+
+@contextmanager
+def patch_retry_sleep() -> Generator[AsyncMock, None, None]:
+    """Suppress ``asyncio.sleep`` delays inside ``@with_retry`` decorated functions.
+
+    Use this in tests that exercise retry logic so they don't sleep between attempts::
+
+        with patch_retry_sleep():
+            with pytest.raises(RetryableError):
+                await plugin.execute(params, ctx, host)
+
+    Yields:
+        The :class:`~unittest.mock.AsyncMock` replacing ``asyncio.sleep``, in case
+        you want to assert on call count or arguments.
+    """
+    with patch("shu_plugin_sdk.retry.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        yield mock_sleep
 
 
 class HttpRequestFailed(Exception):
