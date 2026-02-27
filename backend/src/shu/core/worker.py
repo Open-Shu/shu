@@ -195,6 +195,7 @@ class Worker:
         self._running = False
         self._current_job: Job | None = None
         self._queue_index: int = 0  # Round-robin index for fair queue polling
+        self._active_jobs: dict[WorkloadType, int] = {}  # Process-local counter per workload type
 
     def _setup_signal_handlers(self) -> None:
         """Set up graceful shutdown on SIGTERM and SIGINT.
@@ -214,6 +215,48 @@ class Worker:
 
         signal.signal(signal.SIGTERM, handle_signal)
         signal.signal(signal.SIGINT, handle_signal)
+
+    def _get_limit(self, work_type: WorkloadType) -> int:
+        """Get the configured concurrency limit for a workload type.
+
+        Returns the maximum number of concurrent jobs allowed for the given
+        workload type. A value of 0 means unlimited (no concurrency limiting).
+
+        Args:
+            work_type: The workload type to get the limit for.
+
+        Returns:
+            The configured limit, or 0 if unlimited.
+
+        """
+        from .config import get_settings_instance
+
+        settings = get_settings_instance()
+
+        if work_type == WorkloadType.INGESTION_OCR:
+            return settings.ocr_max_concurrent_jobs
+        if work_type == WorkloadType.PROFILING:
+            return settings.profiling_max_concurrent_tasks
+        return 0  # Unlimited for other workload types
+
+    def _at_capacity(self, work_type: WorkloadType) -> bool:
+        """Check if a workload type is at its concurrency limit.
+
+        Returns True if the workload type has reached its configured limit
+        and should not accept new jobs. Returns False if the limit is 0
+        (unlimited) or if there is capacity available.
+
+        Args:
+            work_type: The workload type to check.
+
+        Returns:
+            True if at capacity, False otherwise.
+
+        """
+        limit = self._get_limit(work_type)
+        if limit == 0:
+            return False
+        return self._active_jobs.get(work_type, 0) >= limit
 
     async def run(self) -> None:
         """Run the worker loop until shutdown signal.
@@ -275,11 +318,17 @@ class Worker:
         Each call starts from the next queue in rotation, preventing any single
         queue from starving others when under continuous load.
 
+        Before attempting to dequeue from a queue, checks whether the workload
+        type is at capacity. If at capacity, skips that queue and tries the next.
+        This prevents workers from blocking on rate-limited work types (OCR,
+        profiling) while other work sits in queues undone.
+
         Args:
             queue_names: List of queue names to try dequeuing from.
 
         Returns:
-            The first job found, or None if no jobs are available.
+            The first job found, or None if no jobs are available or all
+            queues are at capacity.
 
         """
         num_queues = len(queue_names)
@@ -287,6 +336,21 @@ class Worker:
         for i in range(num_queues):
             idx = (self._queue_index + i) % num_queues
             queue_name = queue_names[idx]
+
+            # Check capacity before attempting to dequeue
+            work_type = WorkloadType.from_queue_name(queue_name)
+            if work_type and self._at_capacity(work_type):
+                logger.debug(
+                    f"Skipping queue '{queue_name}' - workload type at capacity",
+                    extra={
+                        "queue_name": queue_name,
+                        "workload_type": work_type.value,
+                        "active_jobs": self._active_jobs.get(work_type, 0),
+                        "limit": self._get_limit(work_type),
+                    },
+                )
+                continue
+
             try:
                 job = await self._backend.dequeue(queue_name)
                 if job:
@@ -308,10 +372,12 @@ class Worker:
 
         This method:
         1. Records the job as current (for shutdown handling)
-        2. Calls the job handler
-        3. Acknowledges the job on success
-        4. Rejects the job on failure (with requeue if under max_attempts)
-        5. Logs job processing metrics
+        2. Increments active job counter for the workload type
+        3. Calls the job handler
+        4. Acknowledges the job on success
+        5. Rejects the job on failure (with requeue if under max_attempts)
+        6. Logs job processing metrics
+        7. Decrements active job counter in finally block
 
         Args:
             job: The job to process.
@@ -319,6 +385,11 @@ class Worker:
         """
         self._current_job = job
         start_time = time.time()
+
+        # Track active job for concurrency limiting
+        work_type = WorkloadType.from_queue_name(job.queue_name)
+        if work_type:
+            self._active_jobs[work_type] = self._active_jobs.get(work_type, 0) + 1
 
         try:
             # Process the job using the provided handler
@@ -384,3 +455,6 @@ class Worker:
 
         finally:
             self._current_job = None
+            # Decrement active job counter
+            if work_type and work_type in self._active_jobs:
+                self._active_jobs[work_type] = max(0, self._active_jobs[work_type] - 1)

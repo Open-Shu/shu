@@ -423,3 +423,236 @@ async def test_worker_graceful_shutdown_no_new_jobs():
     # Verify second job is still in queue
     queue_length = await backend.queue_length(WorkloadType.INGESTION.queue_name)
     assert queue_length == 1
+
+
+# =============================================================================
+# Queue-Level Concurrency Tracking Tests (SHU-596)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_queue_at_capacity():
+    """
+    Test that worker skips queues at capacity and processes other work.
+
+    Validates: SHU-596 queue-level concurrency tracking
+
+    When a workload type is at capacity (active jobs >= limit), the worker
+    should skip that queue and try the next available queue.
+    """
+    from unittest.mock import patch
+
+    backend = InMemoryQueueBackend()
+    processed_jobs: list[Job] = []
+    processing_started = asyncio.Event()
+    should_complete = asyncio.Event()
+
+    async def slow_handler(job: Job) -> None:
+        """Handler that signals when processing starts and waits before completing."""
+        processing_started.set()
+        await should_complete.wait()
+        processed_jobs.append(job)
+
+    # Enqueue jobs: 1 OCR job and 1 INGESTION job
+    await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"type": "ocr"})
+    await enqueue_job(backend, WorkloadType.INGESTION, payload={"type": "ingestion"})
+
+    # Configure worker to handle both types with OCR limit of 1
+    config = WorkerConfig(
+        workload_types={WorkloadType.INGESTION_OCR, WorkloadType.INGESTION},
+        poll_interval=0.1
+    )
+    worker = Worker(backend, config, slow_handler)
+
+    # Mock the OCR limit to be 1
+    def mock_get_limit(work_type):
+        if work_type == WorkloadType.INGESTION_OCR:
+            return 1
+        return 0  # Unlimited for other types
+
+    with patch.object(worker, "_get_limit", mock_get_limit):
+        worker_task = asyncio.create_task(worker.run())
+
+        # Wait for first job (OCR) to start
+        await asyncio.wait_for(processing_started.wait(), timeout=2.0)
+
+        # At this point, OCR queue should be at capacity (1 active job)
+        # The worker should now skip OCR queue and process INGESTION
+
+        # Enqueue another OCR job - it should NOT be processed while first is active
+        await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"type": "ocr2"})
+
+        # Reset event for next job
+        processing_started.clear()
+
+        # Allow first job to complete
+        should_complete.set()
+
+        # Wait for second job to be processed
+        await asyncio.sleep(0.5)
+
+        # Stop worker
+        worker._running = False
+        try:
+            await asyncio.wait_for(worker_task, timeout=2.0)
+        except TimeoutError:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+    # Verify both OCR jobs and the ingestion job were processed
+    # The order should be: OCR1, then either INGESTION or OCR2
+    assert len(processed_jobs) >= 2
+    processed_types = [job.payload["type"] for job in processed_jobs]
+    assert "ocr" in processed_types  # First OCR job was processed
+
+
+@pytest.mark.asyncio
+async def test_worker_capacity_tracking_increments_and_decrements():
+    """
+    Test that active job counter increments on dequeue and decrements on completion.
+
+    Validates: SHU-596 capacity tracking
+
+    The worker must increment _active_jobs when starting a job and decrement
+    it in the finally block, even if the job fails.
+    """
+    backend = InMemoryQueueBackend()
+
+    async def simple_handler(job: Job) -> None:
+        pass
+
+    # Enqueue a job
+    await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"test": True})
+
+    config = WorkerConfig(workload_types={WorkloadType.INGESTION_OCR}, poll_interval=0.1)
+    worker = Worker(backend, config, simple_handler)
+
+    # Verify counter starts at 0
+    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+
+    # Run worker briefly to process the job
+    worker_task = asyncio.create_task(worker.run())
+    await asyncio.sleep(0.3)
+    worker._running = False
+
+    try:
+        await asyncio.wait_for(worker_task, timeout=1.0)
+    except TimeoutError:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+
+    # Verify counter is back to 0 after job completes
+    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_capacity_tracking_decrements_on_failure():
+    """
+    Test that active job counter decrements even when job processing fails.
+
+    Validates: SHU-596 capacity tracking
+
+    The counter must decrement in the finally block, ensuring capacity is
+    freed even when jobs fail.
+    """
+    backend = InMemoryQueueBackend()
+
+    async def failing_handler(job: Job) -> None:
+        raise ValueError("Simulated failure")
+
+    # Enqueue a job with max_attempts=1 so it doesn't retry
+    await enqueue_job(backend, WorkloadType.INGESTION_OCR, payload={"test": True}, max_attempts=1)
+
+    config = WorkerConfig(workload_types={WorkloadType.INGESTION_OCR}, poll_interval=0.1)
+    worker = Worker(backend, config, failing_handler)
+
+    # Verify counter starts at 0
+    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+
+    # Run worker briefly to process the job
+    worker_task = asyncio.create_task(worker.run())
+    await asyncio.sleep(0.3)
+    worker._running = False
+
+    try:
+        await asyncio.wait_for(worker_task, timeout=1.0)
+    except TimeoutError:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+
+    # Verify counter is back to 0 after job fails
+    assert worker._active_jobs.get(WorkloadType.INGESTION_OCR, 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_unlimited_capacity_with_zero_limit():
+    """
+    Test that a limit of 0 means unlimited (no capacity checking).
+
+    Validates: SHU-596 0 = unlimited behavior
+
+    When the configured limit is 0, the worker should never skip the queue.
+    """
+    from unittest.mock import patch
+
+    backend = InMemoryQueueBackend()
+    processed_jobs: list[Job] = []
+
+    async def handler(job: Job) -> None:
+        processed_jobs.append(job)
+
+    # Enqueue multiple jobs
+    for i in range(3):
+        await enqueue_job(backend, WorkloadType.INGESTION, payload={"index": i})
+
+    config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+    worker = Worker(backend, config, handler)
+
+    # Mock the limit to be 0 (unlimited)
+    def mock_get_limit(work_type):
+        return 0
+
+    with patch.object(worker, "_get_limit", mock_get_limit):
+        # Manually set active jobs to a high number
+        worker._active_jobs[WorkloadType.INGESTION] = 1000
+
+        # Worker should still process jobs because limit=0 means unlimited
+        assert not worker._at_capacity(WorkloadType.INGESTION)
+
+        worker_task = asyncio.create_task(worker.run())
+        await asyncio.sleep(0.5)
+        worker._running = False
+
+        try:
+            await asyncio.wait_for(worker_task, timeout=1.0)
+        except TimeoutError:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+    # All jobs should be processed
+    assert len(processed_jobs) == 3
+
+
+@pytest.mark.asyncio
+async def test_workload_type_from_queue_name():
+    """Test WorkloadType.from_queue_name() reverse lookup."""
+    # Valid queue names
+    assert WorkloadType.from_queue_name("shu:ingestion") == WorkloadType.INGESTION
+    assert WorkloadType.from_queue_name("shu:ingestion_ocr") == WorkloadType.INGESTION_OCR
+    assert WorkloadType.from_queue_name("shu:profiling") == WorkloadType.PROFILING
+
+    # Invalid queue name returns None
+    assert WorkloadType.from_queue_name("invalid:queue") is None
+    assert WorkloadType.from_queue_name("") is None
