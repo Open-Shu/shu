@@ -252,24 +252,42 @@ class ExperienceSource:
 class LogMaintenanceSource:
     """Schedulable source for log file maintenance.
 
-    Runs on every scheduler tick (typically every 60s). Handles:
-    - Midnight rotation: archives the current log file when the UTC date changes.
-    - Retention cleanup: prunes archived log files older than the configured window.
+    Called on every scheduler tick (typically every 60s). Two responsibilities
+    with different frequencies:
+
+    - **Midnight rotation** (every tick): cheap date comparison — archives
+      the current log file when the UTC date changes.
+    - **Retention cleanup** (hourly): filesystem scan that prunes archived
+      log files older than the configured retention window.
 
     This is a filesystem-only operation — no DB or queue interaction needed.
-    Each replica manages its own hostname-prefixed log files independently.
+    Cleanup prunes all shu log archives by age, regardless of hostname.
     """
+
+    # How often to run the archive cleanup scan (seconds).
+    _CLEANUP_INTERVAL_SECONDS = 3600  # 1 hour
+
+    def __init__(self) -> None:
+        self._last_cleanup: datetime | None = None
 
     @property
     def name(self) -> str:
         return "log_maintenance"
 
     async def cleanup_stale(self, db: AsyncSession) -> int:
-        from ..core.logging import get_managed_file_handler
+        from ..core.logging import get_managed_file_handler, run_log_cleanup
 
+        # Rotation check — runs every tick (cheap date comparison)
         handler = get_managed_file_handler()
         if handler is not None:
             handler.rotate_if_needed()
+
+        # Archive cleanup — throttled to once per hour
+        now = datetime.now(UTC)
+        if self._last_cleanup is None or (now - self._last_cleanup).total_seconds() >= self._CLEANUP_INTERVAL_SECONDS:
+            run_log_cleanup()
+            self._last_cleanup = now
+
         return 0
 
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
