@@ -6,7 +6,7 @@ orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
 - Generate chunk profiles (summary, keywords, topics) for batch processing
-- Generate document metadata in final batch (incremental profiling)
+- Generate document metadata in a separate LLM call after all chunks are profiled
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
 
@@ -275,12 +275,12 @@ class ProfilingService:
         )
 
         if not result.success:
-            logger.warning(f"chunk_batch_profiling_failed: {result.error_message}")
-            # Return failed results for all chunks
+            logger.warning("chunk_batch_profiling_failed", error=result.error_message, chunk_count=len(chunks))
+            # Return failed results for all chunks, but preserve token count for cost tracking
             failed_results = [
                 self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks
             ]
-            return failed_results, 0
+            return failed_results, result.tokens_used
 
         # Parse the response using dedicated parser
         parsed_results = self.parser.parse_chunk_profiles(result.content, chunks)
@@ -327,7 +327,7 @@ class ProfilingService:
             user_content += f"\n4. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
 
         if document_metadata:
-            meta_str = json.dumps(document_metadata, indent=2)
+            meta_str = json.dumps(document_metadata, indent=2, default=str)
             user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
 
         # Validate input doesn't exceed max tokens
@@ -347,7 +347,7 @@ class ProfilingService:
 
         if not result.success:
             logger.warning("document_metadata_generation_failed", error=result.error_message)
-            return None, [], 0
+            return None, [], result.tokens_used
 
         # Parse the response using dedicated parser
         metadata_response = self.parser.parse_document_metadata_response(result.content)

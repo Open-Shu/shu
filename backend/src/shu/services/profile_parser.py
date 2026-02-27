@@ -90,7 +90,7 @@ class ProfileParser:
             question_domains=self._coerce_list(manifest_data.get("question_domains")),
         )
 
-    def _parse_synthesized_queries(self, queries: list) -> list[str]:
+    def _parse_synthesized_queries(self, queries: list | None) -> list[str]:
         """Parse synthesized queries, handling both string and object formats.
 
         Args:
@@ -142,10 +142,10 @@ class ProfileParser:
                 doc_type = DocumentType.NARRATIVE
 
             return DocumentMetadataResponse(
-                synopsis=data.get("synopsis", ""),
+                synopsis=self._coerce_string(data.get("synopsis")),
                 document_type=doc_type,
                 capability_manifest=self._parse_capability_manifest(data),
-                synthesized_queries=self._parse_synthesized_queries(data.get("synthesized_queries", [])),
+                synthesized_queries=self._parse_synthesized_queries(self._coerce_list(data.get("synthesized_queries"))),
             )
         except Exception as e:
             logger.warning(
