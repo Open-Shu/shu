@@ -77,7 +77,7 @@ class ProfilingOrchestrator:
 
         # Look up KB for embedding model (needed after profiling for synopsis/query embedding)
         kb = await self.db.get(KnowledgeBase, document.knowledge_base_id)
-        embedding_model = str(kb.embedding_model) if kb else None
+        embedding_model = str(kb.embedding_model) if kb and kb.embedding_model is not None else None
 
         # Mark profiling in progress
         document.mark_profiling_started()
@@ -307,7 +307,7 @@ class ProfilingOrchestrator:
         from .rag_processing_service import RAGProcessingService
 
         rag_service = RAGProcessingService.get_instance(embedding_model=embedding_model)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             rag_service.executor,
             lambda: rag_service.model.encode(texts, batch_size=32, show_progress_bar=False),
