@@ -34,6 +34,8 @@ class PublicConfig(BaseModel):
     password_policy: PasswordPolicy = Field(
         default_factory=lambda: PasswordPolicy(policy="moderate", min_length=8, special_chars="!@#$%^&*()-_+=")
     )
+    # Feature flags
+    enable_document_profiling: bool = False
 
 
 class SetupStatus(BaseModel):

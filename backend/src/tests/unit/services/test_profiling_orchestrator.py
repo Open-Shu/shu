@@ -30,7 +30,6 @@ def mock_settings():
     settings.chunk_profiling_batch_size = 5
     settings.profiling_max_input_tokens = 8000
     settings.enable_document_profiling = True
-    settings.enable_query_synthesis = True
     return settings
 
 

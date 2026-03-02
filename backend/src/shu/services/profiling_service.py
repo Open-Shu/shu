@@ -66,7 +66,7 @@ Generate a JSON response with this exact structure:
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
         "answers_questions_about": [
-            "SPECIFIC topics consolidated from all chunks with named entities and dates",
+            "SPECIFIC topics consolidated from all chunks with keywords, topics, named entities and dates",
             "Example: 'Acme Corp Q3 2024 revenue and profit margins'"
         ],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
@@ -84,7 +84,7 @@ Guidelines:
 - synopsis: Lead with the most important SPECIFIC facts from across the document. Synthesize, don't just list.{queries_guidelines}
 - capability_manifest: Consolidate themes from all chunks into specific, queryable topics."""
 
-# Query synthesis additions - injected into templates when enable_query_synthesis=True
+# Query synthesis additions - always injected into document metadata prompts
 QUERIES_JSON_ADDITION = """,
     "synthesized_queries": [
         "What was Acme Corp's Q3 2024 revenue?",
@@ -106,6 +106,7 @@ QUERIES_GUIDELINES_TEMPLATE = """
   Include in your queries:
   - Named entities (people, companies, projects, products)
   - Dates and time periods
+  - Keywords and topics from the document
   - Version numbers, amounts, metrics
   - Specific technical terms unique to this document
 
@@ -130,38 +131,34 @@ class ProfilingService:
         self.settings = settings
         self.parser = ProfileParser(max_queries=settings.query_synthesis_max_queries)
 
-    def _resolve_timeout_ms(self, timeout_ms: int | None, *, for_query_synthesis: bool = False) -> int:
+    def _resolve_timeout_ms(self, timeout_ms: int | None, *, for_metadata: bool = False) -> int:
         """Resolve timeout, using settings default if not provided.
 
         Args:
             timeout_ms: Explicit timeout override (takes priority)
-            for_query_synthesis: If True, use query_synthesis_timeout_seconds as default
-                instead of profiling_timeout_seconds (for calls that generate queries)
+            for_metadata: If True, use profiling_metadata_timeout_seconds (for the
+                document-level metadata synthesis call, which is heavier than chunk batches)
 
         """
         if timeout_ms is not None:
             return timeout_ms
-        if for_query_synthesis:
-            return self.settings.query_synthesis_timeout_seconds * 1000
+        if for_metadata:
+            return self.settings.profiling_metadata_timeout_seconds * 1000
         return self.settings.profiling_timeout_seconds * 1000
 
     def _build_document_metadata_prompt(self) -> str:
         """Build document metadata synthesis system prompt.
 
-        Injects query synthesis sections when enable_query_synthesis is True.
+        Always includes query synthesis sections — query generation is embedded
+        in the same profiling LLM call at no additional cost.
         """
-        if self.settings.enable_query_synthesis:
-            queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
-                min_queries=self.settings.query_synthesis_min_queries,
-                max_queries=self.settings.query_synthesis_max_queries,
-            )
-            return DOCUMENT_METADATA_PROMPT_TEMPLATE.format(
-                queries_json=QUERIES_JSON_ADDITION,
-                queries_guidelines=queries_guidelines,
-            )
+        queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
+            min_queries=self.settings.query_synthesis_min_queries,
+            max_queries=self.settings.query_synthesis_max_queries,
+        )
         return DOCUMENT_METADATA_PROMPT_TEMPLATE.format(
-            queries_json="",
-            queries_guidelines="",
+            queries_json=QUERIES_JSON_ADDITION,
+            queries_guidelines=queries_guidelines,
         )
 
     def _validate_input_tokens(self, content: str, context: str) -> SideCallResult | None:
@@ -302,13 +299,14 @@ class ProfilingService:
         document_metadata: dict | None,
         timeout_ms: int,
     ) -> tuple[DocumentProfile | None, list[str], int]:
-        """Generate document-level metadata from accumulated chunk summaries.
+        """Generate document-level metadata from accumulated chunk context.
 
-        This is a separate, focused LLM call that synthesizes all chunk summaries
-        into document-level metadata (synopsis, capability_manifest, queries).
+        This is a separate, focused LLM call that synthesizes chunk summaries,
+        keywords, and topics into document-level metadata (synopsis,
+        capability_manifest, queries).
 
         Args:
-            accumulated_summaries: Summaries from all profiled chunks
+            accumulated_summaries: Context from all profiled chunks (summary + keywords + topics)
             document_metadata: Optional document metadata (title, source, etc.)
             timeout_ms: Timeout for LLM call
 
@@ -320,21 +318,20 @@ class ProfilingService:
             logger.warning("generate_document_metadata_called_with_no_summaries")
             return None, [], 0
 
-        # Build user message with accumulated summaries
-        user_content = "Synthesize document-level metadata from these chunk summaries:\n\n"
+        # Build user message with accumulated chunk context
+        user_content = "Synthesize document-level metadata from these chunk profiles:\n\n"
         user_content += "\n".join(accumulated_summaries)
 
-        # Build response instructions - only request queries if enabled
+        # Build response instructions — always include query synthesis
+        min_q = self.settings.query_synthesis_min_queries
+        max_q = self.settings.query_synthesis_max_queries
         user_content += (
             "\n\nRespond with a JSON object containing:\n"
             "1. 'synopsis': 2-4 sentence summary of the ENTIRE document\n"
             "2. 'document_type': narrative, transactional, technical, or conversational\n"
-            "3. 'capability_manifest': what questions this document can answer"
+            "3. 'capability_manifest': what questions this document can answer\n"
+            f"4. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
         )
-        if self.settings.enable_query_synthesis:
-            min_q = self.settings.query_synthesis_min_queries
-            max_q = self.settings.query_synthesis_max_queries
-            user_content += f"\n4. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
 
         if document_metadata:
             meta_str = json.dumps(document_metadata, indent=2, default=str)
@@ -508,9 +505,7 @@ class ProfilingService:
             return [], None, [], 0, 100.0
 
         timeout = self._resolve_timeout_ms(timeout_ms)
-        metadata_timeout = self._resolve_timeout_ms(
-            timeout_ms, for_query_synthesis=self.settings.enable_query_synthesis
-        )
+        metadata_timeout = self._resolve_timeout_ms(timeout_ms, for_metadata=True)
         batch_size = self.settings.chunk_profiling_batch_size
         all_results: list[ChunkProfileResult] = []
         total_tokens = 0
@@ -571,13 +566,20 @@ class ProfilingService:
             for idx, retry_result in zip(failed_indices, retry_results, strict=True):
                 all_results[idx] = retry_result
 
-        # Phase 3: Calculate coverage and accumulate summaries for metadata
+        # Phase 3: Calculate coverage and accumulate chunk context for metadata
         successful_count = sum(1 for r in all_results if not self._is_chunk_profile_failed(r))
         coverage_percent = (successful_count / len(chunks)) * 100 if chunks else 100.0
 
-        accumulated_summaries = [
-            f"Chunk {r.chunk_index}: {r.profile.summary}" for r in all_results if not self._is_chunk_profile_failed(r)
-        ]
+        accumulated_summaries = []
+        for r in all_results:
+            if self._is_chunk_profile_failed(r):
+                continue
+            entry = f"Chunk {r.chunk_index}: {r.profile.summary}"
+            if r.profile.keywords:
+                entry += f"\n  Keywords: {', '.join(r.profile.keywords)}"
+            if r.profile.topics:
+                entry += f"\n  Topics: {', '.join(r.profile.topics)}"
+            accumulated_summaries.append(entry)
 
         logger.info(
             "chunk_profiling_coverage",
@@ -586,7 +588,7 @@ class ProfilingService:
             coverage_percent=round(coverage_percent, 1),
         )
 
-        # Phase 4: Generate document metadata from accumulated summaries (separate LLM call)
+        # Phase 4: Generate document metadata from accumulated chunk context (separate LLM call)
         doc_profile, queries, metadata_tokens = await self._generate_document_metadata(
             accumulated_summaries,
             document_metadata,
