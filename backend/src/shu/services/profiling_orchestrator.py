@@ -141,9 +141,7 @@ class ProfilingOrchestrator:
             queries_embedded = 0
             if doc_profile and embedding_model:
                 try:
-                    synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(
-                        document, embedding_model
-                    )
+                    synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(document, embedding_model)
                 except Exception as e:
                     logger.warning("profile_embedding_failed", document_id=document_id, error=str(e))
 
@@ -316,9 +314,7 @@ class ProfilingOrchestrator:
         )
         return [e.tolist() for e in embeddings]
 
-    async def _embed_profile_artifacts(
-        self, document: Document, embedding_model: str
-    ) -> tuple[bool, int]:
+    async def _embed_profile_artifacts(self, document: Document, embedding_model: str) -> tuple[bool, int]:
         """Embed synopsis and synthesized query texts after profiling.
 
         Generates vector embeddings for the document's synopsis and all synthesized
