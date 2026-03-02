@@ -66,7 +66,7 @@ Generate a JSON response with this exact structure:
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
         "answers_questions_about": [
-            "SPECIFIC topics consolidated from all chunks with named entities and dates",
+            "SPECIFIC topics consolidated from all chunks with keywords, topics, named entities and dates",
             "Example: 'Acme Corp Q3 2024 revenue and profit margins'"
         ],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
@@ -106,6 +106,7 @@ QUERIES_GUIDELINES_TEMPLATE = """
   Include in your queries:
   - Named entities (people, companies, projects, products)
   - Dates and time periods
+  - Keywords and topics from the document
   - Version numbers, amounts, metrics
   - Specific technical terms unique to this document
 
@@ -298,13 +299,14 @@ class ProfilingService:
         document_metadata: dict | None,
         timeout_ms: int,
     ) -> tuple[DocumentProfile | None, list[str], int]:
-        """Generate document-level metadata from accumulated chunk summaries.
+        """Generate document-level metadata from accumulated chunk context.
 
-        This is a separate, focused LLM call that synthesizes all chunk summaries
-        into document-level metadata (synopsis, capability_manifest, queries).
+        This is a separate, focused LLM call that synthesizes chunk summaries,
+        keywords, and topics into document-level metadata (synopsis,
+        capability_manifest, queries).
 
         Args:
-            accumulated_summaries: Summaries from all profiled chunks
+            accumulated_summaries: Context from all profiled chunks (summary + keywords + topics)
             document_metadata: Optional document metadata (title, source, etc.)
             timeout_ms: Timeout for LLM call
 
@@ -316,8 +318,8 @@ class ProfilingService:
             logger.warning("generate_document_metadata_called_with_no_summaries")
             return None, [], 0
 
-        # Build user message with accumulated summaries
-        user_content = "Synthesize document-level metadata from these chunk summaries:\n\n"
+        # Build user message with accumulated chunk context
+        user_content = "Synthesize document-level metadata from these chunk profiles:\n\n"
         user_content += "\n".join(accumulated_summaries)
 
         # Build response instructions — always include query synthesis
@@ -564,13 +566,20 @@ class ProfilingService:
             for idx, retry_result in zip(failed_indices, retry_results, strict=True):
                 all_results[idx] = retry_result
 
-        # Phase 3: Calculate coverage and accumulate summaries for metadata
+        # Phase 3: Calculate coverage and accumulate chunk context for metadata
         successful_count = sum(1 for r in all_results if not self._is_chunk_profile_failed(r))
         coverage_percent = (successful_count / len(chunks)) * 100 if chunks else 100.0
 
-        accumulated_summaries = [
-            f"Chunk {r.chunk_index}: {r.profile.summary}" for r in all_results if not self._is_chunk_profile_failed(r)
-        ]
+        accumulated_summaries = []
+        for r in all_results:
+            if self._is_chunk_profile_failed(r):
+                continue
+            entry = f"Chunk {r.chunk_index}: {r.profile.summary}"
+            if r.profile.keywords:
+                entry += f"\n  Keywords: {', '.join(r.profile.keywords)}"
+            if r.profile.topics:
+                entry += f"\n  Topics: {', '.join(r.profile.topics)}"
+            accumulated_summaries.append(entry)
 
         logger.info(
             "chunk_profiling_coverage",
@@ -579,7 +588,7 @@ class ProfilingService:
             coverage_percent=round(coverage_percent, 1),
         )
 
-        # Phase 4: Generate document metadata from accumulated summaries (separate LLM call)
+        # Phase 4: Generate document metadata from accumulated chunk context (separate LLM call)
         doc_profile, queries, metadata_tokens = await self._generate_document_metadata(
             accumulated_summaries,
             document_metadata,

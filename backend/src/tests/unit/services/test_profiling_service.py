@@ -647,6 +647,83 @@ class TestQuerySynthesisInPrompt:
         assert "synthesized_queries" in user_content
 
 
+class TestMetadataContextEnrichment:
+    """Tests that chunk keywords and topics are included in metadata LLM context (SHU-601)."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_context_includes_keywords_and_topics(
+        self, mock_side_call_service, mock_settings
+    ):
+        """Keywords and topics from chunk profiles should appear in metadata user content."""
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        chunk_response = json.dumps([
+            {
+                "summary": "Q3 revenue grew 15% YoY",
+                "keywords": ["Q3 2024", "revenue", "$42M", "EMEA"],
+                "topics": ["financial performance", "regional growth"],
+            },
+        ])
+
+        metadata_response = json.dumps({
+            "synopsis": "Financial report",
+            "document_type": "transactional",
+            "capability_manifest": {},
+            "synthesized_queries": ["What was Q3 2024 revenue?"],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_chunks_incremental(chunks=chunks)
+
+        metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
+        user_content = metadata_call_kwargs["message_sequence"][0]["content"]
+
+        # Keywords and topics should be present
+        assert "Keywords: Q3 2024, revenue, $42M, EMEA" in user_content
+        assert "Topics: financial performance, regional growth" in user_content
+
+    @pytest.mark.asyncio
+    async def test_metadata_context_omits_empty_keywords_and_topics(
+        self, mock_side_call_service, mock_settings
+    ):
+        """Empty keywords/topics lists should not appear in metadata context."""
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        chunk_response = json.dumps([
+            {"summary": "Brief chunk", "keywords": [], "topics": []},
+        ])
+
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=chunk_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+        await service.profile_chunks_incremental(chunks=chunks)
+
+        metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
+        user_content = metadata_call_kwargs["message_sequence"][0]["content"]
+
+        # Should contain summary but not keyword/topic labels
+        assert "Brief chunk" in user_content
+        assert "Keywords:" not in user_content
+        assert "Topics:" not in user_content
+
+
 class TestProfileParserNullHandling:
     """Tests for ProfileParser handling of null values from LLM responses (SHU-586)."""
 
