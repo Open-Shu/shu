@@ -401,7 +401,9 @@ class Worker:
             return False
         if self._worker_id is None:
             return True  # Standalone worker
-        return self._worker_id.startswith("1/")
+        # Check if this is worker "1" in the pool (e.g., "1/4" but not "10/4")
+        parts = self._worker_id.split("/", 1)
+        return len(parts) >= 1 and parts[0] == "1"
 
     async def _report_deferred_work(self) -> None:
         """Check capacity-limited queues and log a summary of deferred work.
@@ -429,7 +431,10 @@ class Worker:
                         label = work_type.value.replace("_", " ")
                         deferred.append(f"{pending} {label} job{'s' if pending != 1 else ''}")
                 except Exception:
-                    pass  # Don't let reporting failures affect the worker
+                    logger.debug(
+                        f"Failed to query queue length for {work_type.value}",
+                        exc_info=True,
+                    )
 
         if deferred:
             logger.info(

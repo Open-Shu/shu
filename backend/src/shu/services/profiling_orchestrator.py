@@ -75,15 +75,14 @@ class ProfilingOrchestrator:
                 error=f"Document {document_id} not found",
             )
 
-        # Look up KB for embedding model (needed after profiling for synopsis/query embedding)
-        kb = await self.db.get(KnowledgeBase, document.knowledge_base_id)
-        embedding_model = str(kb.embedding_model) if kb and kb.embedding_model is not None else None
-
         # Mark profiling in progress
         document.mark_profiling_started()
         await self.db.commit()
 
         try:
+            # Look up KB for embedding model (needed after profiling for synopsis/query embedding)
+            kb = await self.db.get(KnowledgeBase, document.knowledge_base_id)
+            embedding_model = str(kb.embedding_model) if kb and kb.embedding_model is not None else None
             # Load chunks
             stmt = (
                 select(DocumentChunk)
@@ -133,6 +132,7 @@ class ProfilingOrchestrator:
                 try:
                     queries_created = await self._persist_queries(document, synthesized_queries)
                 except Exception as e:
+                    await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
 
             # Embed synopsis and synthesized queries (SHU-351, SHU-359)
@@ -143,6 +143,7 @@ class ProfilingOrchestrator:
                 try:
                     synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(document, embedding_model)
                 except Exception as e:
+                    await self.db.rollback()
                     logger.warning("profile_embedding_failed", document_id=document_id, error=str(e))
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -307,10 +308,11 @@ class ProfilingOrchestrator:
         from .rag_processing_service import RAGProcessingService
 
         rag_service = RAGProcessingService.get_instance(embedding_model=embedding_model)
+        batch_size = rag_service.batch_size
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             rag_service.executor,
-            lambda: rag_service.model.encode(texts, batch_size=32, show_progress_bar=False),
+            lambda: rag_service.model.encode(texts, batch_size=batch_size, show_progress_bar=False),
         )
         return [e.tolist() for e in embeddings]
 
