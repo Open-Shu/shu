@@ -128,18 +128,21 @@ class ProfilingOrchestrator:
             # Persist synthesized queries (even if empty, to delete stale queries on re-profile)
             # Isolated from main try block so query failures don't mark profiling as failed
             queries_created = 0
+            queries_persist_ok = True
             if doc_profile:
                 try:
                     queries_created = await self._persist_queries(document, synthesized_queries)
                 except Exception as e:
+                    queries_persist_ok = False
                     await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
 
             # Embed synopsis and synthesized queries (SHU-351, SHU-359)
             # Isolated so embedding failures don't fail the profiling job
+            # Skip if query persistence rolled back — avoids embedding stale queries
             synopsis_embedded = False
             queries_embedded = 0
-            if doc_profile and embedding_model:
+            if doc_profile and embedding_model and queries_persist_ok:
                 try:
                     synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(document, embedding_model)
                 except Exception as e:
