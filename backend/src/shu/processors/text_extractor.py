@@ -58,10 +58,10 @@ class TextExtractor:
     _ocr_init_lock: ClassVar[asyncio.Lock | None] = None
     _ocr_init_failed: ClassVar[bool] = False
 
-    # --- OCR concurrency semaphore ---
-    # Limits how many OCR jobs run simultaneously (CPU/memory bound).
-    # Lazily created from SHU_OCR_MAX_CONCURRENT_JOBS.
-    _ocr_semaphore: ClassVar[asyncio.Semaphore | None] = None
+    # NOTE: OCR concurrency is now managed at the worker level via queue-level
+    # capacity tracking (SHU-596). Workers skip the INGESTION_OCR queue when
+    # SHU_OCR_MAX_CONCURRENT_JOBS jobs are already active, preventing head-of-line
+    # blocking and allowing other work types to proceed.
 
     # Thread tracking for proper cleanup
     _active_ocr_threads: ClassVar[dict[str, list]] = {}  # job_id -> list of threads
@@ -101,18 +101,6 @@ class TextExtractor:
         if cls._ocr_init_lock is None:
             cls._ocr_init_lock = asyncio.Lock()
         return cls._ocr_init_lock
-
-    @classmethod
-    def get_ocr_semaphore(cls) -> asyncio.Semaphore:
-        """Return the OCR concurrency semaphore, creating it lazily from config."""
-        if cls._ocr_semaphore is None:
-            from ..core.config import get_settings_instance
-
-            settings = get_settings_instance()
-            max_concurrent = getattr(settings, "ocr_max_concurrent_jobs", 1)
-            cls._ocr_semaphore = asyncio.Semaphore(max(1, max_concurrent))
-            logger.info(f"OCR concurrency semaphore created with limit={max(1, max_concurrent)}")
-        return cls._ocr_semaphore
 
     @classmethod
     async def get_ocr_instance(cls) -> easyocr.Reader | None:
@@ -816,27 +804,16 @@ class TextExtractor:
     ) -> tuple[str, float]:
         """Extract PDF text using direct in-process OCR with proper metadata tracking.
 
-        Acquires the class-level OCR semaphore before opening the PDF so that at most
-        ``SHU_OCR_MAX_CONCURRENT_JOBS`` jobs hold a fitz document in memory simultaneously.
-        This bounds peak RSS to the semaphore limit, not the worker concurrency limit.
+        OCR concurrency is managed at the worker level via queue-level capacity
+        tracking (SHU-596). Workers skip the INGESTION_OCR queue when at capacity,
+        so at most SHU_OCR_MAX_CONCURRENT_JOBS jobs will be processing OCR
+        simultaneously per worker process.
 
         Returns:
             (text, confidence) — confidence is the real per-word average from EasyOCR,
             or a text quality heuristic from ``_calculate_text_quality`` when Tesseract ran.
 
         """
-        sem = self.get_ocr_semaphore()
-        logger.debug(
-            "Waiting for OCR semaphore",
-            extra={"file_path": file_path},
-        )
-        async with sem:
-            return await self._extract_pdf_ocr_direct_inner(file_path, file_content, progress_callback)
-
-    async def _extract_pdf_ocr_direct_inner(
-        self, file_path: str, file_content: bytes | None = None, progress_callback=None
-    ) -> tuple[str, float]:
-        """Inner OCR processing (called under semaphore, which is acquired before fitz.open)."""
         start_time = time.time()
 
         try:
@@ -844,8 +821,8 @@ class TextExtractor:
 
             import fitz
 
-            # Open PDF — semaphore is already held by the caller, so at most
-            # SHU_OCR_MAX_CONCURRENT_JOBS fitz documents are open simultaneously.
+            # Open PDF — worker-level concurrency limiting ensures at most
+            # SHU_OCR_MAX_CONCURRENT_JOBS are processing OCR simultaneously.
             doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
 
             total_pages = len(doc)

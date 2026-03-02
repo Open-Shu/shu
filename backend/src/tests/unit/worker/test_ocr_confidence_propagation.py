@@ -40,15 +40,15 @@ def _make_extractor():
 
 
 # ---------------------------------------------------------------------------
-# _extract_pdf_ocr_direct_inner — confidence propagation
+# _extract_pdf_ocr_direct — confidence propagation
 # ---------------------------------------------------------------------------
 
-class TestExtractPdfOcrDirectInner:
-    """_extract_pdf_ocr_direct_inner must return (text, confidence) not just text."""
+class TestExtractPdfOcrDirect:
+    """_extract_pdf_ocr_direct must return (text, confidence) not just text."""
 
     @pytest.mark.asyncio
     async def test_returns_tuple_with_easyocr_confidence(self):
-        """EasyOCR avg_confidence propagates out of _extract_pdf_ocr_direct_inner."""
+        """EasyOCR avg_confidence propagates out of _extract_pdf_ocr_direct."""
         extractor = _make_extractor()
 
         expected_text = "hello world"
@@ -64,7 +64,7 @@ class TestExtractPdfOcrDirectInner:
             doc.__len__ = MagicMock(return_value=1)
 
             with patch("fitz.open", return_value=doc):
-                result = await extractor._extract_pdf_ocr_direct_inner("test.pdf", b"%PDF-fake")
+                result = await extractor._extract_pdf_ocr_direct("test.pdf", b"%PDF-fake")
 
         assert isinstance(result, tuple), "Must return a tuple"
         assert len(result) == 2
@@ -86,7 +86,7 @@ class TestExtractPdfOcrDirectInner:
             doc.__len__ = MagicMock(return_value=1)
 
             with patch("fitz.open", return_value=doc):
-                text, confidence = await extractor._extract_pdf_ocr_direct_inner("test.pdf", b"%PDF-fake")
+                text, confidence = await extractor._extract_pdf_ocr_direct("test.pdf", b"%PDF-fake")
 
         assert text == ""
         assert confidence == 0.0

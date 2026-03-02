@@ -33,6 +33,8 @@ def mock_settings():
     settings.query_synthesis_min_queries = 3
     settings.query_synthesis_max_queries = 20
     settings.enable_query_synthesis = True  # Explicit default for tests
+    settings.profiling_max_retries = 0  # Disable retries by default for simpler tests
+    settings.title_chunk_enabled_default = False  # Disable title chunk enhancement by default
     return settings
 
 
@@ -245,7 +247,7 @@ class TestIncrementalProfiling:
             ChunkData(chunk_id="c2", chunk_index=1, content="Token content"),
         ]
 
-        chunk_results, doc_profile, queries, tokens = (
+        chunk_results, doc_profile, queries, tokens, coverage = (
             await profiling_service.profile_chunks_incremental(
                 chunks=chunks,
                 document_metadata={"title": "Auth Guide"},
@@ -265,6 +267,7 @@ class TestIncrementalProfiling:
         assert "OAuth2 PKCE" in queries[0]
 
         assert tokens == 300  # 200 for chunks + 100 for metadata
+        assert coverage == 100.0  # All chunks successful
         # Two LLM calls: one for chunks, one for metadata
         assert mock_side_call_service.call_for_profiling.call_count == 2
 
@@ -320,7 +323,7 @@ class TestIncrementalProfiling:
             ChunkData(chunk_id="c2", chunk_index=2, content="Content 2"),
         ]
 
-        chunk_results, doc_profile, queries, tokens = (
+        chunk_results, doc_profile, queries, tokens, coverage = (
             await profiling_service.profile_chunks_incremental(chunks=chunks)
         )
 
@@ -334,6 +337,7 @@ class TestIncrementalProfiling:
 
         assert len(queries) == 2
         assert tokens == 300  # 100 + 50 + 150
+        assert coverage == 100.0  # All chunks successful
         # Three LLM calls: two chunk batches + metadata
         assert mock_side_call_service.call_for_profiling.call_count == 3
 
@@ -388,7 +392,7 @@ class TestIncrementalProfiling:
         self, profiling_service, mock_side_call_service
     ):
         """Test incremental profiling with empty chunk list."""
-        chunk_results, doc_profile, queries, tokens = (
+        chunk_results, doc_profile, queries, tokens, coverage = (
             await profiling_service.profile_chunks_incremental(chunks=[])
         )
 
@@ -396,6 +400,7 @@ class TestIncrementalProfiling:
         assert doc_profile is None
         assert queries == []
         assert tokens == 0
+        assert coverage == 100.0  # No chunks = 100% coverage by convention
         mock_side_call_service.call_for_profiling.assert_not_called()
 
     @pytest.mark.asyncio
@@ -429,7 +434,7 @@ class TestIncrementalProfiling:
             for i in range(3)
         ]
 
-        chunk_results, doc_profile, queries, tokens = (
+        chunk_results, doc_profile, queries, tokens, coverage = (
             await profiling_service.profile_chunks_incremental(chunks=chunks)
         )
 
@@ -445,6 +450,7 @@ class TestIncrementalProfiling:
         assert queries == []
         # Tokens from successful chunk batches still counted
         assert tokens == 150  # 100 + 50, metadata call returned 0
+        assert coverage == 100.0  # All chunk profiles succeeded
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_parse_failure(
@@ -460,7 +466,7 @@ class TestIncrementalProfiling:
 
         chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
 
-        chunk_results, doc_profile, queries, tokens = (
+        chunk_results, doc_profile, queries, tokens, coverage = (
             await profiling_service.profile_chunks_incremental(chunks=chunks)
         )
 
@@ -468,6 +474,7 @@ class TestIncrementalProfiling:
         assert chunk_results[0].success is False
         assert doc_profile is None
         assert queries == []
+        assert coverage == 0.0  # No chunks succeeded
 
     @pytest.mark.asyncio
     async def test_incremental_profiling_regular_batch_failure(
@@ -506,7 +513,7 @@ class TestIncrementalProfiling:
             for i in range(3)
         ]
 
-        chunk_results, doc_profile, queries, tokens = (
+        chunk_results, doc_profile, queries, tokens, coverage = (
             await profiling_service.profile_chunks_incremental(chunks=chunks)
         )
 
@@ -523,6 +530,8 @@ class TestIncrementalProfiling:
         assert doc_profile is not None
         assert doc_profile.synopsis == "Synopsis from limited context."
         assert len(queries) == 1
+        # 1 out of 3 chunks succeeded = 33.33% coverage
+        assert abs(coverage - 33.33) < 1.0  # Allow for floating point variance
 
 
 class TestDocumentMetadataPrompt:
@@ -725,3 +734,180 @@ class TestProfileParserNullHandling:
         assert results[1].profile.summary == "Valid summary"
         assert results[1].profile.keywords == ["keyword1"]
         assert results[1].profile.topics == ["topic1"]
+
+
+class TestRetryMechanism:
+    """Tests for chunk profiling retry mechanism (SHU-598)."""
+
+    @pytest.mark.asyncio
+    async def test_retry_recovers_failed_chunks(
+        self, mock_side_call_service, mock_settings
+    ):
+        """Test that failed chunks are retried and can recover."""
+        mock_settings.profiling_max_retries = 1
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        # Initial batch: chunk 0 fails (empty summary), chunk 1 succeeds
+        initial_response = json.dumps([
+            {"summary": "", "keywords": [], "topics": []},  # Will be retried
+            {"summary": "Chunk 1 success", "keywords": ["k1"], "topics": ["t1"]},
+        ])
+
+        # Retry: chunk 0 now succeeds
+        retry_response = json.dumps([
+            {"summary": "Chunk 0 recovered", "keywords": ["k0"], "topics": ["t0"]},
+        ])
+
+        # Metadata generation
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=initial_response, success=True, tokens_used=100),
+            SideCallResult(content=retry_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
+
+        chunks = [
+            ChunkData(chunk_id="c0", chunk_index=0, content="Content 0"),
+            ChunkData(chunk_id="c1", chunk_index=1, content="Content 1"),
+        ]
+
+        chunk_results, doc_profile, _, tokens, coverage = (
+            await service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        # Both chunks should now succeed after retry
+        assert chunk_results[0].success is True
+        assert chunk_results[0].profile.summary == "Chunk 0 recovered"
+        assert chunk_results[1].success is True
+        assert chunk_results[1].profile.summary == "Chunk 1 success"
+        assert coverage == 100.0
+        assert tokens == 200  # 100 + 50 + 50
+
+    @pytest.mark.asyncio
+    async def test_multiple_retry_attempts(
+        self, mock_side_call_service, mock_settings
+    ):
+        """Test that multiple retry attempts are executed when configured."""
+        mock_settings.profiling_max_retries = 2
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        # Initial: chunk 0 fails
+        initial_response = json.dumps([
+            {"summary": "", "keywords": [], "topics": []},
+        ])
+
+        # First retry: still fails
+        retry1_response = json.dumps([
+            {"summary": "", "keywords": [], "topics": []},
+        ])
+
+        # Second retry: now succeeds
+        retry2_response = json.dumps([
+            {"summary": "Finally recovered", "keywords": [], "topics": []},
+        ])
+
+        # Metadata
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=initial_response, success=True, tokens_used=100),
+            SideCallResult(content=retry1_response, success=True, tokens_used=50),
+            SideCallResult(content=retry2_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+
+        chunk_results, _, _, _, coverage = (
+            await service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        # Should have 4 calls: initial + 2 retries + metadata
+        assert mock_side_call_service.call_for_profiling.call_count == 4
+        assert chunk_results[0].profile.summary == "Finally recovered"
+        assert coverage == 100.0
+
+    @pytest.mark.asyncio
+    async def test_retry_stops_early_when_all_succeed(
+        self, mock_side_call_service, mock_settings
+    ):
+        """Test that retry loop exits early when no failures remain."""
+        mock_settings.profiling_max_retries = 3  # Allow up to 3 retries
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        # Initial: chunk 0 fails
+        initial_response = json.dumps([
+            {"summary": "", "keywords": [], "topics": []},
+        ])
+
+        # First retry: succeeds (should not need retry 2 or 3)
+        retry1_response = json.dumps([
+            {"summary": "Recovered on first retry", "keywords": [], "topics": []},
+        ])
+
+        # Metadata
+        metadata_response = json.dumps({
+            "synopsis": "Test",
+            "document_type": "narrative",
+            "capability_manifest": {},
+            "synthesized_queries": [],
+        })
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=initial_response, success=True, tokens_used=100),
+            SideCallResult(content=retry1_response, success=True, tokens_used=50),
+            SideCallResult(content=metadata_response, success=True, tokens_used=50),
+        ]
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+
+        chunk_results, _, _, _, _ = await service.profile_chunks_incremental(chunks=chunks)
+
+        # Should only have 3 calls: initial + 1 retry + metadata (not 5 = initial + 3 retries + metadata)
+        assert mock_side_call_service.call_for_profiling.call_count == 3
+        assert chunk_results[0].profile.summary == "Recovered on first retry"
+
+    @pytest.mark.asyncio
+    async def test_no_retry_when_disabled(
+        self, mock_side_call_service, mock_settings
+    ):
+        """Test that no retry occurs when profiling_max_retries=0."""
+        mock_settings.profiling_max_retries = 0
+        mock_settings.chunk_profiling_batch_size = 10
+        service = ProfilingService(mock_side_call_service, mock_settings)
+
+        # Initial: chunk fails (empty summary)
+        initial_response = json.dumps([
+            {"summary": "", "keywords": [], "topics": []},
+        ])
+
+        mock_side_call_service.call_for_profiling.side_effect = [
+            SideCallResult(content=initial_response, success=True, tokens_used=100),
+        ]
+
+        chunks = [ChunkData(chunk_id="c0", chunk_index=0, content="Content")]
+
+        chunk_results, doc_profile, _, _, coverage = (
+            await service.profile_chunks_incremental(chunks=chunks)
+        )
+
+        # Should only have 1 call: initial batch
+        # (metadata generation skipped because no successful summaries)
+        assert mock_side_call_service.call_for_profiling.call_count == 1
+        assert chunk_results[0].profile.summary == ""  # Still empty, no retry
+        assert coverage == 0.0  # Failed chunk
+        assert doc_profile is None  # No summaries means no document profile

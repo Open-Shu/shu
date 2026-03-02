@@ -134,6 +134,7 @@ class ProfilingResult(BaseModel):
     error: str | None = Field(None, description="Error message if failed")
     tokens_used: int = Field(0, description="Total tokens used for profiling")
     duration_ms: int = Field(0, description="Total profiling duration in milliseconds")
+    chunk_coverage_percent: float = Field(100.0, description="Percentage of chunks successfully profiled")
 
 
 class DocumentMetadataResponse(BaseModel):
