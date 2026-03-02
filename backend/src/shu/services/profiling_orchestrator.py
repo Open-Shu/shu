@@ -119,10 +119,10 @@ class ProfilingOrchestrator:
             # Persist results (including coverage)
             await self._persist_results(document, chunks, doc_profile, chunk_results, coverage_percent)
 
-            # Persist synthesized queries if enabled (even if empty, to delete stale queries on re-profile)
+            # Persist synthesized queries (even if empty, to delete stale queries on re-profile)
             # Isolated from main try block so query failures don't mark profiling as failed
             queries_created = 0
-            if doc_profile and self.settings.enable_query_synthesis:
+            if doc_profile:
                 try:
                     queries_created = await self._persist_queries(document, synthesized_queries)
                 except Exception as e:

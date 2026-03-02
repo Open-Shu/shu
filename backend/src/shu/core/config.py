@@ -240,13 +240,13 @@ class Settings(BaseSettings):
     profiling_max_retries: int = Field(1, alias="SHU_PROFILING_MAX_RETRIES")
 
     # Shu RAG Query Synthesis (SHU-353)
-    enable_query_synthesis: bool = Field(False, alias="SHU_ENABLE_QUERY_SYNTHESIS")
+    # Query synthesis runs automatically as part of document profiling at no additional cost.
     # Upper bound on queries per document (cost control)
     query_synthesis_max_queries: int = Field(20, alias="SHU_QUERY_SYNTHESIS_MAX_QUERIES")
     # Minimum queries for any document
     query_synthesis_min_queries: int = Field(3, alias="SHU_QUERY_SYNTHESIS_MIN_QUERIES")
-    # Timeout for final batch LLM calls that include query synthesis (longer due to more output)
-    query_synthesis_timeout_seconds: int = Field(240, alias="SHU_QUERY_SYNTHESIS_TIMEOUT_SECONDS")
+    # Timeout for the document-metadata LLM call (synopsis, type, queries — heavier than chunk batches)
+    profiling_metadata_timeout_seconds: int = Field(240, alias="SHU_PROFILING_METADATA_TIMEOUT_SECONDS")
 
     @staticmethod
     def _repo_root_from_this_file() -> Path:
