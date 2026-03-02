@@ -39,7 +39,7 @@ def _check_repo_format(repo: str) -> PluginResult | None:
 def _resolve_dates(params: dict[str, Any]) -> tuple[str, str]:
     """Return ``(date, date_end)`` with defaults applied.
 
-    ``date`` defaults to yesterday (UTC); ``date_end`` defaults to ``date``.
+    ``date`` defaults to yesterday (UTC); ``date_end`` defaults to today (UTC).
     """
     now = datetime.now(UTC)
     yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -100,12 +100,6 @@ _OP_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "description": "Repository in owner/repo format",
             },
-            "user_email": {
-                "type": "string",
-                "description": (
-                    "User email for commit search and GitHub username resolution"
-                ),
-            },
             "date": {
                 "type": "string",
                 "pattern": r"^\d{4}-\d{2}-\d{2}$",
@@ -114,16 +108,10 @@ _OP_SCHEMAS: dict[str, dict[str, Any]] = {
             "date_end": {
                 "type": "string",
                 "pattern": r"^\d{4}-\d{2}-\d{2}$",
-                "description": "End date (ISO 8601 YYYY-MM-DD); defaults to date",
-            },
-            "github_username": {
-                "type": "string",
-                "description": (
-                    "GitHub username override — skips user-search resolution when provided"
-                ),
+                "description": "End date (ISO 8601 YYYY-MM-DD); defaults to today (UTC)",
             },
         },
-        "required": ["op", "repo", "user_email"],
+        "required": ["op", "repo"],
         "additionalProperties": False,
     },
 }
@@ -163,13 +151,7 @@ class GithubPlugin:
                 "repo": {"type": "string"},
                 "date": {"type": "string"},
                 "date_end": {"type": "string"},
-                "user_email": {"type": "string"},
-                "github_username": {
-                    "type": ["string", "null"],
-                    "description": (
-                        "null when the user's email could not be resolved to a GitHub username"
-                    ),
-                },
+                "github_username": {"type": "string"},
                 "commits": {
                     "type": "array",
                     "items": {
@@ -190,6 +172,21 @@ class GithubPlugin:
                                 },
                                 "additionalProperties": False,
                             },
+                            "files": {
+                                "type": "array",
+                                "description": "Changed files with unified-diff patches",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "filename": {"type": "string"},
+                                        "patch": {
+                                            "type": "string",
+                                            "description": "Unified diff hunks (changed lines only)",
+                                        },
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
                         },
                         "additionalProperties": False,
                     },
@@ -202,11 +199,20 @@ class GithubPlugin:
                             "number": {"type": "integer"},
                             "title": {"type": "string"},
                             "state": {"type": "string"},
+                            "created_at": {
+                                "type": "string",
+                                "description": "ISO 8601 timestamp of PR creation",
+                            },
                             "merged": {"type": "boolean"},
                             "merged_at": {"type": ["string", "null"]},
                             "additions": {"type": "integer"},
                             "deletions": {"type": "integer"},
                             "changed_files": {"type": "integer"},
+                            "commit_shas": {
+                                "type": "array",
+                                "description": "SHA hashes of commits in this PR",
+                                "items": {"type": "string"},
+                            },
                             "role": {
                                 "type": "string",
                                 "description": "Always 'author' for this list",
@@ -225,11 +231,33 @@ class GithubPlugin:
                             "state": {"type": "string"},
                             "body": {
                                 "type": "string",
-                                "description": "The content of the review comment"
+                                "description": "Top-level review body (may be empty for inline-only reviews)",
                             },
                             "submitted_at": {
                                 "type": "string",
                                 "description": "ISO 8601 timestamp",
+                            },
+                            "comments": {
+                                "type": "array",
+                                "description": "Inline review comments attached to this review",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "path": {
+                                            "type": "string",
+                                            "description": "File path the comment is on",
+                                        },
+                                        "body": {
+                                            "type": "string",
+                                            "description": "Comment text",
+                                        },
+                                        "diff_hunk": {
+                                            "type": "string",
+                                            "description": "Diff context surrounding the comment",
+                                        },
+                                    },
+                                    "additionalProperties": False,
+                                },
                             },
                             "role": {
                                 "type": "string",
@@ -256,25 +284,27 @@ class GithubPlugin:
         Returns:
             A valid JSON Schema dict for the op's parameters, or ``None`` if
             the op name is not recognised.
+
         """
         return _OP_SCHEMAS.get(op_name)
 
     async def execute(
         self,
         params: dict[str, Any],
-        context: Any,
+        _context: Any,
         host: Any,
     ) -> PluginResult:
         """Execute the requested op and return a structured result.
 
         Args:
             params:  Validated input parameters (always contains ``op``).
-            context: Execution context (user_id, agent_key, etc.).
+            _context: Execution context (user_id, agent_key, etc.).
             host:    Host capability object — ``host.log``, ``host.http``,
                      ``host.secrets``.
 
         Returns:
             A ``PluginResult`` whose ``data`` shape matches ``get_output_schema()``.
+
         """
         repo: str = params.get("repo", "")
         if err := _check_repo_format(repo):
@@ -288,13 +318,18 @@ class GithubPlugin:
         if err:
             return err
 
-        user_email: str = params["user_email"]
-        github_username: str | None = params.get("github_username") or None
+        github_username = ((await host.secrets.get("github_username")) or "").strip()
+        if not github_username:
+            return PluginResult.err(
+                "GitHub username not configured. "
+                "Store your username via host.secrets under key 'github_username'.",
+                code="auth_missing",
+            )
 
         client = _GithubClient(pat, host)
         try:
             data, diagnostics = await client.fetch_activity(
-                repo, user_email, date, date_end, github_username
+                repo, date, date_end, github_username
             )
         except RetryableError as exc:
             cause = exc.__cause__
@@ -315,4 +350,3 @@ class GithubPlugin:
             return _map_api_error(exc, repo)
 
         return PluginResult.ok(data=data, diagnostics=diagnostics)
-1

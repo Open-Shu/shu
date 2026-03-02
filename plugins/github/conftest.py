@@ -6,12 +6,13 @@ decorated functions so retry tests run instantly without any manual patching.
 
 from __future__ import annotations
 
-import pytest
+from collections.abc import Iterator
 
+import pytest
 from shu_plugin_sdk.testing import patch_retry_sleep
 
 
 @pytest.fixture(autouse=True)
-def _no_retry_sleep():
+def _no_retry_sleep() -> Iterator[None]:
     with patch_retry_sleep():
         yield

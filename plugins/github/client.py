@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date as _date, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from shu_plugin_sdk import (
@@ -12,6 +12,12 @@ from shu_plugin_sdk import (
     RetryConfig,
     with_retry,
 )
+
+
+def _split_repo(repo: str) -> tuple[str, str]:
+    """Split ``owner/repo`` into ``(owner, repo_name)``."""
+    owner, repo_name = repo.split("/", 1)
+    return owner, repo_name
 
 
 class _GithubClient:
@@ -26,13 +32,8 @@ class _GithubClient:
     - Maps ``HttpRequestFailed`` to ``RetryableError`` / ``NonRetryableError``
       so the retry decorator knows what to do
 
-    URL query parameters are embedded directly in the ``url`` string (not via
-    a ``params=`` kwarg) because ``FakeHostBuilder`` matches routes by the
-    full ``(method, url)`` string including the query portion.
-
-    # SDK-NOTE: FakeHostBuilder matches routes by exact (method, url) string.
-    # Passing params as a kwarg would prevent test routes from matching.
-    # A params-dict-aware lookup would make call sites cleaner.
+    URL query parameters are embedded directly in the ``url`` string rather
+    than via ``params=`` for historical reasons.
     """
 
     BASE_URL: str = "https://api.github.com"
@@ -43,6 +44,7 @@ class _GithubClient:
         Args:
             pat:  GitHub Personal Access Token (already validated as non-blank).
             host: Shu host capability object providing ``http`` and ``log``.
+
         """
         self._pat = pat
         self._host = host
@@ -73,6 +75,7 @@ class _GithubClient:
         Raises:
             RetryableError:    After all retries are exhausted on a transient error.
             NonRetryableError: On the first permanent (non-retryable) error.
+
         """
         headers: dict[str, str] = {
             "Authorization": f"Bearer {self._pat}",
@@ -112,6 +115,7 @@ class _GithubClient:
 
         Returns:
             Combined list of all items across all pages.
+
         """
         all_items: list[dict[str, Any]] = []
         page = 1
@@ -126,7 +130,6 @@ class _GithubClient:
             if len(items) < per_page:
                 break
             page += 1
-            time.sleep(1)
 
         return all_items
 
@@ -143,6 +146,7 @@ class _GithubClient:
 
         Returns:
             List of branch name strings.
+
         """
         url = f"{self.BASE_URL}/repos/{owner}/{repo_name}/branches"
         items = await self._paginate_search(url, per_page=100)
@@ -151,39 +155,35 @@ class _GithubClient:
     async def fetch_commits(
         self,
         repo: str,
-        email: str,
+        username: str,
         date: str,
         date_end: str,
     ) -> list[dict[str, Any]]:
-        """Fetch all commits authored by ``email`` in ``repo`` between ``date`` and ``date_end``.
+        """Fetch all commits authored by ``username`` in ``repo`` between ``date`` and ``date_end``.
 
-        Iterates every branch using the repositories commits endpoint.  To
-        avoid missing commits whose UTC committer timestamp crosses midnight
-        (e.g. a commit at 18:40 -0600 is 00:40 UTC the next day), the API
-        ``until`` is extended by one calendar day.  Results are then filtered
-        locally against the commit's *author date* in its stored timezone so
-        that only commits the author considers to be on ``date``..``date_end``
-        are included.  Commits reachable from multiple branches are
-        deduplicated by SHA.
+        Iterates every branch using the repositories commits endpoint.  The
+        ``author`` query parameter accepts a GitHub login.  Results are
+        filtered locally against the commit's *author date* in its stored
+        timezone so that only commits the author considers to be on
+        ``date``..``date_end`` are included.  Commits reachable from multiple
+        branches are deduplicated by SHA.
 
         Args:
             repo:     Repository in ``owner/repo`` format.
-            email:    Author email address to filter by.
+            username: GitHub username to filter commits by.
             date:     Start date (ISO 8601 YYYY-MM-DD, inclusive).
             date_end: End date (ISO 8601 YYYY-MM-DD, inclusive).
 
         Returns:
             Deduplicated commit items whose author date falls in the requested
             range.
+
         """
-        owner, repo_name = repo.split("/", 1)
+        owner, repo_name = _split_repo(repo)
         branches = await self.fetch_branches(owner, repo_name)
 
         since = f"{date}T00:00:00Z"
-        # Extend by one day so late-evening commits in western timezones
-        # (which spill into the next UTC day) are not excluded by the API.
-        until_dt = _date.fromisoformat(date_end) + timedelta(days=1)
-        until = f"{until_dt.isoformat()}T23:59:59Z"
+        until = f"{date_end}T23:59:59Z"
 
         seen_shas: set[str] = set()
         all_commits: list[dict[str, Any]] = []
@@ -191,30 +191,27 @@ class _GithubClient:
         for branch in branches:
             base_url = (
                 f"{self.BASE_URL}/repos/{owner}/{repo_name}/commits"
-                f"?sha={branch}&author={email}&since={since}&until={until}"
+                f"?sha={branch}&author={username}&since={since}&until={until}"
             )
-            print(base_url)
             items = await self._paginate_search(base_url, per_page=100)
-            print(items)
             for item in items:
                 sha: str = item.get("sha", "")
-                if sha and sha not in seen_shas:
-                    if _author_date_in_range(item, date, date_end):
-                        seen_shas.add(sha)
-                        all_commits.append(item)
+                if sha and sha not in seen_shas and _author_date_in_range(item, date, date_end):
+                    seen_shas.add(sha)
+                    all_commits.append(item)
 
         return all_commits
 
-    async def fetch_commit_stats(
+    async def fetch_commit_detail(
         self,
         owner: str,
         repo_name: str,
         sha: str,
-    ) -> dict[str, int]:
-        """Fetch diff statistics for a single commit.
+    ) -> dict[str, Any]:
+        """Fetch diff statistics and file-level patches for a single commit.
 
-        Queries the individual commit endpoint and extracts line-level and
-        file-level diff counts from the response.
+        Queries the individual commit endpoint and extracts line-level stats
+        and the unified-diff patch for each changed file.
 
         Args:
             owner:     Repository owner (user or organisation login).
@@ -222,8 +219,9 @@ class _GithubClient:
             sha:       Full or abbreviated commit SHA.
 
         Returns:
-            Dict with ``additions``, ``deletions``, and ``files_changed`` counts.
-            Falls back to zero values if the stats fields are absent.
+            Dict with ``additions``, ``deletions``, ``files_changed`` counts,
+            and a ``files`` list of ``{filename, patch}`` dicts.
+
         """
         url = f"{self.BASE_URL}/repos/{owner}/{repo_name}/commits/{sha}"
         response = await self._get(url)
@@ -234,7 +232,73 @@ class _GithubClient:
             "additions": stats.get("additions", 0),
             "deletions": stats.get("deletions", 0),
             "files_changed": len(files),
+            "files": [
+                {
+                    "filename": f.get("filename", ""),
+                    "patch": f.get("patch", ""),
+                }
+                for f in files
+            ],
         }
+
+    async def fetch_pr_detail(
+        self,
+        owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> dict[str, Any]:
+        """Fetch diff stats for a single pull request.
+
+        Queries ``GET /repos/{owner}/{repo}/pulls/{number}`` and extracts
+        ``additions``, ``deletions``, ``changed_files``, and merge state.
+
+        Args:
+            owner:     Repository owner login.
+            repo_name: Repository name (without owner prefix).
+            pr_number: Pull request number.
+
+        Returns:
+            Dict with ``additions``, ``deletions``, ``changed_files``,
+            ``merged``, and ``merged_at``.
+
+        """
+        url = f"{self.BASE_URL}/repos/{owner}/{repo_name}/pulls/{pr_number}"
+        response = await self._get(url)
+        body: dict[str, Any] = response.get("body", {})
+        return {
+            "additions": body.get("additions", 0),
+            "deletions": body.get("deletions", 0),
+            "changed_files": body.get("changed_files", 0),
+            "merged": bool(body.get("merged", False)),
+            "merged_at": body.get("merged_at"),
+        }
+
+    async def fetch_pr_commits(
+        self,
+        owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[str]:
+        """Fetch commit SHAs for a single pull request.
+
+        Queries ``GET /repos/{owner}/{repo}/pulls/{number}/commits``
+        (paginated) and returns the list of commit SHA strings.
+
+        Args:
+            owner:     Repository owner login.
+            repo_name: Repository name (without owner prefix).
+            pr_number: Pull request number.
+
+        Returns:
+            List of commit SHA strings in the PR.
+
+        """
+        url = (
+            f"{self.BASE_URL}/repos/{owner}/{repo_name}"
+            f"/pulls/{pr_number}/commits"
+        )
+        items = await self._paginate_search(url, per_page=100)
+        return [item["sha"] for item in items if item.get("sha")]
 
 
     async def fetch_prs_authored(
@@ -246,9 +310,10 @@ class _GithubClient:
     ) -> list[dict[str, Any]]:
         """Fetch pull requests authored by ``user`` in ``repo`` for the date range.
 
-        Uses the GitHub issues search API (PRs are a superset of issues).
-        Diff stats (additions/deletions/changed_files) are not available from
-        the search endpoint and are returned as 0.
+        Uses the GitHub issues search API to discover PRs, then enriches each
+        with real diff stats from the individual PR endpoint and the list of
+        commit SHAs from the PR commits endpoint.  Stat/commit failures are
+        non-fatal (graceful degradation).
 
         Args:
             repo:     Repository in ``owner/repo`` format.
@@ -259,7 +324,9 @@ class _GithubClient:
         Returns:
             List of PR dicts matching the output schema PR shape with
             ``role="author"``.
+
         """
+        owner, repo_name = _split_repo(repo)
         base_url = (
             f"{self.BASE_URL}/search/issues"
             f"?q=type:pr+repo:{repo}+author:{user}+updated:{date}..{date_end}"
@@ -267,18 +334,41 @@ class _GithubClient:
         items = await self._paginate_search(base_url)
         result = []
         for item in items:
-            pr = item.get("pull_request", {})
-            merged_at: str | None = pr.get("merged_at")
+            pr_number: int = item["number"]
+
+            try:
+                detail = await self.fetch_pr_detail(owner, repo_name, pr_number)
+            except Exception:
+                detail = {
+                    "additions": 0,
+                    "deletions": 0,
+                    "changed_files": 0,
+                    "merged": False,
+                    "merged_at": None,
+                }
+                await self._host.log.warning(
+                    f"Failed to fetch detail for PR #{pr_number}; using zero stats"
+                )
+
+            try:
+                commit_shas = await self.fetch_pr_commits(owner, repo_name, pr_number)
+            except Exception:
+                commit_shas = []
+                await self._host.log.warning(
+                    f"Failed to fetch commits for PR #{pr_number}; using empty list"
+                )
+
             result.append({
-                "number": item["number"],
+                "number": pr_number,
                 "title": item["title"],
                 "state": item["state"],
-                "merged": merged_at is not None,
-                "merged_at": merged_at,
-                # Diff stats are not available from the search API.
-                "additions": 0,
-                "deletions": 0,
-                "changed_files": 0,
+                "created_at": item.get("created_at", ""),
+                "merged": detail["merged"],
+                "merged_at": detail["merged_at"],
+                "additions": detail["additions"],
+                "deletions": detail["deletions"],
+                "changed_files": detail["changed_files"],
+                "commit_shas": commit_shas,
                 "role": "author",
             })
         return result
@@ -304,6 +394,7 @@ class _GithubClient:
 
         Returns:
             List of dicts with ``number`` and ``title`` for each reviewed PR.
+
         """
         base_url = (
             f"{self.BASE_URL}/search/issues"
@@ -312,31 +403,97 @@ class _GithubClient:
         items = await self._paginate_search(base_url)
         return [{"number": item["number"], "title": item["title"]} for item in items]
 
+    async def fetch_review_comments(
+        self,
+        owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch all inline review comments on a pull request.
+
+        Queries ``GET /repos/{owner}/{repo}/pulls/{number}/comments``
+        (paginated).  Each comment includes ``pull_request_review_id`` which
+        links it to a top-level review submission.
+
+        Args:
+            owner:     Repository owner login.
+            repo_name: Repository name (without owner prefix).
+            pr_number: Pull request number.
+
+        Returns:
+            Raw list of review comment dicts from the GitHub API.
+
+        """
+        url = (
+            f"{self.BASE_URL}/repos/{owner}/{repo_name}"
+            f"/pulls/{pr_number}/comments"
+        )
+        return await self._paginate_search(url, per_page=100)
+
     async def fetch_review_details(
         self,
         owner: str,
         repo_name: str,
         pr_number: int,
         pr_title: str,
+        user: str,
+        date: str,
+        date_end: str,
     ) -> list[dict[str, Any]]:
-        """Fetch review records submitted on a specific pull request.
+        """Fetch review records submitted by ``user`` on a specific pull request.
 
-        Queries the PR reviews endpoint and maps each review to the output
-        schema review shape.
+        Queries the PR reviews endpoint, filters to only reviews authored by
+        ``user`` in the requested date range, then fetches inline review
+        comments and attaches them to each review by ``pull_request_review_id``.
 
         Args:
             owner:     Repository owner (user or organisation login).
             repo_name: Repository name (without owner prefix).
             pr_number: Pull request number.
             pr_title:  Pull request title (carried through for display purposes).
+            user:      GitHub username to filter reviews by.
+            date:      Start date string ``YYYY-MM-DD`` (inclusive).
+            date_end:  End date string ``YYYY-MM-DD`` (inclusive).
 
         Returns:
             List of review dicts with ``pr_number``, ``pr_title``, ``state``,
-            ``submitted_at``, and ``role="reviewer"``.
+            ``submitted_at``, ``comments``, and ``role="reviewer"`` — only
+            for ``user`` and within ``date``..``date_end``.
+
         """
         url = f"{self.BASE_URL}/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
         response = await self._get(url)
         reviews_raw: list[dict[str, Any]] = response.get("body", [])
+
+        user_reviews = [
+            r for r in reviews_raw
+            if (r.get("user") or {}).get("login") == user
+            and _timestamp_in_range(r.get("submitted_at"), date, date_end)
+        ]
+        if not user_reviews:
+            return []
+
+        # Fetch inline review comments and group by review id.
+        try:
+            all_comments = await self.fetch_review_comments(
+                owner, repo_name, pr_number
+            )
+        except Exception:
+            all_comments = []
+            await self._host.log.warning(
+                f"Failed to fetch review comments for PR #{pr_number}"
+            )
+
+        comments_by_review: dict[int, list[dict[str, Any]]] = {}
+        for c in all_comments:
+            rid = c.get("pull_request_review_id")
+            if rid is not None:
+                comments_by_review.setdefault(rid, []).append({
+                    "path": c.get("path", ""),
+                    "body": c.get("body", ""),
+                    "diff_hunk": c.get("diff_hunk", ""),
+                })
+
         return [
             {
                 "pr_number": pr_number,
@@ -344,135 +501,105 @@ class _GithubClient:
                 "state": review.get("state", ""),
                 "body": review.get("body", ""),
                 "submitted_at": review.get("submitted_at", ""),
+                "comments": comments_by_review.get(review.get("id", -1), []),
                 "role": "reviewer",
             }
-            for review in reviews_raw
+            for review in user_reviews
         ]
 
 
     async def fetch_activity(
         self,
         repo: str,
-        user_email: str,
         date: str,
         date_end: str,
-        github_username: str | None,
+        github_username: str,
     ) -> tuple[dict[str, Any], list[str] | None]:
         """Fetch and assemble all GitHub activity for a user in a date range.
 
         Orchestrates all API calls in the correct dependency order:
-        1. Commits are always fetched first (they carry the ``author.login``
-           field needed to resolve the GitHub username).
-        2. Username resolution — uses ``github_username`` directly if provided,
-           otherwise extracts from commit items.
-        3. Per-commit diff stats are fetched individually; failures are
-           non-fatal (zero stats + warning).
-        4. If a username was resolved, PRs authored, PRs reviewed, and review
-           details are fetched. If not, the result is commits-only with a
-           diagnostic message.
+        1. Commits by GitHub username.
+        2. Per-commit diff stats (failures are non-fatal).
+        3. PRs authored and reviewed, plus review details.
+
+        ``github_username`` is guaranteed present (enforced by ``op_auth``
+        secrets preflight).
 
         Args:
             repo:            Repository in ``owner/repo`` format.
-            user_email:      Author email used for commit search and username
-                             resolution.
             date:            Start date (ISO 8601 YYYY-MM-DD, inclusive).
             date_end:        End date (ISO 8601 YYYY-MM-DD, inclusive).
-            github_username: Explicit GitHub username override; skips
-                             resolution from commit items when provided.
+            github_username: GitHub username for all queries.
 
         Returns:
             A ``(data, diagnostics)`` tuple where ``data`` matches the plugin
-            output schema and ``diagnostics`` is ``None`` or a single-entry
-            list for the commits-only mode warning.
+            output schema and ``diagnostics`` is always ``None``.
 
         Raises:
             RetryableError:    When retries are exhausted on a 429/5xx error.
             NonRetryableError: On a permanent API error (4xx other than 429).
+
         """
-        owner, repo_name = repo.split("/", 1)
+        owner, repo_name = _split_repo(repo)
 
-        raw_commit_items = await self.fetch_commits(repo, user_email, date, date_end)
-
-        resolved_username = (
-            github_username
-            if github_username is not None
-            else _extract_username_from_commits(raw_commit_items)
-        )
+        raw_commit_items = await self.fetch_commits(repo, github_username, date, date_end)
 
         commits = []
         for item in raw_commit_items:
             sha: str = item["sha"]
             try:
-                stats = await self.fetch_commit_stats(owner, repo_name, sha)
+                detail = await self.fetch_commit_detail(owner, repo_name, sha)
             except Exception:
-                stats = {"additions": 0, "deletions": 0, "files_changed": 0}
+                detail = {
+                    "additions": 0,
+                    "deletions": 0,
+                    "files_changed": 0,
+                    "files": [],
+                }
                 await self._host.log.warning(
-                    f"Failed to fetch stats for commit {sha}; using zero stats"
+                    f"Failed to fetch detail for commit {sha}; using zero stats"
                 )
             commits.append({
                 "sha": sha,
                 "message": item["commit"]["message"],
                 "committed_at": item["commit"]["committer"]["date"],
-                "stats": stats,
+                "stats": {
+                    "additions": detail["additions"],
+                    "deletions": detail["deletions"],
+                    "files_changed": detail["files_changed"],
+                },
+                "files": detail["files"],
             })
 
-        diagnostics: list[str] | None = None
-        if resolved_username is not None:
-            pull_requests = await self.fetch_prs_authored(
-                repo, resolved_username, date, date_end
+        pull_requests = await self.fetch_prs_authored(
+            repo, github_username, date, date_end
+        )
+        reviewed_prs = await self.fetch_prs_reviewed(
+            repo, github_username, date, date_end
+        )
+        reviews: list[dict[str, Any]] = []
+        for pr in reviewed_prs:
+            pr_reviews = await self.fetch_review_details(
+                owner,
+                repo_name,
+                pr["number"],
+                pr["title"],
+                github_username,
+                date,
+                date_end,
             )
-            reviewed_prs = await self.fetch_prs_reviewed(
-                repo, resolved_username, date, date_end
-            )
-            reviews: list[dict[str, Any]] = []
-            for pr in reviewed_prs:
-                pr_reviews = await self.fetch_review_details(
-                    owner, repo_name, pr["number"], pr["title"]
-                )
-                reviews.extend(pr_reviews)
-        else:
-            pull_requests = []
-            reviews = []
-            diagnostics = [
-                f"Could not resolve a GitHub username for {user_email}. "
-                "Pull request and review data is unavailable. "
-                "To include this data, pass github_username explicitly."
-            ]
+            reviews.extend(pr_reviews)
 
         data: dict[str, Any] = {
             "repo": repo,
             "date": date,
             "date_end": date_end,
-            "user_email": user_email,
-            "github_username": resolved_username,
+            "github_username": github_username,
             "commits": commits,
             "pull_requests": pull_requests,
             "reviews": reviews,
         }
-        return data, diagnostics
-
-
-def _extract_username_from_commits(commit_items: list[dict[str, Any]]) -> str | None:
-    """Return the GitHub login of the commit author, or None if unresolvable.
-
-    Inspects the ``author.login`` field on raw GitHub commit search result
-    items. GitHub links commit emails to user accounts server-side and
-    populates this field even for private emails, so no extra API call is
-    needed.
-
-    Args:
-        commit_items: Raw items list from a GitHub commit search response.
-
-    Returns:
-        The first non-null ``author.login`` found in the list, or ``None``
-        if every item has a null ``author`` or null ``author.login`` — meaning
-        GitHub could not link any commit to a GitHub account.
-    """
-    for item in commit_items:
-        author = item.get("author")
-        if author is not None and author.get("login") is not None:
-            return author["login"]
-    return None
+        return data, None
 
 
 def _author_date_in_range(item: dict[str, Any], date: str, date_end: str) -> bool:
@@ -493,6 +620,7 @@ def _author_date_in_range(item: dict[str, Any], date: str, date_end: str) -> boo
         ``True`` if the commit's local author date is within the range,
         ``False`` otherwise.  Returns ``True`` on parse errors so no commits
         are silently dropped due to unexpected date formats.
+
     """
     try:
         author_date_str: str = (
@@ -505,3 +633,26 @@ def _author_date_in_range(item: dict[str, Any], date: str, date_end: str) -> boo
         return date <= local_date <= date_end
     except Exception:
         return True
+
+
+def _timestamp_in_range(timestamp: Any, date: str, date_end: str) -> bool:
+    """Return True if an ISO timestamp falls within ``date``..``date_end``.
+
+    Args:
+        timestamp: Timestamp string in ISO 8601 form (e.g. ``...Z``).
+        date: Start date string ``YYYY-MM-DD`` (inclusive).
+        date_end: End date string ``YYYY-MM-DD`` (inclusive).
+
+    Returns:
+        ``True`` when the timestamp parses and its date is within range.
+        ``False`` when missing, unparsable, or out of range.
+
+    """
+    if not isinstance(timestamp, str) or not timestamp:
+        return False
+    try:
+        dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    local_date = dt.date().isoformat()
+    return date <= local_date <= date_end

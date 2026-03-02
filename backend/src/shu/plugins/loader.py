@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,19 +78,59 @@ class PluginLoader:
             return repo_root / "plugins"
 
     def _static_scan_for_violations(self, plugin_dir: Path) -> list[str]:
-        violations: list[str] = []
-        # Deny direct HTTP clients and host-internal imports from plugins
-        deny = (
-            "import requests",
-            "import httpx",
-            "from httpx",
-            "import urllib3",
+        violations: set[str] = set()
+        disallowed_modules = (
+            "requests",
+            "httpx",
+            "urllib3",
             "urllib.request",
-            # Block host-internal imports from plugins.
-            # Use "shu." (with dot) so "from shu_plugin_sdk" is not matched.
-            "import shu.",
-            "from shu.",
+            # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
+            "shu",
         )
+
+        def disallowed_import(module: str) -> bool:
+            """Return True when ``module`` is on the plugin deny-list."""
+            return any(
+                module == name or module.startswith(f"{name}.")
+                for name in disallowed_modules
+            )
+
+        fallback_patterns = (
+            (r"\bimport\s+requests(\b|\.)", "import requests"),
+            (r"\bfrom\s+requests(\b|\.)", "from requests"),
+            (r"\bimport\s+httpx(\b|\.)", "import httpx"),
+            (r"\bfrom\s+httpx(\b|\.)", "from httpx"),
+            (r"\bimport\s+urllib3(\b|\.)", "import urllib3"),
+            (r"\bfrom\s+urllib3(\b|\.)", "from urllib3"),
+            (r"\burllib\.request(\b|\.)", "urllib.request"),
+            (r"\bfrom\s+urllib\s+import\s+request\b", "from urllib import request"),
+            (r"\bimport\s+shu(\b|\.)", "import shu"),
+            (r"\bfrom\s+shu(\b|\.)", "from shu"),
+        )
+
+        def scan_ast_imports(tree: ast.AST, filename: str) -> None:
+            """Collect disallowed import violations from a parsed AST."""
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        module = alias.name
+                        if disallowed_import(module):
+                            violations.add(f"{filename}: import {module}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if not module:
+                        continue
+                    if disallowed_import(module):
+                        violations.add(f"{filename}: from {module} import ...")
+                        continue
+
+                    # Catch "from urllib import request" by checking
+                    # imported names against disallowed submodules.
+                    for alias in node.names:
+                        imported = f"{module}.{alias.name}"
+                        if disallowed_import(imported):
+                            violations.add(f"{filename}: from {module} import {alias.name}")
+
         try:
             for p in plugin_dir.rglob("*.py"):
                 try:
@@ -96,12 +138,22 @@ class PluginLoader:
                 except Exception as e:
                     logger.error("Could not read text: %s", e)
                     continue
-                for d in deny:
-                    if d in txt:
-                        violations.append(f"{p.name}: {d}")
+
+                try:
+                    tree = ast.parse(txt)
+                except SyntaxError:
+                    tree = None
+
+                if tree is None:
+                    for pattern, label in fallback_patterns:
+                        if re.search(pattern, txt):
+                            violations.add(f"{p.name}: {label}")
+                    continue
+
+                scan_ast_imports(tree, p.name)
         except Exception:
             pass
-        return violations
+        return sorted(violations)
 
     def discover(self) -> dict[str, PluginRecord]:
         records: dict[str, PluginRecord] = {}
