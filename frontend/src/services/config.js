@@ -132,6 +132,10 @@ class ConfigService {
     );
   }
 
+  isDocumentProfilingEnabled() {
+    return this.config?.enable_document_profiling ?? false;
+  }
+
   isLoaded() {
     return this.config !== null;
   }

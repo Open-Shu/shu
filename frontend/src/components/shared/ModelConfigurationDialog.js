@@ -28,6 +28,7 @@ import LLMTester from '../LLMTester';
 import HelpTooltip from '../HelpTooltip';
 import { modelConfigAPI, formatError, extractDataFromResponse } from '../../services/api';
 import log from '../../utils/log';
+import { configService } from '../../services/config';
 
 const ModelConfigurationDialog = ({
   open,
@@ -1430,22 +1431,24 @@ const ModelConfigurationDialog = ({
                 ariaLabel="Side calls help"
               />
             </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-              <Switch
-                checked={formData.is_profiling_model || false}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    is_profiling_model: e.target.checked,
-                  })
-                }
-              />
-              <Typography variant="body2">Use model for document profiling</Typography>
-              <HelpTooltip
-                title="Document profiling is a background process that analyzes uploaded documents for RAG retrieval. This can use a different model than side calls, allowing cost optimization with cheaper/faster models."
-                ariaLabel="Profiling help"
-              />
-            </Box>
+            {configService.isDocumentProfilingEnabled() && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                <Switch
+                  checked={formData.is_profiling_model || false}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      is_profiling_model: e.target.checked,
+                    })
+                  }
+                />
+                <Typography variant="body2">Use model for document profiling</Typography>
+                <HelpTooltip
+                  title="Document profiling is a background process that analyzes uploaded documents for RAG retrieval. This can use a different model than side calls, allowing cost optimization with cheaper/faster models."
+                  ariaLabel="Profiling help"
+                />
+              </Box>
+            )}
           </Grid>
           <Grid item xs={12}>
             <Box sx={{ mt: 0.5 }}>
@@ -1454,11 +1457,13 @@ const ModelConfigurationDialog = ({
                 prompt assistance, title generation, and UI summaries. Only one model should have this enabled at a
                 time.
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                <strong>Profiling:</strong> When enabled, this model will be used for document profiling during
-                ingestion. If not set, profiling falls back to the side-call model. Use a faster/cheaper model for
-                profiling to reduce costs.
-              </Typography>
+              {configService.isDocumentProfilingEnabled() && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  <strong>Profiling:</strong> When enabled, this model will be used for document profiling during
+                  ingestion. If not set, profiling falls back to the side-call model. Use a faster/cheaper model for
+                  profiling to reduce costs.
+                </Typography>
+              )}
             </Box>
           </Grid>
         </Grid>

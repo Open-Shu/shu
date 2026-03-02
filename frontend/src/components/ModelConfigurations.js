@@ -1,4 +1,5 @@
 import { log } from '../utils/log';
+import { configService } from '../services/config';
 
 import { useState, useMemo } from 'react';
 import {
@@ -19,6 +20,7 @@ import {
   TextField,
   Divider,
   CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -615,9 +617,20 @@ const ModelConfigurations = () => {
                           size="small"
                         />
                         {isSideCallModel && <Chip icon={<CallIcon />} label="Side Call" color="info" size="small" />}
-                        {isProfilingModel && (
-                          <Chip icon={<SettingsIcon />} label="Profiling" color="secondary" size="small" />
-                        )}
+                        {isProfilingModel &&
+                          (configService.isDocumentProfilingEnabled() ? (
+                            <Chip icon={<SettingsIcon />} label="Profiling" color="secondary" size="small" />
+                          ) : (
+                            <Tooltip title="Document profiling is disabled globally in system configuration">
+                              <Chip
+                                icon={<SettingsIcon />}
+                                label="Profiling"
+                                size="small"
+                                variant="outlined"
+                                sx={{ opacity: 0.5 }}
+                              />
+                            </Tooltip>
+                          ))}
                       </Box>
                       {testResults[config.id] && (
                         <Chip
