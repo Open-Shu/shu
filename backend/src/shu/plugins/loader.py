@@ -83,7 +83,8 @@ class PluginLoader:
             "requests",
             "httpx",
             "urllib3",
-            "urllib.request",
+            "urllib",  # This exposes urllib.request. In the future we can expose safe operations through host capabilities.
+            "importlib",
             # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
             "shu",
         )
@@ -102,10 +103,13 @@ class PluginLoader:
             (r"\bfrom\s+httpx(\b|\.)", "from httpx"),
             (r"\bimport\s+urllib3(\b|\.)", "import urllib3"),
             (r"\bfrom\s+urllib3(\b|\.)", "from urllib3"),
-            (r"\burllib\.request(\b|\.)", "urllib.request"),
-            (r"\bfrom\s+urllib\s+import\s+request\b", "from urllib import request"),
+            (r"\bimport\s+urllib(\b|\.)", "import urllib"),
+            (r"\bfrom\s+urllib(\b|\.)", "from urllib"),
+            (r"\bimport\s+importlib(\b|\.)", "import importlib"),
+            (r"\bfrom\s+importlib(\b|\.)", "from importlib"),
             (r"\bimport\s+shu(\b|\.)", "import shu"),
             (r"\bfrom\s+shu(\b|\.)", "from shu"),
+            (r"\b__import__\s*\(", "__import__"),
         )
 
         def scan_ast_imports(tree: ast.AST, filename: str) -> None:
@@ -130,6 +134,17 @@ class PluginLoader:
                         imported = f"{module}.{alias.name}"
                         if disallowed_import(imported):
                             violations.add(f"{filename}: from {module} import {alias.name}")
+                elif (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "__import__"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    mod = node.args[0].value
+                    if disallowed_import(mod):
+                        violations.add(f"{filename}: __import__('{mod}')")
 
         for p in plugin_dir.rglob("*.py"):
             try:

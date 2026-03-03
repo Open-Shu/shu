@@ -466,8 +466,7 @@ class _GithubClient:
 
         """
         url = f"{self.BASE_URL}/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
-        response = await self._get(url)
-        reviews_raw: list[dict[str, Any]] = response.get("body", [])
+        reviews_raw: list[dict[str, Any]] = await self._paginate_search(url)
 
         user_reviews = [
             r for r in reviews_raw

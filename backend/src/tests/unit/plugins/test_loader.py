@@ -1,7 +1,7 @@
 """Unit tests for PluginLoader._static_scan_for_violations.
 
 Verifies the AST-based import guard correctly blocks disallowed modules
-(requests, httpx, urllib3, urllib.request, shu.*) while allowing
+(requests, httpx, urllib3, urllib, importlib, shu.*) while allowing
 shu_plugin_sdk imports.
 """
 
@@ -80,8 +80,11 @@ def test_allows_shu_plugin_sdk_imports(
         ("import requests\n", "requests"),
         ("from httpx import AsyncClient\n", "httpx"),
         ("import urllib3\n", "urllib3"),
-        ("from urllib.request import urlopen\n", "urllib.request"),
-        ("from urllib import request\n", "from urllib import request"),
+        ("import urllib\n", "urllib"),
+        ("from urllib.request import urlopen\n", "urllib"),
+        ("from urllib import request\n", "urllib"),
+        ("import importlib\n", "importlib"),
+        ("from importlib import import_module\n", "importlib"),
     ],
     ids=[
         "import-shu",
@@ -92,8 +95,11 @@ def test_allows_shu_plugin_sdk_imports(
         "import-requests",
         "from-httpx-import",
         "import-urllib3",
+        "import-urllib",
         "from-urllib-request-import",
         "from-urllib-import-request",
+        "import-importlib",
+        "from-importlib-import",
     ],
 )
 def test_blocks_disallowed_imports(
@@ -144,7 +150,7 @@ def test_violations_across_multiple_files(loader: PluginLoader, plugin_dir: Path
     [
         ("import shu\n((\n", "shu"),
         ("from shu.core import config\n((\n", "shu"),
-        ("from urllib import request\n((\n", "from urllib import request"),
+        ("from urllib import request\n((\n", "urllib"),
     ],
     ids=[
         "fallback-import-shu",
@@ -170,3 +176,8 @@ def test_fallback_regex_allows_shu_plugin_sdk_in_bad_syntax(
     _write_plugin_file(plugin_dir, "from shu_plugin_sdk import X\n((\n")
     violations = loader._static_scan_for_violations(plugin_dir)
     assert violations == []
+
+
+def test_blocks_dunder_import(loader: PluginLoader, plugin_dir: Path) -> None:
+    """__import__('requests') is caught without any import statement."""
+    _assert_single_violation(loader, plugin_dir, "__import__('requests')\n", "requests")

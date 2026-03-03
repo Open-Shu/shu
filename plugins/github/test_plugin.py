@@ -241,9 +241,13 @@ def _reviews_url(
     pr_number: int = 42,
     owner: str = "owner",
     repo_name: str = "myrepo",
+    page: int = 1,
 ) -> str:
     """Return the exact PR reviews URL the plugin builds."""
-    return f"{_GH_BASE}/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
+    return (
+        f"{_GH_BASE}/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
+        f"?per_page=30&page={page}"
+    )
 
 
 def _pr_detail_url(
