@@ -440,43 +440,6 @@ class DocumentChunk(BaseModel):
             return self.content
         return self.content[:max_chars] + "..."
 
-    def calculate_similarity_score(self, query_embedding: list[float]) -> float:
-        """Calculate cosine similarity with query embedding.
-
-        Note: In production, similarity search is done at the database level
-        with pgvector for efficiency. This method exists for testing and
-        fallback scenarios.
-
-        Raises:
-            ValueError: If embedding dimensions don't match (likely due to
-                embedding model change in configuration).
-
-        """
-        if not self.embedding or not query_embedding:
-            return 0.0
-
-        # Validate dimension match - mismatched dimensions indicate embedding
-        # model configuration change, which would produce incorrect results
-        if len(self.embedding) != len(query_embedding):
-            raise ValueError(
-                f"Embedding dimension mismatch: chunk has {len(self.embedding)} dimensions, "
-                f"query has {len(query_embedding)} dimensions. This usually indicates the "
-                "embedding model was changed after documents were indexed. Re-index the "
-                "knowledge base to fix this."
-            )
-
-        # Simple cosine similarity calculation
-        import math
-
-        dot_product = sum(a * b for a, b in zip(self.embedding, query_embedding, strict=False))
-        magnitude_a = math.sqrt(sum(a * a for a in self.embedding))
-        magnitude_b = math.sqrt(sum(b * b for b in query_embedding))
-
-        if magnitude_a == 0 or magnitude_b == 0:
-            return 0.0
-
-        return dot_product / (magnitude_a * magnitude_b)
-
     @classmethod
     def create_from_text(
         cls,

@@ -762,16 +762,43 @@ class QueryService:
             embedding_service = await get_embedding_service()
             query_embedding = await embedding_service.embed_query(processed["similarity_query"])
 
-            # Perform vector similarity search using pgvector
-            from pgvector.sqlalchemy import Vector
-            from sqlalchemy import bindparam, text
+            # Perform vector similarity search via VectorStore
+            from ..core.vector_store import get_vector_store
 
-            # Use cosine distance for similarity (pgvector's <-> operator)
-            # Lower distance = higher similarity
-            # Note: Cosine distance ranges from 0 (identical) to 2 (opposite)
-            # We convert to similarity score: 1 - distance (so 1 = identical, -1 = opposite)
-            # Return multiple chunks per document for better context coverage
-            similarity_query = text("""
+            vector_store = await get_vector_store()
+            search_results = await vector_store.search(
+                "chunks",
+                query_vector=query_embedding,
+                db=self.db,
+                limit=limit,
+                threshold=threshold,
+                filters={"knowledge_base_id": knowledge_base_id},
+                extra_where=(
+                    "(chunk_metadata->>'chunk_type' != 'title' "
+                    "OR chunk_metadata->>'chunk_type' IS NULL)"
+                ),
+            )
+
+            if not search_results:
+                from ..schemas.query import SimilaritySearchResponse
+
+                return SimilaritySearchResponse(
+                    results=[],
+                    total_results=0,
+                    query=query,
+                    threshold=threshold,
+                    execution_time=0.0,
+                    embedding_model=str(knowledge_base.embedding_model),
+                ).model_dump()
+
+            # Build score lookup from vector results
+            score_map = {r.id: r.score for r in search_results}
+            chunk_ids = list(score_map.keys())
+
+            # Load full chunk + document metadata for matched chunks
+            from sqlalchemy import text
+
+            metadata_query = text("""
                 SELECT
                     dc.id,
                     dc.document_id,
@@ -791,49 +818,18 @@ class QueryService:
                     d.source_url,
                     d.file_type,
                     d.source_type,
-                    GREATEST(0, 1 - (dc.embedding <=> :query_embedding)) as similarity_score,
                     (SELECT COUNT(*) FROM document_chunks dc2
                      WHERE dc2.document_id = dc.document_id
                      AND dc2.knowledge_base_id = dc.knowledge_base_id
-                     AND (dc2.chunk_metadata->>'chunk_type' != 'title' OR dc2.chunk_metadata->>'chunk_type' IS NULL)
+                     AND (dc2.chunk_metadata->>'chunk_type' != 'title'
+                          OR dc2.chunk_metadata->>'chunk_type' IS NULL)
                     ) as total_content_chunks
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
-                WHERE dc.knowledge_base_id = :kb_id
-                AND dc.embedding IS NOT NULL
-                AND (dc.chunk_metadata->>'chunk_type' != 'title' OR dc.chunk_metadata->>'chunk_type' IS NULL)
-                AND 1 - (dc.embedding <=> :query_embedding) >= :threshold
-                ORDER BY dc.embedding <=> :query_embedding
-                LIMIT :limit
+                WHERE dc.id = ANY(:chunk_ids)
             """)
-
-            # Bind the query_embedding as a Vector type
-            similarity_query = similarity_query.bindparams(bindparam("query_embedding", type_=Vector(384)))
-
-            result = await self.db.execute(
-                similarity_query,
-                {
-                    "kb_id": knowledge_base_id,
-                    "query_embedding": query_embedding,
-                    "threshold": threshold,
-                    "limit": limit,
-                },
-            )
-
+            result = await self.db.execute(metadata_query, {"chunk_ids": chunk_ids})
             chunks = result.fetchall()
-
-            if not chunks:
-                # Return empty results if no matches found
-                from ..schemas.query import SimilaritySearchResponse
-
-                return SimilaritySearchResponse(
-                    results=[],
-                    total_results=0,
-                    query=query,
-                    threshold=threshold,
-                    execution_time=0.0,
-                    embedding_model=str(knowledge_base.embedding_model),
-                ).model_dump()
 
             # Convert results to DocumentChunkWithScore objects
             # De-duplicate documents while preserving top-k chunks per document
@@ -854,11 +850,9 @@ class QueryService:
 
             # Flatten results, maintaining order by similarity score
             results = []
-            # Document deduplication: Limit chunks per document based on configuration
-            # This prevents the same document from appearing multiple times while allowing multiple relevant chunks
             for _, doc_chunks in document_chunks.items():
                 # Sort chunks within each document by similarity score (descending)
-                doc_chunks.sort(key=lambda x: float(x.similarity_score), reverse=True)
+                doc_chunks.sort(key=lambda x: score_map.get(x.id, 0.0), reverse=True)
                 # Add up to max_chunks_per_doc chunks for this document
                 chunks_to_add = doc_chunks[:max_chunks_per_doc]
                 for chunk in chunks_to_add:
@@ -873,11 +867,11 @@ class QueryService:
                         "token_count": chunk.token_count,
                         "start_char": chunk.start_char,
                         "end_char": chunk.end_char,
-                        "has_embedding": True,  # Since we filtered for embedding IS NOT NULL
+                        "has_embedding": True,
                         "embedding_model": chunk.embedding_model,
                         "embedding_created_at": chunk.embedding_created_at,
                         "created_at": chunk.created_at,
-                        "similarity_score": float(chunk.similarity_score),
+                        "similarity_score": score_map.get(chunk.id, 0.0),
                         "document_title": chunk.document_title or "Unknown Document",
                         "source_id": chunk.source_id,
                         "source_url": chunk.source_url,
@@ -886,9 +880,11 @@ class QueryService:
                         "total_chunks": getattr(chunk, "total_content_chunks", 0),
                     }
 
-                    # Create proper DocumentChunkWithScore object
                     chunk_obj = DocumentChunkWithScore(**chunk_data)
                     results.append(chunk_obj)
+
+            # Sort final results by score descending (chunks may be interleaved after grouping)
+            results.sort(key=lambda x: x.similarity_score, reverse=True)
 
             from ..schemas.query import SimilaritySearchResponse
 

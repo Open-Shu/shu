@@ -318,13 +318,20 @@ class ProfilingOrchestrator:
             Tuple of (synopsis_embedded: bool, queries_embedded_count: int)
 
         """
+        from ..core.vector_store import VectorEntry, get_vector_store
+
         synopsis_embedded = False
         queries_embedded = 0
+        vector_store = await get_vector_store()
 
         # Embed synopsis
         if document.synopsis and document.synopsis.strip():
             embeddings = await self._embed_texts([document.synopsis])
-            document.synopsis_embedding = embeddings[0]
+            await vector_store.store_embeddings(
+                "synopses",
+                [VectorEntry(id=document.id, vector=embeddings[0])],
+                db=self.db,
+            )
             synopsis_embedded = True
 
         # Embed synthesized queries
@@ -339,8 +346,11 @@ class ProfilingOrchestrator:
         if queries:
             query_texts = [q.query_text for q in queries]
             embeddings = await self._embed_texts(query_texts)
-            for query, embedding in zip(queries, embeddings, strict=True):
-                query.set_embedding(embedding)
+            entries = [
+                VectorEntry(id=q.id, vector=emb)
+                for q, emb in zip(queries, embeddings, strict=True)
+            ]
+            await vector_store.store_embeddings("queries", entries, db=self.db)
             queries_embedded = len(queries)
 
         await self.db.commit()

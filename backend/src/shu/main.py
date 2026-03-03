@@ -224,6 +224,15 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         logger.error(f"Failed to preload embedding model: {e}", exc_info=True)
         # Don't raise here, as the app can still function without preloaded model
 
+    # Initialize vector store
+    try:
+        from .core.vector_store import initialize_vector_store
+
+        await initialize_vector_store()
+        logger.info("Vector store initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize vector store: {e}", exc_info=True)
+
     # Start unified scheduler (plugin feeds + experiences + maintenance tasks)
     try:
         from .services.scheduler_service import start_scheduler

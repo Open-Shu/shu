@@ -437,12 +437,22 @@ class TestEmbedProfileArtifacts:
         mock_db.execute.return_value = mock_query_result
 
         fake_embedding = [0.1] * 384
-        with patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=[fake_embedding])):
+        mock_vector_store = AsyncMock()
+        mock_vector_store.store_embeddings = AsyncMock(return_value=1)
+        with (
+            patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=[fake_embedding])),
+            patch(
+                "shu.core.vector_store.get_vector_store",
+                new=AsyncMock(return_value=mock_vector_store),
+            ),
+        ):
             synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is True
         assert queries_embedded == 0
-        assert doc.synopsis_embedding == fake_embedding
+        mock_vector_store.store_embeddings.assert_called_once()
+        call_args = mock_vector_store.store_embeddings.call_args
+        assert call_args[0][0] == "synopses"
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -455,9 +465,9 @@ class TestEmbedProfileArtifacts:
         mock_queries = []
         for text in ["What is OAuth2?", "How does PKCE work?", "What are JWT claims?"]:
             q = MagicMock()
+            q.id = f"q-{text[:5]}"
             q.query_text = text
             q.query_embedding = None
-            q.set_embedding = MagicMock()
             mock_queries.append(q)
 
         mock_query_result = MagicMock()
@@ -465,13 +475,25 @@ class TestEmbedProfileArtifacts:
         mock_db.execute.return_value = mock_query_result
 
         fake_embeddings = [[0.1 * i] * 384 for i in range(3)]
-        with patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=fake_embeddings)):
+        mock_vector_store = AsyncMock()
+        mock_vector_store.store_embeddings = AsyncMock(return_value=3)
+        with (
+            patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=fake_embeddings)),
+            patch(
+                "shu.core.vector_store.get_vector_store",
+                new=AsyncMock(return_value=mock_vector_store),
+            ),
+        ):
             synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is False
         assert queries_embedded == 3
-        for i, q in enumerate(mock_queries):
-            q.set_embedding.assert_called_once_with(fake_embeddings[i])
+        # Verify VectorStore was called for queries collection
+        mock_vector_store.store_embeddings.assert_called_once()
+        call_args = mock_vector_store.store_embeddings.call_args
+        assert call_args[0][0] == "queries"
+        entries = call_args[0][1]
+        assert len(entries) == 3
 
     @pytest.mark.asyncio
     async def test_embeds_both_synopsis_and_queries(self, orchestrator, mock_db):
@@ -480,9 +502,9 @@ class TestEmbedProfileArtifacts:
         doc.synopsis = "Test synopsis"
 
         mock_query = MagicMock()
+        mock_query.id = "q-1"
         mock_query.query_text = "What is this about?"
         mock_query.query_embedding = None
-        mock_query.set_embedding = MagicMock()
 
         mock_query_result = MagicMock()
         mock_query_result.scalars.return_value.all.return_value = [mock_query]
@@ -491,18 +513,29 @@ class TestEmbedProfileArtifacts:
         synopsis_embedding = [0.5] * 384
         query_embedding = [0.3] * 384
 
+        mock_vector_store = AsyncMock()
+        mock_vector_store.store_embeddings = AsyncMock(return_value=1)
         # _embed_texts called twice: once for synopsis, once for queries
-        with patch.object(
-            orchestrator,
-            "_embed_texts",
-            new=AsyncMock(side_effect=[[synopsis_embedding], [query_embedding]]),
+        with (
+            patch.object(
+                orchestrator,
+                "_embed_texts",
+                new=AsyncMock(side_effect=[[synopsis_embedding], [query_embedding]]),
+            ),
+            patch(
+                "shu.core.vector_store.get_vector_store",
+                new=AsyncMock(return_value=mock_vector_store),
+            ),
         ):
             synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is True
         assert queries_embedded == 1
-        assert doc.synopsis_embedding == synopsis_embedding
-        mock_query.set_embedding.assert_called_once_with(query_embedding)
+        # VectorStore should be called twice: once for synopses, once for queries
+        assert mock_vector_store.store_embeddings.call_count == 2
+        calls = mock_vector_store.store_embeddings.call_args_list
+        assert calls[0][0][0] == "synopses"
+        assert calls[1][0][0] == "queries"
 
     @pytest.mark.asyncio
     async def test_skips_empty_synopsis(self, orchestrator, mock_db):
@@ -514,7 +547,14 @@ class TestEmbedProfileArtifacts:
         mock_query_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_query_result
 
-        with patch.object(orchestrator, "_embed_texts", new=AsyncMock()) as mock_embed:
+        mock_vector_store = AsyncMock()
+        with (
+            patch.object(orchestrator, "_embed_texts", new=AsyncMock()) as mock_embed,
+            patch(
+                "shu.core.vector_store.get_vector_store",
+                new=AsyncMock(return_value=mock_vector_store),
+            ),
+        ):
             synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is False
