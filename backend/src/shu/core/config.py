@@ -234,7 +234,8 @@ class Settings(BaseSettings):
     chunk_profiling_batch_size: int = Field(10, alias="SHU_CHUNK_PROFILING_BATCH_SIZE")
     # Max concurrent profiling tasks per worker process to prevent LLM rate-limit storms
     # during bulk imports. Workers skip the profiling queue when at capacity, allowing
-    # other work types to proceed. Set to 0 for unlimited (not recommended).
+    # other work types to proceed. Set to 0 to disable the limit. Values above
+    # worker_concurrency have no additional effect since workers are the constraint.
     profiling_max_concurrent_tasks: int = Field(5, alias="SHU_PROFILING_MAX_CONCURRENT_TASKS")
     # Maximum retry attempts for failed chunk profiles (0 = no retries)
     profiling_max_retries: int = Field(1, alias="SHU_PROFILING_MAX_RETRIES")

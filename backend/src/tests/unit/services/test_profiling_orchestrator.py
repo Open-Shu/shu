@@ -1,16 +1,19 @@
 """
-Unit tests for ProfilingOrchestrator (SHU-343, SHU-581, SHU-589).
+Unit tests for ProfilingOrchestrator (SHU-343, SHU-351, SHU-359, SHU-581, SHU-589).
 
 Tests the DB-aware orchestration layer that coordinates profiling,
-manages status transitions, and persists results.
+manages status transitions, persists results, and embeds profile artifacts.
 
 SHU-589 removed unified profiling, consolidating on incremental profiling only.
+SHU-351/359 added synopsis and query embedding after profiling.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.models.document import Document
+from shu.models.knowledge_base import KnowledgeBase
 from shu.schemas.profiling import (
     CapabilityManifest,
     ChunkProfile,
@@ -67,15 +70,25 @@ def orchestrator(mock_db, mock_settings, mock_side_call_service):
 
 def create_mock_document(doc_id: str = "doc-123", title: str = "Test Doc"):
     """Create a mock Document with profiling status helpers."""
-    doc = MagicMock()
+    doc = MagicMock(spec=Document)
     doc.id = doc_id
     doc.title = title
     doc.knowledge_base_id = "kb-123"
     doc.profiling_status = "pending"
+    doc.synopsis = None
+    doc.synopsis_embedding = None
     doc.mark_profiling_started = MagicMock()
     doc.mark_profiling_complete = MagicMock()
     doc.mark_profiling_failed = MagicMock()
     return doc
+
+
+def create_mock_kb(kb_id: str = "kb-123", embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
+    """Create a mock KnowledgeBase."""
+    kb = MagicMock(spec=KnowledgeBase)
+    kb.id = kb_id
+    kb.embedding_model = embedding_model
+    return kb
 
 
 def create_mock_chunk(chunk_id: str, index: int, content: str):
@@ -111,8 +124,10 @@ class TestRunForDocument:
         document-level metadata from accumulated summaries.
         """
         doc = create_mock_document()
+        mock_kb = create_mock_kb()
         chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}") for i in range(20)]
-        mock_db.get.return_value = doc
+        # get() called twice: once for Document, once for KnowledgeBase
+        mock_db.get = AsyncMock(side_effect=[doc, mock_kb])
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = chunks
@@ -138,10 +153,13 @@ class TestRunForDocument:
         ]
         synthesized_queries = ["What is this about?", "How does it work?"]
 
-        with patch.object(
-            orchestrator.profiling_service,
-            "profile_chunks_incremental",
-            new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300, 100.0)),
+        with (
+            patch.object(
+                orchestrator.profiling_service,
+                "profile_chunks_incremental",
+                new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300, 100.0)),
+            ),
+            patch.object(orchestrator, "_embed_profile_artifacts", new=AsyncMock(return_value=(True, 2))),
         ):
             result = await orchestrator.run_for_document("doc-123")
 
@@ -149,6 +167,8 @@ class TestRunForDocument:
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
         assert result.document_profile.synopsis == "Incremental synopsis from accumulated summaries"
         assert result.chunk_coverage_percent == 100.0
+        assert result.synopsis_embedded is True
+        assert result.queries_embedded == 2
         # Verify queries were persisted
         assert mock_db.add.call_count == 2
 
@@ -156,7 +176,9 @@ class TestRunForDocument:
     async def test_exception_marks_failed(self, orchestrator, mock_db):
         """Test that exceptions properly mark profiling as failed."""
         doc = create_mock_document()
-        mock_db.get.return_value = doc
+        mock_kb = create_mock_kb()
+        # get() called twice: Document, then KnowledgeBase. Execute raises.
+        mock_db.get = AsyncMock(side_effect=[doc, mock_kb])
         mock_db.execute.side_effect = Exception("Database error")
 
         result = await orchestrator.run_for_document("doc-123")
@@ -398,3 +420,199 @@ class TestHelperMethods:
 
         status = await orchestrator.get_profiling_status("nonexistent")
         assert status is None
+
+
+class TestEmbedProfileArtifacts:
+    """Tests for synopsis and query embedding (SHU-351, SHU-359)."""
+
+    @pytest.mark.asyncio
+    async def test_embeds_synopsis(self, orchestrator, mock_db):
+        """Test that synopsis is embedded when present."""
+        doc = create_mock_document()
+        doc.synopsis = "A document about OAuth2 authentication patterns"
+        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+
+        # No queries to embed
+        mock_query_result = MagicMock()
+        mock_query_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_query_result
+
+        fake_embedding = [0.1] * 384
+        with patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=[fake_embedding])):
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
+                doc, embedding_model
+            )
+
+        assert synopsis_embedded is True
+        assert queries_embedded == 0
+        assert doc.synopsis_embedding == fake_embedding
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_embeds_queries(self, orchestrator, mock_db):
+        """Test that synthesized queries are batch-embedded."""
+        doc = create_mock_document()
+        doc.synopsis = None  # No synopsis
+        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+
+        # Create mock queries without embeddings
+        mock_queries = []
+        for text in ["What is OAuth2?", "How does PKCE work?", "What are JWT claims?"]:
+            q = MagicMock()
+            q.query_text = text
+            q.query_embedding = None
+            q.set_embedding = MagicMock()
+            mock_queries.append(q)
+
+        mock_query_result = MagicMock()
+        mock_query_result.scalars.return_value.all.return_value = mock_queries
+        mock_db.execute.return_value = mock_query_result
+
+        fake_embeddings = [[0.1 * i] * 384 for i in range(3)]
+        with patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=fake_embeddings)):
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
+                doc, embedding_model
+            )
+
+        assert synopsis_embedded is False
+        assert queries_embedded == 3
+        for i, q in enumerate(mock_queries):
+            q.set_embedding.assert_called_once_with(fake_embeddings[i])
+
+    @pytest.mark.asyncio
+    async def test_embeds_both_synopsis_and_queries(self, orchestrator, mock_db):
+        """Test that both synopsis and queries are embedded in one pass."""
+        doc = create_mock_document()
+        doc.synopsis = "Test synopsis"
+        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+
+        mock_query = MagicMock()
+        mock_query.query_text = "What is this about?"
+        mock_query.query_embedding = None
+        mock_query.set_embedding = MagicMock()
+
+        mock_query_result = MagicMock()
+        mock_query_result.scalars.return_value.all.return_value = [mock_query]
+        mock_db.execute.return_value = mock_query_result
+
+        synopsis_embedding = [0.5] * 384
+        query_embedding = [0.3] * 384
+
+        # _embed_texts called twice: once for synopsis, once for queries
+        with patch.object(
+            orchestrator,
+            "_embed_texts",
+            new=AsyncMock(side_effect=[[synopsis_embedding], [query_embedding]]),
+        ):
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
+                doc, embedding_model
+            )
+
+        assert synopsis_embedded is True
+        assert queries_embedded == 1
+        assert doc.synopsis_embedding == synopsis_embedding
+        mock_query.set_embedding.assert_called_once_with(query_embedding)
+
+    @pytest.mark.asyncio
+    async def test_skips_empty_synopsis(self, orchestrator, mock_db):
+        """Test that empty/whitespace synopsis is not embedded."""
+        doc = create_mock_document()
+        doc.synopsis = "   "  # Whitespace only
+        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+
+        mock_query_result = MagicMock()
+        mock_query_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_query_result
+
+        with patch.object(orchestrator, "_embed_texts", new=AsyncMock()) as mock_embed:
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
+                doc, embedding_model
+            )
+
+        assert synopsis_embedded is False
+        mock_embed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_embedding_failure_isolated_in_run_for_document(self, orchestrator, mock_db):
+        """Test that embedding failure doesn't fail the profiling job."""
+        doc = create_mock_document()
+        mock_kb = create_mock_kb()
+        chunks = [create_mock_chunk("c1", 0, "Content")]
+        mock_db.get = AsyncMock(side_effect=[doc, mock_kb])
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = chunks
+        mock_db.execute.return_value = mock_result
+
+        doc_profile = DocumentProfile(
+            synopsis="Test synopsis",
+            document_type=DocumentType.TECHNICAL,
+            capability_manifest=CapabilityManifest(),
+        )
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="Summary", keywords=[], topics=[]),
+                success=True,
+            ),
+        ]
+
+        with (
+            patch.object(
+                orchestrator.profiling_service,
+                "profile_chunks_incremental",
+                new=AsyncMock(return_value=(chunk_results, doc_profile, ["query"], 100, 100.0)),
+            ),
+            patch.object(
+                orchestrator,
+                "_embed_profile_artifacts",
+                new=AsyncMock(side_effect=Exception("Embedding model not available")),
+            ),
+        ):
+            result = await orchestrator.run_for_document("doc-123")
+
+        # Profiling still succeeds even though embedding failed
+        assert result.success is True
+        assert result.synopsis_embedded is False
+        assert result.queries_embedded == 0
+
+    @pytest.mark.asyncio
+    async def test_embedding_skipped_when_kb_not_found(self, orchestrator, mock_db):
+        """Test that embedding is skipped when KB is deleted (no embedding model)."""
+        doc = create_mock_document()
+        chunks = [create_mock_chunk("c1", 0, "Content")]
+        # Document found, KB not found (deleted between embed and profiling stages)
+        mock_db.get = AsyncMock(side_effect=[doc, None])
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = chunks
+        mock_db.execute.return_value = mock_result
+
+        doc_profile = DocumentProfile(
+            synopsis="Test synopsis",
+            document_type=DocumentType.TECHNICAL,
+            capability_manifest=CapabilityManifest(),
+        )
+        chunk_results = [
+            ChunkProfileResult(
+                chunk_id="c1",
+                chunk_index=0,
+                profile=ChunkProfile(summary="Summary", keywords=[], topics=[]),
+                success=True,
+            ),
+        ]
+
+        with (
+            patch.object(
+                orchestrator.profiling_service,
+                "profile_chunks_incremental",
+                new=AsyncMock(return_value=(chunk_results, doc_profile, ["query"], 100, 100.0)),
+            ),
+        ):
+            result = await orchestrator.run_for_document("doc-123")
+
+        # Profiling succeeds, embedding skipped (no KB = no embedding model)
+        assert result.success is True
+        assert result.synopsis_embedded is False
+        assert result.queries_embedded == 0

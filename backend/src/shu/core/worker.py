@@ -250,7 +250,8 @@ class Worker:
     2. Processes each job using the provided handler
     3. Acknowledges successful jobs or rejects failed jobs
     4. Logs job processing metrics
-    5. Handles graceful shutdown on SIGTERM/SIGINT
+    5. Periodically reports deferred work behind capacity limits
+    6. Handles graceful shutdown on SIGTERM/SIGINT
 
     Thread Safety:
         The worker is designed to run in a single asyncio event loop.
@@ -296,6 +297,8 @@ class Worker:
 
     """
 
+    _CAPACITY_REPORT_INTERVAL = 30.0  # Seconds between deferred-work reports
+
     def __init__(
         self,
         backend: QueueBackend,
@@ -337,6 +340,8 @@ class Worker:
         self._capacity_limiter = capacity_limiter
         # Track which workload types have acquired capacity for the current job
         self._acquired_capacity: WorkloadType | None = None
+        # Monotonic timestamp of last capacity report (for periodic summaries)
+        self._last_capacity_report: float = 0.0
 
     def _setup_signal_handlers(self) -> None:
         """Set up graceful shutdown on SIGTERM and SIGINT.
@@ -384,6 +389,58 @@ class Worker:
         if work_type is None or self._capacity_limiter is None:
             return
         self._capacity_limiter.release(work_type)
+
+    @property
+    def _is_capacity_reporter(self) -> bool:
+        """Whether this worker logs periodic capacity summaries.
+
+        Only the first worker in a pool reports to avoid duplicate log lines.
+        Standalone workers (no worker_id) also report.
+        """
+        if self._capacity_limiter is None:
+            return False
+        if self._worker_id is None:
+            return True  # Standalone worker
+        # Check if this is worker "1" in the pool (e.g., "1/4" but not "10/4")
+        parts = self._worker_id.split("/", 1)
+        return len(parts) >= 1 and parts[0] == "1"
+
+    async def _report_deferred_work(self) -> None:
+        """Check capacity-limited queues and log a summary of deferred work.
+
+        Called periodically (every _CAPACITY_REPORT_INTERVAL seconds) from
+        the run loop of the designated reporter worker. Only logs when there
+        are actual jobs waiting behind capacity limits.
+        """
+        now = time.monotonic()
+        if now - self._last_capacity_report < self._CAPACITY_REPORT_INTERVAL:
+            return
+        self._last_capacity_report = now
+
+        limiter = self._capacity_limiter
+        if limiter is None:
+            return
+
+        deferred: list[str] = []
+        for work_type in limiter.limits:
+            available = limiter.get_available(work_type)
+            if available is not None and available == 0:
+                try:
+                    pending = await self._backend.queue_length(work_type.queue_name)
+                    if pending > 0:
+                        label = work_type.value.replace("_", " ")
+                        deferred.append(f"{pending} {label} job{'s' if pending != 1 else ''}")
+                except Exception:
+                    logger.debug(
+                        f"Failed to query queue length for {work_type.value}",
+                        exc_info=True,
+                    )
+
+        if deferred:
+            logger.info(
+                f"Jobs waiting for capacity: {', '.join(deferred)}",
+                extra={"deferred_work": deferred},
+            )
 
     async def run(self) -> None:
         """Run the worker loop until shutdown signal.
@@ -433,6 +490,10 @@ class Worker:
                 # No jobs available, sleep before trying again
                 await asyncio.sleep(self._config.poll_interval)
 
+            # Periodic capacity report — only from the designated reporter worker
+            if self._is_capacity_reporter:
+                await self._report_deferred_work()
+
         logger.info(f"{worker_label} stopped", extra={"worker_id": self._worker_id})
 
     async def _dequeue_from_any(
@@ -470,16 +531,6 @@ class Worker:
 
             # Try to acquire capacity before attempting to dequeue
             if not await self._try_acquire_capacity(work_type):
-                limiter = self._capacity_limiter
-                logger.debug(
-                    f"Skipping queue '{queue_name}' - workload type at capacity",
-                    extra={
-                        "queue_name": queue_name,
-                        "workload_type": work_type.value if work_type else None,
-                        "available": limiter.get_available(work_type) if limiter and work_type else None,
-                        "limit": limiter.get_limit(work_type) if limiter and work_type else 0,
-                    },
-                )
                 continue
 
             # Capacity acquired - now try to dequeue
