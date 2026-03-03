@@ -349,6 +349,7 @@ class DocumentService:
         content: str,
     ) -> tuple[int, int, int]:
         """Generate chunks for a document and update processing stats."""
+        from ..core.embedding_service import get_embedding_service
         from .knowledge_base_service import KnowledgeBaseService
         from .rag_processing_service import RAGProcessingService
 
@@ -357,7 +358,8 @@ class DocumentService:
         if not kb:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
 
-        rag = RAGProcessingService.get_instance()
+        embedding_service = await get_embedding_service()
+        rag = RAGProcessingService(embedding_service)
         chunks = await rag.process_document(
             document_id=document.id,
             knowledge_base=kb,

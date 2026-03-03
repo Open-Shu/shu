@@ -430,7 +430,6 @@ class TestEmbedProfileArtifacts:
         """Test that synopsis is embedded when present."""
         doc = create_mock_document()
         doc.synopsis = "A document about OAuth2 authentication patterns"
-        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 
         # No queries to embed
         mock_query_result = MagicMock()
@@ -439,9 +438,7 @@ class TestEmbedProfileArtifacts:
 
         fake_embedding = [0.1] * 384
         with patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=[fake_embedding])):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
-                doc, embedding_model
-            )
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is True
         assert queries_embedded == 0
@@ -453,7 +450,6 @@ class TestEmbedProfileArtifacts:
         """Test that synthesized queries are batch-embedded."""
         doc = create_mock_document()
         doc.synopsis = None  # No synopsis
-        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 
         # Create mock queries without embeddings
         mock_queries = []
@@ -470,9 +466,7 @@ class TestEmbedProfileArtifacts:
 
         fake_embeddings = [[0.1 * i] * 384 for i in range(3)]
         with patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=fake_embeddings)):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
-                doc, embedding_model
-            )
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is False
         assert queries_embedded == 3
@@ -484,7 +478,6 @@ class TestEmbedProfileArtifacts:
         """Test that both synopsis and queries are embedded in one pass."""
         doc = create_mock_document()
         doc.synopsis = "Test synopsis"
-        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 
         mock_query = MagicMock()
         mock_query.query_text = "What is this about?"
@@ -504,9 +497,7 @@ class TestEmbedProfileArtifacts:
             "_embed_texts",
             new=AsyncMock(side_effect=[[synopsis_embedding], [query_embedding]]),
         ):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
-                doc, embedding_model
-            )
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is True
         assert queries_embedded == 1
@@ -518,16 +509,13 @@ class TestEmbedProfileArtifacts:
         """Test that empty/whitespace synopsis is not embedded."""
         doc = create_mock_document()
         doc.synopsis = "   "  # Whitespace only
-        embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 
         mock_query_result = MagicMock()
         mock_query_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_query_result
 
         with patch.object(orchestrator, "_embed_texts", new=AsyncMock()) as mock_embed:
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(
-                doc, embedding_model
-            )
+            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is False
         mock_embed.assert_not_called()
@@ -536,9 +524,8 @@ class TestEmbedProfileArtifacts:
     async def test_embedding_failure_isolated_in_run_for_document(self, orchestrator, mock_db):
         """Test that embedding failure doesn't fail the profiling job."""
         doc = create_mock_document()
-        mock_kb = create_mock_kb()
         chunks = [create_mock_chunk("c1", 0, "Content")]
-        mock_db.get = AsyncMock(side_effect=[doc, mock_kb])
+        mock_db.get = AsyncMock(return_value=doc)
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = chunks
@@ -578,12 +565,11 @@ class TestEmbedProfileArtifacts:
         assert result.queries_embedded == 0
 
     @pytest.mark.asyncio
-    async def test_embedding_skipped_when_kb_not_found(self, orchestrator, mock_db):
-        """Test that embedding is skipped when KB is deleted (no embedding model)."""
+    async def test_embedding_runs_after_successful_profiling(self, orchestrator, mock_db):
+        """Test that embedding runs when profiling succeeds (no KB lookup needed for embedding)."""
         doc = create_mock_document()
         chunks = [create_mock_chunk("c1", 0, "Content")]
-        # Document found, KB not found (deleted between embed and profiling stages)
-        mock_db.get = AsyncMock(side_effect=[doc, None])
+        mock_db.get = AsyncMock(return_value=doc)
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = chunks
@@ -609,10 +595,14 @@ class TestEmbedProfileArtifacts:
                 "profile_chunks_incremental",
                 new=AsyncMock(return_value=(chunk_results, doc_profile, ["query"], 100, 100.0)),
             ),
+            patch.object(
+                orchestrator,
+                "_embed_profile_artifacts",
+                new=AsyncMock(return_value=(True, 1)),
+            ),
         ):
             result = await orchestrator.run_for_document("doc-123")
 
-        # Profiling succeeds, embedding skipped (no KB = no embedding model)
         assert result.success is True
-        assert result.synopsis_embedded is False
-        assert result.queries_embedded == 0
+        assert result.synopsis_embedded is True
+        assert result.queries_embedded == 1

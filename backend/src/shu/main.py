@@ -215,10 +215,10 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
 
     # Preload the default embedding model to avoid lazy loading
     try:
-        from .services.rag_processing_service import RAGProcessingService
+        from .core.embedding_service import initialize_embedding_service
 
         logger.info("Preloading default embedding model...")
-        RAGProcessingService.get_instance(settings.default_embedding_model)
+        await initialize_embedding_service()
         logger.info("Default embedding model preloaded successfully")
     except Exception as e:
         logger.error(f"Failed to preload embedding model: {e}", exc_info=True)
@@ -344,14 +344,14 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Error cleaning up OCR processes during shutdown: {e}")
 
-    # Clean up RAG service instances and thread pools
+    # Clean up embedding service instances and thread pools
     try:
-        from .services.rag_processing_service import clear_rag_service_cache
+        from .core.embedding_service import clear_embedding_service_cache
 
-        clear_rag_service_cache()
-        logger.info("RAG service cache cleared")
+        clear_embedding_service_cache()
+        logger.info("Embedding service cache cleared")
     except Exception as e:
-        logger.warning(f"Error clearing RAG service cache during shutdown: {e}")
+        logger.warning(f"Error clearing embedding service cache during shutdown: {e}")
 
     # Close HTTP client connections
     try:

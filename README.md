@@ -358,7 +358,7 @@ GOOGLE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
 
 # Embedding Configuration
 SHU_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-SHU_EMBEDDING_DIMENSION=384
+SHU_EMBEDDING_DTYPE=float32
 
 # LLM Integration (Required for chat features)
 SHU_LLM_ENCRYPTION_KEY=your_fernet_key_here

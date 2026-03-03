@@ -121,6 +121,7 @@ async def create_and_process_document(db, kb_id, doc_data, source_id_suffix=""):
     try:
         from sqlalchemy import select
 
+        from shu.core.embedding_service import get_embedding_service
         from shu.models.knowledge_base import KnowledgeBase
         from shu.schemas.document import DocumentCreate
         from shu.services.document_service import DocumentService
@@ -145,7 +146,8 @@ async def create_and_process_document(db, kb_id, doc_data, source_id_suffix=""):
         kb = kb_result.scalar_one()
 
         # Process document into chunks
-        rag_processor = RAGProcessingService.get_instance()
+        embedding_service = await get_embedding_service()
+        rag_processor = RAGProcessingService(embedding_service)
         document_chunks = await rag_processor.process_document(
             document_id=doc_response.id,
             knowledge_base=kb,

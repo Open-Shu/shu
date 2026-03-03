@@ -94,7 +94,8 @@ class Settings(BaseSettings):
     default_embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", alias="SHU_EMBEDDING_MODEL")
     embedding_device: str = "cpu"
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")
-    embedding_dimension: int = Field(384, alias="SHU_EMBEDDING_DIMENSION")
+    # Model precision: "float32" (default) or "float16" (half memory, recommended for 1024-dim+ models)
+    embedding_dtype: str = Field("float32", alias="SHU_EMBEDDING_DTYPE")
     # Execution mode for embedding generation: "thread" (optimized, default) or "process"
     embedding_execution_mode: str = Field("thread", alias="SHU_EMBEDDING_EXECUTION_MODE")
 

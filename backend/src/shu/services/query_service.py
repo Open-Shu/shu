@@ -756,12 +756,11 @@ class QueryService:
                 f"Similarity search preprocessing: original='{query[:100]}...' -> processed='{processed['similarity_query'][:100]}...' -> terms={len(processed['keyword_terms'])} terms"
             )
 
-            # Generate embedding for the processed query using the knowledge base's embedding model
-            from ..services.rag_processing_service import RAGProcessingService
+            # Generate embedding for the processed query
+            from ..core.embedding_service import get_embedding_service
 
-            # Use the knowledge base's embedding model to ensure consistency
-            rag_service = RAGProcessingService.get_instance(embedding_model=str(knowledge_base.embedding_model))
-            query_embedding = rag_service.model.encode([processed["similarity_query"]])[0].tolist()
+            embedding_service = await get_embedding_service()
+            query_embedding = await embedding_service.embed_query(processed["similarity_query"])
 
             # Perform vector similarity search using pgvector
             from pgvector.sqlalchemy import Vector
@@ -1682,13 +1681,13 @@ class QueryService:
             # Score each chunk against the original query using existing logic
             scored_chunks = []
 
-            # Get query embedding for similarity scoring using the knowledge base's embedding model
+            # Get query embedding for similarity scoring
             from scipy.spatial.distance import cosine
 
-            from ..services.rag_processing_service import RAGProcessingService
+            from ..core.embedding_service import get_embedding_service
 
-            rag_service = RAGProcessingService.get_instance(embedding_model=str(knowledge_base.embedding_model))
-            query_embedding = rag_service.model.encode([query])[0]
+            embedding_service = await get_embedding_service()
+            query_embedding = await embedding_service.embed_query(query)
 
             for chunk in chunks:
                 # Calculate similarity score

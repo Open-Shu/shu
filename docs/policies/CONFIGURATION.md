@@ -298,8 +298,8 @@ service = SomeService(db, config_manager)  # Service receives config_manager
 
 #### Embedding Configuration
 - `SHU_EMBEDDING_MODEL`: Embedding model name (default: `sentence-transformers/all-MiniLM-L6-v2`)
-- `SHU_EMBEDDING_DIMENSION`: Embedding dimension (default: `384`)
 - `SHU_EMBEDDING_BATCH_SIZE`: Embedding batch size per encode call (default: `32`)
+- `SHU_EMBEDDING_DTYPE`: Model precision — `float32` (default) or `float16` (half memory, recommended for 1024-dim+ models)
 - `SHU_EMBEDDING_EXECUTION_MODE`: Execution mode for embeddings: `thread` (default, optimized) or `process`
 
 
