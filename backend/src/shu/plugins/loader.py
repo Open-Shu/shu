@@ -83,7 +83,8 @@ class PluginLoader:
             "requests",
             "httpx",
             "urllib3",
-            "urllib",  # This exposes urllib.request. In the future we can expose safe operations through host capabilities.
+            # This exposes urllib.request. In the future we can expose safe operations through host capabilities.
+            "urllib",
             "importlib",
             # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
             "shu",
@@ -91,10 +92,7 @@ class PluginLoader:
 
         def disallowed_import(module: str) -> bool:
             """Return True when ``module`` is on the plugin deny-list."""
-            return any(
-                module == name or module.startswith(f"{name}.")
-                for name in disallowed_modules
-            )
+            return any(module == name or module.startswith(f"{name}.") for name in disallowed_modules)
 
         fallback_patterns = (
             (r"\bimport\s+requests(\b|\.)", "import requests"),
