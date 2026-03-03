@@ -7,6 +7,7 @@ no real GitHub API calls are made during the test suite.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from datetime import date as date_type
 from typing import Any
 
 import pytest
@@ -82,6 +83,7 @@ def _make_commit_item(sha: str = _SHA, username: str | None = _USERNAME) -> dict
         "author": {"login": username} if username is not None else None,
         "commit": {
             "message": "Add feature X",
+            "author": {"date": f"{_DATE}T10:00:00Z"},
             "committer": {"date": f"{_DATE}T10:00:00Z"},
         },
     }
@@ -185,8 +187,10 @@ def _commits_url(
 
     Must mirror the URL constructed by ``_GithubClient.fetch_commits``.
     """
-    since = f"{date}T00:00:00Z"
-    until = f"{date_end}T23:59:59Z"
+    since_date = date_type.fromisoformat(date) - timedelta(days=1)
+    until_date = date_type.fromisoformat(date_end) + timedelta(days=1)
+    since = f"{since_date.isoformat()}T00:00:00Z"
+    until = f"{until_date.isoformat()}T23:59:59Z"
     return (
         f"{_GH_BASE}/repos/{owner}/{repo_name}/commits"
         f"?sha={branch}&author={username}&since={since}&until={until}"

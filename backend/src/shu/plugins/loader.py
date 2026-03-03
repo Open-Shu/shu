@@ -131,28 +131,29 @@ class PluginLoader:
                         if disallowed_import(imported):
                             violations.add(f"{filename}: from {module} import {alias.name}")
 
-        try:
-            for p in plugin_dir.rglob("*.py"):
-                try:
-                    txt = p.read_text(encoding="utf-8", errors="ignore")
-                except Exception as e:
-                    logger.error("Could not read text: %s", e)
-                    continue
+        for p in plugin_dir.rglob("*.py"):
+            try:
+                txt = p.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                logger.error("Could not read text: %s", e)
+                continue
 
-                try:
-                    tree = ast.parse(txt)
-                except SyntaxError:
-                    tree = None
+            try:
+                tree = ast.parse(txt)
+            except SyntaxError:
+                tree = None
 
-                if tree is None:
-                    for pattern, label in fallback_patterns:
-                        if re.search(pattern, txt):
-                            violations.add(f"{p.name}: {label}")
-                    continue
+            if tree is None:
+                for pattern, label in fallback_patterns:
+                    if re.search(pattern, txt):
+                        violations.add(f"{p.name}: {label}")
+                continue
 
+            try:
                 scan_ast_imports(tree, p.name)
-        except Exception:
-            pass
+            except Exception as e:
+                logger.exception("Unexpected error scanning %s: %s", p.name, e)
+                violations.add(f"{p.name}: scan error")
         return sorted(violations)
 
     def discover(self) -> dict[str, PluginRecord]:

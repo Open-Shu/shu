@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date as date_type
+from datetime import datetime, timedelta
 from typing import Any
 
 from shu_plugin_sdk import (
@@ -182,8 +183,11 @@ class _GithubClient:
         owner, repo_name = _split_repo(repo)
         branches = await self.fetch_branches(owner, repo_name)
 
-        since = f"{date}T00:00:00Z"
-        until = f"{date_end}T23:59:59Z"
+        # Widen server-side UTC window; exact range is enforced locally by _author_date_in_range.
+        since_date = date_type.fromisoformat(date) - timedelta(days=1)
+        until_date = date_type.fromisoformat(date_end) + timedelta(days=1)
+        since = f"{since_date.isoformat()}T00:00:00Z"
+        until = f"{until_date.isoformat()}T23:59:59Z"
 
         seen_shas: set[str] = set()
         all_commits: list[dict[str, Any]] = []
@@ -618,21 +622,21 @@ def _author_date_in_range(item: dict[str, Any], date: str, date_end: str) -> boo
 
     Returns:
         ``True`` if the commit's local author date is within the range,
-        ``False`` otherwise.  Returns ``True`` on parse errors so no commits
-        are silently dropped due to unexpected date formats.
+        ``False`` otherwise, including when the date field is missing or
+        unparsable.
 
     """
+    author_date_str: str = (
+        item.get("commit", {}).get("author", {}).get("date", "")
+    )
+    if not author_date_str:
+        return False
     try:
-        author_date_str: str = (
-            item.get("commit", {}).get("author", {}).get("date", "")
-        )
-        if not author_date_str:
-            return True
         dt = datetime.fromisoformat(author_date_str.replace("Z", "+00:00"))
         local_date = dt.date().isoformat()
         return date <= local_date <= date_end
-    except Exception:
-        return True
+    except ValueError:
+        return False
 
 
 def _timestamp_in_range(timestamp: Any, date: str, date_end: str) -> bool:

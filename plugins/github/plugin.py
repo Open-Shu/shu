@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
+from datetime import date as date_type
 from typing import Any
 
 from shu_plugin_sdk import (
@@ -49,8 +50,13 @@ def _resolve_dates(params: dict[str, Any]) -> tuple[str, str]:
 
 
 def _check_date_order(date: str, date_end: str) -> PluginResult | None:
-    """Return an error result if ``date_end`` is earlier than ``date``, else None."""
-    if date_end < date:
+    """Return an error result if either date is malformed or ``date_end`` is earlier than ``date``, else None."""
+    try:
+        d_start = date_type.fromisoformat(date)
+        d_end = date_type.fromisoformat(date_end)
+    except ValueError as e:
+        return PluginResult.err(f"Invalid date: {e}", code="invalid_params")
+    if d_end < d_start:
         return PluginResult.err("date_end must not be before date.", code="invalid_params")
     return None
 
