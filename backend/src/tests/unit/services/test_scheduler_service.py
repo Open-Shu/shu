@@ -375,7 +375,7 @@ class TestExperienceSource:
 
     @pytest.mark.asyncio
     async def test_enqueue_due_all_user_pairs_active_enqueues_none(self):
-        """When all users already have active runs, no jobs are enqueued but schedule still advances."""
+        """When all users already have active runs, no jobs are enqueued and schedule does not advance."""
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
@@ -427,9 +427,9 @@ class TestExperienceSource:
 
         assert result["queue_enqueued"] == 0
         assert result["skipped_active_user_runs"] == 2
-        assert result["enqueued"] == 1  # Schedule still advances
+        assert result["enqueued"] == 0  # Schedule does not advance
         mock_enqueue_run.assert_not_called()
-        mock_exp.schedule_next.assert_called_once()
+        mock_exp.schedule_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_enqueue_due_no_active_pairs_enqueues_all(self):

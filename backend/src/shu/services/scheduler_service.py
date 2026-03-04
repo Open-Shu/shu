@@ -23,13 +23,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from ..auth.models import User
 from ..core.config import get_settings_instance
 from ..core.database import get_db_session
 from ..core.queue_backend import QueueBackend
 from ..core.workload_routing import WorkloadType, enqueue_job
-from ..models.experience import ExperienceRun
+from ..models.experience import Experience, ExperienceRun
+from ..models.user_preferences import UserPreferences
+from ..schemas.experience import ExperienceScope
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +172,6 @@ class ExperienceSource:
         Returns a set of (experience_id, user_id) pairs. Shared runs have
         user_id=None. Used for both shared and user-scoped dedup in a single query.
         """
-        from sqlalchemy import and_, select
-
         exp_ids = [str(exp.id) for exp in due_experiences]
         if not exp_ids:
             return set()
@@ -184,14 +187,6 @@ class ExperienceSource:
         return {(row.experience_id, row.user_id) for row in result}
 
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
-        from sqlalchemy import and_, select
-        from sqlalchemy.orm import selectinload
-
-        from ..auth.models import User
-        from ..models.experience import Experience
-        from ..models.user_preferences import UserPreferences
-        from ..schemas.experience import ExperienceScope
-
         now = datetime.now(UTC)
 
         # Claim due experiences with row-level locks
@@ -246,6 +241,8 @@ class ExperienceSource:
         skipped_active = 0
 
         for exp in due_experiences:
+            exp_enqueued = 0
+
             if exp.scope == ExperienceScope.SHARED.value:
                 # Shared scope: one shared run, not per-user fan-out.
                 if (str(exp.id), None) in active_run_keys:
@@ -257,7 +254,7 @@ class ExperienceSource:
                     continue
 
                 if await _enqueue_experience_run(db, queue, exp, user_id=None):
-                    queue_enqueued += 1
+                    exp_enqueued += 1
             else:
                 # Fan out: one job per active user, skipping pairs with active runs
                 for user in all_users:
@@ -265,25 +262,19 @@ class ExperienceSource:
                         skipped_active += 1
                         continue
                     if await _enqueue_experience_run(db, queue, exp, user_id=str(user.id)):
-                        queue_enqueued += 1
+                        exp_enqueued += 1
+
+            queue_enqueued += exp_enqueued
+
+            if exp_enqueued == 0:
+                logger.debug(
+                    "No runs enqueued for experience, skipping schedule advance",
+                    extra={"experience_id": exp.id},
+                )
+                continue
 
             enqueued += 1
-
-            # Advance schedule ONCE per experience (not per user)
-            # Use creator's timezone for scheduling
-            creator_tz = None
-            if exp.created_by:
-                try:
-                    tz_result = await db.execute(
-                        select(UserPreferences).where(UserPreferences.user_id == exp.created_by)
-                    )
-                    prefs = tz_result.scalar_one_or_none()
-                    creator_tz = prefs.timezone if prefs else None
-                except Exception:
-                    pass
-
-            exp.last_run_at = now
-            exp.schedule_next(user_timezone=creator_tz)
+            await self._advance_schedule(db, exp, now)
 
         await db.commit()
 
@@ -303,6 +294,21 @@ class ExperienceSource:
             "skipped_active_user_runs": skipped_active,
             "no_users": 0,
         }
+
+    @staticmethod
+    async def _advance_schedule(db: AsyncSession, exp: Any, now: datetime) -> None:
+        """Advance an experience's schedule using the creator's timezone."""
+        creator_tz = None
+        if exp.created_by:
+            try:
+                tz_result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == exp.created_by))
+                prefs = tz_result.scalar_one_or_none()
+                creator_tz = prefs.timezone if prefs else None
+            except Exception:
+                pass
+
+        exp.last_run_at = now
+        exp.schedule_next(user_timezone=creator_tz)
 
 
 class LogMaintenanceSource:

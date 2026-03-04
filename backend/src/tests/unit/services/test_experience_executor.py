@@ -112,43 +112,31 @@ class TestContextBuilding:
         assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
 
     @pytest.mark.asyncio
-    async def test_build_initial_context_shared_run_user_is_none(self, executor):
-        """Context 'user' key is None when current_user=None (shared run)."""
+    async def test_build_initial_context_shared_run_uses_creator(self, executor):
+        """Shared run (user_id=None) uses creator identity for context and timezone."""
         experience = MagicMock()
         experience.include_previous_run = False
+
+        creator = MagicMock()
+        creator.id = "creator-1"
+        creator.email = "creator@example.com"
+        creator.display_name = "Creator"
+
+        executor._get_user_formatted_datetime = AsyncMock(return_value="Monday, June 15, 2024 at 10:00 AM EST")
 
         context = await executor._build_initial_context(
             experience=experience,
             user_id=None,
-            current_user=None,
+            current_user=creator,
             input_params={"query": "test"},
         )
 
-        assert context["user"] is None
+        assert context["user"]["id"] == "creator-1"
+        assert context["user"]["email"] == "creator@example.com"
         assert context["input"] == {"query": "test"}
         assert context["steps"] == {}
-
-    @pytest.mark.asyncio
-    async def test_build_initial_context_shared_run_uses_utc_datetime(self, executor):
-        """When user_id=None, current_datetime falls back to UTC ISO string."""
-        experience = MagicMock()
-        experience.include_previous_run = False
-
-        with patch("shu.services.experience_executor.datetime") as mock_datetime:
-            fixed_utc = datetime(2024, 6, 15, 10, 0, 0, tzinfo=UTC)
-            mock_datetime.now.return_value = fixed_utc
-
-            context = await executor._build_initial_context(
-                experience=experience,
-                user_id=None,
-                current_user=None,
-                input_params={},
-            )
-
-        # Should use UTC isoformat, not the user-formatted datetime
-        assert context["now"] == fixed_utc.isoformat()
-        # _get_user_formatted_datetime should NOT have been called
-        # (no user_id to look up timezone for)
+        # Timezone lookup uses creator's ID when user_id is None
+        executor._get_user_formatted_datetime.assert_called_once_with("creator-1")
 
 
 class TestTemplateRendering:

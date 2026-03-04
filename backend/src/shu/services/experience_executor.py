@@ -107,13 +107,13 @@ class ExperienceExecutor:
     async def _validate_and_load_model_config(
         self,
         model_configuration_id: str,
-        current_user: User | None,
+        current_user: User,
     ) -> ModelConfiguration | None:
         """Validate and load model configuration for use.
 
         Args:
             model_configuration_id: ID of the model configuration to load
-            current_user: Current user for access validation (None for shared runs)
+            current_user: Current user for access validation (creator for shared runs)
 
         Returns:
             ModelConfiguration if valid, None if validation fails
@@ -134,7 +134,7 @@ class ExperienceExecutor:
             logger.error(
                 "Model configuration validation failed | config_id=%s user=%s error=%s",
                 model_configuration_id,
-                current_user.email if current_user else "shared",
+                current_user.email,
                 error_message,
             )
             return None
@@ -144,7 +144,7 @@ class ExperienceExecutor:
         experience: Experience,
         user_id: str | None,
         input_params: dict[str, Any],
-        current_user: User | None,
+        current_user: User,
         run_id: str | None = None,
     ) -> AsyncGenerator[ExperienceEvent, None]:
         """Execute an experience with streaming events for SSE.
@@ -282,7 +282,7 @@ class ExperienceExecutor:
         experience: Experience,
         user_id: str | None,
         input_params: dict[str, Any],
-        current_user: User | None,
+        current_user: User,
         run_id: str | None = None,
     ) -> ExperienceRun:
         """Execute an experience without streaming (for scheduled execution).
@@ -314,7 +314,7 @@ class ExperienceExecutor:
         experience: Experience,
         context: dict[str, Any],
         user_id: str | None,
-        current_user: User | None,
+        current_user: User,
         step_states: dict[str, Any],
         step_outputs: dict[str, Any],
         knowledge_base_ids: list[str] | None = None,
@@ -614,7 +614,7 @@ class ExperienceExecutor:
         self,
         experience: Experience,
         user_id: str | None,
-        current_user: User | None,
+        current_user: User,
         input_params: dict[str, Any],
     ) -> dict[str, Any]:
         """Build initial Jinja2 template context."""
@@ -624,20 +624,15 @@ class ExperienceExecutor:
             previous_run = await self._get_previous_run(experience, user_id)
 
         # Use current_user for timezone when user_id is None (shared runs)
-        tz_user_id = user_id or (str(current_user.id) if current_user else None)
-        if tz_user_id is not None:
-            formatted_now = await self._get_user_formatted_datetime(tz_user_id)
-        else:
-            formatted_now = datetime.now(UTC).isoformat()
+        tz_user_id = user_id or str(current_user.id)
+        formatted_now = await self._get_user_formatted_datetime(tz_user_id)
 
         context = {
             "user": {
                 "id": str(current_user.id),
                 "email": current_user.email,
                 "display_name": getattr(current_user, "display_name", None) or current_user.email,
-            }
-            if current_user is not None
-            else None,
+            },
             "input": input_params or {},
             "steps": {},  # Starts empty
             "previous_run": None,
@@ -680,14 +675,14 @@ class ExperienceExecutor:
         step: ExperienceStep,
         context: dict[str, Any],
         user_id: str | None,
-        current_user: User | None,
+        current_user: User,
         knowledge_base_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Execute a single step (plugin, KB, or decision_control)."""
         if step.step_type == "plugin":
             # For shared runs user_id is None (run ownership), but plugins need a
-            # real user ID for auth/identity. Derive from current_user (the creator).
-            plugin_user_id = str(current_user.id) if current_user else user_id
+            # real user ID for auth/identity. Use current_user (the creator for shared runs).
+            plugin_user_id = str(current_user.id)
             return await self._execute_plugin_step(step, context, plugin_user_id, knowledge_base_ids)
         if step.step_type == "knowledge_base":
             return await self._execute_kb_step(step, context, current_user)
@@ -741,7 +736,7 @@ class ExperienceExecutor:
         self,
         step: ExperienceStep,
         context: dict[str, Any],
-        current_user: User | None,
+        current_user: User,
     ) -> dict[str, Any]:
         """Execute KB query using shared RAG processing logic."""
         kb_id = step.knowledge_base_id
@@ -823,7 +818,7 @@ class ExperienceExecutor:
         self,
         experience: Experience,
         context: dict[str, Any],
-        current_user: User | None,
+        current_user: User,
         model_config: ModelConfiguration | None = None,
     ) -> AsyncGenerator[Any, None]:
         """Render prompt and stream LLM synthesis using model configuration.
