@@ -132,6 +132,11 @@ class LocalEmbeddingService:
         # Cache dimension from the loaded model
         self._dimension: int = self._model.get_sentence_embedding_dimension()
 
+        # Cache query prompt name for asymmetric models (e.g., Snowflake arctic-embed).
+        # Models that define a "query" prompt use it to prefix queries differently from
+        # documents. Models without it (or with an empty prompt like MiniLM) work fine.
+        self._query_prompt_name: str | None = "query" if "query" in self._model.prompts else None
+
         logger.info(f"Successfully loaded SentenceTransformer model: {model_name} (dim={self._dimension})")
 
         # Preload model to ensure full initialization
@@ -162,7 +167,9 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode([text], batch_size=1, show_progress_bar=False)[0],
+            lambda: self._model.encode(
+                [text], batch_size=1, show_progress_bar=False, prompt_name=self._query_prompt_name
+            )[0],
         )
         return embedding.tolist()
 

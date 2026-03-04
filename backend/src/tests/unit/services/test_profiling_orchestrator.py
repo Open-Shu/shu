@@ -83,7 +83,7 @@ def create_mock_document(doc_id: str = "doc-123", title: str = "Test Doc"):
     return doc
 
 
-def create_mock_kb(kb_id: str = "kb-123", embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
+def create_mock_kb(kb_id: str = "kb-123", embedding_model: str = "Snowflake/snowflake-arctic-embed-l-v2.0"):
     """Create a mock KnowledgeBase."""
     kb = MagicMock(spec=KnowledgeBase)
     kb.id = kb_id

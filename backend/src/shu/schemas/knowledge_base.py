@@ -152,7 +152,7 @@ class KnowledgeBaseBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Knowledge base name")
     description: str | None = Field(None, description="Knowledge base description")
     sync_enabled: bool = Field(True, description="Whether sync is enabled")
-    embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", description="Embedding model to use")
+    embedding_model: str = Field("Snowflake/snowflake-arctic-embed-l-v2.0", description="Embedding model to use")
     chunk_size: int = Field(1000, ge=100, le=5000, description="Text chunk size")
     chunk_overlap: int = Field(200, ge=0, le=1000, description="Chunk overlap size")
 

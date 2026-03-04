@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     auto_activate_users: bool = Field(False, alias="SHU_AUTO_ACTIVATE_USERS")
 
     # Embedding configuration
-    default_embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", alias="SHU_EMBEDDING_MODEL")
+    default_embedding_model: str = Field("Snowflake/snowflake-arctic-embed-l-v2.0", alias="SHU_EMBEDDING_MODEL")
     embedding_device: str = "cpu"
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")
     # Model precision: "float32" (default) or "float16" (half memory, recommended for 1024-dim+ models)

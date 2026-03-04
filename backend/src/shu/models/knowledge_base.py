@@ -32,7 +32,7 @@ class KnowledgeBase(BaseModel):
     last_sync_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # Processing configuration
-    embedding_model = Column(String(100), default="sentence-transformers/all-MiniLM-L6-v2", nullable=False)
+    embedding_model = Column(String(100), default="Snowflake/snowflake-arctic-embed-l-v2.0", nullable=False)
     chunk_size = Column(Integer, default=1000, nullable=False)
     chunk_overlap = Column(Integer, default=200, nullable=False)
 

@@ -1,8 +1,10 @@
-"""Migration 008_0001: Dimensionless vector columns with HNSW indexes.
+"""Migration 008_0001: Dimensionless vector columns, HNSW indexes, new default model.
 
 Migrates all Vector(384) columns to dimensionless vector columns so the schema
 supports any embedding model dimension without DDL changes. Replaces IVFFlat
-indexes with HNSW dimension-scoped partial indexes.
+indexes with HNSW dimension-scoped partial indexes. Updates the default
+embedding model on knowledge_bases from all-MiniLM-L6-v2 to
+Snowflake/snowflake-arctic-embed-l-v2.0.
 
 Columns altered:
 - document_chunks.embedding
@@ -91,6 +93,13 @@ def upgrade() -> None:
                 """
             )
 
+    # 4. Update default embedding model on knowledge_bases (SHU-606)
+    op.alter_column(
+        "knowledge_bases",
+        "embedding_model",
+        server_default=sa.text("'Snowflake/snowflake-arctic-embed-l-v2.0'"),
+    )
+
 
 def downgrade() -> None:
     """Restore Vector(384) columns and IVFFlat indexes."""
@@ -113,7 +122,14 @@ def downgrade() -> None:
     for table, column in _VECTOR_COLUMNS:
         op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector(384)")
 
-    # 3. Recreate original IVFFlat indexes
+    # 3. Restore original embedding model default
+    op.alter_column(
+        "knowledge_bases",
+        "embedding_model",
+        server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'"),
+    )
+
+    # 4. Recreate original IVFFlat indexes
     if not index_exists(inspector, "document_chunks", "idx_document_chunks_embedding"):
         op.execute(
             """
