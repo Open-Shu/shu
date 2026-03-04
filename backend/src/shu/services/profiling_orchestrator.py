@@ -327,12 +327,15 @@ class ProfilingOrchestrator:
         # Embed synopsis
         if document.synopsis and document.synopsis.strip():
             embeddings = await self._embed_texts([document.synopsis])
-            await vector_store.store_embeddings(
-                "synopses",
-                [VectorEntry(id=document.id, vector=embeddings[0])],
-                db=self.db,
-            )
-            synopsis_embedded = True
+            if not embeddings:
+                logger.warning("synopsis_embedding_empty", document_id=document.id)
+            else:
+                await vector_store.store_embeddings(
+                    "synopses",
+                    [VectorEntry(id=document.id, vector=embeddings[0])],
+                    db=self.db,
+                )
+                synopsis_embedded = True
 
         # Embed synthesized queries
         stmt = (

@@ -136,8 +136,7 @@ async def check_resource_health(current_user: User = Depends(get_current_user)):
         if active_instances >= max_instances:
             health_status = "warning"
             recommendations.append("Maximum embedding service instances reached. Consider cleanup.")
-
-        if active_instances >= max_instances * 0.8:
+        elif active_instances >= max_instances * 0.8:
             health_status = "caution"
             recommendations.append("Embedding service instances approaching limit.")
 

@@ -350,7 +350,7 @@ def get_embedding_service_dependency() -> EmbeddingService:
         An EmbeddingService instance.
 
     """
-    global _embedding_service  # noqa: PLW0602
+    global _embedding_service  # noqa: PLW0603
 
     if _embedding_service is not None:
         return _embedding_service
@@ -358,12 +358,13 @@ def get_embedding_service_dependency() -> EmbeddingService:
     # Fallback: create synchronously (startup should have initialized)
     logger.debug("get_embedding_service_dependency called before async initialization")
     settings = get_settings_instance()
-    return _service_manager.get_service(
+    _embedding_service = _service_manager.get_service(
         model_name=settings.default_embedding_model,
         device=settings.embedding_device,
         batch_size=settings.embedding_batch_size,
         dtype=settings.embedding_dtype,
     )
+    return _embedding_service
 
 
 async def initialize_embedding_service() -> EmbeddingService:
