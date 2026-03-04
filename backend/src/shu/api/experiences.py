@@ -21,6 +21,7 @@ from ..models.experience import Experience
 from ..schemas.experience import (
     ExperienceCreate,
     ExperienceRunRequest,
+    ExperienceScope,
     ExperienceUpdate,
     ExperienceVisibility,
 )
@@ -359,11 +360,21 @@ async def run_experience(
             status_code=404,
         )
 
+    # Non-admins cannot manually trigger global experiences
+    if experience_model.scope == ExperienceScope.GLOBAL.value and not is_admin:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Global experiences can only be triggered manually by admins."},
+        )
+
+    # Global experiences run without a specific user owner (user_id=None)
+    run_user_id = None if experience_model.scope == ExperienceScope.GLOBAL.value else str(current_user.id)
+
     config_manager = get_config_manager()
     executor = ExperienceExecutor(db, config_manager)
     event_gen = executor.execute_streaming(
         experience=experience_model,
-        user_id=str(current_user.id),
+        user_id=run_user_id,
         input_params=run_request.input_params if run_request and run_request.input_params else {},
         current_user=current_user,
     )

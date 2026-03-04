@@ -547,7 +547,10 @@ class TestPreviousRunBacklink:
         mock_result.scalars.return_value.first.return_value = mock_run
         executor.db.execute = AsyncMock(return_value=mock_result)
 
-        result = await executor._get_previous_run("exp-123", "user-123")
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.scope = "user"
+        result = await executor._get_previous_run(experience, "user-123")
 
         assert result == mock_run
 
@@ -558,7 +561,10 @@ class TestPreviousRunBacklink:
         mock_result.scalars.return_value.first.return_value = None
         executor.db.execute = AsyncMock(return_value=mock_result)
 
-        result = await executor._get_previous_run("exp-123", "user-123")
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.scope = "user"
+        result = await executor._get_previous_run(experience, "user-123")
 
         assert result is None
 

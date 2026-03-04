@@ -9,14 +9,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 import yaml
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, nullslast, or_, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     from ..auth.models import User
-
 
 try:
     from croniter import croniter
@@ -41,6 +40,7 @@ from ..schemas.experience import (
     ExperienceResultSummary,
     ExperienceRunList,
     ExperienceRunResponse,
+    ExperienceScope,
     ExperienceStepCreate,
     ExperienceStepResponse,
     ExperienceUpdate,
@@ -188,6 +188,7 @@ class ExperienceService:
             description=experience_data.description,
             created_by=created_by,
             visibility=experience_data.visibility.value,
+            scope=experience_data.scope.value,
             trigger_type=experience_data.trigger_type.value,
             trigger_config=experience_data.trigger_config,
             include_previous_run=experience_data.include_previous_run,
@@ -284,12 +285,12 @@ class ExperienceService:
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={"steps"})
         trigger_changed = False
+        enum_string_fields = {"visibility", "scope", "trigger_type"}
         for field, value in update_dict.items():
-            if field == "visibility" and value:
+            if field in enum_string_fields and value:
                 setattr(experience, field, value.value if hasattr(value, "value") else value)
-            elif field == "trigger_type" and value:
-                setattr(experience, field, value.value if hasattr(value, "value") else value)
-                trigger_changed = True
+                if field == "trigger_type":
+                    trigger_changed = True
             elif field == "trigger_config":
                 setattr(experience, field, value)
                 trigger_changed = True
@@ -658,9 +659,9 @@ class ExperienceService:
         """
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
-        # Non-admins see only their own runs
+        # Non-admins see their own runs and global runs (user_id IS NULL)
         if not is_admin and user_id:
-            stmt = stmt.where(ExperienceRun.user_id == user_id)
+            stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
         # Execute with pagination
         total, runs = await self._execute_paginated_query(
@@ -722,8 +723,8 @@ class ExperienceService:
         if not run:
             return None
 
-        # Ownership check for non-admins
-        if not is_admin and user_id and run.user_id != user_id:
+        # Ownership check for non-admins; global runs (user_id IS NULL) are visible to all
+        if not is_admin and user_id and run.user_id is not None and run.user_id != user_id:
             return None
 
         return self._run_to_response(run)
@@ -771,10 +772,14 @@ class ExperienceService:
             .where(
                 and_(
                     ExperienceRun.experience_id.in_(experience_ids),
-                    ExperienceRun.user_id == user_id,
+                    or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)),
                 )
             )
-            .order_by(ExperienceRun.experience_id, ExperienceRun.created_at.desc())
+            .order_by(
+                ExperienceRun.experience_id,
+                nullslast(ExperienceRun.user_id.asc()),
+                ExperienceRun.created_at.desc(),
+            )
             .distinct(ExperienceRun.experience_id)
         )
         runs_result = await self.db.execute(latest_runs_stmt)
@@ -1170,6 +1175,7 @@ class ExperienceService:
             description=experience.description,
             created_by=experience.created_by,
             visibility=ExperienceVisibility(experience.visibility),
+            scope=ExperienceScope(experience.scope),
             trigger_type=TriggerType(experience.trigger_type),
             trigger_config=experience.trigger_config,
             include_previous_run=experience.include_previous_run,

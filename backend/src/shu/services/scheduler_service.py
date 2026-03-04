@@ -28,6 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import get_settings_instance
 from ..core.database import get_db_session
 from ..core.queue_backend import QueueBackend
+from ..core.workload_routing import WorkloadType, enqueue_job
+from ..models.experience import ExperienceRun
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,64 @@ class PluginFeedSource:
         return await svc.enqueue_due_schedules(limit=limit)
 
 
+async def _enqueue_experience_run(
+    db: AsyncSession,
+    queue: QueueBackend,
+    exp: Any,
+    user_id: str | None,
+) -> bool:
+    """Create one ExperienceRun and enqueue one LLM_WORKFLOW job.
+
+    Returns True on success. On failure, rolls back the flushed run and logs
+    the error. Accepts user_id=None for global (non-per-user) runs.
+    """
+    run = None
+    try:
+        run = ExperienceRun(
+            experience_id=str(exp.id),
+            user_id=user_id,
+            model_configuration_id=exp.model_configuration_id,
+            status="queued",
+            input_params={},
+            step_states={},
+            step_outputs={},
+            result_metadata={},
+        )
+        db.add(run)
+        await db.flush()  # get run.id for the job payload
+
+        job = await enqueue_job(
+            queue,
+            WorkloadType.LLM_WORKFLOW,
+            payload={
+                "action": "experience_execution",
+                "experience_id": str(exp.id),
+                "user_id": user_id,
+                "run_id": str(run.id),
+                "input_params": {},
+            },
+            max_attempts=3,
+            visibility_timeout=600,  # 10 min for LLM work
+        )
+        logger.debug(
+            "Experience job enqueued",
+            extra={"experience_id": exp.id, "user_id": user_id, "run_id": run.id, "job_id": job.id},
+        )
+        return True
+    except Exception as e:
+        # Remove the flushed run so it doesn't get committed
+        # as an orphaned "queued" record with no corresponding job.
+        if run is not None:
+            await db.delete(run)
+            await db.flush()
+        logger.error(
+            "Failed to enqueue experience job: %s",
+            e,
+            extra={"experience_id": exp.id, "user_id": user_id},
+        )
+        return False
+
+
 class ExperienceSource:
     """Schedulable source for experiences.
 
@@ -105,9 +165,9 @@ class ExperienceSource:
         from sqlalchemy.orm import selectinload
 
         from ..auth.models import User
-        from ..core.workload_routing import WorkloadType, enqueue_job
-        from ..models.experience import Experience, ExperienceRun
+        from ..models.experience import Experience
         from ..models.user_preferences import UserPreferences
+        from ..schemas.experience import ExperienceScope
 
         now = datetime.now(UTC)
 
@@ -157,61 +217,32 @@ class ExperienceSource:
         queue_enqueued = 0
 
         for exp in due_experiences:
-            # Fan out: one job per active user
-            for user in all_users:
-                run = None
-                try:
-                    # Create ExperienceRun in QUEUED status for observability
-                    run = ExperienceRun(
-                        experience_id=str(exp.id),
-                        user_id=str(user.id),
-                        model_configuration_id=exp.model_configuration_id,
-                        status="queued",
-                        input_params={},
-                        step_states={},
-                        step_outputs={},
-                        result_metadata={},
+            if exp.scope == ExperienceScope.GLOBAL.value:
+                # Global scope: one shared run, not per-user fan-out.
+                # Skip if a queued/running global run already exists.
+                active_result = await db.execute(
+                    select(ExperienceRun).where(
+                        and_(
+                            ExperienceRun.experience_id == str(exp.id),
+                            ExperienceRun.user_id.is_(None),
+                            ExperienceRun.status.in_(["queued", "running"]),
+                        )
                     )
-                    db.add(run)
-                    await db.flush()  # Get run.id for the job payload
-
-                    job = await enqueue_job(
-                        queue,
-                        WorkloadType.LLM_WORKFLOW,
-                        payload={
-                            "action": "experience_execution",
-                            "experience_id": str(exp.id),
-                            "user_id": str(user.id),
-                            "run_id": str(run.id),
-                            "input_params": {},
-                        },
-                        max_attempts=3,
-                        visibility_timeout=600,  # 10 min for LLM work
-                    )
-                    queue_enqueued += 1
+                )
+                if active_result.scalar_one_or_none() is not None:
                     logger.debug(
-                        "Experience job enqueued",
-                        extra={
-                            "experience_id": exp.id,
-                            "user_id": user.id,
-                            "run_id": run.id,
-                            "job_id": job.id,
-                        },
+                        "Global experience already has an active run, skipping",
+                        extra={"experience_id": exp.id},
                     )
-                except Exception as e:
-                    # Remove the flushed run so it doesn't get committed
-                    # as an orphaned "queued" record with no corresponding job.
-                    if run is not None:
-                        await db.delete(run)
-                        await db.flush()
-                    logger.error(
-                        "Failed to enqueue experience job: %s",
-                        e,
-                        extra={
-                            "experience_id": exp.id,
-                            "user_id": user.id,
-                        },
-                    )
+                    continue
+
+                if await _enqueue_experience_run(db, queue, exp, user_id=None):
+                    queue_enqueued += 1
+            else:
+                # Fan out: one job per active user
+                for user in all_users:
+                    if await _enqueue_experience_run(db, queue, exp, user_id=str(user.id)):
+                        queue_enqueued += 1
 
             enqueued += 1
 

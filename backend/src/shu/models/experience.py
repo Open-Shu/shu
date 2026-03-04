@@ -43,6 +43,7 @@ class Experience(BaseModel):
     # Ownership & visibility
     created_by = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     visibility = Column(String(20), default="draft", nullable=False)  # draft, admin_only, published
+    scope = Column(String(20), default="user", nullable=False)  # user, global
 
     # Trigger configuration
     trigger_type = Column(String(20), default="manual", nullable=False)  # manual, scheduled, cron
@@ -238,7 +239,7 @@ class ExperienceRun(BaseModel):
     __tablename__ = "experience_runs"
 
     experience_id = Column(String, ForeignKey("experiences.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
 
     # Backlink to previous run (for experience continuity when include_previous_run=True)
     previous_run_id = Column(String, ForeignKey("experience_runs.id", ondelete="SET NULL"), nullable=True)
@@ -285,6 +286,7 @@ class ExperienceRun(BaseModel):
 
 # Database indexes for performance
 Index("idx_experiences_visibility", Experience.visibility)
+Index("idx_experiences_scope", Experience.scope)
 Index("idx_experiences_created_by", Experience.created_by)
 Index("idx_experiences_active_version", Experience.is_active_version)
 Index("idx_experience_steps_experience", ExperienceStep.experience_id)

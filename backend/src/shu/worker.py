@@ -730,8 +730,6 @@ async def _handle_experience_execution_job(job) -> None:
         raise ValueError("Experience execution job missing experience_id in payload")
 
     user_id = job.payload.get("user_id")
-    if not user_id:
-        raise ValueError("Experience execution job missing user_id in payload")
 
     input_params = job.payload.get("input_params", {})
     run_id = job.payload.get("run_id")
@@ -763,24 +761,33 @@ async def _handle_experience_execution_job(job) -> None:
             await _fail_queued_run(session, run_id, "experience_not_found")
             return
 
-        # Load user
-        user_result = await session.execute(select(User).where(User.id == user_id))
-        user = user_result.scalar_one_or_none()
+        # Load user — None for global experiences (user_id=None)
+        user = None
+        if user_id:
+            user_result = await session.execute(select(User).where(User.id == user_id))
+            user = user_result.scalar_one_or_none()
 
-        if not user:
+            if not user:
+                logger.warning(
+                    "User not found, skipping",
+                    extra={"job_id": job.id, "user_id": user_id},
+                )
+                await _fail_queued_run(session, run_id, "user_not_found")
+                return
+
+            if not user.is_active:  # type: ignore[truthy-bool]
+                logger.debug(
+                    "User inactive, skipping experience execution",
+                    extra={"job_id": job.id, "user_id": user_id},
+                )
+                await _fail_queued_run(session, run_id, "user_inactive")
+                return
+        elif experience.scope != "global":
             logger.warning(
-                "User not found, skipping",
-                extra={"job_id": job.id, "user_id": user_id},
+                "Non-global experience missing user_id, failing run",
+                extra={"job_id": job.id, "experience_id": experience_id, "scope": experience.scope},
             )
-            await _fail_queued_run(session, run_id, "user_not_found")
-            return
-
-        if not user.is_active:  # type: ignore[truthy-bool]
-            logger.debug(
-                "User inactive, skipping experience execution",
-                extra={"job_id": job.id, "user_id": user_id},
-            )
-            await _fail_queued_run(session, run_id, "user_inactive")
+            await _fail_queued_run(session, run_id, "missing_user_id")
             return
 
         try:

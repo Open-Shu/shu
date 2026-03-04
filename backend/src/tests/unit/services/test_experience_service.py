@@ -18,6 +18,7 @@ from shu.schemas.experience import (
     ExperienceCreate,
     ExperienceList,
     ExperienceResponse,
+    ExperienceScope,
     ExperienceStepCreate,
     ExperienceUpdate,
     ExperienceVisibility,
@@ -80,6 +81,7 @@ def mock_experience_response():
         description="A test experience",
         created_by="user-123",
         visibility=ExperienceVisibility.DRAFT,
+        scope=ExperienceScope.USER,
         trigger_type=TriggerType.MANUAL,
         trigger_config=None,
         include_previous_run=False,
@@ -485,6 +487,7 @@ class TestUpdateExperience:
         existing_exp.name = "Old Name"
         existing_exp.description = "Old description"
         existing_exp.visibility = ExperienceVisibility.DRAFT.value
+        existing_exp.scope = ExperienceScope.USER.value
         existing_exp.trigger_type = TriggerType.MANUAL.value
         existing_exp.trigger_config = None
         existing_exp.include_previous_run = False
@@ -523,6 +526,62 @@ class TestUpdateExperience:
 
         # Verify response
         assert isinstance(result, ExperienceResponse)
+
+
+class TestGetRun:
+    """Tests for get_run() ownership and global-run visibility."""
+
+    def _make_mock_run(self, user_id: str | None) -> MagicMock:
+        """Return a minimal mock ExperienceRun with the given user_id."""
+        run = MagicMock()
+        run.user_id = user_id
+        run.started_at = None
+        run.finished_at = None
+        return run
+
+    async def _call_get_run(self, mock_db_session, run: MagicMock | None, user_id: str, is_admin: bool = False):
+        """Wire up db.execute and call get_run()."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = run
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        with patch.object(service, "_run_to_response", return_value=MagicMock()):
+            return await service.get_run("run-123", user_id=user_id, is_admin=is_admin)
+
+    @pytest.mark.asyncio
+    async def test_get_run_not_found(self, mock_db_session):
+        """Returns None when run does not exist."""
+        result = await self._call_get_run(mock_db_session, run=None, user_id="user-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_run_own_run_accessible(self, mock_db_session):
+        """Non-admin can fetch their own run."""
+        run = self._make_mock_run(user_id="user-1")
+        result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_run_other_users_run_blocked(self, mock_db_session):
+        """Non-admin cannot fetch another user's run."""
+        run = self._make_mock_run(user_id="user-2")
+        result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_run_global_run_accessible_by_non_admin(self, mock_db_session):
+        """Non-admin can fetch a global run (user_id IS NULL)."""
+        run = self._make_mock_run(user_id=None)
+        result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_run_admin_can_access_any_run(self, mock_db_session):
+        """Admin can fetch any user's run regardless of ownership."""
+        run = self._make_mock_run(user_id="user-2")
+        result = await self._call_get_run(mock_db_session, run=run, user_id="admin-1", is_admin=True)
+        assert result is not None
 
 
 class TestExperienceExport:
