@@ -1,19 +1,16 @@
-"""Migration 008_0001: Dimensionless vector columns, HNSW indexes, new default model.
+"""Migration 008_0001: Dimensionless vector columns, new default model.
 
 Migrates all Vector(384) columns to dimensionless vector columns so the schema
-supports any embedding model dimension without DDL changes. Replaces IVFFlat
-indexes with HNSW dimension-scoped partial indexes. Updates the default
-embedding model on knowledge_bases from all-MiniLM-L6-v2 to
+supports any embedding model dimension without DDL changes. Drops old IVFFlat
+indexes — new HNSW indexes are created dynamically at runtime by
+VectorStore.ensure_index() based on the configured embedding model's dimension.
+Updates the default embedding model on knowledge_bases from all-MiniLM-L6-v2 to
 Snowflake/snowflake-arctic-embed-l-v2.0.
 
 Columns altered:
 - document_chunks.embedding
 - documents.synopsis_embedding
 - document_queries.query_embedding
-
-Note: HNSW indexes are capped at 2,000 dimensions for the `vector` type.
-If a future model exceeds this (e.g., OpenAI text-embedding-3-large at 3,072),
-the column/index type would need to use `halfvec` instead.
 """
 
 import sqlalchemy as sa
@@ -28,28 +25,9 @@ depends_on = None
 
 # Old IVFFlat indexes to drop
 _OLD_INDEXES = [
-    ("idx_document_chunks_embedding", "document_chunks"),
-    ("ix_documents_synopsis_embedding", "documents"),
-    ("ix_document_queries_query_embedding", "document_queries"),
-]
-
-# New HNSW indexes to create (dimension-scoped partial indexes)
-_NEW_INDEXES = [
-    (
-        "ix_document_chunks_embedding_hnsw_384",
-        "document_chunks",
-        "embedding",
-    ),
-    (
-        "ix_documents_synopsis_embedding_hnsw_384",
-        "documents",
-        "synopsis_embedding",
-    ),
-    (
-        "ix_document_queries_query_embedding_hnsw_384",
-        "document_queries",
-        "query_embedding",
-    ),
+    "idx_document_chunks_embedding",
+    "ix_documents_synopsis_embedding",
+    "ix_document_queries_query_embedding",
 ]
 
 # Columns to alter
@@ -61,9 +39,8 @@ _VECTOR_COLUMNS = [
 
 
 def upgrade() -> None:
-    """ALTER vector columns to dimensionless, replace IVFFlat with HNSW."""
+    """ALTER vector columns to dimensionless, drop IVFFlat indexes."""
     conn = op.get_bind()
-    inspector = sa.inspect(conn)
 
     # Check pgvector availability
     pgvector_available = conn.execute(
@@ -77,23 +54,12 @@ def upgrade() -> None:
     for table, column in _VECTOR_COLUMNS:
         op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector")
 
-    # 2. Drop old IVFFlat indexes
-    for index_name, table_name in _OLD_INDEXES:
-        if index_exists(inspector, table_name, index_name):
-            op.execute(f"DROP INDEX IF EXISTS {index_name}")
+    # 2. Drop old IVFFlat indexes — new HNSW indexes are created at runtime
+    #    by VectorStore.ensure_index() based on the embedding model's dimension.
+    for index_name in _OLD_INDEXES:
+        op.execute(f"DROP INDEX IF EXISTS {index_name}")
 
-    # 3. Create new HNSW dimension-scoped partial indexes
-    for index_name, table_name, column_name in _NEW_INDEXES:
-        if not index_exists(inspector, table_name, index_name):
-            op.execute(
-                f"""
-                CREATE INDEX IF NOT EXISTS {index_name}
-                ON {table_name} USING hnsw (({column_name}::vector(384)) vector_cosine_ops)
-                WHERE vector_dims({column_name}) = 384
-                """
-            )
-
-    # 4. Update default embedding model on knowledge_bases (SHU-606)
+    # 3. Update default embedding model on knowledge_bases (SHU-606)
     op.alter_column(
         "knowledge_bases",
         "embedding_model",
@@ -113,23 +79,18 @@ def downgrade() -> None:
     if not pgvector_available:
         return
 
-    # 1. Drop HNSW indexes
-    for index_name, table_name, _column_name in _NEW_INDEXES:
-        if index_exists(inspector, table_name, index_name):
-            op.execute(f"DROP INDEX IF EXISTS {index_name}")
-
-    # 2. ALTER columns back to vector(384)
+    # 1. ALTER columns back to vector(384)
     for table, column in _VECTOR_COLUMNS:
         op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector(384)")
 
-    # 3. Restore original embedding model default
+    # 2. Restore original embedding model default
     op.alter_column(
         "knowledge_bases",
         "embedding_model",
         server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'"),
     )
 
-    # 4. Recreate original IVFFlat indexes
+    # 3. Recreate original IVFFlat indexes
     if not index_exists(inspector, "document_chunks", "idx_document_chunks_embedding"):
         op.execute(
             """
