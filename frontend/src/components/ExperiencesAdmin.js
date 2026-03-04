@@ -149,6 +149,11 @@ const ExperienceCard = ({ experience, onEdit, onDelete, onRun, onHistory, isDele
                   <Chip size="small" label={timezone} variant="outlined" color="info" />
                 </Tooltip>
               )}
+              {experience.scope === 'global' && (
+                <Tooltip title="Runs once and shares the result with all users">
+                  <Chip size="small" label="Global" color="info" variant="outlined" />
+                </Tooltip>
+              )}
               <Chip size="small" label={`${experience.step_count || 0} steps`} variant="outlined" />
             </Stack>
           </Grid>

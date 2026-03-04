@@ -168,7 +168,9 @@ async def get_run(
 ) -> JSONResponse:
     """Get a specific experience run.
 
-    Only the run owner or admins can view run details.
+    - Admins can view any run.
+    - Non-admins can view their own runs and global runs (user_id IS NULL)
+      only when the parent experience is visible to them.
     """
     logger.info("API: Get run", extra={"run_id": run_id, "user_id": current_user.id})
 
@@ -362,13 +364,16 @@ async def run_experience(
 
     # Non-admins cannot manually trigger global experiences
     if experience_model.scope == ExperienceScope.GLOBAL.value and not is_admin:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "Global experiences can only be triggered manually by admins."},
+        return ShuResponse.error(
+            message="Global experiences can only be triggered manually by admins.",
+            code="GLOBAL_EXPERIENCE_NON_ADMIN",
+            status_code=403,
         )
 
-    # Global experiences run without a specific user owner (user_id=None)
-    run_user_id = None if experience_model.scope == ExperienceScope.GLOBAL.value else str(current_user.id)
+    # Global experiences run without a specific user owner (user_id=None, current_user=None)
+    is_global = experience_model.scope == ExperienceScope.GLOBAL.value
+    run_user_id = None if is_global else str(current_user.id)
+    run_current_user = None if is_global else current_user
 
     config_manager = get_config_manager()
     executor = ExperienceExecutor(db, config_manager)
@@ -376,7 +381,7 @@ async def run_experience(
         experience=experience_model,
         user_id=run_user_id,
         input_params=run_request.input_params if run_request and run_request.input_params else {},
-        current_user=current_user,
+        current_user=run_current_user,
     )
     sse_generator = create_sse_stream_generator(
         event_gen,
@@ -470,7 +475,8 @@ async def list_experience_runs(
     """List runs for a specific experience.
 
     - Admins see all runs
-    - Non-admins only see their own runs
+    - Non-admins see their own runs plus global runs
+    - Experience visibility is applied before returning run history
     """
     logger.info(
         "API: List experience runs",

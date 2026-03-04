@@ -458,7 +458,10 @@ class ExperienceExecutor:
                 # Ownership validation: ensure the run belongs to this experience and user
                 if run.experience_id != str(experience.id):
                     raise ValueError(f"Run {run_id} belongs to experience '{run.experience_id}', not '{experience.id}'")
-                if user_id is not None and run.user_id != str(user_id):
+                if user_id is None:
+                    if run.user_id is not None:
+                        raise PermissionError(f"Run {run_id} is user-scoped, cannot resume as global")
+                elif run.user_id != str(user_id):
                     raise PermissionError(f"Run {run_id} belongs to a different user")
 
                 # Only allow transition from queued/pending → running
@@ -561,6 +564,8 @@ class ExperienceExecutor:
         if experience.scope == ExperienceScope.GLOBAL.value:
             stmt = stmt.where(ExperienceRun.user_id.is_(None))
         else:
+            if user_id is None:
+                return None
             stmt = stmt.where(ExperienceRun.user_id == user_id)
 
         result = await self.db.execute(stmt)

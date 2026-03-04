@@ -639,7 +639,7 @@ class ExperienceService:
     async def list_runs(
         self,
         experience_id: str,
-        user_id: str | None = None,
+        user_id: str,
         is_admin: bool = False,
         limit: int = 50,
         offset: int = 0,
@@ -648,7 +648,7 @@ class ExperienceService:
 
         Args:
             experience_id: Experience ID
-            user_id: Filter by user ID (non-admins see only their own)
+            user_id: Current user ID
             is_admin: Whether current user is admin
             limit: Maximum number of results
             offset: Number of results to skip
@@ -657,10 +657,14 @@ class ExperienceService:
             Paginated list of runs
 
         """
+        # Run history inherits parent experience visibility rules.
+        if not await self._can_access_experience_runs(experience_id, user_id, is_admin):
+            return self._build_paginated_response(ExperienceRunList, [], total=0, offset=offset, limit=limit)
+
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
         # Non-admins see their own runs and global runs (user_id IS NULL)
-        if not is_admin and user_id:
+        if not is_admin:
             stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
         # Execute with pagination
@@ -702,14 +706,12 @@ class ExperienceService:
             }
         return users_by_id
 
-    async def get_run(
-        self, run_id: str, user_id: str | None = None, is_admin: bool = False
-    ) -> ExperienceRunResponse | None:
+    async def get_run(self, run_id: str, user_id: str, is_admin: bool = False) -> ExperienceRunResponse | None:
         """Get a specific run by ID.
 
         Args:
             run_id: Run ID
-            user_id: Current user ID (for ownership check)
+            user_id: Current user ID
             is_admin: Whether current user is admin
 
         Returns:
@@ -724,7 +726,10 @@ class ExperienceService:
             return None
 
         # Ownership check for non-admins; global runs (user_id IS NULL) are visible to all
-        if not is_admin and user_id and run.user_id is not None and run.user_id != user_id:
+        if not is_admin and run.user_id is not None and run.user_id != user_id:
+            return None
+
+        if not await self._can_access_experience_runs(run.experience_id, user_id, is_admin):
             return None
 
         return self._run_to_response(run)
@@ -1105,6 +1110,23 @@ class ExperienceService:
             return True
         # Non-admins only see published experiences
         return experience.visibility == ExperienceVisibility.PUBLISHED.value
+
+    async def _can_access_experience_runs(self, experience_id: str, user_id: str, is_admin: bool) -> bool:
+        """Check whether a user can access run history for an experience."""
+        if not user_id and not is_admin:
+            logger.warning(
+                "Run access check failed: missing user_id for non-admin",
+                extra={"experience_id": experience_id},
+            )
+            return False
+
+        stmt = select(Experience).where(Experience.id == experience_id)
+        result = await self.db.execute(stmt)
+        experience = result.scalar_one_or_none()
+        if not experience:
+            return False
+
+        return self._check_visibility(experience, user_id, is_admin)
 
     def _get_last_run_timestamp(self, experience: Experience) -> datetime | None:
         """Get the last run timestamp for an experience.

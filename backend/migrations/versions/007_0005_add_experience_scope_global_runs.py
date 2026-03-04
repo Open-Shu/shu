@@ -32,7 +32,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Restore NOT NULL on user_id; remove scope column and index."""
-    # Restore NOT NULL — note: any global runs (user_id IS NULL) must be removed first
+    # Delete global runs (user_id IS NULL) before restoring the NOT NULL constraint
+    op.execute("DELETE FROM experience_runs WHERE user_id IS NULL")
     op.alter_column("experience_runs", "user_id", existing_type=sa.String(), nullable=False)
 
     op.drop_index(SCOPE_INDEX, table_name="experiences")

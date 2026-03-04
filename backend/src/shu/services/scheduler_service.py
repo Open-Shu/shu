@@ -160,6 +160,29 @@ class ExperienceSource:
         # a future enhancement could mark old queued runs as failed.
         return 0
 
+    @staticmethod
+    async def _active_run_keys(db: AsyncSession, due_experiences: list[Any]) -> set[tuple[str, str | None]]:
+        """Batch-query active (queued/running) runs to prevent duplicate enqueues.
+
+        Returns a set of (experience_id, user_id) pairs. Global runs have
+        user_id=None. Used for both global and user-scoped dedup in a single query.
+        """
+        from sqlalchemy import and_, select
+
+        exp_ids = [str(exp.id) for exp in due_experiences]
+        if not exp_ids:
+            return set()
+
+        result = await db.execute(
+            select(ExperienceRun.experience_id, ExperienceRun.user_id).where(
+                and_(
+                    ExperienceRun.experience_id.in_(exp_ids),
+                    ExperienceRun.status.in_(["queued", "running"]),
+                )
+            )
+        )
+        return {(row.experience_id, row.user_id) for row in result}
+
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
         from sqlalchemy import and_, select
         from sqlalchemy.orm import selectinload
@@ -189,7 +212,7 @@ class ExperienceSource:
         due_experiences = list(result.scalars().all())
 
         if not due_experiences:
-            return {"due": 0, "enqueued": 0, "queue_enqueued": 0, "no_users": 0}
+            return {"due": 0, "enqueued": 0, "queue_enqueued": 0, "skipped_active_user_runs": 0, "no_users": 0}
 
         # Get all active users once
         user_result = await db.execute(
@@ -210,37 +233,37 @@ class ExperienceSource:
                 "due": len(due_experiences),
                 "enqueued": 0,
                 "queue_enqueued": 0,
+                "skipped_active_user_runs": 0,
                 "no_users": 1,
             }
 
+        # Pre-fetch all active (queued/running) runs for due experiences in one query.
+        # Covers both global (user_id=None) and user-scoped dedup.
+        active_run_keys = await self._active_run_keys(db, due_experiences)
+
         enqueued = 0
         queue_enqueued = 0
+        skipped_active = 0
 
         for exp in due_experiences:
             if exp.scope == ExperienceScope.GLOBAL.value:
                 # Global scope: one shared run, not per-user fan-out.
-                # Skip if a queued/running global run already exists.
-                active_result = await db.execute(
-                    select(ExperienceRun).where(
-                        and_(
-                            ExperienceRun.experience_id == str(exp.id),
-                            ExperienceRun.user_id.is_(None),
-                            ExperienceRun.status.in_(["queued", "running"]),
-                        )
-                    )
-                )
-                if active_result.scalar_one_or_none() is not None:
+                if (str(exp.id), None) in active_run_keys:
                     logger.debug(
-                        "Global experience already has an active run, skipping",
+                        "Global experience already has an active run, skipping enqueue",
                         extra={"experience_id": exp.id},
                     )
+                    skipped_active += 1
                     continue
 
                 if await _enqueue_experience_run(db, queue, exp, user_id=None):
                     queue_enqueued += 1
             else:
-                # Fan out: one job per active user
+                # Fan out: one job per active user, skipping pairs with active runs
                 for user in all_users:
+                    if (str(exp.id), str(user.id)) in active_run_keys:
+                        skipped_active += 1
+                        continue
                     if await _enqueue_experience_run(db, queue, exp, user_id=str(user.id)):
                         queue_enqueued += 1
 
@@ -265,17 +288,19 @@ class ExperienceSource:
         await db.commit()
 
         logger.info(
-            "Experience source tick | due=%d enqueued=%d queue_enqueued=%d users=%d",
+            "Experience source tick | due=%d enqueued=%d queue_enqueued=%d users=%d skipped_active=%d",
             len(due_experiences),
             enqueued,
             queue_enqueued,
             len(all_users),
+            skipped_active,
         )
 
         return {
             "due": len(due_experiences),
             "enqueued": enqueued,
             "queue_enqueued": queue_enqueued,
+            "skipped_active_user_runs": skipped_active,
             "no_users": 0,
         }
 
