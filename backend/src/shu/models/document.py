@@ -133,7 +133,7 @@ class Document(BaseModel):
     # Shu RAG Document Profile (SHU-342)
     # Synopsis: One-paragraph summary for document-level retrieval
     synopsis = Column(Text, nullable=True)
-    synopsis_embedding = Column(Vector(384), nullable=True)
+    synopsis_embedding = Column(Vector(), nullable=True)
 
     # Document type classification (narrative, transactional, technical, conversational)
     document_type = Column(String(50), nullable=True)
@@ -345,8 +345,8 @@ class DocumentChunk(BaseModel):
     chunk_index = Column(Integer, nullable=False)  # Position within the document
     content = Column(Text, nullable=False)  # Chunk text content
 
-    # Vector embedding (384 dimensions for all-MiniLM-L6-v2)
-    embedding = Column(Vector(384), nullable=True)
+    # Vector embedding — dimensionless; dimension derived from embedding model at runtime
+    embedding = Column(Vector(), nullable=True)
 
     # Chunk metadata
     char_count = Column(Integer, nullable=False)
@@ -495,8 +495,8 @@ class DocumentQuery(BaseModel):
     # Query content
     query_text = Column(Text, nullable=False)
 
-    # Vector embedding for similarity search (384 dimensions for MiniLM)
-    query_embedding = Column(Vector(384), nullable=True)
+    # Vector embedding for similarity search — dimensionless; dimension derived from embedding model at runtime
+    query_embedding = Column(Vector(), nullable=True)
 
     # Relationships
     document = relationship("Document", back_populates="queries")
