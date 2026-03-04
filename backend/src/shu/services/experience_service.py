@@ -518,7 +518,7 @@ class ExperienceService:
                         if isinstance(s, str) and s.strip() and s.strip() not in scopes:
                             scopes.append(s.strip())
 
-            # Also check required_identities in manifest for global scopes
+            # Also check required_identities in manifest for shared scopes
             # This would be accessible through the full manifest, but PluginRecord
             # doesn't expose it directly. For now, op_auth scopes are sufficient.
 
@@ -663,7 +663,7 @@ class ExperienceService:
 
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
-        # Non-admins see their own runs and global runs (user_id IS NULL)
+        # Non-admins see their own runs and shared runs (user_id IS NULL)
         if not is_admin:
             stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
@@ -725,7 +725,7 @@ class ExperienceService:
         if not run:
             return None
 
-        # Ownership check for non-admins; global runs (user_id IS NULL) are visible to all
+        # Ownership check for non-admins; shared runs (user_id IS NULL) are visible to all
         if not is_admin and run.user_id is not None and run.user_id != user_id:
             return None
 

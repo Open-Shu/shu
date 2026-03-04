@@ -29,7 +29,7 @@ class ExperienceScope(str, Enum):
     """Scope of experience execution."""
 
     USER = "user"
-    GLOBAL = "global"
+    SHARED = "shared"
 
 
 class TriggerType(str, Enum):

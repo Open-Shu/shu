@@ -201,23 +201,23 @@ class TestExperienceSource:
         assert mock_exp.last_run_at is not None
 
     @pytest.mark.asyncio
-    async def test_enqueue_due_global_scope_enqueues_single_shared_job(self):
-        """Global experiences enqueue exactly one shared run/job, not per-user fan-out."""
+    async def test_enqueue_due_shared_scope_enqueues_single_shared_job(self):
+        """Shared experiences enqueue exactly one shared run/job, not per-user fan-out."""
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
         queue = AsyncMock()
 
-        # Mock global experience
+        # Mock shared experience
         mock_exp = MagicMock()
-        mock_exp.id = "exp-global-1"
+        mock_exp.id = "exp-shared-1"
         mock_exp.trigger_type = "cron"
         mock_exp.created_by = None
         mock_exp.model_configuration_id = None
-        mock_exp.scope = "global"
+        mock_exp.scope = "shared"
         mock_exp.schedule_next = MagicMock()
 
-        # Mock users (should not affect global fan-out count)
+        # Mock users (should not affect shared fan-out count)
         mock_user1 = MagicMock()
         mock_user1.id = "user-1"
         mock_user2 = MagicMock()
@@ -260,19 +260,19 @@ class TestExperienceSource:
         assert mock_exp.last_run_at is not None
 
     @pytest.mark.asyncio
-    async def test_enqueue_due_global_scope_skips_when_active_global_run_exists(self):
-        """Global experiences are skipped when a queued/running global run already exists."""
+    async def test_enqueue_due_shared_scope_skips_when_active_shared_run_exists(self):
+        """Shared experiences are skipped when a queued/running shared run already exists."""
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
         queue = AsyncMock()
 
         mock_exp = MagicMock()
-        mock_exp.id = "exp-global-1"
+        mock_exp.id = "exp-shared-1"
         mock_exp.trigger_type = "cron"
         mock_exp.created_by = None
         mock_exp.model_configuration_id = None
-        mock_exp.scope = "global"
+        mock_exp.scope = "shared"
         mock_exp.schedule_next = MagicMock()
 
         mock_user = MagicMock()
@@ -291,9 +291,9 @@ class TestExperienceSource:
                 # Active users
                 result.scalars.return_value.all.return_value = [mock_user]
             elif call_count == 3:
-                # Batch active-runs query — global run exists (user_id=None)
+                # Batch active-runs query — shared run exists (user_id=None)
                 active_row = MagicMock()
-                active_row.experience_id = "exp-global-1"
+                active_row.experience_id = "exp-shared-1"
                 active_row.user_id = None
                 result.__iter__ = MagicMock(return_value=iter([active_row]))
             else:
@@ -483,19 +483,19 @@ class TestExperienceSource:
         assert mock_enqueue_run.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_enqueue_due_global_scope_unaffected_by_user_dedup(self):
-        """Global experience uses the same batch query but checks (exp_id, None) key."""
+    async def test_enqueue_due_shared_scope_unaffected_by_user_dedup(self):
+        """Shared experience uses the same batch query but checks (exp_id, None) key."""
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
         queue = AsyncMock()
 
         mock_exp = MagicMock()
-        mock_exp.id = "exp-global-1"
+        mock_exp.id = "exp-shared-1"
         mock_exp.trigger_type = "cron"
         mock_exp.created_by = None
         mock_exp.model_configuration_id = None
-        mock_exp.scope = "global"
+        mock_exp.scope = "shared"
         mock_exp.schedule_next = MagicMock()
 
         mock_user = MagicMock()
@@ -527,7 +527,7 @@ class TestExperienceSource:
         ) as mock_enqueue_run:
             result = await source.enqueue_due(db, queue, limit=10)
 
-        # Global experience enqueues one shared job
+        # shared experience enqueues one shared job
         assert result["queue_enqueued"] == 1
         assert result["skipped_active_user_runs"] == 0
         assert mock_enqueue_run.call_count == 1

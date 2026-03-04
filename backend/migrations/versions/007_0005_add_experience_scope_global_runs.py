@@ -1,8 +1,8 @@
 """Migration 007_0005: Add scope column to experiences and make user_id nullable in experience_runs.
 
-Introduces global experiences — experiences that run once and share their result with all users.
-- experiences.scope (VARCHAR 20, NOT NULL, default 'user') distinguishes per-user vs global experiences.
-- experience_runs.user_id becomes nullable; global runs store user_id = NULL.
+Introduces shared experiences — experiences that run once and share their result with all users.
+- experiences.scope (VARCHAR 20, NOT NULL, default 'user') distinguishes per-user vs shared experiences.
+- experience_runs.user_id becomes nullable; shared runs store user_id = NULL.
 """
 
 import sqlalchemy as sa
@@ -26,13 +26,13 @@ def upgrade() -> None:
     )
     op.create_index(SCOPE_INDEX, "experiences", ["scope"])
 
-    # Make experience_runs.user_id nullable for global runs (user_id = NULL)
+    # Make experience_runs.user_id nullable for shared runs (user_id = NULL)
     op.alter_column("experience_runs", "user_id", existing_type=sa.String(), nullable=True)
 
 
 def downgrade() -> None:
     """Restore NOT NULL on user_id; remove scope column and index."""
-    # Delete global runs (user_id IS NULL) before restoring the NOT NULL constraint
+    # Delete shared runs (user_id IS NULL) before restoring the NOT NULL constraint
     op.execute("DELETE FROM experience_runs WHERE user_id IS NULL")
     op.alter_column("experience_runs", "user_id", existing_type=sa.String(), nullable=False)
 

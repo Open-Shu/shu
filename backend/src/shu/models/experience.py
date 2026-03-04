@@ -43,7 +43,7 @@ class Experience(BaseModel):
     # Ownership & visibility
     created_by = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     visibility = Column(String(20), default="draft", nullable=False)  # draft, admin_only, published
-    scope = Column(String(20), default="user", nullable=False)  # user, global
+    scope = Column(String(20), default="user", nullable=False)  # user, shared
 
     # Trigger configuration
     trigger_type = Column(String(20), default="manual", nullable=False)  # manual, scheduled, cron

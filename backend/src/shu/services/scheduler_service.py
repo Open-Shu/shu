@@ -93,7 +93,7 @@ async def _enqueue_experience_run(
     """Create one ExperienceRun and enqueue one LLM_WORKFLOW job.
 
     Returns True on success. On failure, rolls back the flushed run and logs
-    the error. Accepts user_id=None for global (non-per-user) runs.
+    the error. Accepts user_id=None for shared (non-per-user) runs.
     """
     run = None
     try:
@@ -164,8 +164,8 @@ class ExperienceSource:
     async def _active_run_keys(db: AsyncSession, due_experiences: list[Any]) -> set[tuple[str, str | None]]:
         """Batch-query active (queued/running) runs to prevent duplicate enqueues.
 
-        Returns a set of (experience_id, user_id) pairs. Global runs have
-        user_id=None. Used for both global and user-scoped dedup in a single query.
+        Returns a set of (experience_id, user_id) pairs. Shared runs have
+        user_id=None. Used for both shared and user-scoped dedup in a single query.
         """
         from sqlalchemy import and_, select
 
@@ -238,7 +238,7 @@ class ExperienceSource:
             }
 
         # Pre-fetch all active (queued/running) runs for due experiences in one query.
-        # Covers both global (user_id=None) and user-scoped dedup.
+        # Covers both shared (user_id=None) and user-scoped dedup.
         active_run_keys = await self._active_run_keys(db, due_experiences)
 
         enqueued = 0
@@ -246,11 +246,11 @@ class ExperienceSource:
         skipped_active = 0
 
         for exp in due_experiences:
-            if exp.scope == ExperienceScope.GLOBAL.value:
-                # Global scope: one shared run, not per-user fan-out.
+            if exp.scope == ExperienceScope.SHARED.value:
+                # Shared scope: one shared run, not per-user fan-out.
                 if (str(exp.id), None) in active_run_keys:
                     logger.debug(
-                        "Global experience already has an active run, skipping enqueue",
+                        "Shared experience already has an active run, skipping enqueue",
                         extra={"experience_id": exp.id},
                     )
                     skipped_active += 1

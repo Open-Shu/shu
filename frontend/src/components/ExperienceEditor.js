@@ -419,10 +419,10 @@ export default function ExperienceEditor() {
                       <InputLabel>Scope</InputLabel>
                       <Select value={scope} label="Scope" onChange={handleFieldChange(setScope, 'scope')}>
                         <MenuItem value="user">Per User</MenuItem>
-                        <MenuItem value="global">Global</MenuItem>
+                        <MenuItem value="shared">Shared</MenuItem>
                       </Select>
                       <FormHelperText>
-                        {scope === 'global' ? 'Runs once, result shared with all users' : 'Runs once per active user'}
+                        {scope === 'shared' ? 'Runs once, result shared with all users' : 'Runs once per active user'}
                       </FormHelperText>
                     </FormControl>
                     <TextField
@@ -435,6 +435,11 @@ export default function ExperienceEditor() {
                       helperText="Timeout before the run is cancelled"
                     />
                   </Stack>
+                  {scope === 'shared' && (
+                    <Alert severity="info">
+                      This experience will run using the creator's account for data access and plugin authentication.
+                    </Alert>
+                  )}
                   <FormControlLabel
                     control={
                       <Switch

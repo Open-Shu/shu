@@ -169,7 +169,7 @@ async def get_run(
     """Get a specific experience run.
 
     - Admins can view any run.
-    - Non-admins can view their own runs and global runs (user_id IS NULL)
+    - Non-admins can view their own runs and shared runs (user_id IS NULL)
       only when the parent experience is visible to them.
     """
     logger.info("API: Get run", extra={"run_id": run_id, "user_id": current_user.id})
@@ -350,7 +350,7 @@ async def run_experience(
 
     result = await db.execute(
         select(Experience)
-        .options(selectinload(Experience.steps), selectinload(Experience.prompt))
+        .options(selectinload(Experience.steps), selectinload(Experience.prompt), selectinload(Experience.creator))
         .where(Experience.id == experience_id)
     )
     experience_model = result.scalars().first()
@@ -362,18 +362,25 @@ async def run_experience(
             status_code=404,
         )
 
-    # Non-admins cannot manually trigger global experiences
-    if experience_model.scope == ExperienceScope.GLOBAL.value and not is_admin:
+    # Non-admins cannot manually trigger shared experiences
+    if experience_model.scope == ExperienceScope.SHARED.value and not is_admin:
         return ShuResponse.error(
-            message="Global experiences can only be triggered manually by admins.",
-            code="GLOBAL_EXPERIENCE_NON_ADMIN",
+            message="Shared experiences can only be triggered manually by admins.",
+            code="SHARED_EXPERIENCE_NON_ADMIN",
             status_code=403,
         )
 
-    # Global experiences run without a specific user owner (user_id=None, current_user=None)
-    is_global = experience_model.scope == ExperienceScope.GLOBAL.value
-    run_user_id = None if is_global else str(current_user.id)
-    run_current_user = None if is_global else current_user
+    # Shared experiences: run record stays user_id=None, but execute with creator identity
+    is_shared = experience_model.scope == ExperienceScope.SHARED.value
+    if is_shared and (not experience_model.creator or not experience_model.creator.is_active):
+        return ShuResponse.error(
+            message="The creator of this shared experience is inactive. Re-activate their account or reassign the experience.",
+            code="SHARED_EXPERIENCE_CREATOR_INACTIVE",
+            status_code=403,
+        )
+
+    run_user_id = None if is_shared else str(current_user.id)
+    run_current_user = experience_model.creator if is_shared else current_user
 
     config_manager = get_config_manager()
     executor = ExperienceExecutor(db, config_manager)
@@ -475,7 +482,7 @@ async def list_experience_runs(
     """List runs for a specific experience.
 
     - Admins see all runs
-    - Non-admins see their own runs plus global runs
+    - Non-admins see their own runs plus shared runs
     - Experience visibility is applied before returning run history
     """
     logger.info(

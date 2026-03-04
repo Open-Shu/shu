@@ -6,7 +6,7 @@ Tests cover:
 - Helper methods (pagination, base query)
 - Required scopes computation
 - Visibility checks
-- Global scope: creation, run visibility, access control
+- Shared scope: creation, run visibility, access control
 """
 
 from datetime import datetime
@@ -530,7 +530,7 @@ class TestUpdateExperience:
 
 
 class TestGetRun:
-    """Tests for get_run() ownership and global-run visibility."""
+    """Tests for get_run() ownership and shared-run visibility."""
 
     def _make_mock_run(self, user_id: str | None) -> MagicMock:
         """Return a minimal mock ExperienceRun with the given user_id."""
@@ -585,8 +585,8 @@ class TestGetRun:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_run_global_run_accessible_by_non_admin(self, mock_db_session):
-        """Non-admin can fetch a global run (user_id IS NULL)."""
+    async def test_get_run_shared_run_accessible_by_non_admin(self, mock_db_session):
+        """Non-admin can fetch a shared run (user_id IS NULL)."""
         run = self._make_mock_run(user_id=None)
         result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
         assert result is not None
@@ -781,7 +781,7 @@ class TestExperienceExport:
 
 
 # ---------------------------------------------------------------------------
-# Global-scope tests
+# Shared-scope tests
 # ---------------------------------------------------------------------------
 
 
@@ -809,25 +809,25 @@ def _make_mock_run(user_id: str | None, run_id: str = "run-1") -> MagicMock:
     return run
 
 
-class TestCreateGlobalExperience:
-    """Tests for creating experiences with scope='global'."""
+class TestCreateSharedExperience:
+    """Tests for creating experiences with scope='shared'."""
 
     @pytest.mark.asyncio
     @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
     @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
-    async def test_create_global_experience_stores_scope_field(
+    async def test_create_shared_experience_stores_scope_field(
         self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
     ):
-        """Creating an experience with scope='global' persists and returns the scope."""
-        # Override the fixture response to have global scope
-        mock_experience_response.scope = ExperienceScope.GLOBAL
+        """Creating an experience with scope='shared' persists and returns the scope."""
+        # Override the fixture response to have shared scope
+        mock_experience_response.scope = ExperienceScope.SHARED
 
         service = ExperienceService(mock_db_session)
 
         experience_data = ExperienceCreate(
             name="Daily Briefing",
-            description="A global daily briefing",
-            scope=ExperienceScope.GLOBAL,
+            description="A shared daily briefing",
+            scope=ExperienceScope.SHARED,
             visibility=ExperienceVisibility.DRAFT,
             trigger_type=TriggerType.MANUAL,
             steps=[],
@@ -836,24 +836,24 @@ class TestCreateGlobalExperience:
         with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
             result = await service.create_experience(experience_data, created_by="admin-1")
 
-        assert result.scope == ExperienceScope.GLOBAL
+        assert result.scope == ExperienceScope.SHARED
 
-        # Verify the Experience ORM object added to DB had scope="global"
+        # Verify the Experience ORM object added to DB had scope="shared"
         added_calls = mock_db_session.add.call_args_list
         experience_obj = added_calls[0][0][0]
-        assert experience_obj.scope == "global"
+        assert experience_obj.scope == "shared"
 
     @pytest.mark.asyncio
     @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
     @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
-    async def test_create_global_experience_with_auth_steps_succeeds(
+    async def test_create_shared_experience_with_auth_steps_succeeds(
         self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
     ):
         """No creation-time rejection even if steps declare user OAuth.
 
         Auth resolution happens at execution time, not creation time.
         """
-        mock_experience_response.scope = ExperienceScope.GLOBAL
+        mock_experience_response.scope = ExperienceScope.SHARED
 
         service = ExperienceService(mock_db_session)
 
@@ -867,8 +867,8 @@ class TestCreateGlobalExperience:
 
         experience_data = ExperienceCreate(
             name="Inbox Summary",
-            description="Global inbox summary with user auth steps",
-            scope=ExperienceScope.GLOBAL,
+            description="Shared inbox summary with user auth steps",
+            scope=ExperienceScope.SHARED,
             visibility=ExperienceVisibility.DRAFT,
             trigger_type=TriggerType.MANUAL,
             steps=[step],
@@ -878,17 +878,17 @@ class TestCreateGlobalExperience:
             result = await service.create_experience(experience_data, created_by="admin-1")
 
         # If we got here without raising, creation succeeded
-        assert result.scope == ExperienceScope.GLOBAL
+        assert result.scope == ExperienceScope.SHARED
         assert mock_db_session.commit.called
 
 
-class TestListRunsGlobalVisibility:
-    """Tests for list_runs visibility of global runs vs user-scoped runs."""
+class TestListRunsSharedVisibility:
+    """Tests for list_runs visibility of shared runs vs user-scoped runs."""
 
     @pytest.mark.asyncio
-    async def test_list_runs_non_admin_includes_global_runs(self, mock_db_session):
+    async def test_list_runs_non_admin_includes_shared_runs(self, mock_db_session):
         """Non-admin sees runs where user_id=NULL alongside their own."""
-        global_run = _make_mock_run(user_id=None, run_id="run-global")
+        shared_run = _make_mock_run(user_id=None, run_id="run-shared")
         user_run = _make_mock_run(user_id="user-1", run_id="run-user")
 
         call_count = 0
@@ -902,7 +902,7 @@ class TestListRunsGlobalVisibility:
                 result.scalar.return_value = 2
             elif call_count == 2:
                 # Paginated query
-                result.scalars.return_value.all.return_value = [global_run, user_run]
+                result.scalars.return_value.all.return_value = [shared_run, user_run]
             else:
                 # User info query
                 user_mock = MagicMock()
@@ -924,18 +924,18 @@ class TestListRunsGlobalVisibility:
 
         assert result.total == 2
         run_ids = {r.id for r in result.items}
-        assert "run-global" in run_ids
+        assert "run-shared" in run_ids
         assert "run-user" in run_ids
 
     @pytest.mark.asyncio
     async def test_list_runs_non_admin_excludes_other_users_runs(self, mock_db_session):
-        """Non-admin does not see another user's non-global runs.
+        """Non-admin does not see another user's non-shared runs.
 
         The SQL filter (user_id = :uid OR user_id IS NULL) excludes runs
         owned by other users. We verify the response contains only the
         expected runs.
         """
-        global_run = _make_mock_run(user_id=None, run_id="run-global")
+        shared_run = _make_mock_run(user_id=None, run_id="run-shared")
         own_run = _make_mock_run(user_id="user-1", run_id="run-own")
         # user-2's run is excluded by the SQL filter, not returned by DB
 
@@ -948,7 +948,7 @@ class TestListRunsGlobalVisibility:
             if call_count == 1:
                 result.scalar.return_value = 2
             elif call_count == 2:
-                result.scalars.return_value.all.return_value = [global_run, own_run]
+                result.scalars.return_value.all.return_value = [shared_run, own_run]
             else:
                 user_mock = MagicMock()
                 user_mock.id = "user-1"
@@ -968,7 +968,7 @@ class TestListRunsGlobalVisibility:
             )
 
         run_ids = {r.id for r in result.items}
-        assert "run-global" in run_ids
+        assert "run-shared" in run_ids
         assert "run-own" in run_ids
         assert "run-other" not in run_ids
 
@@ -987,15 +987,15 @@ class TestListRunsGlobalVisibility:
         assert result.items == []
 
     @pytest.mark.asyncio
-    async def test_list_runs_after_scope_change_global_to_user(self, mock_db_session):
-        """After experience scope changes global→user, existing global runs
+    async def test_list_runs_after_scope_change_shared_to_user(self, mock_db_session):
+        """After experience scope changes shared→user, existing shared runs
         (user_id=NULL) remain visible to admins but the non-admin query still
         includes them via the OR user_id IS NULL clause.
 
         This documents current behaviour — the list_runs query does not join
-        on Experience.scope, so stale global runs remain visible to non-admins.
+        on Experience.scope, so stale shared runs remain visible to non-admins.
         """
-        stale_global_run = _make_mock_run(user_id=None, run_id="run-stale-global")
+        stale_shared_run = _make_mock_run(user_id=None, run_id="run-stale-shared")
         new_user_run = _make_mock_run(user_id="user-1", run_id="run-new-user")
 
         # -- Non-admin query --
@@ -1008,7 +1008,7 @@ class TestListRunsGlobalVisibility:
             if call_count == 1:
                 result.scalar.return_value = 2
             elif call_count == 2:
-                result.scalars.return_value.all.return_value = [stale_global_run, new_user_run]
+                result.scalars.return_value.all.return_value = [stale_shared_run, new_user_run]
             else:
                 user_mock = MagicMock()
                 user_mock.id = "user-1"
@@ -1040,7 +1040,7 @@ class TestListRunsGlobalVisibility:
             if admin_call_count == 1:
                 result.scalar.return_value = 2
             elif admin_call_count == 2:
-                result.scalars.return_value.all.return_value = [stale_global_run, new_user_run]
+                result.scalars.return_value.all.return_value = [stale_shared_run, new_user_run]
             else:
                 user_mock = MagicMock()
                 user_mock.id = "user-1"
@@ -1059,20 +1059,20 @@ class TestListRunsGlobalVisibility:
             )
 
         admin_ids = {r.id for r in admin_result.items}
-        assert "run-stale-global" in admin_ids
+        assert "run-stale-shared" in admin_ids
         assert "run-new-user" in admin_ids
 
 
-class TestGetRunGlobalAccess:
-    """Tests for get_run access control with global runs."""
+class TestGetRunSharedAccess:
+    """Tests for get_run access control with shared runs."""
 
     @pytest.mark.asyncio
-    async def test_get_run_global_accessible_to_any_user(self, mock_db_session):
+    async def test_get_run_shared_accessible_to_any_user(self, mock_db_session):
         """Any authenticated user can fetch a run with user_id=NULL."""
-        global_run = _make_mock_run(user_id=None, run_id="run-global")
+        shared_run = _make_mock_run(user_id=None, run_id="run-shared")
 
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = global_run
+        mock_result.scalar_one_or_none.return_value = shared_run
         mock_db_session.execute.return_value = mock_result
 
         service = ExperienceService(mock_db_session)
@@ -1080,11 +1080,11 @@ class TestGetRunGlobalAccess:
         # User "user-99" who did not create the run can still access it
         with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
             result = await service.get_run(
-                run_id="run-global",
+                run_id="run-shared",
                 user_id="user-99",
                 is_admin=False,
             )
 
         assert result is not None
-        assert result.id == "run-global"
+        assert result.id == "run-shared"
         assert result.user_id is None

@@ -112,8 +112,8 @@ class TestContextBuilding:
         assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
 
     @pytest.mark.asyncio
-    async def test_build_initial_context_global_run_user_is_none(self, executor):
-        """Context 'user' key is None when current_user=None (global run)."""
+    async def test_build_initial_context_shared_run_user_is_none(self, executor):
+        """Context 'user' key is None when current_user=None (shared run)."""
         experience = MagicMock()
         experience.include_previous_run = False
 
@@ -129,7 +129,7 @@ class TestContextBuilding:
         assert context["steps"] == {}
 
     @pytest.mark.asyncio
-    async def test_build_initial_context_global_run_uses_utc_datetime(self, executor):
+    async def test_build_initial_context_shared_run_uses_utc_datetime(self, executor):
         """When user_id=None, current_datetime falls back to UTC ISO string."""
         experience = MagicMock()
         experience.include_previous_run = False
@@ -442,13 +442,13 @@ class TestRunManagement:
         assert run.model_configuration_id == "config-1"
 
     @pytest.mark.asyncio
-    async def test_create_or_resume_run_global_skips_ownership_check(self, executor):
-        """user_id=None does not raise PermissionError when resuming a global run."""
+    async def test_create_or_resume_run_shared_skips_ownership_check(self, executor):
+        """user_id=None does not raise PermissionError when resuming a shared run."""
         experience = MagicMock()
         experience.id = "exp-123"
         experience.model_configuration_id = "config-1"
 
-        # Simulate an existing queued global run (user_id=None)
+        # Simulate an existing queued shared run (user_id=None)
         existing_run = MagicMock()
         existing_run.experience_id = "exp-123"
         existing_run.user_id = None
@@ -636,10 +636,10 @@ class TestPreviousRunBacklink:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_previous_run_global_uses_null_user_id(self, executor):
-        """For scope='global', _get_previous_run queries runs where user_id IS NULL."""
+    async def test_get_previous_run_shared_uses_null_user_id(self, executor):
+        """For scope='shared', _get_previous_run queries runs where user_id IS NULL."""
         mock_run = MagicMock()
-        mock_run.result_content = "Global result"
+        mock_run.result_content = "Shared result"
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.first.return_value = mock_run
@@ -647,7 +647,7 @@ class TestPreviousRunBacklink:
 
         experience = MagicMock()
         experience.id = "exp-123"
-        experience.scope = "global"
+        experience.scope = "shared"
 
         result = await executor._get_previous_run(experience, user_id=None)
 

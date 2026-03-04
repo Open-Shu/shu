@@ -113,7 +113,7 @@ class ExperienceExecutor:
 
         Args:
             model_configuration_id: ID of the model configuration to load
-            current_user: Current user for access validation (None for global runs)
+            current_user: Current user for access validation (None for shared runs)
 
         Returns:
             ModelConfiguration if valid, None if validation fails
@@ -134,7 +134,7 @@ class ExperienceExecutor:
             logger.error(
                 "Model configuration validation failed | config_id=%s user=%s error=%s",
                 model_configuration_id,
-                current_user.email if current_user else "global",
+                current_user.email if current_user else "shared",
                 error_message,
             )
             return None
@@ -155,6 +155,8 @@ class ExperienceExecutor:
         - run_completed or error
 
         Args:
+            user_id: Run record ownership (NULL for shared runs).
+            current_user: Execution identity for steps (creator for shared runs).
             run_id: Optional pre-created ExperienceRun ID (e.g., from queue scheduler).
                 If provided, the existing run is transitioned to "running" instead of
                 creating a new one.
@@ -460,7 +462,7 @@ class ExperienceExecutor:
                     raise ValueError(f"Run {run_id} belongs to experience '{run.experience_id}', not '{experience.id}'")
                 if user_id is None:
                     if run.user_id is not None:
-                        raise PermissionError(f"Run {run_id} is user-scoped, cannot resume as global")
+                        raise PermissionError(f"Run {run_id} is user-scoped, cannot resume as shared")
                 elif run.user_id != str(user_id):
                     raise PermissionError(f"Run {run_id} belongs to a different user")
 
@@ -549,7 +551,7 @@ class ExperienceExecutor:
     ) -> ExperienceRun | None:
         """Get the most recent successful run for context continuity.
 
-        For global experiences: finds the last global run (user_id IS NULL).
+        For shared experiences: finds the last shared run (user_id IS NULL).
         For user experiences: finds the last run for this specific user.
         """
         stmt = (
@@ -561,7 +563,7 @@ class ExperienceExecutor:
             .order_by(ExperienceRun.finished_at.desc())
             .limit(1)
         )
-        if experience.scope == ExperienceScope.GLOBAL.value:
+        if experience.scope == ExperienceScope.SHARED.value:
             stmt = stmt.where(ExperienceRun.user_id.is_(None))
         else:
             if user_id is None:
@@ -621,8 +623,10 @@ class ExperienceExecutor:
         if experience.include_previous_run:
             previous_run = await self._get_previous_run(experience, user_id)
 
-        if user_id is not None:
-            formatted_now = await self._get_user_formatted_datetime(user_id)
+        # Use current_user for timezone when user_id is None (shared runs)
+        tz_user_id = user_id or (str(current_user.id) if current_user else None)
+        if tz_user_id is not None:
+            formatted_now = await self._get_user_formatted_datetime(tz_user_id)
         else:
             formatted_now = datetime.now(UTC).isoformat()
 
@@ -681,7 +685,10 @@ class ExperienceExecutor:
     ) -> dict[str, Any]:
         """Execute a single step (plugin, KB, or decision_control)."""
         if step.step_type == "plugin":
-            return await self._execute_plugin_step(step, context, user_id, knowledge_base_ids)
+            # For shared runs user_id is None (run ownership), but plugins need a
+            # real user ID for auth/identity. Derive from current_user (the creator).
+            plugin_user_id = str(current_user.id) if current_user else user_id
+            return await self._execute_plugin_step(step, context, plugin_user_id, knowledge_base_ids)
         if step.step_type == "knowledge_base":
             return await self._execute_kb_step(step, context, current_user)
         if step.step_type == "decision_control":
@@ -737,8 +744,6 @@ class ExperienceExecutor:
         current_user: User | None,
     ) -> dict[str, Any]:
         """Execute KB query using shared RAG processing logic."""
-        if current_user is None:
-            raise ValueError(f"Step '{step.step_key}' requires user identity but this is a global (no-user) run")
         kb_id = step.knowledge_base_id
         if not kb_id:
             raise ValueError(f"Step {step.step_key} missing knowledge_base_id")
