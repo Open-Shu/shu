@@ -197,6 +197,8 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
 
     id: str = Field(..., description="Knowledge base ID")
     status: KnowledgeBaseStatus = Field(..., description="Knowledge base status")
+    embedding_status: str = Field("current", description="Embedding status: current, stale, re_embedding, error")
+    re_embedding_progress: dict | None = Field(None, description="Re-embedding progress when status is re_embedding")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")
@@ -227,6 +229,7 @@ class KnowledgeBaseSummary(BaseModel):
     description: str | None = Field(None, description="Knowledge base description")
     source_types: list[str] = Field(..., description="Source types used in this knowledge base")
     status: KnowledgeBaseStatus = Field(..., description="Status")
+    embedding_status: str = Field("current", description="Embedding status: current, stale, re_embedding, error")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")

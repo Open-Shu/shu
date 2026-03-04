@@ -233,6 +233,21 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.error(f"Failed to initialize vector store: {e}", exc_info=True)
 
+    # Detect stale knowledge bases (embedding model mismatch)
+    try:
+        from .core.database import get_async_session_local
+        from .core.embedding_service import get_embedding_service
+        from .services.knowledge_base_service import detect_stale_kbs
+
+        embedding_service = await get_embedding_service()
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            stale_ids = await detect_stale_kbs(session, embedding_service.model_name)
+            if stale_ids:
+                logger.warning(f"Found {len(stale_ids)} stale knowledge base(s) needing re-embedding")
+    except Exception as e:
+        logger.error(f"Failed to detect stale knowledge bases: {e}", exc_info=True)
+
     # Start unified scheduler (plugin feeds + experiences + maintenance tasks)
     try:
         from .services.scheduler_service import start_scheduler

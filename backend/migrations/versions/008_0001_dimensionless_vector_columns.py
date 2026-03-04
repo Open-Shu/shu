@@ -1,4 +1,4 @@
-"""Migration 008_0001: Dimensionless vector columns, new default model.
+"""Migration 008_0001: Dimensionless vector columns, new default model, embedding status.
 
 Migrates all Vector(384) columns to dimensionless vector columns so the schema
 supports any embedding model dimension without DDL changes. Drops old IVFFlat
@@ -7,10 +7,17 @@ VectorStore.ensure_index() based on the configured embedding model's dimension.
 Updates the default embedding model on knowledge_bases from all-MiniLM-L6-v2 to
 Snowflake/snowflake-arctic-embed-l-v2.0.
 
+Adds embedding_status and re_embedding_progress columns to knowledge_bases for
+stale KB detection and re-embedding progress tracking (SHU-605).
+
 Columns altered:
 - document_chunks.embedding
 - documents.synopsis_embedding
 - document_queries.query_embedding
+
+Columns added:
+- knowledge_bases.embedding_status
+- knowledge_bases.re_embedding_progress
 """
 
 import sqlalchemy as sa
@@ -66,6 +73,21 @@ def upgrade() -> None:
         server_default=sa.text("'Snowflake/snowflake-arctic-embed-l-v2.0'"),
     )
 
+    # 4. Add embedding status tracking columns (SHU-605)
+    op.add_column(
+        "knowledge_bases",
+        sa.Column(
+            "embedding_status",
+            sa.String(20),
+            server_default=sa.text("'current'"),
+            nullable=False,
+        ),
+    )
+    op.add_column(
+        "knowledge_bases",
+        sa.Column("re_embedding_progress", sa.JSON(), nullable=True),
+    )
+
 
 def downgrade() -> None:
     """Restore Vector(384) columns and IVFFlat indexes."""
@@ -79,18 +101,22 @@ def downgrade() -> None:
     if not pgvector_available:
         return
 
-    # 1. ALTER columns back to vector(384)
+    # 1. Drop embedding status columns (SHU-605)
+    op.drop_column("knowledge_bases", "re_embedding_progress")
+    op.drop_column("knowledge_bases", "embedding_status")
+
+    # 2. ALTER columns back to vector(384)
     for table, column in _VECTOR_COLUMNS:
         op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector(384)")
 
-    # 2. Restore original embedding model default
+    # 3. Restore original embedding model default
     op.alter_column(
         "knowledge_bases",
         "embedding_model",
         server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'"),
     )
 
-    # 3. Recreate original IVFFlat indexes
+    # 4. Recreate original IVFFlat indexes
     if not index_exists(inspector, "document_chunks", "idx_document_chunks_embedding"):
         op.execute(
             """

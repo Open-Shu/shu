@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     ocr_page_timeout: int = Field(180, alias="SHU_OCR_PAGE_TIMEOUT")
 
     # Vector database configuration
-    vector_index_type: str = Field("ivfflat", alias="SHU_VECTOR_INDEX_TYPE")
+    vector_index_type: str = Field("hnsw", alias="SHU_VECTOR_INDEX_TYPE")
     vector_index_lists: int = Field(100, alias="SHU_VECTOR_INDEX_LISTS")
 
     # Performance configuration

@@ -986,3 +986,131 @@ async def upload_documents(
             "results": results,
         }
     )
+
+
+@router.post(
+    "/{kb_id}/re-embed",
+    summary="Trigger re-embedding for a knowledge base",
+    description="Enqueue a re-embedding job for a KB whose embeddings are stale.",
+)
+async def trigger_re_embedding(
+    kb_id: str = Path(..., description="Knowledge base ID"),
+    current_user: User = Depends(require_kb_manage_default),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger re-embedding of all vectors in a knowledge base.
+
+    The KB must have embedding_status='stale'. The job re-embeds all chunks,
+    synopses, and queries using the currently configured embedding model.
+    """
+    from ..core.embedding_service import get_embedding_service
+    from ..core.queue_backend import get_queue_backend
+    from ..core.workload_routing import WorkloadType, enqueue_job
+    from ..models.knowledge_base import KnowledgeBase
+
+    try:
+        kb = await db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            from ..core.exceptions import KnowledgeBaseNotFoundError
+
+            raise KnowledgeBaseNotFoundError(kb_id)
+
+        embedding_service = await get_embedding_service()
+
+        # Reject if already current
+        if kb.embedding_model == embedding_service.model_name and kb.embedding_status == "current":
+            return ShuResponse.error(
+                message="Knowledge base embeddings are already current",
+                code="ALREADY_CURRENT",
+                status_code=400,
+            )
+
+        # Reject if already re-embedding
+        if kb.embedding_status == "re_embedding":
+            return ShuResponse.error(
+                message="Re-embedding is already in progress for this knowledge base",
+                code="RE_EMBEDDING_IN_PROGRESS",
+                status_code=409,
+            )
+
+        # Count chunks to set progress tracking
+        from sqlalchemy import func, select
+
+        from ..models.document import DocumentChunk
+
+        result = await db.execute(
+            select(func.count(DocumentChunk.id)).where(DocumentChunk.knowledge_base_id == kb_id)
+        )
+        total_chunks = result.scalar() or 0
+
+        # Mark KB as re-embedding and enqueue the job
+        kb.mark_re_embedding_started(total_chunks)
+        await db.commit()
+
+        queue = await get_queue_backend()
+        await enqueue_job(
+            queue,
+            WorkloadType.RE_EMBEDDING,
+            payload={
+                "knowledge_base_id": kb_id,
+                "action": "re_embed_kb",
+            },
+            max_attempts=3,
+            visibility_timeout=600,
+        )
+
+        logger.info(
+            "Re-embedding job enqueued",
+            extra={"kb_id": kb_id, "total_chunks": total_chunks},
+        )
+
+        return ShuResponse.success(
+            {
+                "status": "queued",
+                "knowledge_base_id": kb_id,
+                "total_chunks": total_chunks,
+            }
+        )
+
+    except ShuException as e:
+        logger.error("API: Failed to trigger re-embedding", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to trigger re-embedding", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.get(
+    "/{kb_id}/re-embed/status",
+    summary="Get re-embedding status",
+    description="Get the current embedding status and re-embedding progress for a KB.",
+)
+async def get_re_embedding_status(
+    kb_id: str = Path(..., description="Knowledge base ID"),
+    current_user: User = Depends(require_kb_query_default),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the embedding status and re-embedding progress for a knowledge base."""
+    from ..models.knowledge_base import KnowledgeBase
+
+    try:
+        kb = await db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            from ..core.exceptions import KnowledgeBaseNotFoundError
+
+            raise KnowledgeBaseNotFoundError(kb_id)
+
+        return ShuResponse.success(
+            {
+                "knowledge_base_id": kb_id,
+                "embedding_status": kb.embedding_status,
+                "embedding_model": kb.embedding_model,
+                "re_embedding_progress": kb.re_embedding_progress,
+            }
+        )
+
+    except ShuException as e:
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to get re-embedding status", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)

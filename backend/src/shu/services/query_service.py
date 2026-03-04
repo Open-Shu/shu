@@ -743,6 +743,14 @@ class QueryService:
             # Verify knowledge base exists
             knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
 
+            # Block vector search on stale or re-embedding KBs
+            if knowledge_base.embedding_status not in ("current",):
+                from ..core.exceptions import KnowledgeBaseStaleEmbeddingsError
+
+                raise KnowledgeBaseStaleEmbeddingsError(
+                    knowledge_base_id, knowledge_base.embedding_status
+                )
+
             # Extract parameters from request
             query = request.query
             limit = request.limit
@@ -2014,7 +2022,7 @@ class QueryService:
             raise ShuException(f"Failed to perform title search: {e!s}", "TITLE_SEARCH_ERROR")
 
     @measure_execution_time
-    async def hybrid_search(
+    async def hybrid_search(  # noqa: PLR0915
         self, knowledge_base_id: str, query: str, limit: int = 10, threshold: float = 0.0
     ) -> dict[str, Any]:
         """Perform hybrid search (combination of similarity and keyword).
@@ -2042,18 +2050,27 @@ class QueryService:
                 f"Hybrid search: query='{query[:100]}...' kb_id={knowledge_base_id} limit={limit} threshold={threshold}"
             )
 
-            # Get similarity search results
-            similarity_request = SimilaritySearchRequest(
-                query=query,
-                limit=limit,
-                threshold=threshold,
-                include_embeddings=False,
-                document_ids=None,
-                file_types=None,
-                created_after=None,
-                created_before=None,
-            )
-            similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+            # Get similarity search results (may fail if KB has stale embeddings)
+            similarity_response = None
+            try:
+                similarity_request = SimilaritySearchRequest(
+                    query=query,
+                    limit=limit,
+                    threshold=threshold,
+                    include_embeddings=False,
+                    document_ids=None,
+                    file_types=None,
+                    created_after=None,
+                    created_before=None,
+                )
+                similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+            except ShuException as e:
+                if e.error_code == "KNOWLEDGE_BASE_STALE_EMBEDDINGS":
+                    logger.warning(
+                        f"Hybrid search falling back to keyword-only: KB {knowledge_base_id} has stale embeddings"
+                    )
+                else:
+                    raise
 
             # Get keyword search results (this handles stop word filtering correctly)
             keyword_response = await self.keyword_search(knowledge_base_id, query, limit)
@@ -2062,6 +2079,24 @@ class QueryService:
             logger.info(
                 f"Hybrid search keyword results: total={keyword_response.get('total_results', 0)}, top_docs={[r.get('document_title', 'unknown')[:50] for r in keyword_response.get('results', [])[:3]]}"
             )
+
+            # If similarity search was skipped (stale KB), return keyword-only results
+            if similarity_response is None:
+                from datetime import datetime
+
+                from ..schemas.query import QueryResponse, QueryType
+
+                response = QueryResponse(
+                    results=keyword_response["results"],
+                    total_results=keyword_response["total_results"],
+                    query=query,
+                    query_type=QueryType.HYBRID,
+                    execution_time=0.0,
+                    similarity_threshold=threshold,
+                    embedding_model=str(knowledge_base.embedding_model),
+                    processed_at=datetime.now(UTC),
+                )
+                return response.model_dump()
 
             # If keyword search returned empty results due to stop words, return only similarity results
             if keyword_response["total_results"] == 0:

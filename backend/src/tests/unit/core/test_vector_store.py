@@ -345,7 +345,7 @@ class TestPgVectorStoreEnsureIndex:
 
     @pytest.mark.asyncio
     async def test_ensure_index_creates_ivfflat(self):
-        """ensure_index() should create IVFFlat index when missing."""
+        """ensure_index() should create dimension-scoped IVFFlat index when missing."""
         store = PgVectorStore(index_type="ivfflat", index_lists=100)
         mock_db = AsyncMock()
 
@@ -366,16 +366,18 @@ class TestPgVectorStoreEnsureIndex:
 
         assert created is True
         assert mock_db.execute.call_count == 3
-        # Verify the CREATE INDEX SQL
+        # Verify the CREATE INDEX SQL uses dimension-scoped naming and partial index
         create_call = mock_db.execute.call_args_list[2]
         sql_text = str(create_call[0][0])
         assert "ivfflat" in sql_text
         assert "vector_cosine_ops" in sql_text
-        assert "idx_document_chunks_embedding" in sql_text
+        assert "ix_document_chunks_embedding_hnsw_384" in sql_text
+        assert "vector(384)" in sql_text
+        assert "vector_dims" in sql_text
 
     @pytest.mark.asyncio
     async def test_ensure_index_creates_hnsw(self):
-        """ensure_index() should create HNSW index when requested."""
+        """ensure_index() should create dimension-scoped HNSW index."""
         store = PgVectorStore(index_type="hnsw")
         mock_db = AsyncMock()
 
@@ -395,6 +397,9 @@ class TestPgVectorStoreEnsureIndex:
         create_call = mock_db.execute.call_args_list[2]
         sql_text = str(create_call[0][0])
         assert "hnsw" in sql_text
+        assert "vector(384)" in sql_text
+        assert "vector_dims" in sql_text
+        assert "ix_document_chunks_embedding_hnsw_384" in sql_text
 
     @pytest.mark.asyncio
     async def test_ensure_index_unsupported_type_raises(self):

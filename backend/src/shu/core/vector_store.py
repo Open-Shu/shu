@@ -211,12 +211,13 @@ _DEFAULT_COLLECTIONS: dict[str, CollectionConfig] = {
     ),
 }
 
-# Index name conventions matching existing migrations
-_INDEX_NAMES: dict[str, str] = {
-    "chunks": "idx_document_chunks_embedding",
-    "synopses": "ix_documents_synopsis_embedding",
-    "queries": "ix_document_queries_query_embedding",
-}
+def _index_name(collection: str, dimension: int) -> str:
+    """Generate a dimension-scoped HNSW index name.
+
+    Pattern: ix_{table}_{column}_hnsw_{dim}
+    """
+    config = _DEFAULT_COLLECTIONS[collection]
+    return f"ix_{config.table_name}_{config.embedding_column}_hnsw_{dimension}"
 
 
 class PgVectorStore:
@@ -229,7 +230,7 @@ class PgVectorStore:
 
     def __init__(
         self,
-        index_type: str = "ivfflat",
+        index_type: str = "hnsw",
         index_lists: int = 100,
         collections: dict[str, CollectionConfig] | None = None,
     ) -> None:
@@ -381,7 +382,11 @@ class PgVectorStore:
         index_type: str | None = None,
         lists: int | None = None,
     ) -> bool:
-        """Ensure an appropriate vector index exists.
+        """Ensure a dimension-scoped HNSW vector index exists.
+
+        Creates a partial index scoped to vectors of the given dimension using
+        a cast expression and WHERE clause. This allows multiple embedding
+        dimensions to coexist in the same dimensionless vector column.
 
         Uses non-CONCURRENTLY since we're in a session context. For
         production index creation on large tables, use a management
@@ -390,8 +395,9 @@ class PgVectorStore:
         config = self._get_collection(collection)
         idx_type = index_type or self._index_type
         idx_lists = lists or self._index_lists
-        index_name = _INDEX_NAMES.get(collection, f"idx_{config.table_name}_{config.embedding_column}")
+        index_name = _index_name(collection, dimension)
         ops_class = _OPS_CLASSES[config.distance_metric]
+        emb = config.embedding_column
 
         # Check if index already exists
         check_sql = text(
@@ -412,25 +418,27 @@ class PgVectorStore:
                 f"Creating index on {config.table_name} with {row_count} rows — this may be slow"
             )
 
-        # Build CREATE INDEX statement
-        if idx_type == "ivfflat":
-            create_sql = (
-                f"CREATE INDEX IF NOT EXISTS {index_name} "
-                f"ON {config.table_name} USING ivfflat "
-                f"({config.embedding_column} {ops_class}) "
-                f"WITH (lists = {idx_lists})"
-            )
-        elif idx_type == "hnsw":
+        # Build CREATE INDEX statement with dimension-scoped partial index
+        if idx_type == "hnsw":
             create_sql = (
                 f"CREATE INDEX IF NOT EXISTS {index_name} "
                 f"ON {config.table_name} USING hnsw "
-                f"({config.embedding_column} {ops_class})"
+                f"(({emb}::vector({dimension})) {ops_class}) "
+                f"WHERE vector_dims({emb}) = {dimension}"
+            )
+        elif idx_type == "ivfflat":
+            create_sql = (
+                f"CREATE INDEX IF NOT EXISTS {index_name} "
+                f"ON {config.table_name} USING ivfflat "
+                f"(({emb}::vector({dimension})) {ops_class}) "
+                f"WITH (lists = {idx_lists}) "
+                f"WHERE vector_dims({emb}) = {dimension}"
             )
         else:
             raise ValueError(f"Unsupported index type: {idx_type}")
 
         await db.execute(text(create_sql))
-        logger.info(f"Created {idx_type} index: {index_name} on {config.table_name}")
+        logger.info(f"Created {idx_type} index: {index_name} on {config.table_name} (dim={dimension})")
         return True
 
 
