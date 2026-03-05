@@ -89,9 +89,7 @@ class PluginLoader:
         # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
         "shu",
     )
-    ALLOWED_MODULES: tuple[str, ...] = (
-        "urllib.parse",
-    )
+    ALLOWED_MODULES: tuple[str, ...] = ("urllib.parse",)
 
     def _static_scan_for_violations(self, plugin_dir: Path) -> list[str]:
         violations: set[str] = set()
