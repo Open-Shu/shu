@@ -84,7 +84,16 @@ class TestKnowledgeBaseEmbeddingHelpers:
         assert kb.embedding_status == "re_embedding"
         assert kb.re_embedding_progress["chunks_total"] == 500
         assert kb.re_embedding_progress["chunks_done"] == 0
+        assert kb.re_embedding_progress["phase"] == "chunks"
         assert "started_at" in kb.re_embedding_progress
+
+    def test_update_re_embedding_phase(self):
+        kb = KnowledgeBase()
+        kb.mark_re_embedding_started(500)
+        assert kb.re_embedding_progress["phase"] == "chunks"
+        kb.update_re_embedding_phase("synopses")
+        assert kb.re_embedding_progress["phase"] == "synopses"
+        assert kb.re_embedding_progress["chunks_total"] == 500  # other fields preserved
 
     def test_update_re_embedding_progress(self):
         kb = KnowledgeBase()

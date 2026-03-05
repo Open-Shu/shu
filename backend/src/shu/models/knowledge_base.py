@@ -11,6 +11,8 @@ from sqlalchemy import JSON, Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
 
+from shu.core.config import get_settings_instance
+
 from .base import BaseModel
 
 
@@ -32,7 +34,9 @@ class KnowledgeBase(BaseModel):
     last_sync_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # Processing configuration
-    embedding_model = Column(String(100), default="Snowflake/snowflake-arctic-embed-l-v2.0", nullable=False)
+    embedding_model = Column(
+        String(100), default=lambda: get_settings_instance().default_embedding_model, nullable=False
+    )
     chunk_size = Column(Integer, default=1000, nullable=False)
     chunk_overlap = Column(Integer, default=200, nullable=False)
 
@@ -133,6 +137,7 @@ class KnowledgeBase(BaseModel):
         self.re_embedding_progress = {
             "chunks_done": 0,
             "chunks_total": total_chunks,
+            "phase": "chunks",
             "started_at": datetime.now(UTC).isoformat(),
         }
 
@@ -142,6 +147,17 @@ class KnowledgeBase(BaseModel):
             self.re_embedding_progress = {
                 **self.re_embedding_progress,
                 "chunks_done": chunks_done,
+            }
+
+    def update_re_embedding_phase(self, phase: str) -> None:
+        """Update the current re-embedding phase.
+
+        Valid phases: 'chunks', 'synopses', 'queries', 'indexes'.
+        """
+        if self.re_embedding_progress is not None:
+            self.re_embedding_progress = {
+                **self.re_embedding_progress,
+                "phase": phase,
             }
 
     def mark_re_embedding_complete(self, model_name: str) -> None:

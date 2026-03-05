@@ -211,6 +211,7 @@ _DEFAULT_COLLECTIONS: dict[str, CollectionConfig] = {
     ),
 }
 
+
 def _index_name(collection: str, dimension: int) -> str:
     """Generate a dimension-scoped HNSW index name.
 
@@ -276,8 +277,7 @@ class PgVectorStore:
                 if col not in config.filterable_columns:
                     valid = ", ".join(config.filterable_columns)
                     raise ValueError(
-                        f"Filter column '{col}' not allowed for collection '{collection}'. "
-                        f"Allowed: {valid}"
+                        f"Filter column '{col}' not allowed for collection '{collection}'. " f"Allowed: {valid}"
                     )
                 param_name = f"f_{col}"
                 where_clauses.append(f"{col} = :{param_name}")
@@ -400,12 +400,8 @@ class PgVectorStore:
         emb = config.embedding_column
 
         # Check if index already exists
-        check_sql = text(
-            "SELECT 1 FROM pg_indexes WHERE tablename = :table_name AND indexname = :index_name"
-        )
-        result = await db.execute(
-            check_sql, {"table_name": config.table_name, "index_name": index_name}
-        )
+        check_sql = text("SELECT 1 FROM pg_indexes WHERE tablename = :table_name AND indexname = :index_name")
+        result = await db.execute(check_sql, {"table_name": config.table_name, "index_name": index_name})
         if result.scalar_one_or_none():
             logger.debug(f"Index {index_name} already exists on {config.table_name}")
             return False
@@ -414,9 +410,7 @@ class PgVectorStore:
         count_result = await db.execute(text(f"SELECT COUNT(*) FROM {config.table_name}"))  # noqa: S608
         row_count = count_result.scalar_one()
         if row_count > 100_000:
-            logger.warning(
-                f"Creating index on {config.table_name} with {row_count} rows — this may be slow"
-            )
+            logger.warning(f"Creating index on {config.table_name} with {row_count} rows — this may be slow")
 
         # Build CREATE INDEX statement with dimension-scoped partial index
         if idx_type == "hnsw":
@@ -440,6 +434,53 @@ class PgVectorStore:
         await db.execute(text(create_sql))
         logger.info(f"Created {idx_type} index: {index_name} on {config.table_name} (dim={dimension})")
         return True
+
+
+# ---------------------------------------------------------------------------
+# Index maintenance
+# ---------------------------------------------------------------------------
+
+
+async def drop_orphaned_indexes(db: AsyncSession, current_dimension: int) -> list[str]:
+    """Drop HNSW indexes that target a dimension other than *current_dimension*.
+
+    After an embedding model change the old-dimension indexes are useless
+    (vector search is blocked on stale KBs) and waste storage / write overhead.
+    This function queries ``pg_indexes`` for our naming pattern and drops any
+    index whose dimension suffix doesn't match the currently configured model.
+
+    Args:
+        db: Database session (DDL auto-commits in PostgreSQL).
+        current_dimension: The dimension of the active embedding model.
+
+    Returns:
+        List of index names that were dropped.
+
+    """
+    result = await db.execute(
+        text(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE schemaname = 'public' "
+            "AND indexname ~ '^ix_(document_chunks|documents|document_queries)_[a-z_]+_hnsw_[0-9]+$'"
+        )
+    )
+
+    dropped: list[str] = []
+    for (index_name,) in result.fetchall():
+        dim_str = index_name.rsplit("_", 1)[1]
+        try:
+            dim = int(dim_str)
+        except ValueError:
+            logger.warning(f"Could not parse dimension from index name: {index_name}")
+            continue
+
+        if dim != current_dimension:
+            # Identifier is safe (regex constrains to [a-z_0-9]), but quote for defense-in-depth
+            await db.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
+            dropped.append(index_name)
+            logger.info(f"Dropped orphaned index {index_name} (dim={dim}, current={current_dimension})")
+
+    return dropped
 
 
 # ---------------------------------------------------------------------------

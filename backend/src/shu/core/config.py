@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     auto_activate_users: bool = Field(False, alias="SHU_AUTO_ACTIVATE_USERS")
 
     # Embedding configuration
+    # WARNING: Changing SHU_EMBEDDING_MODEL is a DESTRUCTIVE operation.
+    # All existing knowledge bases will be marked "stale" on next startup.
+    # Vector/semantic search is disabled on stale KBs until an admin triggers
+    # re-embedding from the Admin Console. Keyword search continues working.
+    # Re-embedding is CPU-intensive and processes all chunks, synopses, and queries.
     default_embedding_model: str = Field("Snowflake/snowflake-arctic-embed-l-v2.0", alias="SHU_EMBEDDING_MODEL")
     embedding_device: str = "cpu"
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")

@@ -121,8 +121,9 @@ class TestHandleReEmbeddingJob:
 
         mock_kb = MagicMock(spec=KnowledgeBase)
         mock_kb.embedding_status = "re_embedding"
-        mock_kb.re_embedding_progress = {"chunks_done": 0, "chunks_total": 3}
+        mock_kb.re_embedding_progress = {"chunks_done": 0, "chunks_total": 3, "phase": "chunks"}
         mock_kb.update_re_embedding_progress = MagicMock()
+        mock_kb.update_re_embedding_phase = MagicMock()
         mock_kb.mark_re_embedding_complete = MagicMock()
 
         # Mock embedding service
@@ -183,7 +184,7 @@ class TestHandleReEmbeddingJob:
 
         mock_kb = MagicMock(spec=KnowledgeBase)
         mock_kb.embedding_status = "re_embedding"
-        mock_kb.re_embedding_progress = {"chunks_done": 0, "chunks_total": 1}
+        mock_kb.re_embedding_progress = {"chunks_done": 0, "chunks_total": 1, "phase": "chunks"}
         mock_kb.mark_re_embedding_failed = MagicMock()
 
         # Make embed_texts raise
@@ -216,6 +217,164 @@ class TestHandleReEmbeddingJob:
 
         mock_kb.mark_re_embedding_failed.assert_called_once()
         assert "GPU OOM" in mock_kb.mark_re_embedding_failed.call_args[0][0]
+
+
+    @pytest.mark.asyncio
+    async def test_resume_from_synopses_skips_chunks(self):
+        """Resuming from 'synopses' phase should skip chunk processing entirely."""
+        from shu.worker import _handle_re_embedding_job
+
+        job = _make_job()
+
+        mock_kb = MagicMock(spec=KnowledgeBase)
+        mock_kb.embedding_status = "re_embedding"
+        mock_kb.re_embedding_progress = {"chunks_done": 10, "chunks_total": 10, "phase": "synopses"}
+        mock_kb.update_re_embedding_progress = MagicMock()
+        mock_kb.update_re_embedding_phase = MagicMock()
+        mock_kb.mark_re_embedding_complete = MagicMock()
+
+        mock_embedding = AsyncMock()
+        mock_embedding.model_name = "new-model"
+        mock_embedding.dimension = 1024
+        mock_embedding.embed_texts = AsyncMock(return_value=[[0.1] * 1024])
+
+        mock_vs = AsyncMock()
+        mock_vs.store_embeddings = AsyncMock(return_value=1)
+        mock_vs.ensure_index = AsyncMock(return_value=True)
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_kb)
+
+        # Only synopses and queries results needed (no chunks query)
+        synopses_result = MagicMock()
+        synopses_result.scalars.return_value.all.return_value = [_make_document("doc-1")]
+        queries_result = MagicMock()
+        queries_result.scalars.return_value.all.return_value = []
+
+        mock_session.execute = AsyncMock(side_effect=[synopses_result, queries_result])
+        mock_session.commit = AsyncMock()
+
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
+            patch("shu.core.embedding_service.get_embedding_service", new_callable=AsyncMock, return_value=mock_embedding),
+            patch("shu.core.vector_store.get_vector_store", new_callable=AsyncMock, return_value=mock_vs),
+        ):
+            await _handle_re_embedding_job(job)
+
+        # Synopses were embedded
+        mock_embedding.embed_texts.assert_called_once()
+        mock_vs.store_embeddings.assert_called_once()
+
+        # Phase transitions happened (synopses→queries, queries→indexes)
+        phase_calls = [c[0][0] for c in mock_kb.update_re_embedding_phase.call_args_list]
+        assert "queries" in phase_calls
+        assert "indexes" in phase_calls
+        # "synopses" should NOT be in calls since we started there
+        assert "synopses" not in phase_calls
+
+        mock_kb.mark_re_embedding_complete.assert_called_once_with("new-model")
+
+    @pytest.mark.asyncio
+    async def test_resume_from_queries_skips_chunks_and_synopses(self):
+        """Resuming from 'queries' phase should skip chunks and synopses."""
+        from shu.worker import _handle_re_embedding_job
+
+        job = _make_job()
+
+        mock_kb = MagicMock(spec=KnowledgeBase)
+        mock_kb.embedding_status = "re_embedding"
+        mock_kb.re_embedding_progress = {"chunks_done": 10, "chunks_total": 10, "phase": "queries"}
+        mock_kb.update_re_embedding_progress = MagicMock()
+        mock_kb.update_re_embedding_phase = MagicMock()
+        mock_kb.mark_re_embedding_complete = MagicMock()
+
+        mock_embedding = AsyncMock()
+        mock_embedding.model_name = "new-model"
+        mock_embedding.dimension = 1024
+        mock_embedding.embed_texts = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
+
+        mock_vs = AsyncMock()
+        mock_vs.store_embeddings = AsyncMock(return_value=2)
+        mock_vs.ensure_index = AsyncMock(return_value=True)
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_kb)
+
+        # Only queries result needed
+        queries_result = MagicMock()
+        queries_result.scalars.return_value.all.return_value = [
+            _make_query("q-1"), _make_query("q-2"),
+        ]
+
+        mock_session.execute = AsyncMock(side_effect=[queries_result])
+        mock_session.commit = AsyncMock()
+
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
+            patch("shu.core.embedding_service.get_embedding_service", new_callable=AsyncMock, return_value=mock_embedding),
+            patch("shu.core.vector_store.get_vector_store", new_callable=AsyncMock, return_value=mock_vs),
+        ):
+            await _handle_re_embedding_job(job)
+
+        # Queries were embedded
+        mock_embedding.embed_texts.assert_called_once()
+
+        # Phase transitions: queries→indexes only
+        phase_calls = [c[0][0] for c in mock_kb.update_re_embedding_phase.call_args_list]
+        assert phase_calls == ["indexes"]
+
+        mock_kb.mark_re_embedding_complete.assert_called_once_with("new-model")
+
+    @pytest.mark.asyncio
+    async def test_resume_from_indexes_only_runs_indexing(self):
+        """Resuming from 'indexes' phase should only run ensure_index calls."""
+        from shu.worker import _handle_re_embedding_job
+
+        job = _make_job()
+
+        mock_kb = MagicMock(spec=KnowledgeBase)
+        mock_kb.embedding_status = "re_embedding"
+        mock_kb.re_embedding_progress = {"chunks_done": 10, "chunks_total": 10, "phase": "indexes"}
+        mock_kb.update_re_embedding_progress = MagicMock()
+        mock_kb.update_re_embedding_phase = MagicMock()
+        mock_kb.mark_re_embedding_complete = MagicMock()
+
+        mock_embedding = AsyncMock()
+        mock_embedding.model_name = "new-model"
+        mock_embedding.dimension = 1024
+
+        mock_vs = AsyncMock()
+        mock_vs.ensure_index = AsyncMock(return_value=True)
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_kb)
+        mock_session.execute = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
+            patch("shu.core.embedding_service.get_embedding_service", new_callable=AsyncMock, return_value=mock_embedding),
+            patch("shu.core.vector_store.get_vector_store", new_callable=AsyncMock, return_value=mock_vs),
+        ):
+            await _handle_re_embedding_job(job)
+
+        # No embeddings generated (no chunks, synopses, or queries to process)
+        mock_embedding.embed_texts.assert_not_called()
+        assert mock_vs.ensure_index.call_count == 3  # chunks, synopses, queries
+
+        mock_kb.mark_re_embedding_complete.assert_called_once_with("new-model")
 
 
 class TestReEmbeddingWorkloadType:

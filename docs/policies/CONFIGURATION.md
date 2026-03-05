@@ -297,7 +297,7 @@ service = SomeService(db, config_manager)  # Service receives config_manager
 - `GOOGLE_SERVICE_ACCOUNT_JSON`: Path to Google service account JSON file
 
 #### Embedding Configuration
-- `SHU_EMBEDDING_MODEL`: Embedding model name (default: `sentence-transformers/all-MiniLM-L6-v2`)
+- `SHU_EMBEDDING_MODEL`: Embedding model name (default: `Snowflake/snowflake-arctic-embed-l-v2.0`). **DESTRUCTIVE OPERATION** — changing this value invalidates all existing vector embeddings. On next startup, all knowledge bases are marked "stale" and vector/semantic search is disabled until an admin triggers re-embedding per KB from the Admin Console. Keyword search continues working. Re-embedding is CPU-intensive and processes every chunk, synopsis, and query in the KB.
 - `SHU_EMBEDDING_BATCH_SIZE`: Embedding batch size per encode call (default: `32`)
 - `SHU_EMBEDDING_DTYPE`: Model precision — `float32` (default) or `float16` (half memory, recommended for 1024-dim+ models)
 - `SHU_EMBEDDING_EXECUTION_MODE`: Execution mode for embeddings: `thread` (default, optimized) or `process`

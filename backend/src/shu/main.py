@@ -245,6 +245,24 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             stale_ids = await detect_stale_kbs(session, embedding_service.model_name)
             if stale_ids:
                 logger.warning(f"Found {len(stale_ids)} stale knowledge base(s) needing re-embedding")
+
+            # Drop HNSW indexes for dimensions that no longer match the active model
+            from .core.vector_store import drop_orphaned_indexes
+
+            dropped = await drop_orphaned_indexes(session, embedding_service.dimension)
+            if dropped:
+                logger.info(f"Dropped {len(dropped)} orphaned vector index(es)")
+
+            # Ensure HNSW indexes exist for the current embedding dimension.
+            # After the dimensionless migration drops old IVFFlat indexes, new HNSW
+            # indexes won't exist until something triggers ensure_index(). Run it
+            # unconditionally so vector search has indexes from the first query.
+            from .core.vector_store import get_vector_store
+
+            vs = await get_vector_store()
+            for collection in ("chunks", "synopses", "queries"):
+                await vs.ensure_index(collection, embedding_service.dimension, db=session)
+            await session.commit()
     except Exception as e:
         logger.error(f"Failed to detect stale knowledge bases: {e}", exc_info=True)
 
