@@ -5,6 +5,7 @@ including CRUD operations, template validation, and required scopes computation.
 """
 
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -27,7 +28,8 @@ import zoneinfo
 from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
-from ..core.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.config import get_config_manager
+from ..core.exceptions import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
@@ -50,6 +52,7 @@ from ..schemas.experience import (
     TriggerType,
     UserExperienceResults,
 )
+from ..services.experience_executor import ExperienceExecutor
 from ..services.plugin_identity import check_plugin_user_auth
 
 logger = get_logger(__name__)
@@ -213,6 +216,83 @@ class ExperienceService:
 
         logger.info(f"Created experience '{experience.name}' with {len(experience_data.steps)} steps")
         return self._experience_to_response(experience)
+
+    async def run(
+        self,
+        experience_id: str,
+        current_user: "User",
+        input_params: dict[str, Any] | None = None,
+    ) -> AsyncGenerator:
+        """Validate, authorize, and start streaming execution of an experience.
+
+        Performs visibility check, shared-experience authorization, identity
+        resolution, and returns the streaming event generator.
+
+        Args:
+            experience_id: Experience ID to run.
+            current_user: The authenticated user initiating the run.
+            input_params: Optional user-provided input parameters.
+
+        Returns:
+            Async generator of ExperienceEvent objects for SSE streaming.
+
+        Raises:
+            NotFoundError: If the experience does not exist or is not visible.
+            AuthorizationError: If the user lacks permission to run the experience.
+
+        """
+        is_admin = current_user.can_manage_users()
+
+        # Visibility check
+        experience_resp = await self.get_experience(
+            experience_id=experience_id, user_id=str(current_user.id), is_admin=is_admin
+        )
+        if not experience_resp:
+            raise NotFoundError(
+                f"Experience '{experience_id}' not found or access denied",
+                details={"code": "EXPERIENCE_NOT_FOUND"},
+            )
+
+        # Load full ORM model with relationships needed for execution
+        result = await self.db.execute(
+            select(Experience)
+            .options(selectinload(Experience.steps), selectinload(Experience.prompt), selectinload(Experience.creator))
+            .where(Experience.id == experience_id)
+        )
+        experience = result.scalars().first()
+        if not experience:
+            raise NotFoundError(
+                f"Experience '{experience_id}' not found",
+                details={"code": "EXPERIENCE_NOT_FOUND"},
+            )
+
+        # Shared-experience guard
+        is_shared = experience.scope == ExperienceScope.SHARED.value
+        if is_shared:
+            if not is_admin:
+                raise AuthorizationError(
+                    "Shared experiences can only be triggered manually by admins.",
+                    details={"code": "SHARED_EXPERIENCE_NON_ADMIN"},
+                )
+            if not experience.creator or not experience.creator.is_active:
+                raise AuthorizationError(
+                    "The creator of this shared experience is inactive. "
+                    "Re-activate their account or reassign the experience.",
+                    details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
+                )
+
+        # Resolve execution identity
+        run_user_id = None if is_shared else str(current_user.id)
+        run_current_user = experience.creator if is_shared else current_user
+
+        config_manager = get_config_manager()
+        executor = ExperienceExecutor(self.db, config_manager)
+        return executor.execute_streaming(
+            experience=experience,
+            user_id=run_user_id,
+            input_params=input_params or {},
+            current_user=run_current_user,
+        )
 
     async def get_experience(
         self, experience_id: str, user_id: str | None = None, is_admin: bool = False

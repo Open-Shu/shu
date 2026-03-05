@@ -6,26 +6,20 @@ including CRUD operations, run management, and user dashboard data.
 
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
-from ..core.config import get_config_manager
 from ..core.exceptions import ConflictError, NotFoundError, ShuException, ValidationError
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
 from ..core.streaming import create_sse_stream_generator
-from ..models.experience import Experience
 from ..schemas.experience import (
     ExperienceCreate,
     ExperienceRunRequest,
-    ExperienceScope,
     ExperienceUpdate,
     ExperienceVisibility,
 )
-from ..services.experience_executor import ExperienceExecutor
 from ..services.experience_service import ExperienceService
 from .dependencies import get_db
 
@@ -333,63 +327,17 @@ async def run_experience(
     """
     logger.info("API: Run experience", extra={"experience_id": experience_id, "user_id": current_user.id})
 
-    # First, verify the experience exists and user has access
-    service = ExperienceService(db)
-    is_admin = current_user.can_manage_users()
-
-    experience = await service.get_experience(experience_id=experience_id, user_id=current_user.id, is_admin=is_admin)
-
-    if not experience:
-        return ShuResponse.error(
-            message=f"Experience '{experience_id}' not found or access denied",
-            code="EXPERIENCE_NOT_FOUND",
-            status_code=404,
+    try:
+        service = ExperienceService(db)
+        event_gen = await service.run(
+            experience_id=experience_id,
+            current_user=current_user,
+            input_params=run_request.input_params if run_request and run_request.input_params else None,
         )
+    except ShuException as e:
+        error_code = e.details.get("code", e.error_code)
+        return ShuResponse.error(message=str(e), code=error_code, status_code=e.status_code)
 
-    # Get the actual Experience model for execution
-
-    result = await db.execute(
-        select(Experience)
-        .options(selectinload(Experience.steps), selectinload(Experience.prompt), selectinload(Experience.creator))
-        .where(Experience.id == experience_id)
-    )
-    experience_model = result.scalars().first()
-
-    if not experience_model:
-        return ShuResponse.error(
-            message=f"Experience '{experience_id}' not found",
-            code="EXPERIENCE_NOT_FOUND",
-            status_code=404,
-        )
-
-    # Non-admins cannot manually trigger shared experiences
-    if experience_model.scope == ExperienceScope.SHARED.value and not is_admin:
-        return ShuResponse.error(
-            message="Shared experiences can only be triggered manually by admins.",
-            code="SHARED_EXPERIENCE_NON_ADMIN",
-            status_code=403,
-        )
-
-    # Shared experiences: run record stays user_id=None, but execute with creator identity
-    is_shared = experience_model.scope == ExperienceScope.SHARED.value
-    if is_shared and (not experience_model.creator or not experience_model.creator.is_active):
-        return ShuResponse.error(
-            message="The creator of this shared experience is inactive. Re-activate their account or reassign the experience.",
-            code="SHARED_EXPERIENCE_CREATOR_INACTIVE",
-            status_code=403,
-        )
-
-    run_user_id = None if is_shared else str(current_user.id)
-    run_current_user = experience_model.creator if is_shared else current_user
-
-    config_manager = get_config_manager()
-    executor = ExperienceExecutor(db, config_manager)
-    event_gen = executor.execute_streaming(
-        experience=experience_model,
-        user_id=run_user_id,
-        input_params=run_request.input_params if run_request and run_request.input_params else {},
-        current_user=run_current_user,
-    )
     sse_generator = create_sse_stream_generator(
         event_gen,
         error_context="experience_execution",
