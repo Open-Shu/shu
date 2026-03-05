@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,32 +77,105 @@ class PluginLoader:
         except Exception:
             return repo_root / "plugins"
 
+    # Single source of truth for modules that plugins must not import.
+    # urllib is broadly blocked; urllib.parse is explicitly allowed (safe
+    # string manipulation needed for URL encoding).
+    DISALLOWED_MODULES: tuple[str, ...] = (
+        "requests",
+        "httpx",
+        "urllib3",
+        "urllib",
+        "importlib",
+        # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
+        "shu",
+    )
+    ALLOWED_MODULES: tuple[str, ...] = ("urllib.parse",)
+
     def _static_scan_for_violations(self, plugin_dir: Path) -> list[str]:
-        violations: list[str] = []
-        # Deny direct HTTP clients and host-internal imports from plugins
-        deny = (
-            "import requests",
-            "import httpx",
-            "from httpx",
-            "import urllib3",
-            "urllib.request",
-            # Block host-internal imports from plugins
-            "import shu",
-            "from shu",
-        )
-        try:
-            for p in plugin_dir.rglob("*.py"):
-                try:
-                    txt = p.read_text(encoding="utf-8", errors="ignore")
-                except Exception as e:
-                    logger.error("Could not read text: %s", e)
-                    continue
-                for d in deny:
-                    if d in txt:
-                        violations.append(f"{p.name}: {d}")
-        except Exception:
-            pass
-        return violations
+        violations: set[str] = set()
+        disallowed_modules = self.DISALLOWED_MODULES
+        allowed_modules = self.ALLOWED_MODULES
+
+        def disallowed_import(module: str) -> bool:
+            """Return True when ``module`` is on the plugin deny-list.
+
+            Modules matching an ``ALLOWED_MODULES`` entry (or children of
+            one) are never flagged, even when their parent is denied.
+            """
+            if any(module == a or module.startswith(f"{a}.") for a in allowed_modules):
+                return False
+            return any(module == name or module.startswith(f"{name}.") for name in disallowed_modules)
+
+        # Auto-generated regex fallback for files that fail to parse as AST.
+        # This is purely informational — files with syntax errors cannot
+        # execute, so violations here are not safety-critical.  The regex
+        # does not consult ALLOWED_MODULES, so it may produce false
+        # positives (e.g. flagging ``from urllib.parse``).
+        fallback_patterns: list[tuple[str, str]] = []
+        for mod in disallowed_modules:
+            escaped = re.escape(mod)
+            fallback_patterns.append((rf"\bimport\s+{escaped}(\b|\.)", f"import {mod}"))
+            fallback_patterns.append((rf"\bfrom\s+{escaped}(\b|\.)", f"from {mod}"))
+        fallback_patterns.append((r"\b__import__\s*\(", "__import__"))
+
+        def scan_ast_imports(tree: ast.AST, filename: str) -> None:
+            """Collect disallowed import violations from a parsed AST."""
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        module = alias.name
+                        if disallowed_import(module):
+                            violations.add(f"{filename}: import {module}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if not module:
+                        continue
+                    if disallowed_import(module):
+                        violations.add(f"{filename}: from {module} import ...")
+                        continue
+
+                    # Catch "from urllib import request" by checking
+                    # imported names against disallowed submodules.
+                    for alias in node.names:
+                        imported = f"{module}.{alias.name}"
+                        if disallowed_import(imported):
+                            violations.add(f"{filename}: from {module} import {alias.name}")
+                elif (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "__import__"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    mod = node.args[0].value
+                    if disallowed_import(mod):
+                        violations.add(f"{filename}: __import__('{mod}')")
+
+        for p in plugin_dir.rglob("*.py"):
+            try:
+                txt = p.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                logger.error("Could not read text: %s", e)
+                continue
+
+            try:
+                tree = ast.parse(txt)
+            except SyntaxError:
+                tree = None
+
+            if tree is None:
+                for pattern, label in fallback_patterns:
+                    if re.search(pattern, txt):
+                        violations.add(f"{p.name}: {label}")
+                continue
+
+            try:
+                scan_ast_imports(tree, p.name)
+            except Exception as e:
+                logger.exception("Unexpected error scanning %s: %s", p.name, e)
+                violations.add(f"{p.name}: scan error")
+        return sorted(violations)
 
     def discover(self) -> dict[str, PluginRecord]:
         records: dict[str, PluginRecord] = {}
