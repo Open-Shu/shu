@@ -5,15 +5,13 @@ This document establishes development standards for the Shu project. These stand
 ## Task Authoring Standards (Mandatory, for task docs only)
 - These requirements apply to implementation/task documentation under `docs/tasks/EPIC-*/`, not to high-level docs like README, ARCHITECTURE, or TESTING.
 - Every task file must include:
-  - Implementation Status
-  - Limitations/Known Issues
-  - Security Vulnerabilities (when applicable to security behavior)
-  - Why this task is useful (user-facing value)
-  - Scope
+  - Goal
+  - Description
   - Acceptance Criteria
-- If the user-facing value is not obvious, pause and ask; update the task before implementing.
-- Avoid marketing language; reflect actual implementation state only.
-
+  - Technical Implementation Outline (optional)
+  - Out of Scope
+  - Dependencies and Links
+  - Notes
 
 ## **1. Directory Structure & Organization**
 - **Backend application** → `backend/src/shu/` (src-layout)

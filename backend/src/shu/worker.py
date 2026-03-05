@@ -952,7 +952,7 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
     """
     from datetime import UTC, datetime
 
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from .core.database import get_async_session_local
     from .core.embedding_service import get_embedding_service
@@ -1010,12 +1010,16 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
 
             # --- Phase: chunks ---
             if current_phase == "chunks":
-                # Only process chunks not yet re-embedded (per-row resumability)
+                # Process chunks that are mismatched, NULL, or missing embeddings
                 chunks_query = (
                     select(DocumentChunk)
                     .where(
                         DocumentChunk.knowledge_base_id == knowledge_base_id,
-                        DocumentChunk.embedding_model != target_model,
+                        or_(
+                            DocumentChunk.embedding_model.is_(None),
+                            DocumentChunk.embedding_model != target_model,
+                            DocumentChunk.embedding.is_(None),
+                        ),
                     )
                     .order_by(DocumentChunk.id)
                 )

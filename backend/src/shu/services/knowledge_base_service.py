@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from ..core.exceptions import (
+    ConflictError,
     KnowledgeBaseAlreadyExistsError,
     KnowledgeBaseNotFoundError,
     ShuException,
@@ -777,6 +778,69 @@ class KnowledgeBaseService:
             await self.db.rollback()
             logger.error(f"Failed to set status for KB '{kb_id}': {e}", exc_info=True)
             raise ShuException(f"Failed to set knowledge base status: {e!s}", "KNOWLEDGE_BASE_SET_STATUS_ERROR")
+
+
+    async def trigger_re_embedding(self, kb_id: str) -> dict[str, Any]:
+        """Validate, mark, and enqueue a re-embedding job for a knowledge base.
+
+        Checks that the KB exists and is eligible (stale or error), marks it
+        as ``re_embedding``, and enqueues the worker job. If enqueue fails the
+        status is reverted so the admin can retry.
+
+        Returns:
+            Dict with ``status``, ``knowledge_base_id``, and ``total_chunks``.
+
+        Raises:
+            KnowledgeBaseNotFoundError: KB does not exist.
+            ValidationError: KB embeddings are already current.
+            ConflictError: Re-embedding already in progress.
+
+        """
+        from ..core.embedding_service import get_embedding_service
+        from ..core.queue_backend import get_queue_backend
+        from ..core.workload_routing import WorkloadType, enqueue_job
+
+        kb = await self.db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            raise KnowledgeBaseNotFoundError(kb_id)
+
+        embedding_service = await get_embedding_service()
+
+        if kb.embedding_model == embedding_service.model_name and kb.embedding_status == "current":
+            raise ValidationError("Knowledge base embeddings are already current")
+
+        if kb.embedding_status == "re_embedding":
+            raise ConflictError("Re-embedding is already in progress for this knowledge base")
+
+        # Count chunks for progress tracking
+        result = await self.db.execute(
+            select(func.count(DocumentChunk.id)).where(DocumentChunk.knowledge_base_id == kb_id)
+        )
+        total_chunks = result.scalar() or 0
+
+        # Mark KB as re-embedding
+        kb.mark_re_embedding_started(total_chunks)
+        await self.db.commit()
+
+        # Enqueue the worker job; revert status on failure so admin can retry
+        try:
+            queue = await get_queue_backend()
+            await enqueue_job(
+                queue,
+                WorkloadType.RE_EMBEDDING,
+                payload={"knowledge_base_id": kb_id, "action": "re_embed_kb"},
+                max_attempts=3,
+                visibility_timeout=600,
+            )
+        except Exception:
+            kb.embedding_status = "stale"
+            kb.re_embedding_progress = None
+            await self.db.commit()
+            raise
+
+        logger.info("Re-embedding job enqueued", extra={"kb_id": kb_id, "total_chunks": total_chunks})
+
+        return {"status": "queued", "knowledge_base_id": kb_id, "total_chunks": total_chunks}
 
 
 async def detect_stale_kbs(db: AsyncSession, system_model: str) -> list[str]:

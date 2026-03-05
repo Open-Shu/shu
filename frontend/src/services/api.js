@@ -319,7 +319,6 @@ export const knowledgeBaseAPI = {
     }),
   // Re-embedding endpoints
   triggerReEmbed: (id) => api.post(`/knowledge-bases/${id}/re-embed`),
-  getReEmbedStatus: (id) => api.get(`/knowledge-bases/${id}/re-embed/status`),
 };
 
 // Query endpoints
