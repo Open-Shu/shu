@@ -141,15 +141,18 @@ class TestHandleReEmbeddingJob:
         mock_session = AsyncMock()
         mock_session.get = AsyncMock(return_value=mock_kb)
 
-        # Return chunks for first query, empty for synopses and queries
+        # Streaming pagination: each phase queries until empty.
+        # Chunks: batch(3) → empty; Synopses: empty; Queries: empty
         chunks_result = MagicMock()
         chunks_result.scalars.return_value.all.return_value = chunks
-        synopses_result = MagicMock()
-        synopses_result.scalars.return_value.all.return_value = []
-        queries_result = MagicMock()
-        queries_result.scalars.return_value.all.return_value = []
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
 
-        mock_session.execute = AsyncMock(side_effect=[chunks_result, synopses_result, queries_result])
+        mock_session.execute = AsyncMock(side_effect=[
+            chunks_result, empty_result,  # chunks: data, then empty
+            empty_result,                  # synopses: empty
+            empty_result,                  # queries: empty
+        ])
         mock_session.commit = AsyncMock()
 
         mock_session_factory = MagicMock()
@@ -245,13 +248,16 @@ class TestHandleReEmbeddingJob:
         mock_session = AsyncMock()
         mock_session.get = AsyncMock(return_value=mock_kb)
 
-        # Only synopses and queries results needed (no chunks query)
+        # Streaming: synopses data → synopses empty → queries empty
         synopses_result = MagicMock()
         synopses_result.scalars.return_value.all.return_value = [_make_document("doc-1")]
-        queries_result = MagicMock()
-        queries_result.scalars.return_value.all.return_value = []
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
 
-        mock_session.execute = AsyncMock(side_effect=[synopses_result, queries_result])
+        mock_session.execute = AsyncMock(side_effect=[
+            synopses_result, empty_result,  # synopses: data, then empty
+            empty_result,                    # queries: empty
+        ])
         mock_session.commit = AsyncMock()
 
         mock_session_factory = MagicMock()
@@ -304,13 +310,17 @@ class TestHandleReEmbeddingJob:
         mock_session = AsyncMock()
         mock_session.get = AsyncMock(return_value=mock_kb)
 
-        # Only queries result needed
+        # Streaming: queries data → queries empty
         queries_result = MagicMock()
         queries_result.scalars.return_value.all.return_value = [
             _make_query("q-1"), _make_query("q-2"),
         ]
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
 
-        mock_session.execute = AsyncMock(side_effect=[queries_result])
+        mock_session.execute = AsyncMock(side_effect=[
+            queries_result, empty_result,  # queries: data, then empty
+        ])
         mock_session.commit = AsyncMock()
 
         mock_session_factory = MagicMock()

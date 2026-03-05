@@ -37,11 +37,6 @@ class KnowledgeBaseService:
             config_manager = get_config_manager()
         self._config_manager = config_manager
 
-    @property
-    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:  # noqa: N802 # i think this can be removed, but needs verified
-        """Get default RAG configuration from ConfigurationManager."""
-        return self._config_manager.get_rag_config_dict()
-
     # Default templates for different use cases
     DEFAULT_TEMPLATES: ClassVar[dict[str, dict[str, Any]]] = {
         "academic": {
@@ -780,12 +775,23 @@ class KnowledgeBaseService:
             raise ShuException(f"Failed to set knowledge base status: {e!s}", "KNOWLEDGE_BASE_SET_STATUS_ERROR")
 
 
-    async def trigger_re_embedding(self, kb_id: str) -> dict[str, Any]:
+    async def trigger_re_embedding(
+        self,
+        kb_id: str,
+        *,
+        embedding_service,
+        queue_backend,
+    ) -> dict[str, Any]:
         """Validate, mark, and enqueue a re-embedding job for a knowledge base.
 
         Checks that the KB exists and is eligible (stale or error), marks it
         as ``re_embedding``, and enqueues the worker job. If enqueue fails the
         status is reverted so the admin can retry.
+
+        Args:
+            kb_id: Knowledge base ID.
+            embedding_service: Injected EmbeddingService instance.
+            queue_backend: Injected QueueBackend instance.
 
         Returns:
             Dict with ``status``, ``knowledge_base_id``, and ``total_chunks``.
@@ -796,15 +802,11 @@ class KnowledgeBaseService:
             ConflictError: Re-embedding already in progress.
 
         """
-        from ..core.embedding_service import get_embedding_service
-        from ..core.queue_backend import get_queue_backend
         from ..core.workload_routing import WorkloadType, enqueue_job
 
         kb = await self.db.get(KnowledgeBase, kb_id)
         if kb is None:
             raise KnowledgeBaseNotFoundError(kb_id)
-
-        embedding_service = await get_embedding_service()
 
         if kb.embedding_model == embedding_service.model_name and kb.embedding_status == "current":
             raise ValidationError("Knowledge base embeddings are already current")
@@ -818,22 +820,24 @@ class KnowledgeBaseService:
         )
         total_chunks = result.scalar() or 0
 
+        # Capture original status so we can restore it on enqueue failure
+        original_status = kb.embedding_status
+
         # Mark KB as re-embedding
         kb.mark_re_embedding_started(total_chunks)
         await self.db.commit()
 
         # Enqueue the worker job; revert status on failure so admin can retry
         try:
-            queue = await get_queue_backend()
             await enqueue_job(
-                queue,
+                queue_backend,
                 WorkloadType.RE_EMBEDDING,
                 payload={"knowledge_base_id": kb_id, "action": "re_embed_kb"},
                 max_attempts=3,
                 visibility_timeout=600,
             )
         except Exception:
-            kb.embedding_status = "stale"
+            kb.embedding_status = original_status
             kb.re_embedding_progress = None
             await self.db.commit()
             raise

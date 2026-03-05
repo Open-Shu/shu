@@ -357,7 +357,7 @@ SHU_ENVIRONMENT=production
 GOOGLE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
 
 # Embedding Configuration
-SHU_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+SHU_EMBEDDING_MODEL=Snowflake/snowflake-arctic-embed-l-v2.0
 SHU_EMBEDDING_DTYPE=float32
 
 # LLM Integration (Required for chat features)

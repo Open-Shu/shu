@@ -1005,9 +1005,19 @@ async def trigger_re_embedding(
     The KB must have embedding_status='stale'. The job re-embeds all chunks,
     synopses, and queries using the currently configured embedding model.
     """
+    from ..core.embedding_service import get_embedding_service
+    from ..core.queue_backend import get_queue_backend
+
     try:
+        embedding_service = await get_embedding_service()
+        queue_backend = await get_queue_backend()
+
         service = KnowledgeBaseService(db)
-        result = await service.trigger_re_embedding(kb_id)
+        result = await service.trigger_re_embedding(
+            kb_id,
+            embedding_service=embedding_service,
+            queue_backend=queue_backend,
+        )
         return ShuResponse.success(result)
 
     except ShuException as e:

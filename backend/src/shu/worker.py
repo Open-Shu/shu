@@ -935,7 +935,7 @@ async def _handle_profiling_job(job) -> None:
             raise Exception(f"Profiling failed for document {document_id}: {result.error}")
 
 
-async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
+async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
     """Handle a RE_EMBEDDING workload job.
 
     Re-embeds all chunks, synopses, and queries for a knowledge base using
@@ -1004,14 +1004,23 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
             progress = kb.re_embedding_progress or {}
             current_phase = progress.get("phase", "chunks")
 
+            valid_phases = {"chunks", "synopses", "queries", "indexes"}
+            if current_phase not in valid_phases:
+                raise ValueError(
+                    f"Invalid re-embedding phase '{current_phase}' for KB {knowledge_base_id}. "
+                    f"Valid phases: {sorted(valid_phases)}"
+                )
+
             chunks_done = 0
             synopses_count = 0
             queries_count = 0
 
             # --- Phase: chunks ---
             if current_phase == "chunks":
-                # Process chunks that are mismatched, NULL, or missing embeddings
-                chunks_query = (
+                # Process chunks in streaming batches — re-query each iteration
+                # so already-processed rows (embedding_model = target) are excluded
+                # and we never load more than batch_size ORM objects at once.
+                base_filter = (
                     select(DocumentChunk)
                     .where(
                         DocumentChunk.knowledge_base_id == knowledge_base_id,
@@ -1022,21 +1031,16 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
                         ),
                     )
                     .order_by(DocumentChunk.id)
-                )
-                result = await session.execute(chunks_query)
-                remaining_chunks = list(result.scalars().all())
-
-                total_chunks = len(remaining_chunks)
-
-                logger.info(
-                    f"Re-embedding {total_chunks} chunks for KB {knowledge_base_id}",
-                    extra={"job_id": job.id, "total_chunks": total_chunks},
+                    .limit(batch_size)
                 )
 
-                for i in range(0, total_chunks, batch_size):
-                    batch = remaining_chunks[i : i + batch_size]
+                while True:
+                    result = await session.execute(base_filter)
+                    batch = list(result.scalars().all())
+                    if not batch:
+                        break
+
                     texts = [chunk.content for chunk in batch]
-
                     embeddings = await embedding_service.embed_texts(texts)
 
                     entries = [
@@ -1054,7 +1058,7 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
                     await session.commit()
 
                     logger.debug(
-                        f"Re-embedded chunk batch: {chunks_done}/{total_chunks}",
+                        f"Re-embedded chunk batch: {chunks_done} done",
                         extra={"job_id": job.id, "knowledge_base_id": knowledge_base_id},
                     )
 
@@ -1064,27 +1068,37 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
 
             # --- Phase: synopses ---
             if current_phase == "synopses":
-                synopses_query = select(Document).where(
-                    Document.knowledge_base_id == knowledge_base_id,
-                    Document.synopsis.is_not(None),
-                    Document.synopsis != "",
+                synopses_base = (
+                    select(Document)
+                    .where(
+                        Document.knowledge_base_id == knowledge_base_id,
+                        Document.synopsis.is_not(None),
+                        Document.synopsis != "",
+                    )
+                    .order_by(Document.id)
+                    .limit(batch_size)
                 )
-                result = await session.execute(synopses_query)
-                documents = list(result.scalars().all())
 
-                if documents:
-                    synopses_count = len(documents)
-                    logger.info(f"Re-embedding {synopses_count} synopses for KB {knowledge_base_id}")
-                    for i in range(0, synopses_count, batch_size):
-                        batch = documents[i : i + batch_size]
-                        texts = [doc.synopsis for doc in batch]
-                        embeddings = await embedding_service.embed_texts(texts)
+                offset = 0
+                while True:
+                    result = await session.execute(synopses_base.offset(offset))
+                    batch = list(result.scalars().all())
+                    if not batch:
+                        break
 
-                        entries = [
-                            VectorEntry(id=str(doc.id), vector=emb) for doc, emb in zip(batch, embeddings, strict=True)
-                        ]
-                        await vector_store.store_embeddings("synopses", entries, db=session)
-                        await session.commit()
+                    synopses_count += len(batch)
+                    texts = [doc.synopsis for doc in batch]
+                    embeddings = await embedding_service.embed_texts(texts)
+
+                    entries = [
+                        VectorEntry(id=str(doc.id), vector=emb) for doc, emb in zip(batch, embeddings, strict=True)
+                    ]
+                    await vector_store.store_embeddings("synopses", entries, db=session)
+                    await session.commit()
+                    offset += len(batch)
+
+                if synopses_count:
+                    logger.info(f"Re-embedded {synopses_count} synopses for KB {knowledge_base_id}")
 
                 kb.update_re_embedding_phase("queries")
                 await session.commit()
@@ -1092,25 +1106,33 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0915
 
             # --- Phase: queries ---
             if current_phase == "queries":
-                queries_query = select(DocumentQuery).where(
-                    DocumentQuery.knowledge_base_id == knowledge_base_id,
+                queries_base = (
+                    select(DocumentQuery)
+                    .where(DocumentQuery.knowledge_base_id == knowledge_base_id)
+                    .order_by(DocumentQuery.id)
+                    .limit(batch_size)
                 )
-                result = await session.execute(queries_query)
-                queries = list(result.scalars().all())
 
-                if queries:
-                    queries_count = len(queries)
-                    logger.info(f"Re-embedding {queries_count} queries for KB {knowledge_base_id}")
-                    for i in range(0, queries_count, batch_size):
-                        batch = queries[i : i + batch_size]
-                        texts = [q.query_text for q in batch]
-                        embeddings = await embedding_service.embed_texts(texts)
+                offset = 0
+                while True:
+                    result = await session.execute(queries_base.offset(offset))
+                    batch = list(result.scalars().all())
+                    if not batch:
+                        break
 
-                        entries = [
-                            VectorEntry(id=str(q.id), vector=emb) for q, emb in zip(batch, embeddings, strict=True)
-                        ]
-                        await vector_store.store_embeddings("queries", entries, db=session)
-                        await session.commit()
+                    queries_count += len(batch)
+                    texts = [q.query_text for q in batch]
+                    embeddings = await embedding_service.embed_texts(texts)
+
+                    entries = [
+                        VectorEntry(id=str(q.id), vector=emb) for q, emb in zip(batch, embeddings, strict=True)
+                    ]
+                    await vector_store.store_embeddings("queries", entries, db=session)
+                    await session.commit()
+                    offset += len(batch)
+
+                if queries_count:
+                    logger.info(f"Re-embedded {queries_count} queries for KB {knowledge_base_id}")
 
                 kb.update_re_embedding_phase("indexes")
                 await session.commit()
