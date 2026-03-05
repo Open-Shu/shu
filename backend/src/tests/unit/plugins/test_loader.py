@@ -2,7 +2,7 @@
 
 Verifies the AST-based import guard correctly blocks disallowed modules
 (requests, httpx, urllib3, urllib, importlib, shu.*) while allowing
-shu_plugin_sdk imports.
+shu_plugin_sdk and explicitly allowlisted modules like urllib.parse.
 """
 
 from __future__ import annotations
@@ -52,11 +52,15 @@ def _assert_single_violation(
         "from shu_plugin_sdk import PluginResult\n",
         "import shu_plugin_sdk\n",
         "from shu_plugin_sdk.testing import patch_retry_sleep\n",
+        "from urllib.parse import quote\n",
+        "import urllib.parse\n",
     ],
     ids=[
         "from-shu-plugin-sdk",
         "import-shu-plugin-sdk",
         "from-shu-plugin-sdk-submodule",
+        "from-urllib-parse-import",
+        "import-urllib-parse",
     ],
 )
 def test_allows_shu_plugin_sdk_imports(
@@ -83,6 +87,8 @@ def test_allows_shu_plugin_sdk_imports(
         ("import urllib\n", "urllib"),
         ("from urllib.request import urlopen\n", "urllib"),
         ("from urllib import request\n", "urllib"),
+        ("from urllib import *\n", "urllib"),
+        ('__import__("urllib", fromlist=["request"])\n', "urllib"),
         ("import importlib\n", "importlib"),
         ("from importlib import import_module\n", "importlib"),
     ],
@@ -98,6 +104,8 @@ def test_allows_shu_plugin_sdk_imports(
         "import-urllib",
         "from-urllib-request-import",
         "from-urllib-import-request",
+        "from-urllib-star",
+        "dunder-import-urllib-fromlist",
         "import-importlib",
         "from-importlib-import",
     ],
@@ -176,6 +184,46 @@ def test_fallback_regex_allows_shu_plugin_sdk_in_bad_syntax(
     _write_plugin_file(plugin_dir, "from shu_plugin_sdk import X\n((\n")
     violations = loader._static_scan_for_violations(plugin_dir)
     assert violations == []
+
+
+def test_fallback_regex_false_positive_urllib_parse(
+    loader: PluginLoader,
+    plugin_dir: Path,
+) -> None:
+    """Regex fallback flags urllib.parse in broken files (known false positive).
+
+    The fallback regex does not consult ALLOWED_MODULES, so ``urllib.parse``
+    triggers a violation in syntax-error files.  This is harmless because
+    broken files cannot execute.
+    """
+    _write_plugin_file(plugin_dir, "from urllib.parse import quote\n((\n")
+    violations = loader._static_scan_for_violations(plugin_dir)
+    assert len(violations) == 1
+    assert "urllib" in violations[0]
+
+
+def test_fallback_regex_catches_dunder_import_in_bad_syntax(
+    loader: PluginLoader,
+    plugin_dir: Path,
+) -> None:
+    """Regex fallback catches __import__ in syntax-error files."""
+    _write_plugin_file(plugin_dir, "__import__('shu')\n((\n")
+    violations = loader._static_scan_for_violations(plugin_dir)
+    assert len(violations) == 1
+    assert "__import__" in violations[0]
+
+
+def test_fallback_regex_catches_dunder_import_with_fromlist_in_bad_syntax(
+    loader: PluginLoader,
+    plugin_dir: Path,
+) -> None:
+    """Regex fallback catches __import__ with fromlist in syntax-error files."""
+    _write_plugin_file(
+        plugin_dir, '__import__("urllib", fromlist=["request"])\n((\n'
+    )
+    violations = loader._static_scan_for_violations(plugin_dir)
+    assert len(violations) == 1
+    assert "__import__" in violations[0]
 
 
 def test_blocks_dunder_import(loader: PluginLoader, plugin_dir: Path) -> None:

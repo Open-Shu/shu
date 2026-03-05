@@ -77,38 +77,48 @@ class PluginLoader:
         except Exception:
             return repo_root / "plugins"
 
+    # Single source of truth for modules that plugins must not import.
+    # urllib is broadly blocked; urllib.parse is explicitly allowed (safe
+    # string manipulation needed for URL encoding).
+    DISALLOWED_MODULES: tuple[str, ...] = (
+        "requests",
+        "httpx",
+        "urllib3",
+        "urllib",
+        "importlib",
+        # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
+        "shu",
+    )
+    ALLOWED_MODULES: tuple[str, ...] = (
+        "urllib.parse",
+    )
+
     def _static_scan_for_violations(self, plugin_dir: Path) -> list[str]:
         violations: set[str] = set()
-        disallowed_modules = (
-            "requests",
-            "httpx",
-            "urllib3",
-            # This exposes urllib.request. In the future we can expose safe operations through host capabilities.
-            "urllib",
-            "importlib",
-            # Host-internal imports are blocked; shu_plugin_sdk remains allowed.
-            "shu",
-        )
+        disallowed_modules = self.DISALLOWED_MODULES
+        allowed_modules = self.ALLOWED_MODULES
 
         def disallowed_import(module: str) -> bool:
-            """Return True when ``module`` is on the plugin deny-list."""
+            """Return True when ``module`` is on the plugin deny-list.
+
+            Modules matching an ``ALLOWED_MODULES`` entry (or children of
+            one) are never flagged, even when their parent is denied.
+            """
+            if any(module == a or module.startswith(f"{a}.") for a in allowed_modules):
+                return False
             return any(module == name or module.startswith(f"{name}.") for name in disallowed_modules)
 
-        fallback_patterns = (
-            (r"\bimport\s+requests(\b|\.)", "import requests"),
-            (r"\bfrom\s+requests(\b|\.)", "from requests"),
-            (r"\bimport\s+httpx(\b|\.)", "import httpx"),
-            (r"\bfrom\s+httpx(\b|\.)", "from httpx"),
-            (r"\bimport\s+urllib3(\b|\.)", "import urllib3"),
-            (r"\bfrom\s+urllib3(\b|\.)", "from urllib3"),
-            (r"\bimport\s+urllib(\b|\.)", "import urllib"),
-            (r"\bfrom\s+urllib(\b|\.)", "from urllib"),
-            (r"\bimport\s+importlib(\b|\.)", "import importlib"),
-            (r"\bfrom\s+importlib(\b|\.)", "from importlib"),
-            (r"\bimport\s+shu(\b|\.)", "import shu"),
-            (r"\bfrom\s+shu(\b|\.)", "from shu"),
-            (r"\b__import__\s*\(", "__import__"),
-        )
+        # Auto-generated regex fallback for files that fail to parse as AST.
+        # This is purely informational — files with syntax errors cannot
+        # execute, so violations here are not safety-critical.  The regex
+        # does not consult ALLOWED_MODULES, so it may produce false
+        # positives (e.g. flagging ``from urllib.parse``).
+        fallback_patterns: list[tuple[str, str]] = []
+        for mod in disallowed_modules:
+            escaped = re.escape(mod)
+            fallback_patterns.append((rf"\bimport\s+{escaped}(\b|\.)", f"import {mod}"))
+            fallback_patterns.append((rf"\bfrom\s+{escaped}(\b|\.)", f"from {mod}"))
+        fallback_patterns.append((r"\b__import__\s*\(", "__import__"))
 
         def scan_ast_imports(tree: ast.AST, filename: str) -> None:
             """Collect disallowed import violations from a parsed AST."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date as date_type
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from shu_plugin_sdk import (
     HttpRequestFailed,
@@ -183,7 +184,7 @@ class _GithubClient:
         owner, repo_name = _split_repo(repo)
         branches = await self.fetch_branches(owner, repo_name)
 
-        # Widen server-side UTC window; exact range is enforced locally by _author_date_in_range.
+        # Widen server-side UTC window; exact range is enforced locally by _date_in_range.
         since_date = date_type.fromisoformat(date) - timedelta(days=1)
         until_date = date_type.fromisoformat(date_end) + timedelta(days=1)
         since = f"{since_date.isoformat()}T00:00:00Z"
@@ -195,12 +196,15 @@ class _GithubClient:
         for branch in branches:
             base_url = (
                 f"{self.BASE_URL}/repos/{owner}/{repo_name}/commits"
-                f"?sha={branch}&author={username}&since={since}&until={until}"
+                f"?sha={quote(branch, safe='')}&author={quote(username, safe='')}"
+                f"&since={since}&until={until}"
             )
             items = await self._paginate_search(base_url, per_page=100)
             for item in items:
                 sha: str = item.get("sha", "")
-                if sha and sha not in seen_shas and _author_date_in_range(item, date, date_end):
+                if sha and sha not in seen_shas and _date_in_range(
+                    item.get("commit", {}).get("author", {}).get("date", ""), date, date_end
+                ):
                     seen_shas.add(sha)
                     all_commits.append(item)
 
@@ -331,10 +335,8 @@ class _GithubClient:
 
         """
         owner, repo_name = _split_repo(repo)
-        base_url = (
-            f"{self.BASE_URL}/search/issues"
-            f"?q=type:pr+repo:{repo}+author:{user}+updated:{date}..{date_end}"
-        )
+        q = quote(f"type:pr repo:{repo} author:{user} updated:{date}..{date_end}", safe="")
+        base_url = f"{self.BASE_URL}/search/issues?q={q}"
         items = await self._paginate_search(base_url)
         result = []
         for item in items:
@@ -400,10 +402,8 @@ class _GithubClient:
             List of dicts with ``number`` and ``title`` for each reviewed PR.
 
         """
-        base_url = (
-            f"{self.BASE_URL}/search/issues"
-            f"?q=type:pr+repo:{repo}+reviewed-by:{user}+updated:{date}..{date_end}"
-        )
+        q = quote(f"type:pr repo:{repo} reviewed-by:{user} updated:{date}..{date_end}", safe="")
+        base_url = f"{self.BASE_URL}/search/issues?q={q}"
         items = await self._paginate_search(base_url)
         return [{"number": item["number"], "title": item["title"]} for item in items]
 
@@ -471,7 +471,7 @@ class _GithubClient:
         user_reviews = [
             r for r in reviews_raw
             if (r.get("user") or {}).get("login") == user
-            and _timestamp_in_range(r.get("submitted_at"), date, date_end)
+            and _date_in_range(r.get("submitted_at"), date, date_end)
         ]
         if not user_reviews:
             return []
@@ -605,49 +605,22 @@ class _GithubClient:
         return data, None
 
 
-def _author_date_in_range(item: dict[str, Any], date: str, date_end: str) -> bool:
-    """Return True if the commit's author date (in its stored timezone) falls within ``date``..``date_end``.
+def _date_in_range(timestamp: Any, date: str, date_end: str) -> bool:
+    """Return True if an ISO 8601 timestamp's local date falls within ``date``..``date_end``.
 
-    GitHub stores author dates with their original timezone offset
-    (e.g. ``2026-02-26T18:40:28-06:00``).  Converting to UTC before comparing
-    would incorrectly shift late-evening commits to the next calendar day.
-    By calling ``.date()`` on the timezone-aware datetime we recover the
-    *local* calendar date as the author experienced it.
-
-    Args:
-        item:     Raw commit item from the GitHub API.
-        date:     Start date string ``YYYY-MM-DD`` (inclusive).
-        date_end: End date string ``YYYY-MM-DD`` (inclusive).
-
-    Returns:
-        ``True`` if the commit's local author date is within the range,
-        ``False`` otherwise, including when the date field is missing or
-        unparsable.
-
-    """
-    author_date_str: str = (
-        item.get("commit", {}).get("author", {}).get("date", "")
-    )
-    if not author_date_str:
-        return False
-    try:
-        dt = datetime.fromisoformat(author_date_str.replace("Z", "+00:00"))
-        local_date = dt.date().isoformat()
-        return date <= local_date <= date_end
-    except ValueError:
-        return False
-
-
-def _timestamp_in_range(timestamp: Any, date: str, date_end: str) -> bool:
-    """Return True if an ISO timestamp falls within ``date``..``date_end``.
+    GitHub stores timestamps with their original timezone offset
+    (e.g. ``2026-02-26T18:40:28-06:00``).  By calling ``.date()`` on the
+    timezone-aware datetime we recover the *local* calendar date as the
+    author experienced it, rather than converting to UTC first.
 
     Args:
-        timestamp: Timestamp string in ISO 8601 form (e.g. ``...Z``).
-        date: Start date string ``YYYY-MM-DD`` (inclusive).
-        date_end: End date string ``YYYY-MM-DD`` (inclusive).
+        timestamp: Timestamp string in ISO 8601 form (e.g. ``...Z`` or
+                   ``...+00:00``), or any non-string / falsy value.
+        date:      Start date string ``YYYY-MM-DD`` (inclusive).
+        date_end:  End date string ``YYYY-MM-DD`` (inclusive).
 
     Returns:
-        ``True`` when the timestamp parses and its date is within range.
+        ``True`` when the timestamp parses and its local date is within range.
         ``False`` when missing, unparsable, or out of range.
 
     """

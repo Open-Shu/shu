@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from shu_plugin_sdk import FakeHostBuilder
@@ -193,7 +194,8 @@ def _commits_url(
     until = f"{until_date.isoformat()}T23:59:59Z"
     return (
         f"{_GH_BASE}/repos/{owner}/{repo_name}/commits"
-        f"?sha={branch}&author={username}&since={since}&until={until}"
+        f"?sha={quote(branch, safe='')}&author={quote(username, safe='')}"
+        f"&since={since}&until={until}"
         f"&per_page=100&page={page}"
     )
 
@@ -215,9 +217,9 @@ def _prs_authored_url(
     page: int = 1,
 ) -> str:
     """Return the exact PR-authored search URL the plugin builds."""
+    q = quote(f"type:pr repo:{repo} author:{user} updated:{date}..{date_end}", safe="")
     return (
-        f"{_GH_BASE}/search/issues"
-        f"?q=type:pr+repo:{repo}+author:{user}+updated:{date}..{date_end}"
+        f"{_GH_BASE}/search/issues?q={q}"
         f"&per_page=30&page={page}"
     )
 
@@ -230,9 +232,9 @@ def _prs_reviewed_url(
     page: int = 1,
 ) -> str:
     """Return the exact PR-reviewed search URL the plugin builds."""
+    q = quote(f"type:pr repo:{repo} reviewed-by:{user} updated:{date}..{date_end}", safe="")
     return (
-        f"{_GH_BASE}/search/issues"
-        f"?q=type:pr+repo:{repo}+reviewed-by:{user}+updated:{date}..{date_end}"
+        f"{_GH_BASE}/search/issues?q={q}"
         f"&per_page=30&page={page}"
     )
 
@@ -453,6 +455,16 @@ async def test_reviewed_pr_filters_out_of_range_reviews() -> None:
     assert len(result.data["reviews"]) == 1
     assert result.data["reviews"][0]["state"] == "APPROVED"
     assert result.data["reviews"][0]["submitted_at"] == f"{_DATE}T11:00:00Z"
+
+
+async def test_unsupported_op() -> None:
+    """Unknown op — result must carry code='invalid_op'."""
+    host = FakeHostBuilder().build()
+    plugin = GithubPlugin()
+    result = await plugin.execute({"op": "bad_op", "repo": _REPO}, _CTX, host)
+
+    assert result.status == "error"
+    assert result.error["code"] == "invalid_op"
 
 
 async def test_missing_pat() -> None:

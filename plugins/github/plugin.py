@@ -312,6 +312,10 @@ class GithubPlugin:
             A ``PluginResult`` whose ``data`` shape matches ``get_output_schema()``.
 
         """
+        op = (params.get("op") or "").strip()
+        if op != "fetch_activity":
+            return PluginResult.err(f"Unsupported op: '{op}'", code="invalid_op")
+
         repo: str = params.get("repo", "")
         if err := _check_repo_format(repo):
             return err
