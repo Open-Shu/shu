@@ -11,6 +11,7 @@ Standardize how we manage database schema changes so that:
 - Each release clearly shows its schema delta via a single squashed migration
 
 ## Policy
+- Make sure all the operations are fully idempotent.
 - Development (pre-release):
   - Create standard Alembic revisions for each schema change; no DB wipes.
   - Prefer Alembic over manual SQL. Use manual SQL only when Alembic cannot express a required data fix; write → run → verify → delete.
