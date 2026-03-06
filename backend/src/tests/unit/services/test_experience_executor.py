@@ -111,6 +111,33 @@ class TestContextBuilding:
         assert context["previous_run"]["step_outputs"] == {"old_step": {"data": 123}}
         assert context["now"] == "Monday, January 15, 2024 at 2:30 PM EST"
 
+    @pytest.mark.asyncio
+    async def test_build_initial_context_shared_run_uses_creator(self, executor):
+        """Shared run (user_id=None) uses creator identity for context and timezone."""
+        experience = MagicMock()
+        experience.include_previous_run = False
+
+        creator = MagicMock()
+        creator.id = "creator-1"
+        creator.email = "creator@example.com"
+        creator.display_name = "Creator"
+
+        executor._get_user_formatted_datetime = AsyncMock(return_value="Monday, June 15, 2024 at 10:00 AM EST")
+
+        context = await executor._build_initial_context(
+            experience=experience,
+            user_id=None,
+            current_user=creator,
+            input_params={"query": "test"},
+        )
+
+        assert context["user"]["id"] == "creator-1"
+        assert context["user"]["email"] == "creator@example.com"
+        assert context["input"] == {"query": "test"}
+        assert context["steps"] == {}
+        # Timezone lookup uses creator's ID when user_id is None
+        executor._get_user_formatted_datetime.assert_called_once_with("creator-1")
+
 
 class TestTemplateRendering:
     """
@@ -403,6 +430,34 @@ class TestRunManagement:
         assert run.model_configuration_id == "config-1"
 
     @pytest.mark.asyncio
+    async def test_create_or_resume_run_shared_skips_ownership_check(self, executor):
+        """user_id=None does not raise PermissionError when resuming a shared run."""
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.model_configuration_id = "config-1"
+
+        # Simulate an existing queued shared run (user_id=None)
+        existing_run = MagicMock()
+        existing_run.experience_id = "exp-123"
+        existing_run.user_id = None
+        existing_run.status = "queued"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing_run
+
+        executor.db.execute = AsyncMock(return_value=mock_result)
+        executor.db.commit = AsyncMock()
+        executor.db.refresh = AsyncMock()
+
+        # Should not raise PermissionError for user_id=None
+        run = await executor._create_or_resume_run(
+            experience, user_id=None, input_params={}, run_id="run-456"
+        )
+
+        assert run == existing_run
+        assert run.status == "running"
+
+    @pytest.mark.asyncio
     async def test_finalize_run_success(self, executor):
         """Test run finalization with success status."""
         run = MagicMock()
@@ -547,7 +602,10 @@ class TestPreviousRunBacklink:
         mock_result.scalars.return_value.first.return_value = mock_run
         executor.db.execute = AsyncMock(return_value=mock_result)
 
-        result = await executor._get_previous_run("exp-123", "user-123")
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.scope = "user"
+        result = await executor._get_previous_run(experience, "user-123")
 
         assert result == mock_run
 
@@ -558,9 +616,51 @@ class TestPreviousRunBacklink:
         mock_result.scalars.return_value.first.return_value = None
         executor.db.execute = AsyncMock(return_value=mock_result)
 
-        result = await executor._get_previous_run("exp-123", "user-123")
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.scope = "user"
+        result = await executor._get_previous_run(experience, "user-123")
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_previous_run_shared_uses_null_user_id(self, executor):
+        """For scope='shared', _get_previous_run queries runs where user_id IS NULL."""
+        mock_run = MagicMock()
+        mock_run.result_content = "Shared result"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_run
+        executor.db.execute = AsyncMock(return_value=mock_result)
+
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.scope = "shared"
+
+        result = await executor._get_previous_run(experience, user_id=None)
+
+        assert result == mock_run
+        # Verify db.execute was called (the WHERE clause filters by user_id IS NULL)
+        executor.db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_previous_run_user_scoped_unchanged(self, executor):
+        """For scope='user', _get_previous_run queries runs by user_id (existing behavior)."""
+        mock_run = MagicMock()
+        mock_run.result_content = "User result"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_run
+        executor.db.execute = AsyncMock(return_value=mock_result)
+
+        experience = MagicMock()
+        experience.id = "exp-123"
+        experience.scope = "user"
+
+        result = await executor._get_previous_run(experience, user_id="user-456")
+
+        assert result == mock_run
+        executor.db.execute.assert_called_once()
 
 
 class TestModelConfigurationValidation:

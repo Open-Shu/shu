@@ -21,6 +21,7 @@ import {
   Tab,
   Switch,
   FormControlLabel,
+  FormHelperText,
 } from '@mui/material';
 import { ArrowBack as BackIcon, Save as SaveIcon, PlayArrow as RunIcon } from '@mui/icons-material';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
@@ -43,6 +44,7 @@ export default function ExperienceEditor() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState('draft');
+  const [scope, setScope] = useState('user');
   const [triggerType, setTriggerType] = useState('manual');
   const [triggerConfig, setTriggerConfig] = useState({});
   const [modelConfigurationId, setModelConfigurationId] = useState('');
@@ -101,6 +103,7 @@ export default function ExperienceEditor() {
       setName(exp.name || '');
       setDescription(exp.description || '');
       setVisibility(exp.visibility || 'draft');
+      setScope(exp.scope || 'user');
       setTriggerType(exp.trigger_type || 'manual');
       setTriggerConfig(exp.trigger_config || {});
       // Use model configuration only (no legacy fields)
@@ -225,6 +228,7 @@ export default function ExperienceEditor() {
       name,
       description: description || null,
       visibility,
+      scope,
       trigger_type: triggerType,
       trigger_config: triggerConfig,
       // Use model configuration (no legacy fields)
@@ -403,6 +407,23 @@ export default function ExperienceEditor() {
                         <MenuItem value="admin_only">Admin Only</MenuItem>
                         <MenuItem value="published">Published</MenuItem>
                       </Select>
+                      <FormHelperText>
+                        {visibility === 'published'
+                          ? 'Visible to all users'
+                          : visibility === 'admin_only'
+                            ? 'Only admins can see this'
+                            : 'Not visible to users yet'}
+                      </FormHelperText>
+                    </FormControl>
+                    <FormControl fullWidth>
+                      <InputLabel>Scope</InputLabel>
+                      <Select value={scope} label="Scope" onChange={handleFieldChange(setScope, 'scope')}>
+                        <MenuItem value="user">Per User</MenuItem>
+                        <MenuItem value="shared">Shared</MenuItem>
+                      </Select>
+                      <FormHelperText>
+                        {scope === 'shared' ? 'Runs once, result shared with all users' : 'Runs once per active user'}
+                      </FormHelperText>
                     </FormControl>
                     <TextField
                       label="Max Run Time (s)"
@@ -411,8 +432,14 @@ export default function ExperienceEditor() {
                       onChange={handleFieldChange(setMaxRunSeconds, 'max_run_seconds')}
                       fullWidth
                       inputProps={{ min: 10, max: 600 }}
+                      helperText="Timeout before the run is cancelled"
                     />
                   </Stack>
+                  {scope === 'shared' && (
+                    <Alert severity="info">
+                      This experience will run using the creator's account for data access and plugin authentication.
+                    </Alert>
+                  )}
                   <FormControlLabel
                     control={
                       <Switch

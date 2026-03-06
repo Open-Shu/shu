@@ -5,18 +5,18 @@ including CRUD operations, template validation, and required scopes computation.
 """
 
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 import yaml
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, nullslast, or_, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     from ..auth.models import User
-
 
 try:
     from croniter import croniter
@@ -28,7 +28,8 @@ import zoneinfo
 from jinja2 import BaseLoader, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
-from ..core.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.config import get_config_manager
+from ..core.exceptions import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
@@ -41,6 +42,7 @@ from ..schemas.experience import (
     ExperienceResultSummary,
     ExperienceRunList,
     ExperienceRunResponse,
+    ExperienceScope,
     ExperienceStepCreate,
     ExperienceStepResponse,
     ExperienceUpdate,
@@ -50,6 +52,7 @@ from ..schemas.experience import (
     TriggerType,
     UserExperienceResults,
 )
+from ..services.experience_executor import ExperienceExecutor
 from ..services.plugin_identity import check_plugin_user_auth
 
 logger = get_logger(__name__)
@@ -188,6 +191,7 @@ class ExperienceService:
             description=experience_data.description,
             created_by=created_by,
             visibility=experience_data.visibility.value,
+            scope=experience_data.scope.value,
             trigger_type=experience_data.trigger_type.value,
             trigger_config=experience_data.trigger_config,
             include_previous_run=experience_data.include_previous_run,
@@ -212,6 +216,83 @@ class ExperienceService:
 
         logger.info(f"Created experience '{experience.name}' with {len(experience_data.steps)} steps")
         return self._experience_to_response(experience)
+
+    async def run(
+        self,
+        experience_id: str,
+        current_user: "User",
+        input_params: dict[str, Any] | None = None,
+    ) -> AsyncGenerator:
+        """Validate, authorize, and start streaming execution of an experience.
+
+        Performs visibility check, shared-experience authorization, identity
+        resolution, and returns the streaming event generator.
+
+        Args:
+            experience_id: Experience ID to run.
+            current_user: The authenticated user initiating the run.
+            input_params: Optional user-provided input parameters.
+
+        Returns:
+            Async generator of ExperienceEvent objects for SSE streaming.
+
+        Raises:
+            NotFoundError: If the experience does not exist or is not visible.
+            AuthorizationError: If the user lacks permission to run the experience.
+
+        """
+        is_admin = current_user.can_manage_users()
+
+        # Visibility check
+        experience_resp = await self.get_experience(
+            experience_id=experience_id, user_id=str(current_user.id), is_admin=is_admin
+        )
+        if not experience_resp:
+            raise NotFoundError(
+                f"Experience '{experience_id}' not found or access denied",
+                details={"code": "EXPERIENCE_NOT_FOUND"},
+            )
+
+        # Load full ORM model with relationships needed for execution
+        result = await self.db.execute(
+            select(Experience)
+            .options(selectinload(Experience.steps), selectinload(Experience.prompt), selectinload(Experience.creator))
+            .where(Experience.id == experience_id)
+        )
+        experience = result.scalars().first()
+        if not experience:
+            raise NotFoundError(
+                f"Experience '{experience_id}' not found",
+                details={"code": "EXPERIENCE_NOT_FOUND"},
+            )
+
+        # Shared-experience guard
+        is_shared = experience.scope == ExperienceScope.SHARED.value
+        if is_shared:
+            if not is_admin:
+                raise AuthorizationError(
+                    "Shared experiences can only be triggered manually by admins.",
+                    details={"code": "SHARED_EXPERIENCE_NON_ADMIN"},
+                )
+            if not experience.creator or not experience.creator.is_active:
+                raise AuthorizationError(
+                    "The creator of this shared experience is inactive. "
+                    "Re-activate their account or reassign the experience.",
+                    details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
+                )
+
+        # Resolve execution identity
+        run_user_id = None if is_shared else str(current_user.id)
+        run_current_user = experience.creator if is_shared else current_user
+
+        config_manager = get_config_manager()
+        executor = ExperienceExecutor(self.db, config_manager)
+        return executor.execute_streaming(
+            experience=experience,
+            user_id=run_user_id,
+            input_params=input_params or {},
+            current_user=run_current_user,
+        )
 
     async def get_experience(
         self, experience_id: str, user_id: str | None = None, is_admin: bool = False
@@ -284,12 +365,12 @@ class ExperienceService:
         # Update scalar fields
         update_dict = update_data.model_dump(exclude_unset=True, exclude={"steps"})
         trigger_changed = False
+        enum_string_fields = {"visibility", "scope", "trigger_type"}
         for field, value in update_dict.items():
-            if field == "visibility" and value:
+            if field in enum_string_fields and value:
                 setattr(experience, field, value.value if hasattr(value, "value") else value)
-            elif field == "trigger_type" and value:
-                setattr(experience, field, value.value if hasattr(value, "value") else value)
-                trigger_changed = True
+                if field == "trigger_type":
+                    trigger_changed = True
             elif field == "trigger_config":
                 setattr(experience, field, value)
                 trigger_changed = True
@@ -517,7 +598,7 @@ class ExperienceService:
                         if isinstance(s, str) and s.strip() and s.strip() not in scopes:
                             scopes.append(s.strip())
 
-            # Also check required_identities in manifest for global scopes
+            # Also check required_identities in manifest for shared scopes
             # This would be accessible through the full manifest, but PluginRecord
             # doesn't expose it directly. For now, op_auth scopes are sufficient.
 
@@ -638,7 +719,7 @@ class ExperienceService:
     async def list_runs(
         self,
         experience_id: str,
-        user_id: str | None = None,
+        user_id: str,
         is_admin: bool = False,
         limit: int = 50,
         offset: int = 0,
@@ -647,7 +728,7 @@ class ExperienceService:
 
         Args:
             experience_id: Experience ID
-            user_id: Filter by user ID (non-admins see only their own)
+            user_id: Current user ID
             is_admin: Whether current user is admin
             limit: Maximum number of results
             offset: Number of results to skip
@@ -656,11 +737,15 @@ class ExperienceService:
             Paginated list of runs
 
         """
+        # Run history inherits parent experience visibility rules.
+        if not await self._can_access_experience_runs(experience_id, user_id, is_admin):
+            return self._build_paginated_response(ExperienceRunList, [], total=0, offset=offset, limit=limit)
+
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
-        # Non-admins see only their own runs
-        if not is_admin and user_id:
-            stmt = stmt.where(ExperienceRun.user_id == user_id)
+        # Non-admins see their own runs and shared runs (user_id IS NULL)
+        if not is_admin:
+            stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
         # Execute with pagination
         total, runs = await self._execute_paginated_query(
@@ -701,14 +786,12 @@ class ExperienceService:
             }
         return users_by_id
 
-    async def get_run(
-        self, run_id: str, user_id: str | None = None, is_admin: bool = False
-    ) -> ExperienceRunResponse | None:
+    async def get_run(self, run_id: str, user_id: str, is_admin: bool = False) -> ExperienceRunResponse | None:
         """Get a specific run by ID.
 
         Args:
             run_id: Run ID
-            user_id: Current user ID (for ownership check)
+            user_id: Current user ID
             is_admin: Whether current user is admin
 
         Returns:
@@ -722,8 +805,11 @@ class ExperienceService:
         if not run:
             return None
 
-        # Ownership check for non-admins
-        if not is_admin and user_id and run.user_id != user_id:
+        # Ownership check for non-admins; shared runs (user_id IS NULL) are visible to all
+        if not is_admin and run.user_id is not None and run.user_id != user_id:
+            return None
+
+        if not await self._can_access_experience_runs(run.experience_id, user_id, is_admin):
             return None
 
         return self._run_to_response(run)
@@ -771,10 +857,14 @@ class ExperienceService:
             .where(
                 and_(
                     ExperienceRun.experience_id.in_(experience_ids),
-                    ExperienceRun.user_id == user_id,
+                    or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)),
                 )
             )
-            .order_by(ExperienceRun.experience_id, ExperienceRun.created_at.desc())
+            .order_by(
+                ExperienceRun.experience_id,
+                nullslast(ExperienceRun.user_id.asc()),
+                ExperienceRun.created_at.desc(),
+            )
             .distinct(ExperienceRun.experience_id)
         )
         runs_result = await self.db.execute(latest_runs_stmt)
@@ -1101,6 +1191,23 @@ class ExperienceService:
         # Non-admins only see published experiences
         return experience.visibility == ExperienceVisibility.PUBLISHED.value
 
+    async def _can_access_experience_runs(self, experience_id: str, user_id: str, is_admin: bool) -> bool:
+        """Check whether a user can access run history for an experience."""
+        if not user_id and not is_admin:
+            logger.warning(
+                "Run access check failed: missing user_id for non-admin",
+                extra={"experience_id": experience_id},
+            )
+            return False
+
+        stmt = select(Experience).where(Experience.id == experience_id)
+        result = await self.db.execute(stmt)
+        experience = result.scalar_one_or_none()
+        if not experience:
+            return False
+
+        return self._check_visibility(experience, user_id, is_admin)
+
     def _get_last_run_timestamp(self, experience: Experience) -> datetime | None:
         """Get the last run timestamp for an experience.
 
@@ -1170,6 +1277,7 @@ class ExperienceService:
             description=experience.description,
             created_by=experience.created_by,
             visibility=ExperienceVisibility(experience.visibility),
+            scope=ExperienceScope(experience.scope),
             trigger_type=TriggerType(experience.trigger_type),
             trigger_config=experience.trigger_config,
             include_previous_run=experience.include_previous_run,

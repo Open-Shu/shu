@@ -25,6 +25,13 @@ class ExperienceVisibility(str, Enum):
     PUBLISHED = "published"
 
 
+class ExperienceScope(str, Enum):
+    """Scope of experience execution."""
+
+    USER = "user"
+    SHARED = "shared"
+
+
 class TriggerType(str, Enum):
     """Trigger types for experience execution."""
 
@@ -179,6 +186,7 @@ class ExperienceBase(BaseModel):
 class ExperienceCreate(ExperienceBase):
     """Schema for creating experiences."""
 
+    scope: ExperienceScope = Field(default=ExperienceScope.USER, description="Execution scope of the experience")
     steps: list[ExperienceStepCreate] = Field(default_factory=list, description="Experience steps")
 
 
@@ -190,6 +198,7 @@ class ExperienceUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = None
     visibility: ExperienceVisibility | None = None
+    scope: ExperienceScope | None = None
     trigger_type: TriggerType | None = None
     trigger_config: dict[str, Any] | None = None
     include_previous_run: bool | None = None
@@ -218,6 +227,7 @@ class ExperienceResponse(ExperienceBase):
     created_by: str
     created_at: datetime
     updated_at: datetime
+    scope: ExperienceScope = ExperienceScope.USER
 
     # Version info
     version: int
@@ -270,7 +280,7 @@ class ExperienceRunResponse(BaseModel):
 
     id: str
     experience_id: str
-    user_id: str
+    user_id: str | None
     previous_run_id: str | None = None
 
     # Model configuration used for this run (snapshot at execution time)

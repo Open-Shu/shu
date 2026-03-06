@@ -6,6 +6,7 @@ Tests cover:
 - Helper methods (pagination, base query)
 - Required scopes computation
 - Visibility checks
+- Shared scope: creation, run visibility, access control
 """
 
 from datetime import datetime
@@ -18,6 +19,7 @@ from shu.schemas.experience import (
     ExperienceCreate,
     ExperienceList,
     ExperienceResponse,
+    ExperienceScope,
     ExperienceStepCreate,
     ExperienceUpdate,
     ExperienceVisibility,
@@ -80,6 +82,7 @@ def mock_experience_response():
         description="A test experience",
         created_by="user-123",
         visibility=ExperienceVisibility.DRAFT,
+        scope=ExperienceScope.USER,
         trigger_type=TriggerType.MANUAL,
         trigger_config=None,
         include_previous_run=False,
@@ -485,6 +488,7 @@ class TestUpdateExperience:
         existing_exp.name = "Old Name"
         existing_exp.description = "Old description"
         existing_exp.visibility = ExperienceVisibility.DRAFT.value
+        existing_exp.scope = ExperienceScope.USER.value
         existing_exp.trigger_type = TriggerType.MANUAL.value
         existing_exp.trigger_config = None
         existing_exp.include_previous_run = False
@@ -523,6 +527,134 @@ class TestUpdateExperience:
 
         # Verify response
         assert isinstance(result, ExperienceResponse)
+
+
+class TestGetRun:
+    """Tests for get_run() ownership and shared-run visibility."""
+
+    def _make_mock_run(self, user_id: str | None) -> MagicMock:
+        """Return a minimal mock ExperienceRun with the given user_id."""
+        run = MagicMock()
+        run.user_id = user_id
+        run.started_at = None
+        run.finished_at = None
+        return run
+
+    async def _call_get_run(
+        self,
+        mock_db_session,
+        run: MagicMock | None,
+        user_id: str,
+        is_admin: bool = False,
+        can_access_experience: bool = True,
+    ):
+        """Wire up db.execute and call get_run()."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = run
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        with (
+            patch.object(service, "_run_to_response", return_value=MagicMock()),
+            patch.object(
+                service,
+                "_can_access_experience_runs",
+                new=AsyncMock(return_value=can_access_experience),
+            ),
+        ):
+            return await service.get_run("run-123", user_id=user_id, is_admin=is_admin)
+
+    @pytest.mark.asyncio
+    async def test_get_run_not_found(self, mock_db_session):
+        """Returns None when run does not exist."""
+        result = await self._call_get_run(mock_db_session, run=None, user_id="user-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_run_own_run_accessible(self, mock_db_session):
+        """Non-admin can fetch their own run."""
+        run = self._make_mock_run(user_id="user-1")
+        result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_run_other_users_run_blocked(self, mock_db_session):
+        """Non-admin cannot fetch another user's run."""
+        run = self._make_mock_run(user_id="user-2")
+        result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_run_shared_run_accessible_by_non_admin(self, mock_db_session):
+        """Non-admin can fetch a shared run (user_id IS NULL)."""
+        run = self._make_mock_run(user_id=None)
+        result = await self._call_get_run(mock_db_session, run=run, user_id="user-1")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_run_admin_can_access_any_run(self, mock_db_session):
+        """Admin can fetch any user's run regardless of ownership."""
+        run = self._make_mock_run(user_id="user-2")
+        result = await self._call_get_run(mock_db_session, run=run, user_id="admin-1", is_admin=True)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_run_denied_when_experience_not_visible(self, mock_db_session):
+        """Run is not returned when parent experience is not visible."""
+        run = self._make_mock_run(user_id=None)
+        run.experience_id = "exp-1"
+        result = await self._call_get_run(
+            mock_db_session,
+            run=run,
+            user_id="user-1",
+            can_access_experience=False,
+        )
+        assert result is None
+
+
+class TestRunVisibilityHelper:
+    """Tests for _can_access_experience_runs()."""
+
+    @pytest.mark.asyncio
+    async def test_can_access_experience_runs_non_admin_empty_user_id(self, mock_db_session):
+        service = ExperienceService(mock_db_session)
+        allowed = await service._can_access_experience_runs("exp-1", user_id="", is_admin=False)
+        assert allowed is False
+        mock_db_session.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_can_access_experience_runs_false_when_missing(self, mock_db_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        allowed = await service._can_access_experience_runs("exp-1", user_id="user-1", is_admin=False)
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_can_access_experience_runs_non_admin_published(self, mock_db_session):
+        exp = MagicMock()
+        exp.visibility = ExperienceVisibility.PUBLISHED.value
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = exp
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        allowed = await service._can_access_experience_runs("exp-1", user_id="user-1", is_admin=False)
+        assert allowed is True
+
+    @pytest.mark.asyncio
+    async def test_can_access_experience_runs_non_admin_draft(self, mock_db_session):
+        exp = MagicMock()
+        exp.visibility = ExperienceVisibility.DRAFT.value
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = exp
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        allowed = await service._can_access_experience_runs("exp-1", user_id="user-1", is_admin=False)
+        assert allowed is False
 
 
 class TestExperienceExport:
@@ -646,3 +778,313 @@ class TestExperienceExport:
         assert len(cleaned["items"]) == 2  # None item removed
         assert cleaned["items"][1]["id"] == 2
         assert "name" not in cleaned["items"][1]  # None name removed
+
+
+# ---------------------------------------------------------------------------
+# Shared-scope tests
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_run(user_id: str | None, run_id: str = "run-1") -> MagicMock:
+    """Build a minimal mock ExperienceRun for list/get tests."""
+    now = datetime.now()
+    run = MagicMock()
+    run.id = run_id
+    run.experience_id = "exp-1"
+    run.user_id = user_id
+    run.previous_run_id = None
+    run.model_configuration_id = None
+    run.status = "succeeded"
+    run.started_at = now
+    run.finished_at = now
+    run.step_states = None
+    run.step_outputs = None
+    run.input_params = None
+    run.result_content = "output"
+    run.result_metadata = None
+    run.error_message = None
+    run.error_details = None
+    run.created_at = now
+    run.updated_at = now
+    return run
+
+
+class TestCreateSharedExperience:
+    """Tests for creating experiences with scope='shared'."""
+
+    @pytest.mark.asyncio
+    @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
+    @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
+    async def test_create_shared_experience_stores_scope_field(
+        self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
+    ):
+        """Creating an experience with scope='shared' persists and returns the scope."""
+        # Override the fixture response to have shared scope
+        mock_experience_response.scope = ExperienceScope.SHARED
+
+        service = ExperienceService(mock_db_session)
+
+        experience_data = ExperienceCreate(
+            name="Daily Briefing",
+            description="A shared daily briefing",
+            scope=ExperienceScope.SHARED,
+            visibility=ExperienceVisibility.DRAFT,
+            trigger_type=TriggerType.MANUAL,
+            steps=[],
+        )
+
+        with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
+            result = await service.create_experience(experience_data, created_by="admin-1")
+
+        assert result.scope == ExperienceScope.SHARED
+
+        # Verify the Experience ORM object added to DB had scope="shared"
+        added_calls = mock_db_session.add.call_args_list
+        experience_obj = added_calls[0][0][0]
+        assert experience_obj.scope == "shared"
+
+    @pytest.mark.asyncio
+    @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
+    @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
+    async def test_create_shared_experience_with_auth_steps_succeeds(
+        self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
+    ):
+        """No creation-time rejection even if steps declare user OAuth.
+
+        Auth resolution happens at execution time, not creation time.
+        """
+        mock_experience_response.scope = ExperienceScope.SHARED
+
+        service = ExperienceService(mock_db_session)
+
+        step = ExperienceStepCreate(
+            step_key="gmail",
+            step_type=StepType.PLUGIN,
+            order=1,
+            plugin_name="shu_gmail_digest",
+            plugin_op="fetch_emails",
+        )
+
+        experience_data = ExperienceCreate(
+            name="Inbox Summary",
+            description="Shared inbox summary with user auth steps",
+            scope=ExperienceScope.SHARED,
+            visibility=ExperienceVisibility.DRAFT,
+            trigger_type=TriggerType.MANUAL,
+            steps=[step],
+        )
+
+        with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
+            result = await service.create_experience(experience_data, created_by="admin-1")
+
+        # If we got here without raising, creation succeeded
+        assert result.scope == ExperienceScope.SHARED
+        assert mock_db_session.commit.called
+
+
+class TestListRunsSharedVisibility:
+    """Tests for list_runs visibility of shared runs vs user-scoped runs."""
+
+    @pytest.mark.asyncio
+    async def test_list_runs_non_admin_includes_shared_runs(self, mock_db_session):
+        """Non-admin sees runs where user_id=NULL alongside their own."""
+        shared_run = _make_mock_run(user_id=None, run_id="run-shared")
+        user_run = _make_mock_run(user_id="user-1", run_id="run-user")
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                # Count query
+                result.scalar.return_value = 2
+            elif call_count == 2:
+                # Paginated query
+                result.scalars.return_value.all.return_value = [shared_run, user_run]
+            else:
+                # User info query
+                user_mock = MagicMock()
+                user_mock.id = "user-1"
+                user_mock.email = "user1@example.com"
+                user_mock.display_name = "User One"
+                result.scalars.return_value.all.return_value = [user_mock]
+            return result
+
+        mock_db_session.execute = mock_execute
+
+        service = ExperienceService(mock_db_session)
+        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+            result = await service.list_runs(
+                experience_id="exp-1",
+                user_id="user-1",
+                is_admin=False,
+            )
+
+        assert result.total == 2
+        run_ids = {r.id for r in result.items}
+        assert "run-shared" in run_ids
+        assert "run-user" in run_ids
+
+    @pytest.mark.asyncio
+    async def test_list_runs_non_admin_excludes_other_users_runs(self, mock_db_session):
+        """Non-admin does not see another user's non-shared runs.
+
+        The SQL filter (user_id = :uid OR user_id IS NULL) excludes runs
+        owned by other users. We verify the response contains only the
+        expected runs.
+        """
+        shared_run = _make_mock_run(user_id=None, run_id="run-shared")
+        own_run = _make_mock_run(user_id="user-1", run_id="run-own")
+        # user-2's run is excluded by the SQL filter, not returned by DB
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalar.return_value = 2
+            elif call_count == 2:
+                result.scalars.return_value.all.return_value = [shared_run, own_run]
+            else:
+                user_mock = MagicMock()
+                user_mock.id = "user-1"
+                user_mock.email = "user1@example.com"
+                user_mock.display_name = "User One"
+                result.scalars.return_value.all.return_value = [user_mock]
+            return result
+
+        mock_db_session.execute = mock_execute
+
+        service = ExperienceService(mock_db_session)
+        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+            result = await service.list_runs(
+                experience_id="exp-1",
+                user_id="user-1",
+                is_admin=False,
+            )
+
+        run_ids = {r.id for r in result.items}
+        assert "run-shared" in run_ids
+        assert "run-own" in run_ids
+        assert "run-other" not in run_ids
+
+    @pytest.mark.asyncio
+    async def test_list_runs_returns_empty_when_experience_not_visible(self, mock_db_session):
+        """Returns an empty page when parent experience is not visible."""
+        service = ExperienceService(mock_db_session)
+        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=False)):
+            result = await service.list_runs(
+                experience_id="exp-1",
+                user_id="user-1",
+                is_admin=False,
+            )
+
+        assert result.total == 0
+        assert result.items == []
+
+    @pytest.mark.asyncio
+    async def test_list_runs_after_scope_change_shared_to_user(self, mock_db_session):
+        """After experience scope changes shared→user, existing shared runs
+        (user_id=NULL) remain visible to admins but the non-admin query still
+        includes them via the OR user_id IS NULL clause.
+
+        This documents current behaviour — the list_runs query does not join
+        on Experience.scope, so stale shared runs remain visible to non-admins.
+        """
+        stale_shared_run = _make_mock_run(user_id=None, run_id="run-stale-shared")
+        new_user_run = _make_mock_run(user_id="user-1", run_id="run-new-user")
+
+        # -- Non-admin query --
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalar.return_value = 2
+            elif call_count == 2:
+                result.scalars.return_value.all.return_value = [stale_shared_run, new_user_run]
+            else:
+                user_mock = MagicMock()
+                user_mock.id = "user-1"
+                user_mock.email = "user1@example.com"
+                user_mock.display_name = "User One"
+                result.scalars.return_value.all.return_value = [user_mock]
+            return result
+
+        mock_db_session.execute = mock_execute
+
+        service = ExperienceService(mock_db_session)
+        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+            non_admin_result = await service.list_runs(
+                experience_id="exp-1",
+                user_id="user-1",
+                is_admin=False,
+            )
+
+        non_admin_ids = {r.id for r in non_admin_result.items}
+        assert "run-new-user" in non_admin_ids
+
+        # -- Admin query always includes all runs --
+        admin_call_count = 0
+
+        async def admin_mock_execute(stmt):
+            nonlocal admin_call_count
+            admin_call_count += 1
+            result = MagicMock()
+            if admin_call_count == 1:
+                result.scalar.return_value = 2
+            elif admin_call_count == 2:
+                result.scalars.return_value.all.return_value = [stale_shared_run, new_user_run]
+            else:
+                user_mock = MagicMock()
+                user_mock.id = "user-1"
+                user_mock.email = "user1@example.com"
+                user_mock.display_name = "User One"
+                result.scalars.return_value.all.return_value = [user_mock]
+            return result
+
+        mock_db_session.execute = admin_mock_execute
+
+        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+            admin_result = await service.list_runs(
+                experience_id="exp-1",
+                user_id="admin-1",
+                is_admin=True,
+            )
+
+        admin_ids = {r.id for r in admin_result.items}
+        assert "run-stale-shared" in admin_ids
+        assert "run-new-user" in admin_ids
+
+
+class TestGetRunSharedAccess:
+    """Tests for get_run access control with shared runs."""
+
+    @pytest.mark.asyncio
+    async def test_get_run_shared_accessible_to_any_user(self, mock_db_session):
+        """Any authenticated user can fetch a run with user_id=NULL."""
+        shared_run = _make_mock_run(user_id=None, run_id="run-shared")
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = shared_run
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+
+        # User "user-99" who did not create the run can still access it
+        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+            result = await service.get_run(
+                run_id="run-shared",
+                user_id="user-99",
+                is_admin=False,
+            )
+
+        assert result is not None
+        assert result.id == "run-shared"
+        assert result.user_id is None

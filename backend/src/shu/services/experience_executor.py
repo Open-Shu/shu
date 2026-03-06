@@ -31,6 +31,7 @@ from ..llm.service import LLMService
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
+from ..schemas.experience import ExperienceScope
 from ..schemas.query import QueryRequest
 from ..services.model_configuration_service import ModelConfigurationService
 from ..services.plugin_execution import execute_plugin
@@ -112,7 +113,7 @@ class ExperienceExecutor:
 
         Args:
             model_configuration_id: ID of the model configuration to load
-            current_user: Current user for access validation
+            current_user: Current user for access validation (creator for shared runs)
 
         Returns:
             ModelConfiguration if valid, None if validation fails
@@ -141,7 +142,7 @@ class ExperienceExecutor:
     async def execute_streaming(
         self,
         experience: Experience,
-        user_id: str,
+        user_id: str | None,
         input_params: dict[str, Any],
         current_user: User,
         run_id: str | None = None,
@@ -154,6 +155,8 @@ class ExperienceExecutor:
         - run_completed or error
 
         Args:
+            user_id: Run record ownership (NULL for shared runs).
+            current_user: Execution identity for steps (creator for shared runs).
             run_id: Optional pre-created ExperienceRun ID (e.g., from queue scheduler).
                 If provided, the existing run is transitioned to "running" instead of
                 creating a new one.
@@ -277,7 +280,7 @@ class ExperienceExecutor:
     async def execute(
         self,
         experience: Experience,
-        user_id: str,
+        user_id: str | None,
         input_params: dict[str, Any],
         current_user: User,
         run_id: str | None = None,
@@ -310,7 +313,7 @@ class ExperienceExecutor:
         self,
         experience: Experience,
         context: dict[str, Any],
-        user_id: str,
+        user_id: str | None,
         current_user: User,
         step_states: dict[str, Any],
         step_outputs: dict[str, Any],
@@ -435,7 +438,7 @@ class ExperienceExecutor:
     async def _create_or_resume_run(
         self,
         experience: Experience,
-        user_id: str,
+        user_id: str | None,
         input_params: dict[str, Any],
         run_id: str | None = None,
     ) -> ExperienceRun:
@@ -457,7 +460,10 @@ class ExperienceExecutor:
                 # Ownership validation: ensure the run belongs to this experience and user
                 if run.experience_id != str(experience.id):
                     raise ValueError(f"Run {run_id} belongs to experience '{run.experience_id}', not '{experience.id}'")
-                if run.user_id != str(user_id):
+                if user_id is None:
+                    if run.user_id is not None:
+                        raise PermissionError(f"Run {run_id} is user-scoped, cannot resume as shared")
+                elif run.user_id != str(user_id):
                     raise PermissionError(f"Run {run_id} belongs to a different user")
 
                 # Only allow transition from queued/pending → running
@@ -540,20 +546,31 @@ class ExperienceExecutor:
 
     async def _get_previous_run(
         self,
-        experience_id: str,
-        user_id: str,
+        experience: Experience,
+        user_id: str | None,
     ) -> ExperienceRun | None:
-        """Get the most recent successful run for backlink."""
-        result = await self.db.execute(
+        """Get the most recent successful run for context continuity.
+
+        For shared experiences: finds the last shared run (user_id IS NULL).
+        For user experiences: finds the last run for this specific user.
+        """
+        stmt = (
             select(ExperienceRun)
             .where(
-                ExperienceRun.experience_id == experience_id,
-                ExperienceRun.user_id == user_id,
+                ExperienceRun.experience_id == str(experience.id),
                 ExperienceRun.status == "succeeded",
             )
             .order_by(ExperienceRun.finished_at.desc())
             .limit(1)
         )
+        if experience.scope == ExperienceScope.SHARED.value:
+            stmt = stmt.where(ExperienceRun.user_id.is_(None))
+        else:
+            if user_id is None:
+                return None
+            stmt = stmt.where(ExperienceRun.user_id == user_id)
+
+        result = await self.db.execute(stmt)
         return result.scalars().first()
 
     async def _get_user_formatted_datetime(self, user_id: str) -> str:
@@ -596,7 +613,7 @@ class ExperienceExecutor:
     async def _build_initial_context(
         self,
         experience: Experience,
-        user_id: str,
+        user_id: str | None,
         current_user: User,
         input_params: dict[str, Any],
     ) -> dict[str, Any]:
@@ -604,9 +621,11 @@ class ExperienceExecutor:
         # Get previous run if needed
         previous_run: ExperienceRun | None = None
         if experience.include_previous_run:
-            previous_run = await self._get_previous_run(experience.id, user_id)
+            previous_run = await self._get_previous_run(experience, user_id)
 
-        formatted_now = await self._get_user_formatted_datetime(user_id)
+        # Use current_user for timezone when user_id is None (shared runs)
+        tz_user_id = user_id or str(current_user.id)
+        formatted_now = await self._get_user_formatted_datetime(tz_user_id)
 
         context = {
             "user": {
@@ -655,13 +674,16 @@ class ExperienceExecutor:
         self,
         step: ExperienceStep,
         context: dict[str, Any],
-        user_id: str,
+        user_id: str | None,
         current_user: User,
         knowledge_base_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Execute a single step (plugin, KB, or decision_control)."""
         if step.step_type == "plugin":
-            return await self._execute_plugin_step(step, context, user_id, knowledge_base_ids)
+            # For shared runs user_id is None (run ownership), but plugins need a
+            # real user ID for auth/identity. Use current_user (the creator for shared runs).
+            plugin_user_id = str(current_user.id)
+            return await self._execute_plugin_step(step, context, plugin_user_id, knowledge_base_ids)
         if step.step_type == "knowledge_base":
             return await self._execute_kb_step(step, context, current_user)
         if step.step_type == "decision_control":
@@ -672,7 +694,7 @@ class ExperienceExecutor:
         self,
         step: ExperienceStep,
         context: dict[str, Any],
-        user_id: str,
+        user_id: str | None,
         knowledge_base_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Execute plugin reusing the shared service logic."""
