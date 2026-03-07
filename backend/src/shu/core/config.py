@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     )
     branding_max_asset_size_bytes: int = Field(2 * 1024 * 1024, alias="SHU_BRANDING_MAX_ASSET_SIZE_BYTES")
 
+    # Policy-Based Access Control (PBAC)
+    # TTL for the in-memory policy cache. Policy/binding/statement mutations
+    # invalidate the cache immediately; this TTL acts as a safety-net refresh.
+    # Changes may take up to this many seconds to propagate in multi-process deployments.
+    policy_cache_ttl: int = Field(300, alias="SHU_POLICY_CACHE_TTL")  # 5 minutes
+
     # Security configuration
     api_key: str | None = Field(None, alias="SHU_API_KEY")
     password_policy: str = Field("moderate", alias="SHU_PASSWORD_POLICY")

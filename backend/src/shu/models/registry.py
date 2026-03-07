@@ -16,6 +16,9 @@ def register_all_models():
     # Import User model from auth package to ensure it's available for relationships
     from ..auth.models import User, UserRole
     from . import (
+        AccessPolicy,
+        AccessPolicyBinding,
+        AccessPolicyStatement,
         AgentMemory,
         Base,
         Conversation,
@@ -39,6 +42,9 @@ def register_all_models():
 
     # Return all model classes for reference if needed
     return {
+        "AccessPolicy": AccessPolicy,
+        "AccessPolicyBinding": AccessPolicyBinding,
+        "AccessPolicyStatement": AccessPolicyStatement,
         "Base": Base,
         "KnowledgeBase": KnowledgeBase,
         "Prompt": Prompt,
