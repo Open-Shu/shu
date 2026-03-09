@@ -803,7 +803,11 @@ class KnowledgeBaseService:
         """
         from ..core.workload_routing import WorkloadType, enqueue_job
 
-        kb = await self.db.get(KnowledgeBase, kb_id)
+        # Lock the row to prevent concurrent re-embedding requests
+        result = await self.db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update()
+        )
+        kb = result.scalar_one_or_none()
         if kb is None:
             raise KnowledgeBaseNotFoundError(kb_id)
 

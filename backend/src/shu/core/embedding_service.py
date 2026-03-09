@@ -200,7 +200,7 @@ class _EmbeddingServiceManager:
         dtype: str = "float32",
     ) -> LocalEmbeddingService:
         """Get or create a LocalEmbeddingService instance."""
-        instance_key = f"{model_name}:{device}"
+        instance_key = f"{model_name}:{device}:{dtype}"
         current_time = time.time()
 
         self._cleanup_expired_instances(current_time)

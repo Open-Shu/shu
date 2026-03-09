@@ -153,15 +153,15 @@ class TestEmbeddingServiceManager:
         mgr.get_service("model-2", "cpu", batch_size=32)
 
         # Force model-1 to be "oldest" by back-dating last_used
-        mgr._instances["model-1:cpu"]["last_used"] = time.time() - 100
+        mgr._instances["model-1:cpu:float32"]["last_used"] = time.time() - 100
 
         mock_cls.return_value = _make_mock_service("model-3")
         mgr.get_service("model-3", "cpu", batch_size=32)
 
         assert mgr.get_stats()["active_instances"] == 2
-        assert "model-1:cpu" not in mgr._instances
-        assert "model-2:cpu" in mgr._instances
-        assert "model-3:cpu" in mgr._instances
+        assert "model-1:cpu:float32" not in mgr._instances
+        assert "model-2:cpu:float32" in mgr._instances
+        assert "model-3:cpu:float32" in mgr._instances
 
     @patch("shu.core.embedding_service.LocalEmbeddingService")
     @patch("shu.core.embedding_service.get_settings_instance")

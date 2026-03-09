@@ -83,14 +83,24 @@ class RAGProcessingService:
         # 3. Generate embeddings via the EmbeddingService
         embeddings = await self.embedding_service.embed_texts(chunks)
 
+        if len(embeddings) != len(chunks):
+            raise ValueError(
+                f"Embedding count mismatch: got {len(embeddings)} embeddings for {len(chunks)} chunks"
+            )
+
         # 4. Create DocumentChunk objects
         document_chunks = []
         start_char = 0
         title_chunk_offset = 1 if (document_title and title_chunk_enabled) else 0
 
-        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
-            end_char = start_char + len(chunk)
+        # When the title is inlined (title_chunk_enabled=False), the prefix
+        # inflates chunks[0] but start_char/end_char must map to the original
+        # source text. Track the prefix length so we can subtract it.
+        title_prefix_len = 0
+        if document_title and chunks and not title_chunk_enabled:
+            title_prefix_len = len(f"Document Title: {document_title}\n\n")
 
+        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
             is_title_chunk = idx == 0 and title_chunk_offset == 1
 
             chunk_metadata = {}
@@ -106,6 +116,18 @@ class RAGProcessingService:
                     "title_weighting_enabled": title_weighting_enabled,
                 }
 
+            # For the title chunk (separate), positions are synthetic (not in source text).
+            # For content chunks, positions map to the original source text.
+            if is_title_chunk:
+                chunk_start = 0
+                chunk_end = len(chunk)
+            else:
+                chunk_start = start_char
+                # For the first content chunk with inlined title, the source-text
+                # length is the chunk length minus the prepended title prefix.
+                source_len = len(chunk) - (title_prefix_len if idx == 0 else 0)
+                chunk_end = start_char + source_len
+
             doc_chunk = DocumentChunk(
                 document_id=document_id,
                 knowledge_base_id=knowledge_base.id,
@@ -113,8 +135,8 @@ class RAGProcessingService:
                 content=chunk,
                 char_count=len(chunk),
                 word_count=len(chunk.split()),
-                start_char=start_char if not is_title_chunk else 0,
-                end_char=end_char if not is_title_chunk else len(chunk),
+                start_char=chunk_start,
+                end_char=chunk_end,
                 embedding=embedding,
                 embedding_model=self.embedding_service.model_name,
                 embedding_created_at=datetime.now(UTC),
@@ -125,6 +147,8 @@ class RAGProcessingService:
             if is_title_chunk:
                 start_char = 0
             else:
-                start_char += len(chunk) - chunk_overlap
+                # Advance by the source-text portion of this chunk
+                source_len = len(chunk) - (title_prefix_len if idx == 0 else 0)
+                start_char += source_len - chunk_overlap
 
         return document_chunks

@@ -24,7 +24,7 @@ function ReEmbedConfirmDialog({ knowledgeBase, onClose, onConfirm, isLoading, er
             </Typography>
             {error && (
               <Alert severity="error" sx={{ mt: 2 }}>
-                Failed to start re-embedding: {formatError(error).message}
+                Failed to start re-embedding: {formatError(error)}
               </Alert>
             )}
           </Box>

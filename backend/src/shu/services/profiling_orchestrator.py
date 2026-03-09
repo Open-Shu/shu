@@ -134,12 +134,13 @@ class ProfilingOrchestrator:
 
             # Embed synopsis and synthesized queries (SHU-351, SHU-359)
             # Isolated so embedding failures don't fail the profiling job
-            # Skip if query persistence rolled back — avoids embedding stale queries
             synopsis_embedded = False
             queries_embedded = 0
-            if doc_profile and queries_persist_ok:
+            if doc_profile:
                 try:
-                    synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(document)
+                    synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(
+                        document, embed_queries=queries_persist_ok
+                    )
                 except Exception as e:
                     await self.db.rollback()
                     logger.warning("profile_embedding_failed", document_id=document_id, error=str(e))
@@ -304,7 +305,7 @@ class ProfilingOrchestrator:
         embedding_service = await get_embedding_service()
         return await embedding_service.embed_texts(texts)
 
-    async def _embed_profile_artifacts(self, document: Document) -> tuple[bool, int]:
+    async def _embed_profile_artifacts(self, document: Document, *, embed_queries: bool = True) -> tuple[bool, int]:
         """Embed synopsis and synthesized query texts after profiling.
 
         Generates vector embeddings for the document's synopsis and all synthesized
@@ -337,14 +338,17 @@ class ProfilingOrchestrator:
                 )
                 synopsis_embedded = True
 
-        # Embed synthesized queries
-        stmt = (
-            select(DocumentQuery)
-            .where(DocumentQuery.document_id == document.id)
-            .where(DocumentQuery.query_embedding.is_(None))
-        )
-        result = await self.db.execute(stmt)
-        queries = list(result.scalars().all())
+        # Embed synthesized queries (skip if query persistence failed)
+        if embed_queries:
+            stmt = (
+                select(DocumentQuery)
+                .where(DocumentQuery.document_id == document.id)
+                .where(DocumentQuery.query_embedding.is_(None))
+            )
+            result = await self.db.execute(stmt)
+            queries = list(result.scalars().all())
+        else:
+            queries = []
 
         if queries:
             query_texts = [q.query_text for q in queries]
