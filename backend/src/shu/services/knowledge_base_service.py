@@ -774,7 +774,6 @@ class KnowledgeBaseService:
             logger.error(f"Failed to set status for KB '{kb_id}': {e}", exc_info=True)
             raise ShuException(f"Failed to set knowledge base status: {e!s}", "KNOWLEDGE_BASE_SET_STATUS_ERROR")
 
-
     async def trigger_re_embedding(
         self,
         kb_id: str,
@@ -873,11 +872,7 @@ async def detect_stale_kbs(db: AsyncSession, system_model: str) -> list[str]:
     stale_ids = [str(row[0]) for row in result.fetchall()]
 
     if stale_ids:
-        await db.execute(
-            update(KnowledgeBase)
-            .where(KnowledgeBase.id.in_(stale_ids))
-            .values(embedding_status="stale")
-        )
+        await db.execute(update(KnowledgeBase).where(KnowledgeBase.id.in_(stale_ids)).values(embedding_status="stale"))
         await db.commit()
         logger.warning(
             f"Marked {len(stale_ids)} knowledge base(s) as stale — "

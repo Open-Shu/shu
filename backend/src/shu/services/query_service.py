@@ -747,9 +747,7 @@ class QueryService:
             if knowledge_base.embedding_status not in ("current",):
                 from ..core.exceptions import KnowledgeBaseStaleEmbeddingsError
 
-                raise KnowledgeBaseStaleEmbeddingsError(
-                    knowledge_base_id, knowledge_base.embedding_status
-                )
+                raise KnowledgeBaseStaleEmbeddingsError(knowledge_base_id, knowledge_base.embedding_status)
 
             # Extract parameters from request
             query = request.query
@@ -781,10 +779,7 @@ class QueryService:
                 limit=limit,
                 threshold=threshold,
                 filters={"knowledge_base_id": knowledge_base_id},
-                extra_where=(
-                    "(chunk_metadata->>'chunk_type' != 'title' "
-                    "OR chunk_metadata->>'chunk_type' IS NULL)"
-                ),
+                extra_where=("(chunk_metadata->>'chunk_type' != 'title' " "OR chunk_metadata->>'chunk_type' IS NULL)"),
             )
 
             if not search_results:

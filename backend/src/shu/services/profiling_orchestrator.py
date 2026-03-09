@@ -349,10 +349,7 @@ class ProfilingOrchestrator:
         if queries:
             query_texts = [q.query_text for q in queries]
             embeddings = await self._embed_texts(query_texts)
-            entries = [
-                VectorEntry(id=q.id, vector=emb)
-                for q, emb in zip(queries, embeddings, strict=True)
-            ]
+            entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
             await vector_store.store_embeddings("queries", entries, db=self.db)
             queries_embedded = len(queries)
 

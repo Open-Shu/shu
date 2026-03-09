@@ -303,7 +303,7 @@ class PgVectorStore:
             WHERE {where_sql}
             ORDER BY {order_expr}
             LIMIT :limit
-        """  # noqa: S608
+        """  # noqa: S608  # nosec B608
 
         from sqlalchemy import bindparam
 
@@ -339,7 +339,7 @@ class PgVectorStore:
         id_col = config.id_column
 
         sql = text(
-            f"UPDATE {tbl} SET {emb} = :vector WHERE {id_col} = :row_id"  # noqa: S608
+            f"UPDATE {tbl} SET {emb} = :vector WHERE {id_col} = :row_id"  # noqa: S608  # nosec B608
         ).bindparams(bindparam("vector", type_=PgVector()))
 
         updated = 0
@@ -367,7 +367,7 @@ class PgVectorStore:
         emb = config.embedding_column
         id_col = config.id_column
 
-        sql = text(f"UPDATE {tbl} SET {emb} = NULL WHERE {id_col} = ANY(:ids)")  # noqa: S608
+        sql = text(f"UPDATE {tbl} SET {emb} = NULL WHERE {id_col} = ANY(:ids)")  # noqa: S608  # nosec B608
         result = await db.execute(sql, {"ids": ids})
         return result.rowcount
 
@@ -407,7 +407,7 @@ class PgVectorStore:
             return False
 
         # Warn on large tables
-        count_result = await db.execute(text(f"SELECT COUNT(*) FROM {config.table_name}"))  # noqa: S608
+        count_result = await db.execute(text(f"SELECT COUNT(*) FROM {config.table_name}"))  # noqa: S608  # nosec B608
         row_count = count_result.scalar_one()
         if row_count > 100_000:
             logger.warning(f"Creating index on {config.table_name} with {row_count} rows — this may be slow")
