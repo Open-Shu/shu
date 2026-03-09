@@ -406,12 +406,6 @@ class Settings(BaseSettings):
     # OAuth Token Encryption
     oauth_encryption_key: str | None = Field(None, alias="SHU_OAUTH_ENCRYPTION_KEY")
 
-    # Development fallback LLM configuration
-    default_llm_provider: str = Field("openai", alias="SHU_DEFAULT_LLM_PROVIDER")
-    default_llm_model: str = Field("gpt-4", alias="SHU_DEFAULT_LLM_MODEL")
-    openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
-    anthropic_api_key: str | None = Field(None, alias="ANTHROPIC_API_KEY")
-
     # Global LLM limits
     llm_global_timeout: int = Field(30, alias="SHU_LLM_GLOBAL_TIMEOUT")
     llm_streaming_read_timeout: int = Field(120, alias="SHU_LLM_STREAMING_READ_TIMEOUT")
