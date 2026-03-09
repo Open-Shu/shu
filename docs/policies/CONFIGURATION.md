@@ -61,8 +61,6 @@ Configuration:
 - Source ocr_mode: 'always' | 'auto' | 'fallback' | 'never' (default 'auto' with PDFs forced through OCR path)
 - Global defaults live in config.py and ConfigurationManager; API endpoints should inject config via get_config_manager_dependency
 
-- `SHU_OCR_EXECUTION_MODE`: OCR/Text extraction execution mode. Allowed: `thread` (in-process, default) | `process` (separate process for isolation). Scope: OCR only; does not affect embeddings.
-
 Auditing/Logging:
 - Log extraction method, engine, and durations; do not log raw content
 - On failure, store error details in extraction_metadata but do not fail uploads
@@ -300,7 +298,6 @@ service = SomeService(db, config_manager)  # Service receives config_manager
 - `SHU_EMBEDDING_MODEL`: Embedding model name (default: `Snowflake/snowflake-arctic-embed-l-v2.0`). **DESTRUCTIVE OPERATION** — changing this value invalidates all existing vector embeddings. On next startup, all knowledge bases are marked "stale" and vector/semantic search is disabled until an admin triggers re-embedding per KB from the Admin Console. Keyword search continues working. Re-embedding is CPU-intensive and processes every chunk, synopsis, and query in the KB.
 - `SHU_EMBEDDING_BATCH_SIZE`: Embedding batch size per encode call (default: `32`)
 - `SHU_EMBEDDING_DTYPE`: Model precision — `float32` (default) or `float16` (half memory, recommended for 1024-dim+ models)
-- `SHU_EMBEDDING_EXECUTION_MODE`: Execution mode for embeddings: `thread` (default, optimized) or `process`
 
 
 #### Vector Database Configuration
