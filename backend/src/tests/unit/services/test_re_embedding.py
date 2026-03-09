@@ -4,6 +4,8 @@ Tests _handle_re_embedding_job for batch processing, resumability,
 error handling, and progress tracking.
 """
 
+import asyncio
+
 import pytest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
@@ -386,6 +388,117 @@ class TestHandleReEmbeddingJob:
         assert mock_vs.ensure_index.call_count == 3  # chunks, synopses, queries
 
         mock_kb.mark_re_embedding_complete.assert_called_once_with("new-model")
+
+
+class TestReEmbeddingHeartbeat:
+    """Tests for heartbeat lease renewal in _handle_re_embedding_job."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_started_and_cancelled(self):
+        """Heartbeat task should be started before processing and cancelled on completion."""
+        from shu.worker import _handle_re_embedding_job
+
+        job = _make_job()
+
+        mock_kb = MagicMock(spec=KnowledgeBase)
+        mock_kb.embedding_status = "re_embedding"
+        mock_kb.re_embedding_progress = {"chunks_done": 0, "chunks_total": 0, "phase": "chunks"}
+        mock_kb.update_re_embedding_progress = MagicMock()
+        mock_kb.update_re_embedding_phase = MagicMock()
+        mock_kb.mark_re_embedding_complete = MagicMock()
+
+        mock_embedding = AsyncMock()
+        mock_embedding.model_name = "new-model"
+        mock_embedding.dimension = 1024
+
+        mock_vs = AsyncMock()
+        mock_vs.store_embeddings = AsyncMock(return_value=0)
+        mock_vs.ensure_index = AsyncMock(return_value=True)
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_kb)
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(return_value=empty_result)
+        mock_session.commit = AsyncMock()
+
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        created_tasks = []
+        original_create_task = asyncio.create_task
+
+        def capture_create_task(coro, **kwargs):
+            task = original_create_task(coro, **kwargs)
+            created_tasks.append(task)
+            return task
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
+            patch("shu.core.embedding_service.get_embedding_service", new_callable=AsyncMock, return_value=mock_embedding),
+            patch("shu.core.vector_store.get_vector_store", new_callable=AsyncMock, return_value=mock_vs),
+            patch("asyncio.create_task", side_effect=capture_create_task),
+        ):
+            await _handle_re_embedding_job(job)
+
+        # A heartbeat task was created
+        assert len(created_tasks) == 1
+        heartbeat_task = created_tasks[0]
+        # It should be cancelled after processing completes
+        assert heartbeat_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_cancelled_on_failure(self):
+        """Heartbeat task should be cancelled even when processing fails."""
+        from shu.worker import _handle_re_embedding_job
+
+        job = _make_job()
+        job.attempts = 3
+
+        mock_kb = MagicMock(spec=KnowledgeBase)
+        mock_kb.embedding_status = "re_embedding"
+        mock_kb.re_embedding_progress = {"chunks_done": 0, "chunks_total": 1, "phase": "chunks"}
+        mock_kb.mark_re_embedding_failed = MagicMock()
+
+        mock_embedding = AsyncMock()
+        mock_embedding.model_name = "new-model"
+        mock_embedding.dimension = 1024
+        mock_embedding.embed_texts = AsyncMock(side_effect=RuntimeError("GPU OOM"))
+
+        mock_vs = AsyncMock()
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_kb)
+        chunks_result = MagicMock()
+        chunks_result.scalars.return_value.all.return_value = [_make_chunk("c-1")]
+        mock_session.execute = AsyncMock(return_value=chunks_result)
+        mock_session.commit = AsyncMock()
+
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        created_tasks = []
+        original_create_task = asyncio.create_task
+
+        def capture_create_task(coro, **kwargs):
+            task = original_create_task(coro, **kwargs)
+            created_tasks.append(task)
+            return task
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
+            patch("shu.core.embedding_service.get_embedding_service", new_callable=AsyncMock, return_value=mock_embedding),
+            patch("shu.core.vector_store.get_vector_store", new_callable=AsyncMock, return_value=mock_vs),
+            patch("asyncio.create_task", side_effect=capture_create_task),
+        ):
+            with pytest.raises(RuntimeError, match="GPU OOM"):
+                await _handle_re_embedding_job(job)
+
+        # Heartbeat task was created and cancelled despite failure
+        assert len(created_tasks) == 1
+        assert created_tasks[0].cancelled()
 
 
 class TestReEmbeddingWorkloadType:

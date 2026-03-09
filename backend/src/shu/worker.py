@@ -997,6 +997,53 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
             )
             return
 
+        async def _re_embedding_heartbeat(interval: int = 60) -> None:
+            """Extend queue visibility every `interval` seconds so long-running
+            re-embedding jobs are not redelivered to a competing consumer.
+            Also touches KB updated_at via a separate session.
+            """
+            heartbeat_session_local = get_async_session_local()
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    # Touch KB updated_at via independent session
+                    try:
+                        async with heartbeat_session_local() as hb_session:
+                            hb_kb = await hb_session.get(KnowledgeBase, knowledge_base_id)
+                            if hb_kb and hb_kb.embedding_status == "re_embedding":
+                                hb_kb.updated_at = datetime.now(UTC)
+                                await hb_session.commit()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as hb_err:
+                        logger.warning(
+                            "Re-embedding heartbeat DB touch failed (non-fatal)",
+                            extra={"knowledge_base_id": knowledge_base_id, "error": str(hb_err)},
+                        )
+
+                    # Extend queue visibility
+                    try:
+                        from .core.queue_backend import get_queue_backend
+
+                        queue = await get_queue_backend()
+                        extended = await queue.extend_visibility(job, additional_seconds=interval * 2)
+                        if not extended:
+                            logger.warning(
+                                "extend_visibility returned False — re-embedding job may have been re-delivered",
+                                extra={"knowledge_base_id": knowledge_base_id, "job_id": job.id},
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ev_err:
+                        logger.warning(
+                            "Re-embedding extend_visibility failed (non-fatal)",
+                            extra={"knowledge_base_id": knowledge_base_id, "job_id": job.id, "error": str(ev_err)},
+                        )
+            except asyncio.CancelledError:
+                pass
+
+        heartbeat_task = asyncio.create_task(_re_embedding_heartbeat())
+
         try:
             # Determine current phase for resumability.  Each `if` (not elif)
             # allows a fresh run to fall through all phases while a resume
@@ -1187,6 +1234,13 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
                     },
                 )
             raise
+
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def process_job(job):
