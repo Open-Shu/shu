@@ -291,6 +291,8 @@ class _EmbeddingServiceManager:
 
     def _cleanup_instance(self, instance: LocalEmbeddingService) -> None:
         try:
+            was_cuda = hasattr(instance, "_device") and instance._device.startswith("cuda")
+
             if hasattr(instance, "_model") and instance._model is not None:
                 try:
                     if hasattr(instance._model, "tokenizer") and instance._model.tokenizer is not None:
@@ -298,6 +300,17 @@ class _EmbeddingServiceManager:
                 except Exception:
                     pass
                 instance._model = None  # type: ignore[assignment]
+
+            # Release cached GPU memory after clearing model references
+            if was_cuda:
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
             logger.debug("Cleaned up LocalEmbeddingService instance resources")
         except Exception as e:
             logger.warning(f"Error cleaning up embedding service instance: {e}")

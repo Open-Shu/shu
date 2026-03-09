@@ -20,6 +20,15 @@ class KnowledgeBaseStatus(str, Enum):
     ERROR = "error"
 
 
+class EmbeddingStatus(str, Enum):
+    """Embedding status for a knowledge base."""
+
+    CURRENT = "current"
+    STALE = "stale"
+    RE_EMBEDDING = "re_embedding"
+    ERROR = "error"
+
+
 class RAGConfig(BaseModel):
     """Schema for RAG configuration settings."""
 
@@ -202,7 +211,7 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
 
     id: str = Field(..., description="Knowledge base ID")
     status: KnowledgeBaseStatus = Field(..., description="Knowledge base status")
-    embedding_status: str = Field("current", description="Embedding status: current, stale, re_embedding, error")
+    embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
     re_embedding_progress: dict | None = Field(None, description="Re-embedding progress when status is re_embedding")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
@@ -234,7 +243,7 @@ class KnowledgeBaseSummary(BaseModel):
     description: str | None = Field(None, description="Knowledge base description")
     source_types: list[str] = Field(..., description="Source types used in this knowledge base")
     status: KnowledgeBaseStatus = Field(..., description="Status")
-    embedding_status: str = Field("current", description="Embedding status: current, stale, re_embedding, error")
+    embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")

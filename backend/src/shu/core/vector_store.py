@@ -344,12 +344,9 @@ class PgVectorStore:
             f"UPDATE {tbl} SET {emb} = :vector WHERE {id_col} = :row_id"  # noqa: S608  # nosec B608
         ).bindparams(bindparam("vector", type_=PgVector()))
 
-        updated = 0
-        for entry in entries:
-            result = await db.execute(sql, {"vector": entry.vector, "row_id": entry.id})
-            updated += result.rowcount
-
-        return updated
+        params = [{"vector": entry.vector, "row_id": entry.id} for entry in entries]
+        cursor_result = await db.execute(sql, params)
+        return cursor_result.rowcount  # type: ignore[union-attr]
 
     # -- delete -------------------------------------------------------------
 

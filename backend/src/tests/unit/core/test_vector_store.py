@@ -214,12 +214,12 @@ class TestPgVectorStoreStore:
     """Test store_embeddings behavior."""
 
     @pytest.mark.asyncio
-    async def test_store_embeddings_executes_updates(self):
-        """store_embeddings() should execute UPDATE for each entry."""
+    async def test_store_embeddings_executes_batch_update(self):
+        """store_embeddings() should execute a single batch UPDATE."""
         store = PgVectorStore()
         mock_db = AsyncMock()
         mock_result = MagicMock()
-        mock_result.rowcount = 1
+        mock_result.rowcount = 2
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         entries = [
@@ -230,7 +230,7 @@ class TestPgVectorStoreStore:
         count = await store.store_embeddings("synopses", entries, db=mock_db)
 
         assert count == 2
-        assert mock_db.execute.call_count == 2
+        assert mock_db.execute.call_count == 1
 
     @pytest.mark.asyncio
     async def test_store_embeddings_empty_list(self):
