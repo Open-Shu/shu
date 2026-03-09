@@ -21,6 +21,7 @@ async def test_embedding_service_instance_caching(client, db, auth_headers):
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]  # Mock embedding
         mock_model.get_sentence_embedding_dimension.return_value = 3
+        mock_model.prompts = {}
         mock_transformer.return_value = mock_model
 
         from shu.core.embedding_service import (
@@ -65,6 +66,7 @@ async def test_embedding_service_resource_cleanup(client, db, auth_headers):
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]
         mock_model.get_sentence_embedding_dimension.return_value = 3
+        mock_model.prompts = {}
         mock_transformer.return_value = mock_model
 
         from shu.core.embedding_service import (
@@ -108,6 +110,7 @@ async def test_embedding_service_instance_limits(client, db, auth_headers):
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]
         mock_model.get_sentence_embedding_dimension.return_value = 3
+        mock_model.prompts = {}
         mock_transformer.return_value = mock_model
 
         from shu.core.embedding_service import (

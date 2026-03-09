@@ -17,7 +17,7 @@ try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
     # Fallback for development without pgvector
-    def Vector(dim):  # noqa: N802
+    def Vector(dim=None):  # noqa: N802
         return Text
 
 

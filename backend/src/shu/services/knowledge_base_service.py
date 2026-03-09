@@ -6,7 +6,7 @@ including CRUD operations, statistics, and configuration management.
 
 from typing import Any, ClassVar
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -867,7 +867,10 @@ async def detect_stale_kbs(db: AsyncSession, system_model: str) -> list[str]:
     result = await db.execute(
         select(KnowledgeBase.id).where(
             and_(
-                KnowledgeBase.embedding_model != system_model,
+                or_(
+                    KnowledgeBase.embedding_model != system_model,
+                    KnowledgeBase.embedding_model.is_(None),
+                ),
                 KnowledgeBase.embedding_status == "current",
             )
         )

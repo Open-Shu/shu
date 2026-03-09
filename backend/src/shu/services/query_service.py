@@ -1914,16 +1914,12 @@ class QueryService:
             for _, doc_results in document_results.items():
                 doc_results.sort(key=lambda x: x["combined_score"], reverse=True)
 
-            # Flatten results, maintaining order by combined score
+            # Flatten results with per-document cap, then re-sort globally
             sorted_results = []
-            # Document deduplication: Limit chunks per document based on configuration
-            # This prevents the same document from appearing multiple times while allowing multiple relevant chunks
             for _, doc_results in document_results.items():
-                # Add up to max_chunks_per_doc results for this document
-                results_to_add = doc_results[:max_chunks_per_doc]
-                sorted_results.extend(results_to_add)
+                sorted_results.extend(doc_results[:max_chunks_per_doc])
 
-            # Apply limit
+            sorted_results.sort(key=lambda x: x["combined_score"], reverse=True)
             sorted_results = sorted_results[:limit]
 
             # Convert to QueryResponse format
