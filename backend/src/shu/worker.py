@@ -1011,7 +1011,7 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
                     f"Valid phases: {sorted(valid_phases)}"
                 )
 
-            chunks_done = 0
+            chunks_done = progress.get("chunks_done", 0)
             synopses_count = 0
             queries_count = 0
 

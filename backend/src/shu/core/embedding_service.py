@@ -265,7 +265,7 @@ class _EmbeddingServiceManager:
         return instance
 
     def _get_executor(self) -> ThreadPoolExecutor:
-        if self._executor is None or self._executor._shutdown:
+        if self._executor is None:
             settings = get_settings_instance()
             embedding_threads = max(1, int(getattr(settings, "embedding_threads", 4)))
             self._executor = ThreadPoolExecutor(max_workers=embedding_threads, thread_name_prefix="embedding-worker")

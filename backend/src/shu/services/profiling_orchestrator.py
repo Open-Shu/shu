@@ -353,6 +353,10 @@ class ProfilingOrchestrator:
                 )
                 synopsis_embedded = True
 
+        # Commit synopsis durably before attempting query embeddings
+        if synopsis_embedded:
+            await self.db.commit()
+
         # Embed synthesized queries (skip if query persistence failed)
         if embed_queries:
             stmt = (
@@ -366,11 +370,18 @@ class ProfilingOrchestrator:
             queries = []
 
         if queries:
-            query_texts = [q.query_text for q in queries]
-            embeddings = await self._embed_queries(query_texts)
-            entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
-            await vector_store.store_embeddings("queries", entries, db=self.db)
-            queries_embedded = len(queries)
+            try:
+                query_texts = [q.query_text for q in queries]
+                embeddings = await self._embed_queries(query_texts)
+                entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
+                await vector_store.store_embeddings("queries", entries, db=self.db)
+                queries_embedded = len(queries)
+            except Exception:
+                logger.warning(
+                    "query_embedding_failed",
+                    document_id=document.id,
+                    exc_info=True,
+                )
 
         await self.db.commit()
 

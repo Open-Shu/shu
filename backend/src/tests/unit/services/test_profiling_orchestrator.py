@@ -453,7 +453,8 @@ class TestEmbedProfileArtifacts:
         mock_vector_store.store_embeddings.assert_called_once()
         call_args = mock_vector_store.store_embeddings.call_args
         assert call_args[0][0] == "synopses"
-        mock_db.commit.assert_called_once()
+        # Two commits: one after synopsis (durable), one final
+        assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
     async def test_embeds_queries(self, orchestrator, mock_db):
@@ -478,7 +479,7 @@ class TestEmbedProfileArtifacts:
         mock_vector_store = AsyncMock()
         mock_vector_store.store_embeddings = AsyncMock(return_value=3)
         with (
-            patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=fake_embeddings)),
+            patch.object(orchestrator, "_embed_queries", new=AsyncMock(return_value=fake_embeddings)),
             patch(
                 "shu.core.vector_store.get_vector_store",
                 new=AsyncMock(return_value=mock_vector_store),
