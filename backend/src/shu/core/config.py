@@ -101,9 +101,6 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")
     # Model precision: "float32" (default) or "float16" (half memory, recommended for 1024-dim+ models)
     embedding_dtype: str = Field("float32", alias="SHU_EMBEDDING_DTYPE")
-    # Execution mode for embedding generation: "thread" (optimized, default) or "process"
-    embedding_execution_mode: str = Field("thread", alias="SHU_EMBEDDING_EXECUTION_MODE")
-
     # Text processing configuration
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")

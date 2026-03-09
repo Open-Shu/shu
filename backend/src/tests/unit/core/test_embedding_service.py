@@ -59,6 +59,9 @@ class TestEmbeddingServiceProtocol:
             async def embed_query(self, text: str) -> list[float]:
                 return [0.0] * 384
 
+            async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0] * 384 for _ in texts]
+
         assert isinstance(FakeEmbeddingService(), EmbeddingService)
 
 

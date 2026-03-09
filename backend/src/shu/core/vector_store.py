@@ -212,13 +212,13 @@ _DEFAULT_COLLECTIONS: dict[str, CollectionConfig] = {
 }
 
 
-def _index_name(collection: str, dimension: int) -> str:
-    """Generate a dimension-scoped HNSW index name.
+def _index_name(collection: str, dimension: int, index_type: str = "hnsw") -> str:
+    """Generate a dimension-scoped index name.
 
-    Pattern: ix_{table}_{column}_hnsw_{dim}
+    Pattern: ix_{table}_{column}_{type}_{dim}
     """
     config = _DEFAULT_COLLECTIONS[collection]
-    return f"ix_{config.table_name}_{config.embedding_column}_hnsw_{dimension}"
+    return f"ix_{config.table_name}_{config.embedding_column}_{index_type}_{dimension}"
 
 
 class PgVectorStore:
@@ -270,7 +270,8 @@ class PgVectorStore:
 
         # Validate filters
         params: dict[str, Any] = {}
-        where_clauses: list[str] = [f"{emb} IS NOT NULL"]
+        dimension = len(query_vector)
+        where_clauses: list[str] = [f"{emb} IS NOT NULL", f"vector_dims({emb}) = :dimension"]
 
         if filters:
             for col, val in filters.items():
@@ -311,6 +312,7 @@ class PgVectorStore:
         params["query_vector"] = query_vector
         params["threshold"] = threshold
         params["limit"] = limit
+        params["dimension"] = dimension
 
         result = await db.execute(query, params)
         rows = result.fetchall()
@@ -395,7 +397,7 @@ class PgVectorStore:
         config = self._get_collection(collection)
         idx_type = index_type or self._index_type
         idx_lists = lists or self._index_lists
-        index_name = _index_name(collection, dimension)
+        index_name = _index_name(collection, dimension, idx_type)
         ops_class = _OPS_CLASSES[config.distance_metric]
         emb = config.embedding_column
 
@@ -461,7 +463,7 @@ async def drop_orphaned_indexes(db: AsyncSession, current_dimension: int) -> lis
         text(
             "SELECT indexname FROM pg_indexes "
             "WHERE schemaname = 'public' "
-            "AND indexname ~ '^ix_(document_chunks|documents|document_queries)_[a-z_]+_hnsw_[0-9]+$'"
+            "AND indexname ~ '^ix_(document_chunks|documents|document_queries)_[a-z_]+_(hnsw|ivfflat)_[0-9]+$'"
         )
     )
 

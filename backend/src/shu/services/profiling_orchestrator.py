@@ -305,6 +305,21 @@ class ProfilingOrchestrator:
         embedding_service = await get_embedding_service()
         return await embedding_service.embed_texts(texts)
 
+    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts with the query prompt for asymmetric models.
+
+        Args:
+            texts: List of query strings to embed
+
+        Returns:
+            List of embedding vectors (each a list of floats)
+
+        """
+        from ..core.embedding_service import get_embedding_service
+
+        embedding_service = await get_embedding_service()
+        return await embedding_service.embed_queries(texts)
+
     async def _embed_profile_artifacts(self, document: Document, *, embed_queries: bool = True) -> tuple[bool, int]:
         """Embed synopsis and synthesized query texts after profiling.
 
@@ -352,7 +367,7 @@ class ProfilingOrchestrator:
 
         if queries:
             query_texts = [q.query_text for q in queries]
-            embeddings = await self._embed_texts(query_texts)
+            embeddings = await self._embed_queries(query_texts)
             entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
             await vector_store.store_embeddings("queries", entries, db=self.db)
             queries_embedded = len(queries)

@@ -72,6 +72,23 @@ class EmbeddingService(Protocol):
         """
         ...
 
+    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for a batch of query texts.
+
+        Like embed_texts(), but applies the query prompt for asymmetric
+        models (e.g., Snowflake arctic-embed). Use this when embedding
+        synthesized queries or any text that will be matched against
+        user search queries.
+
+        Args:
+            texts: List of query strings to embed. Empty list returns [].
+
+        Returns:
+            List of embedding vectors, one per input text.
+
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # LocalEmbeddingService
@@ -172,6 +189,22 @@ class LocalEmbeddingService:
             )[0],
         )
         return embedding.tolist()
+
+    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        loop = asyncio.get_running_loop()
+        embeddings = await loop.run_in_executor(
+            self._executor,
+            lambda: self._model.encode(
+                texts,
+                batch_size=self._batch_size,
+                show_progress_bar=False,
+                prompt_name=self._query_prompt_name,
+            ),
+        )
+        return [e.tolist() for e in embeddings]
 
 
 # ---------------------------------------------------------------------------

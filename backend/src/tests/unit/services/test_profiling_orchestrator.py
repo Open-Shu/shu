@@ -515,12 +515,17 @@ class TestEmbedProfileArtifacts:
 
         mock_vector_store = AsyncMock()
         mock_vector_store.store_embeddings = AsyncMock(return_value=1)
-        # _embed_texts called twice: once for synopsis, once for queries
+        # _embed_texts for synopsis, _embed_queries for queries
         with (
             patch.object(
                 orchestrator,
                 "_embed_texts",
-                new=AsyncMock(side_effect=[[synopsis_embedding], [query_embedding]]),
+                new=AsyncMock(return_value=[synopsis_embedding]),
+            ),
+            patch.object(
+                orchestrator,
+                "_embed_queries",
+                new=AsyncMock(return_value=[query_embedding]),
             ),
             patch(
                 "shu.core.vector_store.get_vector_store",

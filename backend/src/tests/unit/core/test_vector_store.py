@@ -371,7 +371,7 @@ class TestPgVectorStoreEnsureIndex:
         sql_text = str(create_call[0][0])
         assert "ivfflat" in sql_text
         assert "vector_cosine_ops" in sql_text
-        assert "ix_document_chunks_embedding_hnsw_384" in sql_text
+        assert "ix_document_chunks_embedding_ivfflat_384" in sql_text
         assert "vector(384)" in sql_text
         assert "vector_dims" in sql_text
 

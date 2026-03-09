@@ -1122,7 +1122,7 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
 
                     queries_count += len(batch)
                     texts = [q.query_text for q in batch]
-                    embeddings = await embedding_service.embed_texts(texts)
+                    embeddings = await embedding_service.embed_queries(texts)
 
                     entries = [VectorEntry(id=str(q.id), vector=emb) for q, emb in zip(batch, embeddings, strict=True)]
                     await vector_store.store_embeddings("queries", entries, db=session)

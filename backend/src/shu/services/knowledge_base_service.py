@@ -804,9 +804,7 @@ class KnowledgeBaseService:
         from ..core.workload_routing import WorkloadType, enqueue_job
 
         # Lock the row to prevent concurrent re-embedding requests
-        result = await self.db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update()
-        )
+        result = await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update())
         kb = result.scalar_one_or_none()
         if kb is None:
             raise KnowledgeBaseNotFoundError(kb_id)
@@ -823,8 +821,9 @@ class KnowledgeBaseService:
         )
         total_chunks = result.scalar() or 0
 
-        # Capture original status so we can restore it on enqueue failure
+        # Capture original state so we can restore it on enqueue failure
         original_status = kb.embedding_status
+        original_progress = kb.re_embedding_progress
 
         # Mark KB as re-embedding
         kb.mark_re_embedding_started(total_chunks)
@@ -841,7 +840,7 @@ class KnowledgeBaseService:
             )
         except Exception:
             kb.embedding_status = original_status
-            kb.re_embedding_progress = None
+            kb.re_embedding_progress = original_progress
             await self.db.commit()
             raise
 

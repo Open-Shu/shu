@@ -302,7 +302,7 @@ class TestHandleReEmbeddingJob:
         mock_embedding = AsyncMock()
         mock_embedding.model_name = "new-model"
         mock_embedding.dimension = 1024
-        mock_embedding.embed_texts = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
+        mock_embedding.embed_queries = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
 
         mock_vs = AsyncMock()
         mock_vs.store_embeddings = AsyncMock(return_value=2)
@@ -335,8 +335,8 @@ class TestHandleReEmbeddingJob:
         ):
             await _handle_re_embedding_job(job)
 
-        # Queries were embedded
-        mock_embedding.embed_texts.assert_called_once()
+        # Queries were embedded using embed_queries (not embed_texts)
+        mock_embedding.embed_queries.assert_called_once()
 
         # Phase transitions: queries→indexes only
         phase_calls = [c[0][0] for c in mock_kb.update_re_embedding_phase.call_args_list]
@@ -412,6 +412,8 @@ class TestEnsureIndexDimensionScoped:
         assert _index_name("chunks", 1024) == "ix_document_chunks_embedding_hnsw_1024"
         assert _index_name("synopses", 384) == "ix_documents_synopsis_embedding_hnsw_384"
         assert _index_name("queries", 1024) == "ix_document_queries_query_embedding_hnsw_1024"
+        # Index type is reflected in the name
+        assert _index_name("chunks", 384, "ivfflat") == "ix_document_chunks_embedding_ivfflat_384"
 
     @pytest.mark.asyncio
     async def test_ensure_index_creates_hnsw_partial_index(self):

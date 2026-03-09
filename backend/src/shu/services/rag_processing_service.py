@@ -84,9 +84,7 @@ class RAGProcessingService:
         embeddings = await self.embedding_service.embed_texts(chunks)
 
         if len(embeddings) != len(chunks):
-            raise ValueError(
-                f"Embedding count mismatch: got {len(embeddings)} embeddings for {len(chunks)} chunks"
-            )
+            raise ValueError(f"Embedding count mismatch: got {len(embeddings)} embeddings for {len(chunks)} chunks")
 
         # 4. Create DocumentChunk objects
         document_chunks = []
