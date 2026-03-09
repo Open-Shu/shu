@@ -528,6 +528,15 @@ class Settings(BaseSettings):
             raise ValueError("password_special_chars must contain at least one character")
         return v
 
+    @field_validator("embedding_dtype")
+    @classmethod
+    def validate_embedding_dtype(cls, v: str) -> str:
+        """Validate embedding dtype."""
+        valid_dtypes = ["float32", "float16"]
+        if v.lower() not in valid_dtypes:
+            raise ValueError(f"Embedding dtype must be one of: {valid_dtypes}")
+        return v.lower()
+
     @field_validator("vector_index_type")
     @classmethod
     def validate_vector_index_type(cls, v: str) -> str:

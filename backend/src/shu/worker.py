@@ -1161,17 +1161,31 @@ async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
             )
 
         except Exception as e:
-            kb.mark_re_embedding_failed(str(e))
-            await session.commit()
+            if job.attempts >= job.max_attempts:
+                kb.mark_re_embedding_failed(str(e))
+                await session.commit()
 
-            logger.error(
-                "Re-embedding failed",
-                extra={
-                    "job_id": job.id,
-                    "knowledge_base_id": knowledge_base_id,
-                    "error": str(e),
-                },
-            )
+                logger.error(
+                    "Re-embedding failed after max attempts",
+                    extra={
+                        "job_id": job.id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": str(e),
+                    },
+                )
+            else:
+                logger.warning(
+                    "Re-embedding failed, will retry",
+                    extra={
+                        "job_id": job.id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": str(e),
+                    },
+                )
             raise
 
 

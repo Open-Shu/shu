@@ -526,16 +526,17 @@ def get_vector_store_dependency() -> VectorStore:
         A VectorStore instance.
 
     """
-    global _vector_store  # noqa: PLW0602
+    global _vector_store  # noqa: PLW0603
 
     if _vector_store is not None:
         return _vector_store
 
     settings = get_settings_instance()
-    return PgVectorStore(
+    _vector_store = PgVectorStore(
         index_type=settings.vector_index_type,
         index_lists=settings.vector_index_lists,
     )
+    return _vector_store
 
 
 async def initialize_vector_store() -> VectorStore:

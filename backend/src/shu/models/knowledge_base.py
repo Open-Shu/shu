@@ -174,6 +174,8 @@ class KnowledgeBase(BaseModel):
                 **self.re_embedding_progress,
                 "error": error,
             }
+        else:
+            self.re_embedding_progress = {"error": error}
 
     def get_source_types(self) -> set:
         """Get all source types used by documents in this knowledge base."""

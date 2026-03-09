@@ -391,6 +391,7 @@ def reset_embedding_service() -> None:
     """Reset the embedding service singleton (for testing only)."""
     global _embedding_service  # noqa: PLW0603
     _embedding_service = None
+    _service_manager.clear_all()
 
 
 # ---------------------------------------------------------------------------

@@ -180,10 +180,11 @@ class TestHandleReEmbeddingJob:
 
     @pytest.mark.asyncio
     async def test_failure_marks_kb_error(self):
-        """If re-embedding fails, KB should be marked with error status."""
+        """If re-embedding fails on final attempt, KB should be marked with error status."""
         from shu.worker import _handle_re_embedding_job
 
         job = _make_job()
+        job.attempts = 3  # Equal to max_attempts — final attempt
 
         mock_kb = MagicMock(spec=KnowledgeBase)
         mock_kb.embedding_status = "re_embedding"
