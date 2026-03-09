@@ -548,6 +548,16 @@ class TestInvalidate:
             mock_refresh.assert_awaited_once_with(mock_db)
 
     @pytest.mark.asyncio
+    async def test_refresh_failure_keeps_stale(self) -> None:
+        """Refresh failures should not raise and should leave cache marked stale."""
+        cache = _make_cache()
+        cache._stale = True
+        mock_db = AsyncMock()
+        with patch.object(cache, "_refresh", new_callable=AsyncMock, side_effect=RuntimeError("db down")):
+            await cache._maybe_refresh(mock_db)
+        assert cache._stale is True
+
+    @pytest.mark.asyncio
     async def test_not_stale_and_fresh_skips_refresh(self) -> None:
         """When not stale and TTL has not expired, _maybe_refresh is a no-op."""
         cache = _make_cache()  # _stale=False, _last_refresh=far future

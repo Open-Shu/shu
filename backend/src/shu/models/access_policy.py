@@ -69,7 +69,7 @@ class AccessPolicyBinding(BaseModel):
     policy = relationship("AccessPolicy", back_populates="bindings")
 
     # Constraints
-    __table_args__ = (UniqueConstraint("policy_id", "actor_type", "actor_id", name="uq_policy_actor_binding"),)
+    __table_args__ = (UniqueConstraint("policy_id", "actor_type", "actor_id", name="uq_binding_policy_actor"),)
 
     def __repr__(self) -> str:
         """Represent as string."""

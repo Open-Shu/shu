@@ -140,7 +140,12 @@ class PolicyCache:
             ttl_expired = (now - self._last_refresh) >= self._ttl_seconds
             if not self._stale and not ttl_expired:
                 return
-            await self._refresh(db)
+            try:
+                await self._refresh(db)
+            except Exception as exc:
+                # Serve existing cache state on refresh failures and retry later.
+                self._stale = True
+                logger.warning("policy_cache.refresh_failed", extra={"error": str(exc)}, exc_info=True)
 
     async def _refresh(self, db: AsyncSession) -> None:
         """Bulk-load all active policies, bindings, statements, group memberships, and admin users.
