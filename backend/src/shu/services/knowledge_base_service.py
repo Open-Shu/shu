@@ -825,30 +825,47 @@ class KnowledgeBaseService:
         )
         total_chunks = result.scalar() or 0
 
+        # Determine number of parallel chunk sub-jobs
+        from ..core.config import get_settings_instance
+        from ..re_embedding_handler import RE_EMBEDDING_BATCH_SIZE
+
+        settings = get_settings_instance()
+        batches_needed = max(1, -(-total_chunks // RE_EMBEDDING_BATCH_SIZE))  # ceil division
+        num_sub_jobs = min(settings.worker_concurrency, batches_needed)
+
         # Capture original state so we can restore it on enqueue failure
         original_status = kb.embedding_status
         original_progress = kb.re_embedding_progress
 
         # Mark KB as re-embedding
-        kb.mark_re_embedding_started(total_chunks)
+        kb.mark_re_embedding_started(total_chunks, sub_jobs_total=num_sub_jobs)
         await self.db.commit()
 
-        # Enqueue the worker job; revert status on failure so admin can retry
+        # Enqueue parallel chunk sub-jobs; revert status on failure so admin can retry
         try:
-            await enqueue_job(
-                queue_backend,
-                WorkloadType.RE_EMBEDDING,
-                payload={"knowledge_base_id": kb_id, "action": "re_embed_kb"},
-                max_attempts=3,
-                visibility_timeout=600,
-            )
+            for i in range(num_sub_jobs):
+                await enqueue_job(
+                    queue_backend,
+                    WorkloadType.RE_EMBEDDING,
+                    payload={
+                        "knowledge_base_id": kb_id,
+                        "action": "re_embed_chunks",
+                        "sub_job_index": i,
+                        "sub_jobs_total": num_sub_jobs,
+                    },
+                    max_attempts=3,
+                    visibility_timeout=600,
+                )
         except Exception:
             kb.embedding_status = original_status
             kb.re_embedding_progress = original_progress
             await self.db.commit()
             raise
 
-        logger.info("Re-embedding job enqueued", extra={"kb_id": kb_id, "total_chunks": total_chunks})
+        logger.info(
+            "Re-embedding jobs enqueued",
+            extra={"kb_id": kb_id, "total_chunks": total_chunks, "sub_jobs": num_sub_jobs},
+        )
 
         return {"status": "queued", "knowledge_base_id": kb_id, "total_chunks": total_chunks}
 

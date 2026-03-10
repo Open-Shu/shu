@@ -313,17 +313,48 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                             phase = progress.get("phase", "chunks")
                             chunks_done = progress.get("chunks_done", 0)
                             chunks_total = progress.get("chunks_total", "?")
+                            sub_jobs_total = progress.get("sub_jobs_total", 1)
+                            sub_jobs_completed = progress.get("sub_jobs_completed", 0)
                             logger.info(
                                 f"Resuming re-embedding for KB {kb.id}, "
-                                f"phase={phase}, chunks_done={chunks_done}/{chunks_total}"
+                                f"phase={phase}, chunks_done={chunks_done}/{chunks_total}, "
+                                f"sub_jobs={sub_jobs_completed}/{sub_jobs_total}"
                             )
-                            await enqueue_job(
-                                backend,
-                                WorkloadType.RE_EMBEDDING,
-                                payload={"knowledge_base_id": str(kb.id), "action": "re_embed_kb"},
-                                max_attempts=3,
-                                visibility_timeout=600,
-                            )
+
+                            if phase == "chunks":
+                                # Re-enqueue chunk sub-jobs for remaining work
+                                remaining_sub_jobs = max(1, sub_jobs_total - sub_jobs_completed)
+                                # Reset sub_jobs_completed since we're re-enqueueing
+                                progress["sub_jobs_completed"] = 0
+                                progress["sub_jobs_total"] = remaining_sub_jobs
+                                kb.re_embedding_progress = progress
+                                await session.commit()
+
+                                for i in range(remaining_sub_jobs):
+                                    await enqueue_job(
+                                        backend,
+                                        WorkloadType.RE_EMBEDDING,
+                                        payload={
+                                            "knowledge_base_id": str(kb.id),
+                                            "action": "re_embed_chunks",
+                                            "sub_job_index": i,
+                                            "sub_jobs_total": remaining_sub_jobs,
+                                        },
+                                        max_attempts=3,
+                                        visibility_timeout=600,
+                                    )
+                            else:
+                                # Past chunks phase — enqueue finalization only
+                                await enqueue_job(
+                                    backend,
+                                    WorkloadType.RE_EMBEDDING,
+                                    payload={
+                                        "knowledge_base_id": str(kb.id),
+                                        "action": "re_embed_finalize",
+                                    },
+                                    max_attempts=3,
+                                    visibility_timeout=600,
+                                )
 
                         if stuck_kbs:
                             logger.info(f"Re-enqueued {len(stuck_kbs)} interrupted re-embedding job(s)")
