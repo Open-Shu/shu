@@ -324,7 +324,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                             )
                             continue
 
-                        progress = kb.re_embedding_progress or {}
+                        progress: dict = kb.re_embedding_progress if kb.re_embedding_progress else {}
                         phase = progress.get("phase", "chunks")
                         chunks_done = progress.get("chunks_done", 0)
                         chunks_total = progress.get("chunks_total", "?")
@@ -357,9 +357,13 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                             # Commit progress update only after all jobs are
                             # enqueued so a mid-loop failure doesn't leave
                             # workers_total out of sync with actual queue state.
-                            progress["workers_completed"] = 0
-                            progress["workers_total"] = remaining_workers
-                            kb.re_embedding_progress = progress
+                            # Create a new dict so SQLAlchemy detects the change
+                            # (plain JSON column, no MutableDict).
+                            kb.re_embedding_progress = {
+                                **progress,
+                                "workers_completed": 0,
+                                "workers_total": remaining_workers,
+                            }
                             await session.commit()
                         else:
                             # Past chunks phase — enqueue finalization only
@@ -373,6 +377,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                                 max_attempts=3,
                                 visibility_timeout=600,
                             )
+                            await session.commit()
                         resumed_count += 1
 
                     if resumed_count:

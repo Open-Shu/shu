@@ -296,10 +296,6 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 await session.commit()
 
         except Exception:
-            # Don't mark KB as error for individual worker failures.
-            # Other workers will absorb the remaining work via competing
-            # consumers. Only the last worker to complete checks for
-            # unprocessed chunks and marks error if needed.
             logger.warning(
                 "Re-embedding chunk worker failed",
                 extra={
@@ -311,6 +307,71 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 },
                 exc_info=True,
             )
+
+            if job.attempts >= job.max_attempts:
+                # Worker exhausted retries — must still increment
+                # workers_completed so finalization isn't permanently
+                # blocked. Use a fresh session since the current one
+                # may be in a bad state from the exception.
+                try:
+                    err_session_local = get_async_session_local()
+                    async with err_session_local() as err_session:
+                        kb_locked = await err_session.execute(
+                            select(KnowledgeBase)
+                            .where(KnowledgeBase.id == knowledge_base_id)
+                            .with_for_update()
+                        )
+                        kb_err = kb_locked.scalar_one_or_none()
+                        if kb_err and kb_err.embedding_status == "re_embedding":
+                            all_done = kb_err.increment_workers_completed()
+
+                            if all_done:
+                                # Last worker — check for unprocessed chunks
+                                remaining = await err_session.execute(
+                                    select(func.count(DocumentChunk.id)).where(
+                                        DocumentChunk.knowledge_base_id == knowledge_base_id,
+                                        or_(
+                                            DocumentChunk.embedding_model.is_(None),
+                                            DocumentChunk.embedding_model != target_model,
+                                            DocumentChunk.embedding.is_(None),
+                                        ),
+                                    )
+                                )
+                                remaining_count = remaining.scalar() or 0
+
+                                if remaining_count > 0:
+                                    kb_err.mark_re_embedding_failed(
+                                        f"{remaining_count} chunks remain unprocessed after all workers completed"
+                                    )
+                                else:
+                                    # All chunks done despite this worker failing —
+                                    # other workers absorbed the work. Enqueue finalization.
+                                    from .core.queue_backend import get_queue_backend
+                                    from .core.workload_routing import WorkloadType, enqueue_job
+
+                                    queue_backend = await get_queue_backend()
+                                    await enqueue_job(
+                                        queue_backend,
+                                        WorkloadType.RE_EMBEDDING,
+                                        payload={
+                                            "knowledge_base_id": knowledge_base_id,
+                                            "action": "re_embed_finalize",
+                                        },
+                                        max_attempts=3,
+                                        visibility_timeout=600,
+                                    )
+
+                            await err_session.commit()
+                except Exception:
+                    logger.error(
+                        "Failed to increment workers_completed for exhausted worker",
+                        extra={
+                            "knowledge_base_id": knowledge_base_id,
+                            "worker_index": worker_index,
+                        },
+                        exc_info=True,
+                    )
+
             raise
 
         finally:
@@ -482,16 +543,26 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
 
         except Exception as e:
             if job.attempts >= job.max_attempts:
-                # Lock the row to safely mark failure
-                kb_locked = await session.execute(
-                    select(KnowledgeBase)
-                    .where(KnowledgeBase.id == knowledge_base_id)
-                    .with_for_update()
-                )
-                kb_err = kb_locked.scalar_one_or_none()
-                if kb_err:
-                    kb_err.mark_re_embedding_failed(str(e))
-                    await session.commit()
+                # Use a fresh session — the current one may be in a bad
+                # state if the exception was a DB error.
+                try:
+                    err_session_local = get_async_session_local()
+                    async with err_session_local() as err_session:
+                        kb_locked = await err_session.execute(
+                            select(KnowledgeBase)
+                            .where(KnowledgeBase.id == knowledge_base_id)
+                            .with_for_update()
+                        )
+                        kb_err = kb_locked.scalar_one_or_none()
+                        if kb_err:
+                            kb_err.mark_re_embedding_failed(str(e))
+                            await err_session.commit()
+                except Exception:
+                    logger.error(
+                        "Failed to mark KB as error after finalization failure",
+                        extra={"knowledge_base_id": knowledge_base_id},
+                        exc_info=True,
+                    )
 
                 logger.error(
                     "Re-embedding finalization failed after max attempts",
