@@ -481,6 +481,8 @@ class ExperienceService:
         else:
             # Non-admins only see published experiences
             stmt = stmt.where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
+            # Pre-filter PBAC-denied experiences so pagination totals are correct.
+            stmt = await self._exclude_denied_experiences(user_id, stmt)
 
         # Apply search filter
         if search:
@@ -492,10 +494,7 @@ class ExperienceService:
             stmt, order_by=Experience.name, offset=offset, limit=limit
         )
 
-        items = [
-            self._experience_to_response(exp)
-            async for exp in self._pbac_filter(user_id, "experience.read", "experience", experiences)
-        ]
+        items = [self._experience_to_response(exp) for exp in experiences]
         return self._build_paginated_response(ExperienceList, items, total, offset, limit)
 
     # =========================================================================
@@ -832,42 +831,19 @@ class ExperienceService:
             User's experience results summary
 
         """
-        # First, count total matching experiences
-        count_stmt = (
-            select(func.count())
-            .select_from(Experience)
-            .where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
+        # Build query with visibility + PBAC pre-filter so totals are correct.
+        exp_stmt = self._base_experience_query().where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
+        exp_stmt = await self._exclude_denied_experiences(user_id, exp_stmt)
+
+        total, experiences = await self._execute_paginated_query(
+            exp_stmt, order_by=Experience.name, offset=offset, limit=limit
         )
-        total_result = await self.db.execute(count_stmt)
-        total = total_result.scalar() or 0
-
-        # Then fetch paginated experiences
-        exp_stmt = (
-            self._base_experience_query()
-            .where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
-            .order_by(Experience.name)
-            .offset(offset)
-            .limit(limit)
-        )
-        exp_result = await self.db.execute(exp_stmt)
-        experiences = exp_result.scalars().all()
-
-        if not experiences:
-            return UserExperienceResults(experiences=[], total=0)
-
-        # Filter by PBAC and collect IDs for the runs query
-        allowed_experiences = []
-        experience_ids = []
-        for exp in experiences:
-            if await POLICY_CACHE.check(user_id, "experience.read", f"experience:{exp.slug}", self.db):
-                allowed_experiences.append(exp)
-                experience_ids.append(exp.id)
-        experiences = allowed_experiences
 
         if not experiences:
             return UserExperienceResults(experiences=[], total=0)
 
         # Get the latest run for each experience for this user in a single query
+        experience_ids = [exp.id for exp in experiences]
         latest_runs_stmt = (
             select(ExperienceRun)
             .where(
@@ -896,7 +872,11 @@ class ExperienceService:
         for exp in experiences:
             latest_run = runs_by_experience.get(exp.id)
 
-            can_run, missing_identities = await self._check_can_run(exp.steps, user_id, plugin_records)
+            can_run = await POLICY_CACHE.check(user_id, "experience.run", f"experience:{exp.slug}", self.db)
+            if can_run:
+                can_run, missing_identities = await self._check_can_run(exp.steps, user_id, plugin_records)
+            else:
+                missing_identities = []
 
             result_preview = None
             if latest_run and latest_run.result_content:
@@ -1233,11 +1213,21 @@ class ExperienceService:
             return True
         return experience.visibility == ExperienceVisibility.PUBLISHED.value
 
-    async def _pbac_filter(self, user_id: str, action: str, resource_type: str, items: list) -> AsyncGenerator:
-        """Yield items the user is allowed to access per PBAC."""
-        for item in items:
-            if await POLICY_CACHE.check(user_id, action, f"{resource_type}:{item.slug}", self.db):
-                yield item
+    async def _exclude_denied_experiences(self, user_id: str, stmt):
+        """Add a WHERE clause excluding experiences the user is denied by PBAC.
+
+        Fetches all candidate slugs from the DB, batch-evaluates them against
+        the in-memory policy cache, and appends ``slug NOT IN (denied)`` to the
+        statement so that pagination counts reflect only accessible rows.
+        """
+        slug_result = await self.db.execute(select(Experience.slug))
+        all_slugs = [row[0] for row in slug_result.all()]
+        if not all_slugs:
+            return stmt
+        denied = await POLICY_CACHE.get_denied_resources(user_id, "experience.read", "experience", all_slugs, self.db)
+        if denied:
+            stmt = stmt.where(Experience.slug.notin_(denied))
+        return stmt
 
     def _get_last_run_timestamp(self, experience: Experience) -> datetime | None:
         """Get the last run timestamp for an experience.

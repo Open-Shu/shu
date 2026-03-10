@@ -41,7 +41,6 @@ import {
   Person as PersonIcon,
 } from '@mui/icons-material';
 import { groupsAPI, authAPI, extractItemsFromResponse, formatError } from '../services/api';
-import AdminLayout from '../layouts/AdminLayout';
 import PageHelpHeader from './PageHelpHeader';
 
 const UserGroups = () => {
@@ -244,11 +243,9 @@ const UserGroups = () => {
 
   if (isLoading) {
     return (
-      <AdminLayout>
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-          <CircularProgress />
-        </Box>
-      </AdminLayout>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
     );
   }
 

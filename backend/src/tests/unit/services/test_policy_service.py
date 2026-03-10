@@ -116,9 +116,9 @@ class TestCreatePolicy:
             result = await service.create_policy(data, "admin-1")
 
         mock_db.add.assert_called_once()
-        mock_db.flush.assert_awaited_once()
+        assert mock_db.flush.await_count == 2  # policy + _set_children
         mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once()
+        assert mock_db.refresh.await_count == 2  # after flush + after commit
         mock_cache.invalidate.assert_called_once()
 
     @pytest.mark.asyncio

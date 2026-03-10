@@ -6,6 +6,7 @@ engine, including policies, actor bindings, and resource/action statements.
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     ForeignKey,
     String,
@@ -28,9 +29,11 @@ class AccessPolicy(BaseModel):
 
     __tablename__ = "access_policies"
 
+    __table_args__ = (CheckConstraint("effect IN ('allow', 'deny')", name="chk_policy_effect"),)
+
     name = Column(String(255), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
-    effect = Column(String(10), nullable=False)  # "allow" or "deny"
+    effect = Column(String(10), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
     # Audit fields
@@ -68,8 +71,10 @@ class AccessPolicyBinding(BaseModel):
     # Relationships
     policy = relationship("AccessPolicy", back_populates="bindings")
 
-    # Constraints
-    __table_args__ = (UniqueConstraint("policy_id", "actor_type", "actor_id", name="uq_binding_policy_actor"),)
+    __table_args__ = (
+        UniqueConstraint("policy_id", "actor_type", "actor_id", name="uq_binding_policy_actor"),
+        CheckConstraint("actor_type IN ('user', 'group')", name="chk_binding_actor_type"),
+    )
 
     def __repr__(self) -> str:
         """Represent as string."""

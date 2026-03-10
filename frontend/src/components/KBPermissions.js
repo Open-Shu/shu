@@ -42,7 +42,6 @@ import {
 import NotImplemented from './NotImplemented';
 // Removed date picker imports due to compatibility issues
 import { knowledgeBaseAPI, groupsAPI, authAPI, extractItemsFromResponse, formatError } from '../services/api';
-import AdminLayout from '../layouts/AdminLayout';
 import { log } from '../utils/log';
 import PageHelpHeader from './PageHelpHeader';
 
@@ -226,11 +225,9 @@ const KBPermissions = () => {
 
   if (kbLoading) {
     return (
-      <AdminLayout>
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-          <CircularProgress />
-        </Box>
-      </AdminLayout>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
     );
   }
 

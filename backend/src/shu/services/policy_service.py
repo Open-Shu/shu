@@ -90,7 +90,8 @@ class PolicyService:
         """
         base = select(AccessPolicy)
         if search:
-            base = base.where(AccessPolicy.name.ilike(f"%{search}%"))
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            base = base.where(AccessPolicy.name.ilike(f"%{escaped}%", escape="\\"))
 
         count_result = await self.db.execute(select(func.count()).select_from(base.subquery()))
         total = count_result.scalar() or 0

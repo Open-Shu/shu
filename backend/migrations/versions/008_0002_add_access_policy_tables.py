@@ -49,6 +49,7 @@ def upgrade() -> None:
             sa.Column("name", sa.String(255), nullable=False, unique=True),
             sa.Column("description", sa.Text(), nullable=True),
             sa.Column("effect", sa.String(10), nullable=False),
+            sa.CheckConstraint("effect IN ('allow', 'deny')", name="chk_policy_effect"),
             sa.Column("is_active", sa.Boolean(), nullable=False, server_default="true"),
             sa.Column(
                 "created_by",
@@ -103,6 +104,7 @@ def upgrade() -> None:
                 onupdate=sa.func.now(),
             ),
             sa.UniqueConstraint("policy_id", "actor_type", "actor_id", name="uq_binding_policy_actor"),
+            sa.CheckConstraint("actor_type IN ('user', 'group')", name="chk_binding_actor_type"),
         )
         op.create_index("ix_access_policy_bindings_policy_id", "access_policy_bindings", ["policy_id"])
         op.create_index("ix_access_policy_bindings_actor_type", "access_policy_bindings", ["actor_type"])
@@ -150,6 +152,8 @@ def upgrade() -> None:
         op.add_column("experiences", sa.Column("slug", sa.String(100), nullable=True))
 
         # Backfill slugs from existing experience names.
+        # Duplicates (same slug or empty slug) are deleted — acceptable for the
+        # small number of experiences in production.
         experiences_table = sa.table(
             "experiences",
             sa.column("id", sa.String),
@@ -157,11 +161,17 @@ def upgrade() -> None:
             sa.column("slug", sa.String),
         )
         rows = conn.execute(sa.select(experiences_table.c.id, experiences_table.c.name)).fetchall()
+        seen_slugs: set[str] = set()
         for row in rows:
+            slug = _slugify(row.name)
+            if not slug or slug in seen_slugs:
+                conn.execute(experiences_table.delete().where(experiences_table.c.id == row.id))
+                continue
+            seen_slugs.add(slug)
             conn.execute(
                 experiences_table.update()
                 .where(experiences_table.c.id == row.id)
-                .values(slug=_slugify(row.name))
+                .values(slug=slug)
             )
 
         # Now make it non-nullable and add unique index.

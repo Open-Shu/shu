@@ -26,6 +26,7 @@ import {
   People as UsersIcon,
   Groups as PeopleIcon,
   Security as SecurityIcon,
+  Policy as PolicyIcon,
   AdminPanelSettings as AdminIcon,
   Extension as ExtensionIcon,
   Schedule as ScheduleIcon,
@@ -102,6 +103,11 @@ const AdminLayout = ({ children }) => {
       text: 'KB Permissions',
       icon: <SecurityIcon />,
       path: '/admin/kb-permissions',
+    },
+    {
+      text: 'Access Policies',
+      icon: <PolicyIcon />,
+      path: '/admin/policies',
     },
   ];
 

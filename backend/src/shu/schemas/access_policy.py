@@ -85,7 +85,7 @@ class PolicyResponse(BaseModel):
     id: str = Field(..., description="Policy ID")
     name: str = Field(..., description="Policy name")
     description: str | None = Field(None, description="Policy description")
-    effect: str = Field(..., description="Policy effect: 'allow' or 'deny'")
+    effect: Literal["allow", "deny"] = Field(..., description="Policy effect: 'allow' or 'deny'")
     is_active: bool = Field(..., description="Whether the policy is active")
     created_by: str = Field(..., description="ID of user who created the policy")
     created_at: datetime = Field(..., description="Creation timestamp")
@@ -121,7 +121,7 @@ class AccessCheckResponse(BaseModel):
     Returns the evaluation decision along with matching policies and reasoning.
     """
 
-    decision: str = Field(..., description="Evaluation result: 'allow' or 'deny'")
+    decision: Literal["allow", "deny"] = Field(..., description="Evaluation result: 'allow' or 'deny'")
     matching_policies: list[str] = Field(..., description="IDs of policies that matched the request")
     reason: str = Field(..., description="Human-readable explanation of the decision")
 

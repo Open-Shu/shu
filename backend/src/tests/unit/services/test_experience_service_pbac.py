@@ -524,13 +524,18 @@ class TestPbacFilteredLists:
         assert len(result.items) == 2
 
     @pytest.mark.asyncio
-    async def test_list_experiences_user_sees_only_allowed(self, service, pbac_cache):
-        """_pbac_filter removes experiences whose slug is not in the user's policy."""
+    async def test_list_experiences_user_sees_only_allowed(self, service, db, pbac_cache):
+        """PBAC pre-filter excludes experiences whose slug is not in the user's policy."""
+        # _exclude_denied_experiences queries all slugs via db.execute
+        slug_result = MagicMock()
+        slug_result.all.return_value = [(ALLOWED_EXP_SLUG,), (DENIED_EXP_SLUG,)]
+        db.execute = AsyncMock(return_value=slug_result)
+
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              patch.object(
                  service, "_execute_paginated_query",
-                 return_value=(2, [MOCK_EXP_ALLOWED, MOCK_EXP_DENIED]),
+                 return_value=(1, [MOCK_EXP_ALLOWED]),
              ):
             result = await service.list_experiences(user_id=REGULAR_USER_ID)
         assert len(result.items) == 1
@@ -538,7 +543,10 @@ class TestPbacFilteredLists:
 
     @pytest.mark.asyncio
     async def test_get_user_results_admin_sees_all(self, service, db, pbac_cache):
-        """Admin bypasses POLICY_CACHE.check so all experiences appear in results."""
+        """Admin bypasses PBAC so all experiences appear in results."""
+        slug_result = MagicMock()
+        slug_result.all.return_value = [(ALLOWED_EXP_SLUG,), (DENIED_EXP_SLUG,)]
+
         count_result = MagicMock()
         count_result.scalar.return_value = 2
 
@@ -554,8 +562,10 @@ class TestPbacFilteredLists:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return count_result
+                return slug_result
             if call_count == 2:
+                return count_result
+            if call_count == 3:
                 return exp_result
             return runs_result
 
@@ -570,12 +580,15 @@ class TestPbacFilteredLists:
 
     @pytest.mark.asyncio
     async def test_get_user_results_user_sees_only_allowed(self, service, db, pbac_cache):
-        """POLICY_CACHE.check filters out experiences whose slug is not in the user's policy."""
+        """PBAC pre-filter excludes experiences whose slug is not in the user's policy."""
+        slug_result = MagicMock()
+        slug_result.all.return_value = [(ALLOWED_EXP_SLUG,), (DENIED_EXP_SLUG,)]
+
         count_result = MagicMock()
-        count_result.scalar.return_value = 2
+        count_result.scalar.return_value = 1
 
         exp_result = MagicMock()
-        exp_result.scalars.return_value.all.return_value = [MOCK_EXP_ALLOWED, MOCK_EXP_DENIED]
+        exp_result.scalars.return_value.all.return_value = [MOCK_EXP_ALLOWED]
 
         runs_result = MagicMock()
         runs_result.scalars.return_value.all.return_value = []
@@ -586,8 +599,10 @@ class TestPbacFilteredLists:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return count_result
+                return slug_result
             if call_count == 2:
+                return count_result
+            if call_count == 3:
                 return exp_result
             return runs_result
 
