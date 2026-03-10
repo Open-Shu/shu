@@ -142,9 +142,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
             )
             return
 
-        heartbeat_task = asyncio.create_task(
-            _re_embedding_heartbeat(job, knowledge_base_id)
-        )
+        heartbeat_task = asyncio.create_task(_re_embedding_heartbeat(job, knowledge_base_id))
 
         try:
             chunks_done_this_job = 0
@@ -191,8 +189,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 embeddings = await embedding_service.embed_texts(texts)
 
                 entries = [
-                    VectorEntry(id=str(chunk.id), vector=emb)
-                    for chunk, emb in zip(batch, embeddings, strict=True)
+                    VectorEntry(id=str(chunk.id), vector=emb) for chunk, emb in zip(batch, embeddings, strict=True)
                 ]
                 await vector_store.store_embeddings("chunks", entries, db=session)
 
@@ -205,9 +202,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
 
                 # Atomic progress update via row lock
                 kb_locked = await session.execute(
-                    select(KnowledgeBase)
-                    .where(KnowledgeBase.id == knowledge_base_id)
-                    .with_for_update()
+                    select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id).with_for_update()
                 )
                 kb_for_progress = kb_locked.scalar_one()
                 kb_for_progress.increment_re_embedding_progress(len(batch))
@@ -238,9 +233,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
 
             # Atomically increment workers_completed; last one enqueues finalization
             kb_locked = await session.execute(
-                select(KnowledgeBase)
-                .where(KnowledgeBase.id == knowledge_base_id)
-                .with_for_update()
+                select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id).with_for_update()
             )
             kb_final = kb_locked.scalar_one()
             all_done = kb_final.increment_workers_completed()
@@ -317,9 +310,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                     err_session_local = get_async_session_local()
                     async with err_session_local() as err_session:
                         kb_locked = await err_session.execute(
-                            select(KnowledgeBase)
-                            .where(KnowledgeBase.id == knowledge_base_id)
-                            .with_for_update()
+                            select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id).with_for_update()
                         )
                         kb_err = kb_locked.scalar_one_or_none()
                         if kb_err and kb_err.embedding_status == "re_embedding":
@@ -439,9 +430,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
             )
             return
 
-        heartbeat_task = asyncio.create_task(
-            _re_embedding_heartbeat(job, knowledge_base_id)
-        )
+        heartbeat_task = asyncio.create_task(_re_embedding_heartbeat(job, knowledge_base_id))
 
         try:
             synopses_count = 0
@@ -473,10 +462,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
                 texts = [doc.synopsis for doc in batch]
                 embeddings = await embedding_service.embed_texts(texts)
 
-                entries = [
-                    VectorEntry(id=str(doc.id), vector=emb)
-                    for doc, emb in zip(batch, embeddings, strict=True)
-                ]
+                entries = [VectorEntry(id=str(doc.id), vector=emb) for doc, emb in zip(batch, embeddings, strict=True)]
                 await vector_store.store_embeddings("synopses", entries, db=session)
                 await session.commit()
                 offset += len(batch)
@@ -509,10 +495,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
                 texts = [q.query_text for q in batch]
                 embeddings = await embedding_service.embed_queries(texts)
 
-                entries = [
-                    VectorEntry(id=str(q.id), vector=emb)
-                    for q, emb in zip(batch, embeddings, strict=True)
-                ]
+                entries = [VectorEntry(id=str(q.id), vector=emb) for q, emb in zip(batch, embeddings, strict=True)]
                 await vector_store.store_embeddings("queries", entries, db=session)
                 await session.commit()
                 offset += len(batch)
@@ -556,9 +539,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
                     err_session_local = get_async_session_local()
                     async with err_session_local() as err_session:
                         kb_locked = await err_session.execute(
-                            select(KnowledgeBase)
-                            .where(KnowledgeBase.id == knowledge_base_id)
-                            .with_for_update()
+                            select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id).with_for_update()
                         )
                         kb_err = kb_locked.scalar_one_or_none()
                         if kb_err:

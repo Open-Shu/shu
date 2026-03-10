@@ -825,7 +825,11 @@ class KnowledgeBaseService:
                 raise ConflictError("Re-embedding is already in progress for this knowledge base")
             logger.info(
                 "Re-embedding appears stale for KB, allowing re-trigger",
-                extra={"kb_id": kb_id, "last_updated": str(last_updated), "stale_after_seconds": int(stale_after.total_seconds())},
+                extra={
+                    "kb_id": kb_id,
+                    "last_updated": str(last_updated),
+                    "stale_after_seconds": int(stale_after.total_seconds()),
+                },
             )
 
         # Count chunks for progress tracking
