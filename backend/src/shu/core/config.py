@@ -99,8 +99,8 @@ class Settings(BaseSettings):
     default_embedding_model: str = Field("Snowflake/snowflake-arctic-embed-l-v2.0", alias="SHU_EMBEDDING_MODEL")
     embedding_device: str = "cpu"
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")
-    # Model precision: "float32" (default) or "float16" (half memory, recommended for 1024-dim+ models)
-    embedding_dtype: str = Field("float32", alias="SHU_EMBEDDING_DTYPE")
+    # Model precision: "float16" (default, half memory) or "float32" (full precision)
+    embedding_dtype: str = Field("float16", alias="SHU_EMBEDDING_DTYPE")
     # Text processing configuration
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")

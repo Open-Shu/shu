@@ -149,12 +149,20 @@ class LocalEmbeddingService:
         # Cache dimension from the loaded model
         self._dimension: int = self._model.get_sentence_embedding_dimension()
 
-        # Cache query prompt name for asymmetric models (e.g., Snowflake arctic-embed).
-        # Models that define a "query" prompt use it to prefix queries differently from
-        # documents. Models without it (or with an empty prompt like MiniLM) work fine.
+        # Cache prompt names for asymmetric models (e.g., Snowflake arctic-embed, E5, BGE).
+        # Models define prompts in config_sentence_transformers.json. We detect supported
+        # prompt names at load time; unsupported names stay None (no prefix applied).
+        # sentence-transformers raises ValueError on unknown prompt_name, so we must check.
         self._query_prompt_name: str | None = "query" if "query" in self._model.prompts else None
+        self._document_prompt_name: str | None = next(
+            (name for name in ("document", "passage") if name in self._model.prompts), None
+        )
 
-        logger.info(f"Successfully loaded SentenceTransformer model: {model_name} (dim={self._dimension})")
+        logger.info(
+            f"Successfully loaded SentenceTransformer model: {model_name} (dim={self._dimension})"
+            f"{f', query_prompt={self._query_prompt_name!r}' if self._query_prompt_name else ''}"
+            f"{f', doc_prompt={self._document_prompt_name!r}' if self._document_prompt_name else ''}"
+        )
 
         # Preload model to ensure full initialization
         logger.debug("Preloading model with dummy text")
@@ -176,7 +184,12 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(texts, batch_size=self._batch_size, show_progress_bar=False),
+            lambda: self._model.encode(
+                texts,
+                batch_size=self._batch_size,
+                show_progress_bar=False,
+                prompt_name=self._document_prompt_name,
+            ),
         )
         return [e.tolist() for e in embeddings]
 
