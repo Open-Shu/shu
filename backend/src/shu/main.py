@@ -328,36 +328,39 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                         phase = progress.get("phase", "chunks")
                         chunks_done = progress.get("chunks_done", 0)
                         chunks_total = progress.get("chunks_total", "?")
-                        sub_jobs_total = progress.get("sub_jobs_total", 1)
-                        sub_jobs_completed = progress.get("sub_jobs_completed", 0)
+                        workers_total = progress.get("workers_total", 1)
+                        workers_completed = progress.get("workers_completed", 0)
                         logger.info(
                             f"Resuming re-embedding for KB {kb.id}, "
                             f"phase={phase}, chunks_done={chunks_done}/{chunks_total}, "
-                            f"sub_jobs={sub_jobs_completed}/{sub_jobs_total}"
+                            f"workers={workers_completed}/{workers_total}"
                         )
 
                         if phase == "chunks":
-                            # Re-enqueue chunk sub-jobs for remaining work
-                            remaining_sub_jobs = max(1, sub_jobs_total - sub_jobs_completed)
-                            # Reset sub_jobs_completed since we're re-enqueueing
-                            progress["sub_jobs_completed"] = 0
-                            progress["sub_jobs_total"] = remaining_sub_jobs
-                            kb.re_embedding_progress = progress
-                            await session.commit()
+                            # Re-enqueue chunk jobs for remaining work
+                            remaining_workers = max(1, workers_total - workers_completed)
 
-                            for i in range(remaining_sub_jobs):
+                            for i in range(remaining_workers):
                                 await enqueue_job(
                                     backend,
                                     WorkloadType.RE_EMBEDDING,
                                     payload={
                                         "knowledge_base_id": str(kb.id),
                                         "action": "re_embed_chunks",
-                                        "sub_job_index": i,
-                                        "sub_jobs_total": remaining_sub_jobs,
+                                        "worker_index": i,
+                                        "workers_total": remaining_workers,
                                     },
                                     max_attempts=3,
                                     visibility_timeout=600,
                                 )
+
+                            # Commit progress update only after all jobs are
+                            # enqueued so a mid-loop failure doesn't leave
+                            # workers_total out of sync with actual queue state.
+                            progress["workers_completed"] = 0
+                            progress["workers_total"] = remaining_workers
+                            kb.re_embedding_progress = progress
+                            await session.commit()
                         else:
                             # Past chunks phase — enqueue finalization only
                             await enqueue_job(

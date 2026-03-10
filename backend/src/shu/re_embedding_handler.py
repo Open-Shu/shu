@@ -2,8 +2,8 @@
 
 Handles parallel re-embedding of knowledge base chunks across multiple workers
 using a competing consumers pattern with FOR UPDATE SKIP LOCKED to prevent
-duplicate work. Coordinates sub-job completion and enqueues finalization
-(synopses, queries, indexes) when all chunk sub-jobs are done.
+duplicate work. Coordinates worker completion and enqueues finalization
+(synopses, queries, indexes) when all chunk workers are done.
 """
 
 import asyncio
@@ -13,7 +13,7 @@ from .core.logging import get_logger
 logger = get_logger(__name__)
 
 # Shared batch size for re-embedding operations (chunks, synopses, queries).
-# Used by both the handler and the service when computing sub-job count.
+# Used by both the handler and the service when computing worker count.
 RE_EMBEDDING_BATCH_SIZE = 64
 
 
@@ -79,16 +79,16 @@ async def handle_re_embedding_job(job) -> None:
 
 
 async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
-    """Handle a chunk re-embedding sub-job.
+    """Handle a chunk re-embedding job.
 
-    Multiple instances of this handler run in parallel, each competing for
-    unprocessed chunks via FOR UPDATE SKIP LOCKED. When a sub-job finds no
-    more chunks to process, it atomically increments the completion counter.
-    The last sub-job to finish enqueues the finalization job.
+    Multiple instances run in parallel, each competing for unprocessed chunks
+    via FOR UPDATE SKIP LOCKED. When a worker finds no more chunks to process,
+    it atomically increments the completion counter. The last worker to finish
+    enqueues the finalization job.
 
-    Individual sub-job failures do NOT mark the KB as error — other sub-jobs
-    will absorb the remaining work. Only if ALL sub-jobs exhaust retries and
-    unprocessed chunks still remain will the last sub-job to complete detect
+    Individual worker failures do NOT mark the KB as error — other workers
+    will absorb the remaining work. Only if ALL workers exhaust retries and
+    unprocessed chunks still remain will the last worker to complete detect
     the problem and mark the KB as error.
     """
     from datetime import UTC, datetime
@@ -105,14 +105,14 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
     if not knowledge_base_id:
         raise ValueError("RE_EMBEDDING job missing knowledge_base_id in payload")
 
-    sub_job_index = job.payload.get("sub_job_index", 0)
+    worker_index = job.payload.get("worker_index", 0)
 
     logger.info(
-        "Processing re-embedding chunk sub-job",
+        "Processing re-embedding chunk worker",
         extra={
             "job_id": job.id,
             "knowledge_base_id": knowledge_base_id,
-            "sub_job_index": sub_job_index,
+            "worker_index": worker_index,
         },
     )
 
@@ -150,7 +150,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
             chunks_done_this_job = 0
 
             # Competing consumers: grab next batch with FOR UPDATE SKIP LOCKED
-            # so parallel sub-jobs never process the same chunks.
+            # so parallel workers never process the same chunks.
             unprocessed_filter = (
                 select(DocumentChunk)
                 .where(
@@ -167,17 +167,17 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
             )
 
             while True:
-                # Check if KB is still in re_embedding status (another sub-job
+                # Check if KB is still in re_embedding status (another worker
                 # may have failed and marked it as error)
                 await session.refresh(kb, attribute_names=["embedding_status"])
                 if kb.embedding_status != "re_embedding":
                     logger.info(
-                        "KB no longer in re_embedding status, stopping sub-job",
+                        "KB no longer in re_embedding status, stopping worker",
                         extra={
                             "job_id": job.id,
                             "knowledge_base_id": knowledge_base_id,
                             "embedding_status": kb.embedding_status,
-                            "sub_job_index": sub_job_index,
+                            "worker_index": worker_index,
                         },
                     )
                     break
@@ -221,32 +221,32 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                     extra={
                         "job_id": job.id,
                         "knowledge_base_id": knowledge_base_id,
-                        "sub_job_index": sub_job_index,
+                        "worker_index": worker_index,
                         "chunks_done_this_job": chunks_done_this_job,
                     },
                 )
 
             logger.info(
-                "Chunk sub-job complete",
+                "Chunk worker complete",
                 extra={
                     "job_id": job.id,
                     "knowledge_base_id": knowledge_base_id,
-                    "sub_job_index": sub_job_index,
+                    "worker_index": worker_index,
                     "chunks_processed": chunks_done_this_job,
                 },
             )
 
-            # Atomically increment sub_jobs_completed; last one enqueues finalization
+            # Atomically increment workers_completed; last one enqueues finalization
             kb_locked = await session.execute(
                 select(KnowledgeBase)
                 .where(KnowledgeBase.id == knowledge_base_id)
                 .with_for_update()
             )
             kb_final = kb_locked.scalar_one()
-            all_done = kb_final.increment_sub_jobs_completed()
+            all_done = kb_final.increment_workers_completed()
 
             if all_done:
-                # Check if any chunks still need processing (all sub-jobs may
+                # Check if any chunks still need processing (all workers may
                 # have failed on some chunks that none could handle)
                 remaining = await session.execute(
                     select(func.count(DocumentChunk.id)).where(
@@ -262,11 +262,11 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
 
                 if remaining_count > 0:
                     kb_final.mark_re_embedding_failed(
-                        f"{remaining_count} chunks remain unprocessed after all sub-jobs completed"
+                        f"{remaining_count} chunks remain unprocessed after all workers completed"
                     )
                     await session.commit()
                     logger.error(
-                        "Re-embedding incomplete: unprocessed chunks remain after all sub-jobs finished",
+                        "Re-embedding incomplete: unprocessed chunks remain after all workers finished",
                         extra={
                             "knowledge_base_id": knowledge_base_id,
                             "remaining_chunks": remaining_count,
@@ -275,7 +275,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 else:
                     await session.commit()
                     logger.info(
-                        "All chunk sub-jobs complete, enqueueing finalization",
+                        "All chunk workers complete, enqueueing finalization",
                         extra={"knowledge_base_id": knowledge_base_id},
                     )
                     from .core.queue_backend import get_queue_backend
@@ -296,16 +296,16 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 await session.commit()
 
         except Exception:
-            # Don't mark KB as error for individual sub-job failures.
-            # Other sub-jobs will absorb the remaining work via competing
-            # consumers. Only the last sub-job to complete checks for
+            # Don't mark KB as error for individual worker failures.
+            # Other workers will absorb the remaining work via competing
+            # consumers. Only the last worker to complete checks for
             # unprocessed chunks and marks error if needed.
             logger.warning(
-                "Re-embedding chunk sub-job failed",
+                "Re-embedding chunk worker failed",
                 extra={
                     "job_id": job.id,
                     "knowledge_base_id": knowledge_base_id,
-                    "sub_job_index": sub_job_index,
+                    "worker_index": worker_index,
                     "attempts": job.attempts,
                     "max_attempts": job.max_attempts,
                 },
@@ -324,7 +324,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
 async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
     """Handle the finalization phase of re-embedding.
 
-    Runs after all chunk sub-jobs complete. Processes synopses, queries,
+    Runs after all chunk workers complete. Processes synopses, queries,
     and indexes, then marks the KB as complete.
     """
     from sqlalchemy import select

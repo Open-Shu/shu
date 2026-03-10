@@ -13,14 +13,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from shu.models.knowledge_base import KnowledgeBase
 
 
-def _make_job(knowledge_base_id="kb-1", action="re_embed_chunks", sub_job_index=0):
+def _make_job(knowledge_base_id="kb-1", action="re_embed_chunks", worker_index=0):
     """Create a mock job with re-embedding payload."""
     job = MagicMock()
     job.id = "job-123"
     job.payload = {
         "knowledge_base_id": knowledge_base_id,
         "action": action,
-        "sub_job_index": sub_job_index,
+        "worker_index": worker_index,
     }
     job.attempts = 1
     job.max_attempts = 3
@@ -56,7 +56,7 @@ def _make_query(query_id, query_text="What is X?"):
     return q
 
 
-def _make_kb(phase="chunks", chunks_done=0, chunks_total=3, sub_jobs_total=1, sub_jobs_completed=0):
+def _make_kb(phase="chunks", chunks_done=0, chunks_total=3, workers_total=1, workers_completed=0):
     """Create a mock KnowledgeBase with re-embedding progress."""
     mock_kb = MagicMock(spec=KnowledgeBase)
     mock_kb.id = "kb-1"
@@ -64,15 +64,15 @@ def _make_kb(phase="chunks", chunks_done=0, chunks_total=3, sub_jobs_total=1, su
     mock_kb.re_embedding_progress = {
         "chunks_done": chunks_done,
         "chunks_total": chunks_total,
-        "sub_jobs_total": sub_jobs_total,
-        "sub_jobs_completed": sub_jobs_completed,
+        "workers_total": workers_total,
+        "workers_completed": workers_completed,
         "phase": phase,
     }
     mock_kb.update_re_embedding_phase = MagicMock()
     mock_kb.mark_re_embedding_complete = MagicMock()
     mock_kb.mark_re_embedding_failed = MagicMock()
     mock_kb.increment_re_embedding_progress = MagicMock()
-    mock_kb.increment_sub_jobs_completed = MagicMock(return_value=True)  # last sub-job by default
+    mock_kb.increment_workers_completed = MagicMock(return_value=True)  # last worker by default
     return mock_kb
 
 
@@ -181,7 +181,7 @@ class TestHandleReEmbedChunksJob:
 
         job = _make_job()
         chunks = [_make_chunk(f"chunk-{i}") for i in range(3)]
-        mock_kb = _make_kb(sub_jobs_total=1)
+        mock_kb = _make_kb(workers_total=1)
 
         mock_embedding = AsyncMock()
         mock_embedding.model_name = "new-model"
@@ -204,7 +204,7 @@ class TestHandleReEmbedChunksJob:
             chunks_result,  # chunk query: 3 results
             lock_result,    # FOR UPDATE progress increment
             empty_result,   # chunk query: empty (done)
-            lock_result,    # FOR UPDATE sub_jobs_completed
+            lock_result,    # FOR UPDATE workers_completed
             count_result,   # remaining chunks count
         ])
         mock_session.commit = AsyncMock()
@@ -222,16 +222,16 @@ class TestHandleReEmbedChunksJob:
         mock_embedding.embed_texts.assert_called_once()
         mock_vs.store_embeddings.assert_called()
         mock_kb.increment_re_embedding_progress.assert_called_with(3)
-        mock_kb.increment_sub_jobs_completed.assert_called_once()
+        mock_kb.increment_workers_completed.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_last_sub_job_enqueues_finalization(self):
-        """When the last sub-job completes, a finalization job is enqueued."""
+    async def test_last_worker_enqueues_finalization(self):
+        """When the last worker completes, a finalization job is enqueued."""
         from shu.re_embedding_handler import _handle_re_embed_chunks_job
 
         job = _make_job()
-        mock_kb = _make_kb(sub_jobs_total=3, sub_jobs_completed=2)
-        mock_kb.increment_sub_jobs_completed = MagicMock(return_value=True)
+        mock_kb = _make_kb(workers_total=3, workers_completed=2)
+        mock_kb.increment_workers_completed = MagicMock(return_value=True)
 
         mock_embedding = AsyncMock()
         mock_embedding.model_name = "new-model"
@@ -249,7 +249,7 @@ class TestHandleReEmbedChunksJob:
 
         mock_session.execute = AsyncMock(side_effect=[
             empty_result,   # chunk query: empty (nothing to process)
-            lock_result,    # FOR UPDATE sub_jobs_completed
+            lock_result,    # FOR UPDATE workers_completed
             count_result,   # remaining chunks count
         ])
         mock_session.commit = AsyncMock()
@@ -270,13 +270,13 @@ class TestHandleReEmbedChunksJob:
         assert call_kwargs[1]["payload"]["action"] == "re_embed_finalize"
 
     @pytest.mark.asyncio
-    async def test_last_sub_job_marks_error_when_chunks_remain(self):
-        """If all sub-jobs complete but chunks remain unprocessed, mark KB as error."""
+    async def test_last_worker_marks_error_when_chunks_remain(self):
+        """If all workers complete but chunks remain unprocessed, mark KB as error."""
         from shu.re_embedding_handler import _handle_re_embed_chunks_job
 
         job = _make_job()
-        mock_kb = _make_kb(sub_jobs_total=2, sub_jobs_completed=1)
-        mock_kb.increment_sub_jobs_completed = MagicMock(return_value=True)
+        mock_kb = _make_kb(workers_total=2, workers_completed=1)
+        mock_kb.increment_workers_completed = MagicMock(return_value=True)
 
         mock_embedding = AsyncMock()
         mock_embedding.model_name = "new-model"
@@ -294,7 +294,7 @@ class TestHandleReEmbedChunksJob:
 
         mock_session.execute = AsyncMock(side_effect=[
             empty_result,   # chunk query: empty
-            lock_result,    # FOR UPDATE sub_jobs_completed
+            lock_result,    # FOR UPDATE workers_completed
             count_result,   # remaining chunks count: 5
         ])
         mock_session.commit = AsyncMock()
@@ -310,13 +310,13 @@ class TestHandleReEmbedChunksJob:
         assert "5 chunks remain" in mock_kb.mark_re_embedding_failed.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_non_last_sub_job_does_not_enqueue_finalization(self):
-        """Non-last sub-jobs should not enqueue finalization."""
+    async def test_non_last_worker_does_not_enqueue_finalization(self):
+        """Non-last workers should not enqueue finalization."""
         from shu.re_embedding_handler import _handle_re_embed_chunks_job
 
         job = _make_job()
-        mock_kb = _make_kb(sub_jobs_total=3, sub_jobs_completed=0)
-        mock_kb.increment_sub_jobs_completed = MagicMock(return_value=False)
+        mock_kb = _make_kb(workers_total=3, workers_completed=0)
+        mock_kb.increment_workers_completed = MagicMock(return_value=False)
 
         mock_embedding = AsyncMock()
         mock_embedding.model_name = "new-model"
@@ -333,7 +333,7 @@ class TestHandleReEmbedChunksJob:
 
         mock_session.execute = AsyncMock(side_effect=[
             empty_result,   # chunk query: empty
-            lock_result,    # FOR UPDATE sub_jobs_completed
+            lock_result,    # FOR UPDATE workers_completed
         ])
         mock_session.commit = AsyncMock()
 
@@ -349,10 +349,10 @@ class TestHandleReEmbedChunksJob:
 
     @pytest.mark.asyncio
     async def test_failure_does_not_mark_kb_error(self):
-        """Individual sub-job failure should NOT mark KB as error.
+        """Individual worker failure should NOT mark KB as error.
 
-        Other sub-jobs absorb remaining work via competing consumers.
-        Only the last sub-job to complete checks for unprocessed chunks.
+        Other workers absorb remaining work via competing consumers.
+        Only the last worker to complete checks for unprocessed chunks.
         """
         from shu.re_embedding_handler import _handle_re_embed_chunks_job
 
@@ -386,17 +386,17 @@ class TestHandleReEmbedChunksJob:
             with pytest.raises(RuntimeError, match="GPU OOM"):
                 await _handle_re_embed_chunks_job(job)
 
-        # KB should NOT be marked as error — other sub-jobs will continue
+        # KB should NOT be marked as error — other workers will continue
         mock_kb.mark_re_embedding_failed.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_stops_if_kb_status_changes(self):
-        """Sub-job should stop processing if KB status changes mid-loop."""
+        """Worker should stop processing if KB status changes mid-loop."""
         from shu.re_embedding_handler import _handle_re_embed_chunks_job
 
         job = _make_job()
         chunks = [_make_chunk(f"chunk-{i}") for i in range(3)]
-        mock_kb = _make_kb(sub_jobs_total=2)
+        mock_kb = _make_kb(workers_total=2)
 
         mock_embedding = AsyncMock()
         mock_embedding.model_name = "new-model"
@@ -425,14 +425,14 @@ class TestHandleReEmbedChunksJob:
 
         chunks_result = _make_scalar_result(chunks)
         lock_result = _make_lock_result(mock_kb)
-        # Not the last sub-job, so no remaining count query needed
-        mock_kb.increment_sub_jobs_completed = MagicMock(return_value=False)
+        # Not the last worker, so no remaining count query needed
+        mock_kb.increment_workers_completed = MagicMock(return_value=False)
 
         mock_session.execute = AsyncMock(side_effect=[
             chunks_result,  # chunk query: 3 results
             lock_result,    # FOR UPDATE progress increment
             # Loop restarts, refresh detects status change, breaks
-            lock_result,    # FOR UPDATE sub_jobs_completed
+            lock_result,    # FOR UPDATE workers_completed
         ])
         mock_session.commit = AsyncMock()
 
@@ -594,7 +594,7 @@ class TestReEmbeddingHeartbeat:
         count_result = _make_count_result(0)
         mock_session.execute = AsyncMock(side_effect=[
             empty_result,   # chunk query: empty
-            lock_result,    # FOR UPDATE sub_jobs_completed
+            lock_result,    # FOR UPDATE workers_completed
             count_result,   # remaining chunks count
         ])
         mock_session.commit = AsyncMock()

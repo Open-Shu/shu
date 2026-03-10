@@ -131,14 +131,14 @@ class KnowledgeBase(BaseModel):
         """Check if this KB's embeddings are from a different model than the system model."""
         return self.embedding_model != system_model
 
-    def mark_re_embedding_started(self, total_chunks: int, sub_jobs_total: int = 1) -> None:
+    def mark_re_embedding_started(self, total_chunks: int, workers_total: int = 1) -> None:
         """Mark this KB as undergoing re-embedding."""
         self.embedding_status = "re_embedding"
         self.re_embedding_progress = {
             "chunks_done": 0,
             "chunks_total": total_chunks,
-            "sub_jobs_total": sub_jobs_total,
-            "sub_jobs_completed": 0,
+            "workers_total": workers_total,
+            "workers_completed": 0,
             "phase": "chunks",
             "started_at": datetime.now(UTC).isoformat(),
         }
@@ -147,7 +147,7 @@ class KnowledgeBase(BaseModel):
         """Atomically increment the chunks_done counter.
 
         Caller MUST hold a row-level lock (SELECT ... FOR UPDATE) to prevent
-        lost updates from concurrent sub-jobs.
+        lost updates from concurrent workers.
         """
         if self.re_embedding_progress is not None:
             current = self.re_embedding_progress.get("chunks_done", 0)
@@ -156,19 +156,19 @@ class KnowledgeBase(BaseModel):
                 "chunks_done": current + additional_chunks,
             }
 
-    def increment_sub_jobs_completed(self) -> bool:
-        """Increment sub_jobs_completed and return True if all sub-jobs are done.
+    def increment_workers_completed(self) -> bool:
+        """Increment workers_completed and return True if all workers are done.
 
         Caller MUST hold a row-level lock (SELECT ... FOR UPDATE) to prevent
-        lost updates from concurrent sub-jobs.
+        lost updates from concurrent workers.
         """
         if self.re_embedding_progress is None:
-            return True
-        completed = self.re_embedding_progress.get("sub_jobs_completed", 0) + 1
-        total = self.re_embedding_progress.get("sub_jobs_total", 1)
+            raise RuntimeError("re_embedding_progress is None in increment_workers_completed")
+        completed = self.re_embedding_progress.get("workers_completed", 0) + 1
+        total = self.re_embedding_progress.get("workers_total", 1)
         self.re_embedding_progress = {
             **self.re_embedding_progress,
-            "sub_jobs_completed": completed,
+            "workers_completed": completed,
         }
         return completed >= total
 
