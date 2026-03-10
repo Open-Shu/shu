@@ -304,7 +304,9 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                 session_factory = get_async_session_local()
                 async with session_factory() as session:
                     result = await session.execute(
-                        select(KnowledgeBase).where(KnowledgeBase.embedding_status == "re_embedding")
+                        select(KnowledgeBase)
+                        .where(KnowledgeBase.embedding_status == "re_embedding")
+                        .with_for_update(skip_locked=True)
                     )
                     stuck_kbs = list(result.scalars().all())
 

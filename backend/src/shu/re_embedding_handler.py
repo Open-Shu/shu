@@ -324,6 +324,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                         kb_err = kb_locked.scalar_one_or_none()
                         if kb_err and kb_err.embedding_status == "re_embedding":
                             all_done = kb_err.increment_workers_completed()
+                            enqueue_finalize = False
 
                             if all_done:
                                 # Last worker — check for unprocessed chunks
@@ -344,24 +345,30 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                                         f"{remaining_count} chunks remain unprocessed after all workers completed"
                                     )
                                 else:
-                                    # All chunks done despite this worker failing —
-                                    # other workers absorbed the work. Enqueue finalization.
-                                    from .core.queue_backend import get_queue_backend
-                                    from .core.workload_routing import WorkloadType, enqueue_job
+                                    enqueue_finalize = True
 
-                                    queue_backend = await get_queue_backend()
-                                    await enqueue_job(
-                                        queue_backend,
-                                        WorkloadType.RE_EMBEDDING,
-                                        payload={
-                                            "knowledge_base_id": knowledge_base_id,
-                                            "action": "re_embed_finalize",
-                                        },
-                                        max_attempts=3,
-                                        visibility_timeout=600,
-                                    )
-
+                            # Commit DB changes (workers_completed increment,
+                            # possible error marking) before enqueueing so the
+                            # finalization job only runs against durable state.
                             await err_session.commit()
+
+                            if enqueue_finalize:
+                                # All chunks done despite this worker failing —
+                                # other workers absorbed the work. Enqueue finalization.
+                                from .core.queue_backend import get_queue_backend
+                                from .core.workload_routing import WorkloadType, enqueue_job
+
+                                queue_backend = await get_queue_backend()
+                                await enqueue_job(
+                                    queue_backend,
+                                    WorkloadType.RE_EMBEDDING,
+                                    payload={
+                                        "knowledge_base_id": knowledge_base_id,
+                                        "action": "re_embed_finalize",
+                                    },
+                                    max_attempts=3,
+                                    visibility_timeout=600,
+                                )
                 except Exception:
                     logger.error(
                         "Failed to increment workers_completed for exhausted worker",

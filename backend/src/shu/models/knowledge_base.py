@@ -144,10 +144,12 @@ class KnowledgeBase(BaseModel):
         }
 
     def increment_re_embedding_progress(self, additional_chunks: int) -> None:
-        """Atomically increment the chunks_done counter.
+        """Increment the chunks_done counter in re_embedding_progress.
 
-        Caller MUST hold a row-level lock (SELECT ... FOR UPDATE) to prevent
-        lost updates from concurrent workers.
+        NOT atomic on its own — caller MUST hold a row-level lock
+        (SELECT ... FOR UPDATE) on the KB row to prevent lost updates
+        from concurrent workers.  The lock serializes access; this
+        method only mutates the in-memory ORM state.
         """
         if self.re_embedding_progress is not None:
             current = self.re_embedding_progress.get("chunks_done", 0)
