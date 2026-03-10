@@ -66,7 +66,7 @@ async def test_trigger_re_embedding_allows_stale_in_progress_kb():
     queue_backend = AsyncMock()
 
     with (
-        patch("shu.core.config.get_settings_instance", return_value=SimpleNamespace(worker_concurrency=4)),
+        patch("shu.core.config.get_settings_instance", return_value=SimpleNamespace(worker_concurrency=4, embedding_batch_size=32)),
         patch("shu.core.workload_routing.enqueue_job", new_callable=AsyncMock) as mock_enqueue,
     ):
         result = await service.trigger_re_embedding(

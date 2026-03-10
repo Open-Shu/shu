@@ -253,7 +253,7 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(
+            lambda: self._model.encode_document(
                 texts,
                 batch_size=self._batch_size,
                 show_progress_bar=False,
@@ -266,7 +266,7 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(
+            lambda: self._model.encode_query(
                 [text], batch_size=1, show_progress_bar=False, prompt_name=self._query_prompt_name
             )[0],
         )
@@ -279,7 +279,7 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(
+            lambda: self._model.encode_query(
                 texts,
                 batch_size=self._batch_size,
                 show_progress_bar=False,
