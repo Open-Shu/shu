@@ -426,7 +426,7 @@ class Worker:
             available = limiter.get_available(work_type)
             if available is not None and available == 0:
                 try:
-                    pending = await self._backend.queue_length(work_type.queue_name)
+                    pending = await self._backend.pending_count(work_type.queue_name)
                     if pending > 0:
                         label = work_type.value.replace("_", " ")
                         deferred.append(f"{pending} {label} job{'s' if pending != 1 else ''}")

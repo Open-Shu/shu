@@ -813,7 +813,11 @@ class KnowledgeBaseService:
             raise ValidationError("Knowledge base embeddings are already current")
 
         if kb.embedding_status == "re_embedding":
-            raise ConflictError("Re-embedding is already in progress for this knowledge base")
+            # Allow re-trigger if the job was lost (no jobs in queue or processing set)
+            existing_jobs = await queue_backend.total_count(WorkloadType.RE_EMBEDDING.queue_name)
+            if existing_jobs > 0:
+                raise ConflictError("Re-embedding is already in progress for this knowledge base")
+            logger.info("Re-embedding status is stuck with no jobs in queue, allowing re-trigger", extra={"kb_id": kb_id})
 
         # Count chunks for progress tracking
         result = await self.db.execute(

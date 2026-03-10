@@ -286,6 +286,50 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             # Get queue backend (shared by all workers)
             backend = await get_queue_backend()
 
+            # Resume re-embedding jobs lost due to queue backend restart (in-memory
+            # or Redis data loss).  With a persistent Redis backend the job is still
+            # in the queue or processing set and will be redelivered automatically,
+            # so we only re-enqueue when the queue is empty.
+            try:
+                queue_name = WorkloadType.RE_EMBEDDING.queue_name
+                existing_jobs = await backend.total_count(queue_name)
+
+                if existing_jobs == 0:
+                    from sqlalchemy import select
+
+                    from .core.database import get_async_session_local
+                    from .core.workload_routing import enqueue_job
+                    from .models.knowledge_base import KnowledgeBase
+
+                    session_factory = get_async_session_local()
+                    async with session_factory() as session:
+                        result = await session.execute(
+                            select(KnowledgeBase).where(KnowledgeBase.embedding_status == "re_embedding")
+                        )
+                        stuck_kbs = list(result.scalars().all())
+
+                        for kb in stuck_kbs:
+                            progress = kb.re_embedding_progress or {}
+                            phase = progress.get("phase", "chunks")
+                            chunks_done = progress.get("chunks_done", 0)
+                            chunks_total = progress.get("chunks_total", "?")
+                            logger.info(
+                                f"Resuming re-embedding for KB {kb.id}, "
+                                f"phase={phase}, chunks_done={chunks_done}/{chunks_total}"
+                            )
+                            await enqueue_job(
+                                backend,
+                                WorkloadType.RE_EMBEDDING,
+                                payload={"knowledge_base_id": str(kb.id), "action": "re_embed_kb"},
+                                max_attempts=3,
+                                visibility_timeout=600,
+                            )
+
+                        if stuck_kbs:
+                            logger.info(f"Re-enqueued {len(stuck_kbs)} interrupted re-embedding job(s)")
+            except Exception as e:
+                logger.error(f"Failed to recover interrupted re-embedding jobs: {e}", exc_info=True)
+
             # Create process-shared capacity limiter (ensures OCR/profiling limits
             # are enforced across all workers, not per-worker)
             capacity_limiter = WorkloadCapacityLimiter.from_settings()
