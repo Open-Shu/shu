@@ -74,7 +74,7 @@ async def handle_re_embedding_job(job) -> None:
         raise ValueError(f"Unknown re-embedding action: {action}")
 
 
-async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
+async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0912, PLR0915
     """Handle a chunk re-embedding job.
 
     Multiple instances run in parallel, each competing for unprocessed chunks
@@ -400,7 +400,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 pass
 
 
-async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
+async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0912, PLR0915
     """Handle the finalization phase of re-embedding.
 
     Runs after all chunk workers complete. Processes synopses, queries,
