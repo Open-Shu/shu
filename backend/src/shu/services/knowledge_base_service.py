@@ -840,10 +840,9 @@ class KnowledgeBaseService:
 
         # Determine number of parallel chunk workers
         from ..core.config import get_settings_instance
-        from ..re_embedding_handler import RE_EMBEDDING_BATCH_SIZE
 
         settings = get_settings_instance()
-        batches_needed = max(1, -(-total_chunks // RE_EMBEDDING_BATCH_SIZE))  # ceil division
+        batches_needed = max(1, -(-total_chunks // settings.embedding_batch_size))  # ceil division
         num_workers = min(settings.worker_concurrency, batches_needed)
 
         # Capture original state so we can restore it on enqueue failure

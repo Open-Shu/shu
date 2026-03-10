@@ -12,10 +12,6 @@ from .core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Shared batch size for re-embedding operations (chunks, synopses, queries).
-# Used by both the handler and the service when computing worker count.
-RE_EMBEDDING_BATCH_SIZE = 64
-
 
 async def _re_embedding_heartbeat(job, knowledge_base_id: str, interval: int = 60) -> None:
     """Extend queue visibility every `interval` seconds so long-running
@@ -116,6 +112,9 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
         },
     )
 
+    from .core.config import get_settings_instance
+
+    settings = get_settings_instance()
     embedding_service = await get_embedding_service()
     vector_store = await get_vector_store()
     target_model = embedding_service.model_name
@@ -145,6 +144,8 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
         heartbeat_task = asyncio.create_task(_re_embedding_heartbeat(job, knowledge_base_id))
 
         try:
+            import time as _time
+
             chunks_done_this_job = 0
 
             # Competing consumers: grab next batch with FOR UPDATE SKIP LOCKED
@@ -160,7 +161,7 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                     ),
                 )
                 .order_by(DocumentChunk.id)
-                .limit(RE_EMBEDDING_BATCH_SIZE)
+                .limit(settings.embedding_batch_size)
                 .with_for_update(skip_locked=True)
             )
 
@@ -180,18 +181,24 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                     )
                     break
 
+                t0 = _time.monotonic()
                 result = await session.execute(unprocessed_filter)
                 batch = list(result.scalars().all())
                 if not batch:
                     break
+                t_select = _time.monotonic() - t0
 
                 texts = [chunk.content for chunk in batch]
+                t0 = _time.monotonic()
                 embeddings = await embedding_service.embed_texts(texts)
+                t_embed = _time.monotonic() - t0
 
                 entries = [
                     VectorEntry(id=str(chunk.id), vector=emb) for chunk, emb in zip(batch, embeddings, strict=True)
                 ]
+                t0 = _time.monotonic()
                 await vector_store.store_embeddings("chunks", entries, db=session)
+                t_store = _time.monotonic() - t0
 
                 now = datetime.now(UTC)
                 for chunk in batch:
@@ -200,9 +207,13 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
 
                 chunks_done_this_job += len(batch)
 
-                # Atomic progress update via row lock
+                # Atomic progress update via row lock.
+                # populate_existing=True forces a DB refresh past the identity map.
                 kb_locked = await session.execute(
-                    select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id).with_for_update()
+                    select(KnowledgeBase)
+                    .where(KnowledgeBase.id == knowledge_base_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
                 kb_for_progress = kb_locked.scalar_one()
                 kb_for_progress.increment_re_embedding_progress(len(batch))
@@ -214,10 +225,13 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 logger.debug(
                     "Re-embedded chunk batch",
                     extra={
-                        "job_id": job.id,
                         "knowledge_base_id": knowledge_base_id,
                         "worker_index": worker_index,
+                        "batch_size": len(batch),
                         "chunks_done_this_job": chunks_done_this_job,
+                        "select_ms": round(t_select * 1000, 1),
+                        "embed_ms": round(t_embed * 1000, 1),
+                        "store_ms": round(t_store * 1000, 1),
                     },
                 )
 
@@ -231,9 +245,15 @@ async def _handle_re_embed_chunks_job(job) -> None:  # noqa: PLR0915
                 },
             )
 
-            # Atomically increment workers_completed; last one enqueues finalization
+            # Atomically increment workers_completed; last one enqueues finalization.
+            # IMPORTANT: populate_existing=True forces SQLAlchemy to refresh
+            # from the DB row rather than returning the stale identity-map object.
+            # Without it, concurrent workers all read the same pre-lock value.
             kb_locked = await session.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id).with_for_update()
+                select(KnowledgeBase)
+                .where(KnowledgeBase.id == knowledge_base_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
             kb_final = kb_locked.scalar_one()
             all_done = kb_final.increment_workers_completed()
@@ -388,12 +408,14 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
     """
     from sqlalchemy import select
 
+    from .core.config import get_settings_instance
     from .core.database import get_async_session_local
     from .core.embedding_service import get_embedding_service
     from .core.vector_store import VectorEntry, get_vector_store
     from .models.document import Document, DocumentQuery
     from .models.knowledge_base import KnowledgeBase
 
+    settings = get_settings_instance()
     knowledge_base_id = job.payload.get("knowledge_base_id")
     if not knowledge_base_id:
         raise ValueError("RE_EMBEDDING finalize job missing knowledge_base_id in payload")
@@ -448,7 +470,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
                     Document.synopsis != "",
                 )
                 .order_by(Document.id)
-                .limit(RE_EMBEDDING_BATCH_SIZE)
+                .limit(settings.embedding_batch_size)
             )
 
             offset = 0
@@ -481,7 +503,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0915
                 select(DocumentQuery)
                 .where(DocumentQuery.knowledge_base_id == knowledge_base_id)
                 .order_by(DocumentQuery.id)
-                .limit(RE_EMBEDDING_BATCH_SIZE)
+                .limit(settings.embedding_batch_size)
             )
 
             offset = 0
