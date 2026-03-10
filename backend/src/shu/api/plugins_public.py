@@ -259,6 +259,7 @@ async def execute_plugin(  # noqa: PLR0912, PLR0915
         params=body.params or {},
         limits=per_plugin_limits,
         provider_identities=providers_map,
+        db_session=db,
     )
 
     try:

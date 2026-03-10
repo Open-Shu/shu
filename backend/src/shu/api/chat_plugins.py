@@ -22,6 +22,7 @@ from ..plugins.executor import EXECUTOR
 from ..plugins.loader import PluginRecord
 from ..plugins.registry import REGISTRY
 from ..schemas.envelope import SuccessResponse
+from ..services.plugin_execution import get_allowed_plugin_names
 from ..services.plugin_identity import (
     PluginIdentityError,
     ensure_secrets_for_plugin,
@@ -98,14 +99,11 @@ async def list_chat_plugins(
     except Exception:
         manifest = {}
 
-    # Get enabled plugins from DB
-    res = await db.execute(select(PluginDefinition).where(PluginDefinition.enabled == True))  # noqa: E712
-    rows = res.scalars().all()
-    enabled = {r.name for r in rows}
+    allowed = await get_allowed_plugin_names(str(user.id), set(manifest or {}), db)
 
     out: list[ChatPluginOpDescriptor] = []
     for name, rec in (manifest or {}).items():
-        if name not in enabled:
+        if name not in allowed:
             continue
 
         chat_ops = get_chat_ops(rec)
@@ -231,6 +229,7 @@ async def execute_chat_plugin(
         params=params,
         limits=limits,
         provider_identities=providers_map,
+        db_session=db,
     )
 
     try:

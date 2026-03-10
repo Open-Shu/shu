@@ -229,7 +229,7 @@ class UnifiedLLMClient:
     async def _build_tool_context(self, payload: dict[str, Any], tools_enabled: bool) -> dict[str, Any]:
         if not tools_enabled:
             return payload
-        tools: list[CallableTool] = await build_agent_tools(self.db_session)
+        tools: list[CallableTool] = await build_agent_tools(self.db_session, user_id=self.conversation_owner_id)
         return await self.provider_adapter.inject_tool_payload(tools, payload)
 
     def _build_client_headers(self):

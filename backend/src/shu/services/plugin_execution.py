@@ -13,11 +13,25 @@ from shu.plugins.executor import EXECUTOR
 from shu.plugins.loader import PluginRecord
 from shu.plugins.registry import REGISTRY
 from shu.services.plugin_identity import PluginIdentityError, ensure_user_identity_for_plugin
+from shu.services.policy_engine import POLICY_CACHE
 
 logger = get_logger(__name__)
 
 
-async def build_agent_tools(db_session: AsyncSession) -> list[CallableTool]:
+async def get_allowed_plugin_names(user_id: str, manifest_names: set[str] | list[str], db: AsyncSession) -> set[str]:
+    """Return the set of plugin names the user is allowed to see.
+
+    Loads enabled plugins from the DB, then filters out any denied by
+    ``plugin.read`` policy.
+    """
+    res = await db.execute(select(PluginDefinition).where(PluginDefinition.enabled == True))  # noqa: E712
+    enabled = {r.name for r in res.scalars().all()}
+    candidate_names = [name for name in manifest_names if name in enabled]
+    denied = await POLICY_CACHE.get_denied_resources(user_id, "plugin.read", "plugin", candidate_names, db)
+    return enabled - denied
+
+
+async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[CallableTool]:
     tools: list[CallableTool] = []
 
     manifest: dict[str, PluginRecord] = {}
@@ -29,13 +43,10 @@ async def build_agent_tools(db_session: AsyncSession) -> list[CallableTool]:
     except Exception:
         pass
 
-    res = await db_session.execute(
-        select(PluginDefinition).where(PluginDefinition.enabled == True)  # noqa: E712
-    )
-    enabled = {r.name for r in res.scalars().all()}
+    allowed = await get_allowed_plugin_names(user_id, set(manifest or {}), db_session)
 
     for name, rec in (manifest or {}).items():
-        if name not in enabled:
+        if name not in allowed:
             continue
 
         chat_ops: list[str] = []
@@ -265,6 +276,7 @@ async def execute_plugin(
         params=params,
         limits=limits,
         provider_identities=providers_map,
+        db_session=db_session,
     )
 
     return _handle_plugin_execution_result_types(plugin_name, result)
