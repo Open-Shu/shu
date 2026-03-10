@@ -317,6 +317,8 @@ export const knowledgeBaseAPI = {
     api.get(`/knowledge-bases/${id}/effective-permissions`, {
       params: userId ? { user_id: userId } : {},
     }),
+  // Re-embedding endpoints
+  triggerReEmbed: (id) => api.post(`/knowledge-bases/${id}/re-embed`),
 };
 
 // Query endpoints

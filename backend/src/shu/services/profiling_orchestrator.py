@@ -9,7 +9,6 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Uses two-phase profiling: all chunks profiled first, then document metadata generated separately
 """
 
-import asyncio
 import time
 
 import structlog
@@ -18,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
 from ..models.document import Document, DocumentChunk, DocumentQuery
-from ..models.knowledge_base import KnowledgeBase
 from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
@@ -80,9 +78,6 @@ class ProfilingOrchestrator:
         await self.db.commit()
 
         try:
-            # Look up KB for embedding model (needed after profiling for synopsis/query embedding)
-            kb = await self.db.get(KnowledgeBase, document.knowledge_base_id)
-            embedding_model = str(kb.embedding_model) if kb and kb.embedding_model is not None else None
             # Load chunks
             stmt = (
                 select(DocumentChunk)
@@ -139,12 +134,13 @@ class ProfilingOrchestrator:
 
             # Embed synopsis and synthesized queries (SHU-351, SHU-359)
             # Isolated so embedding failures don't fail the profiling job
-            # Skip if query persistence rolled back — avoids embedding stale queries
             synopsis_embedded = False
             queries_embedded = 0
-            if doc_profile and embedding_model and queries_persist_ok:
+            if doc_profile:
                 try:
-                    synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(document, embedding_model)
+                    synopsis_embedded, queries_embedded = await self._embed_profile_artifacts(
+                        document, embed_queries=queries_persist_ok
+                    )
                 except Exception as e:
                     await self.db.rollback()
                     logger.warning("profile_embedding_failed", document_id=document_id, error=str(e))
@@ -294,32 +290,37 @@ class ProfilingOrchestrator:
             coverage_percent=round(coverage_percent, 1),
         )
 
-    async def _embed_texts(self, texts: list[str], embedding_model: str) -> list[list[float]]:
-        """Embed texts using the KB's embedding model.
-
-        This is the abstraction seam for swapping to API embedding later.
-        Currently uses the local sentence-transformers model via RAGProcessingService.
+    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts using the system embedding service.
 
         Args:
             texts: List of text strings to embed
-            embedding_model: Model name (e.g., "sentence-transformers/all-MiniLM-L6-v2")
 
         Returns:
             List of embedding vectors (each a list of floats)
 
         """
-        from .rag_processing_service import RAGProcessingService
+        from ..core.embedding_service import get_embedding_service
 
-        rag_service = RAGProcessingService.get_instance(embedding_model=embedding_model)
-        batch_size = rag_service.batch_size
-        loop = asyncio.get_running_loop()
-        embeddings = await loop.run_in_executor(
-            rag_service.executor,
-            lambda: rag_service.model.encode(texts, batch_size=batch_size, show_progress_bar=False),
-        )
-        return [e.tolist() for e in embeddings]
+        embedding_service = await get_embedding_service()
+        return await embedding_service.embed_texts(texts)
 
-    async def _embed_profile_artifacts(self, document: Document, embedding_model: str) -> tuple[bool, int]:
+    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts with the query prompt for asymmetric models.
+
+        Args:
+            texts: List of query strings to embed
+
+        Returns:
+            List of embedding vectors (each a list of floats)
+
+        """
+        from ..core.embedding_service import get_embedding_service
+
+        embedding_service = await get_embedding_service()
+        return await embedding_service.embed_queries(texts)
+
+    async def _embed_profile_artifacts(self, document: Document, *, embed_queries: bool = True) -> tuple[bool, int]:
         """Embed synopsis and synthesized query texts after profiling.
 
         Generates vector embeddings for the document's synopsis and all synthesized
@@ -328,36 +329,59 @@ class ProfilingOrchestrator:
 
         Args:
             document: The profiled document (must have synopsis set)
-            embedding_model: Model name for embedding consistency with chunks
 
         Returns:
             Tuple of (synopsis_embedded: bool, queries_embedded_count: int)
 
         """
+        from ..core.vector_store import VectorEntry, get_vector_store
+
         synopsis_embedded = False
         queries_embedded = 0
+        vector_store = await get_vector_store()
 
         # Embed synopsis
         if document.synopsis and document.synopsis.strip():
-            embeddings = await self._embed_texts([document.synopsis], embedding_model)
-            document.synopsis_embedding = embeddings[0]
-            synopsis_embedded = True
+            embeddings = await self._embed_texts([document.synopsis])
+            if not embeddings:
+                logger.warning("synopsis_embedding_empty", document_id=document.id)
+            else:
+                await vector_store.store_embeddings(
+                    "synopses",
+                    [VectorEntry(id=document.id, vector=embeddings[0])],
+                    db=self.db,
+                )
+                synopsis_embedded = True
 
-        # Embed synthesized queries
-        stmt = (
-            select(DocumentQuery)
-            .where(DocumentQuery.document_id == document.id)
-            .where(DocumentQuery.query_embedding.is_(None))
-        )
-        result = await self.db.execute(stmt)
-        queries = list(result.scalars().all())
+        # Commit synopsis durably before attempting query embeddings
+        if synopsis_embedded:
+            await self.db.commit()
+
+        # Embed synthesized queries (skip if query persistence failed)
+        if embed_queries:
+            stmt = (
+                select(DocumentQuery)
+                .where(DocumentQuery.document_id == document.id)
+                .where(DocumentQuery.query_embedding.is_(None))
+            )
+            result = await self.db.execute(stmt)
+            queries = list(result.scalars().all())
+        else:
+            queries = []
 
         if queries:
-            query_texts = [q.query_text for q in queries]
-            embeddings = await self._embed_texts(query_texts, embedding_model)
-            for query, embedding in zip(queries, embeddings, strict=True):
-                query.set_embedding(embedding)
-            queries_embedded = len(queries)
+            try:
+                query_texts = [q.query_text for q in queries]
+                embeddings = await self._embed_queries(query_texts)
+                entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
+                await vector_store.store_embeddings("queries", entries, db=self.db)
+                queries_embedded = len(queries)
+            except Exception:
+                logger.warning(
+                    "query_embedding_failed",
+                    document_id=document.id,
+                    exc_info=True,
+                )
 
         await self.db.commit()
 

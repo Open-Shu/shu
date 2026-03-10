@@ -231,10 +231,6 @@ SHU_DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/shu
 # API settings
 SHU_API_PORT=8000
 SHU_LOG_LEVEL=DEBUG
-
-# LLM Provider API keys (optional)
-OPENAI_API_KEY=your_openai_key_here
-ANTHROPIC_API_KEY=your_anthropic_key_here
 ```
 
 **3. Verify configuration works:**

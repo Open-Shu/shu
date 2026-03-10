@@ -5,8 +5,6 @@ These tests verify model instantiation, methods, and property behavior without d
 SHU-342, SHU-355
 """
 
-import pytest
-
 from shu.models.document import (
     ENTITY_TYPE_ORGANIZATION,
     ENTITY_TYPE_PERSON,
@@ -318,42 +316,6 @@ class TestDocumentChunk:
         chunk.content = "Short"
         chunk.char_count = 5
         assert chunk.get_preview() == "Short"
-
-    def test_calculate_similarity_score(self):
-        """Test calculate_similarity_score method."""
-        chunk = DocumentChunk()
-        chunk.content = "Test"
-        chunk.char_count = 4
-
-        # No embedding
-        assert chunk.calculate_similarity_score([0.1] * 384) == 0.0
-
-        # With embedding (unit vectors for easy verification)
-        chunk.embedding = [1.0, 0.0, 0.0]
-        query = [1.0, 0.0, 0.0]
-        score = chunk.calculate_similarity_score(query)
-        assert score == pytest.approx(1.0, rel=1e-6)  # Same vector = 1.0
-
-        # Orthogonal vectors
-        query = [0.0, 1.0, 0.0]
-        score = chunk.calculate_similarity_score(query)
-        assert score == pytest.approx(0.0, rel=1e-6)
-
-    def test_calculate_similarity_score_dimension_mismatch(self):
-        """Test that dimension mismatch raises ValueError."""
-        chunk = DocumentChunk()
-        chunk.content = "Test"
-        chunk.char_count = 4
-        chunk.embedding = [1.0, 0.0, 0.0]  # 3 dimensions
-
-        # Query with different dimensions should raise
-        query = [1.0, 0.0]  # 2 dimensions
-        with pytest.raises(ValueError) as exc_info:
-            chunk.calculate_similarity_score(query)
-
-        assert "dimension mismatch" in str(exc_info.value).lower()
-        assert "3" in str(exc_info.value)
-        assert "2" in str(exc_info.value)
 
     def test_to_dict_includes_profile_fields(self):
         """Test that to_dict includes chunk profile fields."""

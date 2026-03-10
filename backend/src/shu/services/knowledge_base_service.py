@@ -6,11 +6,12 @@ including CRUD operations, statistics, and configuration management.
 
 from typing import Any, ClassVar
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from ..core.exceptions import (
+    ConflictError,
     KnowledgeBaseAlreadyExistsError,
     KnowledgeBaseNotFoundError,
     ShuException,
@@ -35,11 +36,6 @@ class KnowledgeBaseService:
 
             config_manager = get_config_manager()
         self._config_manager = config_manager
-
-    @property
-    def DEFAULT_RAG_CONFIG(self) -> dict[str, Any]:  # noqa: N802 # i think this can be removed, but needs verified
-        """Get default RAG configuration from ConfigurationManager."""
-        return self._config_manager.get_rag_config_dict()
 
     # Default templates for different use cases
     DEFAULT_TEMPLATES: ClassVar[dict[str, dict[str, Any]]] = {
@@ -777,3 +773,117 @@ class KnowledgeBaseService:
             await self.db.rollback()
             logger.error(f"Failed to set status for KB '{kb_id}': {e}", exc_info=True)
             raise ShuException(f"Failed to set knowledge base status: {e!s}", "KNOWLEDGE_BASE_SET_STATUS_ERROR")
+
+    async def trigger_re_embedding(
+        self,
+        kb_id: str,
+        *,
+        embedding_service,
+        queue_backend,
+    ) -> dict[str, Any]:
+        """Validate, mark, and enqueue a re-embedding job for a knowledge base.
+
+        Checks that the KB exists and is eligible (stale or error), marks it
+        as ``re_embedding``, and enqueues the worker job. If enqueue fails the
+        status is reverted so the admin can retry.
+
+        Args:
+            kb_id: Knowledge base ID.
+            embedding_service: Injected EmbeddingService instance.
+            queue_backend: Injected QueueBackend instance.
+
+        Returns:
+            Dict with ``status``, ``knowledge_base_id``, and ``total_chunks``.
+
+        Raises:
+            KnowledgeBaseNotFoundError: KB does not exist.
+            ValidationError: KB embeddings are already current.
+            ConflictError: Re-embedding already in progress.
+
+        """
+        from ..core.workload_routing import WorkloadType, enqueue_job
+
+        # Lock the row to prevent concurrent re-embedding requests
+        result = await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update())
+        kb = result.scalar_one_or_none()
+        if kb is None:
+            raise KnowledgeBaseNotFoundError(kb_id)
+
+        if kb.embedding_model == embedding_service.model_name and kb.embedding_status == "current":
+            raise ValidationError("Knowledge base embeddings are already current")
+
+        if kb.embedding_status == "re_embedding":
+            raise ConflictError("Re-embedding is already in progress for this knowledge base")
+
+        # Count chunks for progress tracking
+        result = await self.db.execute(
+            select(func.count(DocumentChunk.id)).where(DocumentChunk.knowledge_base_id == kb_id)
+        )
+        total_chunks = result.scalar() or 0
+
+        # Capture original state so we can restore it on enqueue failure
+        original_status = kb.embedding_status
+        original_progress = kb.re_embedding_progress
+
+        # Mark KB as re-embedding
+        kb.mark_re_embedding_started(total_chunks)
+        await self.db.commit()
+
+        # Enqueue the worker job; revert status on failure so admin can retry
+        try:
+            await enqueue_job(
+                queue_backend,
+                WorkloadType.RE_EMBEDDING,
+                payload={"knowledge_base_id": kb_id, "action": "re_embed_kb"},
+                max_attempts=3,
+                visibility_timeout=600,
+            )
+        except Exception:
+            kb.embedding_status = original_status
+            kb.re_embedding_progress = original_progress
+            await self.db.commit()
+            raise
+
+        logger.info("Re-embedding job enqueued", extra={"kb_id": kb_id, "total_chunks": total_chunks})
+
+        return {"status": "queued", "knowledge_base_id": kb_id, "total_chunks": total_chunks}
+
+
+async def detect_stale_kbs(db: AsyncSession, system_model: str) -> list[str]:
+    """Detect and mark KBs whose embeddings are from a different model.
+
+    Compares each KB's recorded embedding_model against the system's configured
+    model. KBs that don't match are marked as 'stale'.
+
+    Args:
+        db: Database session.
+        system_model: The currently configured embedding model name.
+
+    Returns:
+        List of KB IDs that were marked stale.
+
+    """
+    # Find KBs that are 'current' but have a different embedding model
+    result = await db.execute(
+        select(KnowledgeBase.id).where(
+            and_(
+                or_(
+                    KnowledgeBase.embedding_model != system_model,
+                    KnowledgeBase.embedding_model.is_(None),
+                ),
+                KnowledgeBase.embedding_status == "current",
+            )
+        )
+    )
+    stale_ids = [str(row[0]) for row in result.fetchall()]
+
+    if stale_ids:
+        await db.execute(update(KnowledgeBase).where(KnowledgeBase.id.in_(stale_ids)).values(embedding_status="stale"))
+        await db.commit()
+        logger.warning(
+            f"Marked {len(stale_ids)} knowledge base(s) as stale — "
+            f"embedding model mismatch (system={system_model})",
+            extra={"stale_kb_ids": stale_ids},
+        )
+
+    return stale_ids

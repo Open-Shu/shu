@@ -91,13 +91,16 @@ class Settings(BaseSettings):
     auto_activate_users: bool = Field(False, alias="SHU_AUTO_ACTIVATE_USERS")
 
     # Embedding configuration
-    default_embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", alias="SHU_EMBEDDING_MODEL")
+    # WARNING: Changing SHU_EMBEDDING_MODEL is a DESTRUCTIVE operation.
+    # All existing knowledge bases will be marked "stale" on next startup.
+    # Vector/semantic search is disabled on stale KBs until an admin triggers
+    # re-embedding from the Admin Console. Keyword search continues working.
+    # Re-embedding is CPU-intensive and processes all chunks, synopses, and queries.
+    default_embedding_model: str = Field("Snowflake/snowflake-arctic-embed-l-v2.0", alias="SHU_EMBEDDING_MODEL")
     embedding_device: str = "cpu"
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")
-    embedding_dimension: int = Field(384, alias="SHU_EMBEDDING_DIMENSION")
-    # Execution mode for embedding generation: "thread" (optimized, default) or "process"
-    embedding_execution_mode: str = Field("thread", alias="SHU_EMBEDDING_EXECUTION_MODE")
-
+    # Model precision: "float32" (default) or "float16" (half memory, recommended for 1024-dim+ models)
+    embedding_dtype: str = Field("float32", alias="SHU_EMBEDDING_DTYPE")
     # Text processing configuration
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")
@@ -106,7 +109,7 @@ class Settings(BaseSettings):
     ocr_page_timeout: int = Field(180, alias="SHU_OCR_PAGE_TIMEOUT")
 
     # Vector database configuration
-    vector_index_type: str = Field("ivfflat", alias="SHU_VECTOR_INDEX_TYPE")
+    vector_index_type: str = Field("hnsw", alias="SHU_VECTOR_INDEX_TYPE")
     vector_index_lists: int = Field(100, alias="SHU_VECTOR_INDEX_LISTS")
 
     # Performance configuration
@@ -400,12 +403,6 @@ class Settings(BaseSettings):
     # OAuth Token Encryption
     oauth_encryption_key: str | None = Field(None, alias="SHU_OAUTH_ENCRYPTION_KEY")
 
-    # Development fallback LLM configuration
-    default_llm_provider: str = Field("openai", alias="SHU_DEFAULT_LLM_PROVIDER")
-    default_llm_model: str = Field("gpt-4", alias="SHU_DEFAULT_LLM_MODEL")
-    openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
-    anthropic_api_key: str | None = Field(None, alias="ANTHROPIC_API_KEY")
-
     # Global LLM limits
     llm_global_timeout: int = Field(30, alias="SHU_LLM_GLOBAL_TIMEOUT")
     llm_streaming_read_timeout: int = Field(120, alias="SHU_LLM_STREAMING_READ_TIMEOUT")
@@ -527,6 +524,15 @@ class Settings(BaseSettings):
         if not v:
             raise ValueError("password_special_chars must contain at least one character")
         return v
+
+    @field_validator("embedding_dtype")
+    @classmethod
+    def validate_embedding_dtype(cls, v: str) -> str:
+        """Validate embedding dtype."""
+        valid_dtypes = ["float32", "float16"]
+        if v.lower() not in valid_dtypes:
+            raise ValueError(f"Embedding dtype must be one of: {valid_dtypes}")
+        return v.lower()
 
     @field_validator("vector_index_type")
     @classmethod

@@ -935,6 +935,314 @@ async def _handle_profiling_job(job) -> None:
             raise Exception(f"Profiling failed for document {document_id}: {result.error}")
 
 
+async def _handle_re_embedding_job(job) -> None:  # noqa: PLR0912, PLR0915
+    """Handle a RE_EMBEDDING workload job.
+
+    Re-embeds all chunks, synopses, and queries for a knowledge base using
+    the currently configured embedding model. Processes in batches with
+    per-batch commits for crash resilience and progress tracking.
+
+    Args:
+        job: The job containing knowledge_base_id in payload.
+
+    Raises:
+        ValueError: If required fields are missing from payload.
+        Exception: If re-embedding fails (triggers retry).
+
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import or_, select
+
+    from .core.database import get_async_session_local
+    from .core.embedding_service import get_embedding_service
+    from .core.vector_store import VectorEntry, get_vector_store
+    from .models.document import Document, DocumentChunk, DocumentQuery
+    from .models.knowledge_base import KnowledgeBase
+
+    knowledge_base_id = job.payload.get("knowledge_base_id")
+    if not knowledge_base_id:
+        raise ValueError("RE_EMBEDDING job missing knowledge_base_id in payload")
+
+    logger.info(
+        "Processing re-embedding job",
+        extra={"job_id": job.id, "knowledge_base_id": knowledge_base_id},
+    )
+
+    embedding_service = await get_embedding_service()
+    vector_store = await get_vector_store()
+    target_model = embedding_service.model_name
+    target_dimension = embedding_service.dimension
+    batch_size = 64
+
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        kb = await session.get(KnowledgeBase, knowledge_base_id)
+        if kb is None:
+            logger.info(
+                "Knowledge base deleted, discarding re-embedding job",
+                extra={"job_id": job.id, "knowledge_base_id": knowledge_base_id},
+            )
+            return
+
+        if kb.embedding_status != "re_embedding":
+            logger.warning(
+                "KB embedding_status is not 're_embedding', skipping",
+                extra={
+                    "job_id": job.id,
+                    "knowledge_base_id": knowledge_base_id,
+                    "embedding_status": kb.embedding_status,
+                },
+            )
+            return
+
+        async def _re_embedding_heartbeat(interval: int = 60) -> None:
+            """Extend queue visibility every `interval` seconds so long-running
+            re-embedding jobs are not redelivered to a competing consumer.
+            Also touches KB updated_at via a separate session.
+            """
+            heartbeat_session_local = get_async_session_local()
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    # Touch KB updated_at via independent session
+                    try:
+                        async with heartbeat_session_local() as hb_session:
+                            hb_kb = await hb_session.get(KnowledgeBase, knowledge_base_id)
+                            if hb_kb and hb_kb.embedding_status == "re_embedding":
+                                hb_kb.updated_at = datetime.now(UTC)
+                                await hb_session.commit()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as hb_err:
+                        logger.warning(
+                            "Re-embedding heartbeat DB touch failed (non-fatal)",
+                            extra={"knowledge_base_id": knowledge_base_id, "error": str(hb_err)},
+                        )
+
+                    # Extend queue visibility
+                    try:
+                        from .core.queue_backend import get_queue_backend
+
+                        queue = await get_queue_backend()
+                        extended = await queue.extend_visibility(job, additional_seconds=interval * 2)
+                        if not extended:
+                            logger.warning(
+                                "extend_visibility returned False — re-embedding job may have been re-delivered",
+                                extra={"knowledge_base_id": knowledge_base_id, "job_id": job.id},
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ev_err:
+                        logger.warning(
+                            "Re-embedding extend_visibility failed (non-fatal)",
+                            extra={"knowledge_base_id": knowledge_base_id, "job_id": job.id, "error": str(ev_err)},
+                        )
+            except asyncio.CancelledError:
+                pass
+
+        heartbeat_task = asyncio.create_task(_re_embedding_heartbeat())
+
+        try:
+            # Determine current phase for resumability.  Each `if` (not elif)
+            # allows a fresh run to fall through all phases while a resume
+            # skips already-completed ones.
+            progress = kb.re_embedding_progress or {}
+            current_phase = progress.get("phase", "chunks")
+
+            valid_phases = {"chunks", "synopses", "queries", "indexes"}
+            if current_phase not in valid_phases:
+                raise ValueError(
+                    f"Invalid re-embedding phase '{current_phase}' for KB {knowledge_base_id}. "
+                    f"Valid phases: {sorted(valid_phases)}"
+                )
+
+            chunks_done = progress.get("chunks_done", 0)
+            synopses_count = 0
+            queries_count = 0
+
+            # --- Phase: chunks ---
+            if current_phase == "chunks":
+                # Process chunks in streaming batches — re-query each iteration
+                # so already-processed rows (embedding_model = target) are excluded
+                # and we never load more than batch_size ORM objects at once.
+                base_filter = (
+                    select(DocumentChunk)
+                    .where(
+                        DocumentChunk.knowledge_base_id == knowledge_base_id,
+                        or_(
+                            DocumentChunk.embedding_model.is_(None),
+                            DocumentChunk.embedding_model != target_model,
+                            DocumentChunk.embedding.is_(None),
+                        ),
+                    )
+                    .order_by(DocumentChunk.id)
+                    .limit(batch_size)
+                )
+
+                while True:
+                    result = await session.execute(base_filter)
+                    batch = list(result.scalars().all())
+                    if not batch:
+                        break
+
+                    texts = [chunk.content for chunk in batch]
+                    embeddings = await embedding_service.embed_texts(texts)
+
+                    entries = [
+                        VectorEntry(id=str(chunk.id), vector=emb) for chunk, emb in zip(batch, embeddings, strict=True)
+                    ]
+                    await vector_store.store_embeddings("chunks", entries, db=session)
+
+                    now = datetime.now(UTC)
+                    for chunk in batch:
+                        chunk.embedding_model = target_model
+                        chunk.embedding_created_at = now
+
+                    chunks_done += len(batch)
+                    kb.update_re_embedding_progress(chunks_done)
+                    await session.commit()
+
+                    logger.debug(
+                        f"Re-embedded chunk batch: {chunks_done} done",
+                        extra={"job_id": job.id, "knowledge_base_id": knowledge_base_id},
+                    )
+
+                kb.update_re_embedding_phase("synopses")
+                await session.commit()
+                current_phase = "synopses"
+
+            # --- Phase: synopses ---
+            if current_phase == "synopses":
+                synopses_base = (
+                    select(Document)
+                    .where(
+                        Document.knowledge_base_id == knowledge_base_id,
+                        Document.synopsis.is_not(None),
+                        Document.synopsis != "",
+                    )
+                    .order_by(Document.id)
+                    .limit(batch_size)
+                )
+
+                offset = 0
+                while True:
+                    result = await session.execute(synopses_base.offset(offset))
+                    batch = list(result.scalars().all())
+                    if not batch:
+                        break
+
+                    synopses_count += len(batch)
+                    texts = [doc.synopsis for doc in batch]
+                    embeddings = await embedding_service.embed_texts(texts)
+
+                    entries = [
+                        VectorEntry(id=str(doc.id), vector=emb) for doc, emb in zip(batch, embeddings, strict=True)
+                    ]
+                    await vector_store.store_embeddings("synopses", entries, db=session)
+                    await session.commit()
+                    offset += len(batch)
+
+                if synopses_count:
+                    logger.info(f"Re-embedded {synopses_count} synopses for KB {knowledge_base_id}")
+
+                kb.update_re_embedding_phase("queries")
+                await session.commit()
+                current_phase = "queries"
+
+            # --- Phase: queries ---
+            if current_phase == "queries":
+                queries_base = (
+                    select(DocumentQuery)
+                    .where(DocumentQuery.knowledge_base_id == knowledge_base_id)
+                    .order_by(DocumentQuery.id)
+                    .limit(batch_size)
+                )
+
+                offset = 0
+                while True:
+                    result = await session.execute(queries_base.offset(offset))
+                    batch = list(result.scalars().all())
+                    if not batch:
+                        break
+
+                    queries_count += len(batch)
+                    texts = [q.query_text for q in batch]
+                    embeddings = await embedding_service.embed_queries(texts)
+
+                    entries = [VectorEntry(id=str(q.id), vector=emb) for q, emb in zip(batch, embeddings, strict=True)]
+                    await vector_store.store_embeddings("queries", entries, db=session)
+                    await session.commit()
+                    offset += len(batch)
+
+                if queries_count:
+                    logger.info(f"Re-embedded {queries_count} queries for KB {knowledge_base_id}")
+
+                kb.update_re_embedding_phase("indexes")
+                await session.commit()
+                current_phase = "indexes"
+
+            # --- Phase: indexes ---
+            if current_phase == "indexes":
+                await vector_store.ensure_index("chunks", target_dimension, db=session)
+                await vector_store.ensure_index("synopses", target_dimension, db=session)
+                await vector_store.ensure_index("queries", target_dimension, db=session)
+                await session.commit()
+
+            # --- Mark complete ---
+            kb.mark_re_embedding_complete(target_model)
+            await session.commit()
+
+            logger.info(
+                "Re-embedding complete",
+                extra={
+                    "job_id": job.id,
+                    "knowledge_base_id": knowledge_base_id,
+                    "chunks_processed": chunks_done,
+                    "synopses_processed": synopses_count,
+                    "queries_processed": queries_count,
+                    "model": target_model,
+                    "dimension": target_dimension,
+                },
+            )
+
+        except Exception as e:
+            if job.attempts >= job.max_attempts:
+                kb.mark_re_embedding_failed(str(e))
+                await session.commit()
+
+                logger.error(
+                    "Re-embedding failed after max attempts",
+                    extra={
+                        "job_id": job.id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": str(e),
+                    },
+                )
+            else:
+                logger.warning(
+                    "Re-embedding failed, will retry",
+                    extra={
+                        "job_id": job.id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": str(e),
+                    },
+                )
+            raise
+
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+
 async def process_job(job):
     """Process a job based on its workload type and payload.
 
@@ -969,6 +1277,9 @@ async def process_job(job):
 
     elif workload_type == WorkloadType.INGESTION_EMBED:
         await _handle_embed_job(job)
+
+    elif workload_type == WorkloadType.RE_EMBEDDING:
+        await _handle_re_embedding_job(job)
 
     elif workload_type == WorkloadType.MAINTENANCE:
         # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)

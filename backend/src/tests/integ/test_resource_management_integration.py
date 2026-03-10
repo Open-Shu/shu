@@ -1,7 +1,7 @@
 """
 Resource Management Integration Tests
 
-Tests the resource management system for RAGProcessingService instances,
+Tests the resource management system for embedding service instances,
 ensuring proper lifecycle management, memory usage bounds, and cleanup.
 """
 
@@ -13,68 +13,71 @@ from unittest.mock import Mock, patch
 from integ.base_integration_test import BaseIntegrationTestSuite
 
 
-async def test_rag_service_instance_caching(client, db, auth_headers):
-    """Test that RAG service instances are properly cached and reused."""
+async def test_embedding_service_instance_caching(client, db, auth_headers):
+    """Test that embedding service instances are properly cached and reused."""
 
     # Mock SentenceTransformer to avoid loading actual models
-    with patch("sentence_transformers.SentenceTransformer") as mock_transformer:
+    with patch("shu.core.embedding_service.sentence_transformers.SentenceTransformer") as mock_transformer:
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]  # Mock embedding
+        mock_model.get_sentence_embedding_dimension.return_value = 3
+        mock_model.prompts = {}
         mock_transformer.return_value = mock_model
 
-        from shu.services.rag_processing_service import (
-            RAGProcessingService,
-            clear_rag_service_cache,
-            get_rag_service_stats,
+        from shu.core.embedding_service import (
+            _service_manager,
+            clear_embedding_service_cache,
+            get_embedding_service_stats,
         )
 
         # Clear any existing instances
-        clear_rag_service_cache()
+        clear_embedding_service_cache()
 
         # Get initial stats
-        initial_stats = get_rag_service_stats()
+        initial_stats = get_embedding_service_stats()
         assert initial_stats["active_instances"] == 0, "Should start with no instances"
 
         # Create first instance
-        service1 = RAGProcessingService.get_instance("test-model", "cpu")
-        stats_after_first = get_rag_service_stats()
+        service1 = _service_manager.get_service("test-model", "cpu", batch_size=32)
+        stats_after_first = get_embedding_service_stats()
         assert stats_after_first["active_instances"] == 1, "Should have 1 instance after first creation"
 
         # Create second instance with same parameters (should reuse)
-        service2 = RAGProcessingService.get_instance("test-model", "cpu")
-        stats_after_second = get_rag_service_stats()
+        service2 = _service_manager.get_service("test-model", "cpu", batch_size=32)
+        stats_after_second = get_embedding_service_stats()
         assert stats_after_second["active_instances"] == 1, "Should still have 1 instance (reused)"
         assert service1 is service2, "Should return the same cached instance"
 
         # Create third instance with different parameters
-        RAGProcessingService.get_instance("different-model", "cpu")
-        stats_after_third = get_rag_service_stats()
+        _service_manager.get_service("different-model", "cpu", batch_size=32)
+        stats_after_third = get_embedding_service_stats()
         assert stats_after_third["active_instances"] == 2, "Should have 2 instances with different models"
 
         # Clean up
-        clear_rag_service_cache()
-        final_stats = get_rag_service_stats()
+        clear_embedding_service_cache()
+        final_stats = get_embedding_service_stats()
         assert final_stats["active_instances"] == 0, "Should have no instances after cleanup"
 
 
-async def test_rag_service_resource_cleanup(client, db, auth_headers):
-    """Test that expired RAG service instances are cleaned up."""
+async def test_embedding_service_resource_cleanup(client, db, auth_headers):
+    """Test that expired embedding service instances are cleaned up."""
 
-    with patch("sentence_transformers.SentenceTransformer") as mock_transformer:
+    with patch("shu.core.embedding_service.sentence_transformers.SentenceTransformer") as mock_transformer:
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]
+        mock_model.get_sentence_embedding_dimension.return_value = 3
+        mock_model.prompts = {}
         mock_transformer.return_value = mock_model
 
-        from shu.services.rag_processing_service import (
-            RAGProcessingService,
+        from shu.core.embedding_service import (
             _service_manager,
-            cleanup_rag_services,
-            clear_rag_service_cache,
-            get_rag_service_stats,
+            cleanup_embedding_services,
+            clear_embedding_service_cache,
+            get_embedding_service_stats,
         )
 
         # Clear any existing instances
-        clear_rag_service_cache()
+        clear_embedding_service_cache()
 
         # Temporarily reduce TTL for testing
         original_ttl = _service_manager._cache_ttl
@@ -82,41 +85,42 @@ async def test_rag_service_resource_cleanup(client, db, auth_headers):
 
         try:
             # Create an instance
-            service = RAGProcessingService.get_instance("test-model", "cpu")
-            stats_after_create = get_rag_service_stats()
+            _service_manager.get_service("test-model", "cpu", batch_size=32)
+            stats_after_create = get_embedding_service_stats()
             assert stats_after_create["active_instances"] == 1, "Should have 1 instance after creation"
 
             # Wait for TTL to expire
             await asyncio.sleep(2)
 
             # Trigger cleanup
-            cleanup_rag_services()
-            stats_after_cleanup = get_rag_service_stats()
+            cleanup_embedding_services()
+            stats_after_cleanup = get_embedding_service_stats()
             assert stats_after_cleanup["active_instances"] == 0, "Should have no instances after cleanup"
 
         finally:
             # Restore original TTL
             _service_manager._cache_ttl = original_ttl
-            clear_rag_service_cache()
+            clear_embedding_service_cache()
 
 
-async def test_rag_service_instance_limits(client, db, auth_headers):
-    """Test that RAG service instance limits are enforced."""
+async def test_embedding_service_instance_limits(client, db, auth_headers):
+    """Test that embedding service instance limits are enforced."""
 
-    with patch("sentence_transformers.SentenceTransformer") as mock_transformer:
+    with patch("shu.core.embedding_service.sentence_transformers.SentenceTransformer") as mock_transformer:
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]
+        mock_model.get_sentence_embedding_dimension.return_value = 3
+        mock_model.prompts = {}
         mock_transformer.return_value = mock_model
 
-        from shu.services.rag_processing_service import (
-            RAGProcessingService,
+        from shu.core.embedding_service import (
             _service_manager,
-            clear_rag_service_cache,
-            get_rag_service_stats,
+            clear_embedding_service_cache,
+            get_embedding_service_stats,
         )
 
         # Clear any existing instances
-        clear_rag_service_cache()
+        clear_embedding_service_cache()
 
         # Temporarily reduce max instances for testing
         original_max = _service_manager._max_instances
@@ -124,12 +128,10 @@ async def test_rag_service_instance_limits(client, db, auth_headers):
 
         try:
             # Create instances up to the limit
-            services = []
             for i in range(4):  # Try to create more than the limit
-                service = RAGProcessingService.get_instance(f"model-{i}", "cpu")
-                services.append(service)
+                _service_manager.get_service(f"model-{i}", "cpu", batch_size=32)
 
-            final_stats = get_rag_service_stats()
+            final_stats = get_embedding_service_stats()
             assert (
                 final_stats["active_instances"] <= 3
             ), f"Should not exceed limit of 3 instances, got {final_stats['active_instances']}"
@@ -137,37 +139,38 @@ async def test_rag_service_instance_limits(client, db, auth_headers):
         finally:
             # Restore original limit
             _service_manager._max_instances = original_max
-            clear_rag_service_cache()
+            clear_embedding_service_cache()
 
 
-async def test_rag_service_statistics_accuracy(client, db, auth_headers):
-    """Test that RAG service statistics are accurate."""
+async def test_embedding_service_statistics_accuracy(client, db, auth_headers):
+    """Test that embedding service statistics are accurate."""
 
-    with patch("sentence_transformers.SentenceTransformer") as mock_transformer:
+    with patch("shu.core.embedding_service.sentence_transformers.SentenceTransformer") as mock_transformer:
         mock_model = Mock()
         mock_model.encode.return_value = [[0.1, 0.2, 0.3]]
+        mock_model.get_sentence_embedding_dimension.return_value = 3
         mock_transformer.return_value = mock_model
 
-        from shu.services.rag_processing_service import (
-            RAGProcessingService,
-            clear_rag_service_cache,
-            get_rag_service_stats,
+        from shu.core.embedding_service import (
+            _service_manager,
+            clear_embedding_service_cache,
+            get_embedding_service_stats,
         )
 
         # Clear any existing instances
-        clear_rag_service_cache()
+        clear_embedding_service_cache()
 
         # Get initial stats
-        initial_stats = get_rag_service_stats()
+        initial_stats = get_embedding_service_stats()
         assert initial_stats["active_instances"] == 0, "Should start with no instances"
         assert len(initial_stats["instances"]) == 0, "Should have no instance details"
 
         # Create some instances
-        service1 = RAGProcessingService.get_instance("model-1", "cpu")
-        service2 = RAGProcessingService.get_instance("model-2", "cpu")
+        _service_manager.get_service("model-1", "cpu", batch_size=32)
+        _service_manager.get_service("model-2", "cpu", batch_size=32)
 
         # Get updated stats
-        updated_stats = get_rag_service_stats()
+        updated_stats = get_embedding_service_stats()
         assert updated_stats["active_instances"] == 2, "Should have 2 active instances"
         assert len(updated_stats["instances"]) == 2, "Should have 2 instance details"
         assert "model-1:cpu" in updated_stats["instances"], "Should have model-1 instance"
@@ -185,7 +188,7 @@ async def test_rag_service_statistics_accuracy(client, db, auth_headers):
             ), "last_used_seconds_ago should be numeric"
 
         # Clean up
-        clear_rag_service_cache()
+        clear_embedding_service_cache()
 
 
 async def test_resources_api_endpoints(client, db, auth_headers):
@@ -198,7 +201,7 @@ async def test_resources_api_endpoints(client, db, auth_headers):
     stats_data = response.json()
     assert "data" in stats_data, "Resource stats should have data field"
     data = stats_data["data"]
-    assert "rag_services" in data, "Should include RAG services stats"
+    assert "embedding_services" in data, "Should include embedding services stats"
     assert "resource_management" in data, "Should include resource management info"
 
     # Test resource health endpoint
@@ -227,10 +230,10 @@ class ResourceManagementIntegrationTestSuite(BaseIntegrationTestSuite):
     def get_test_functions(self) -> list[Callable]:
         """Return all resource management integration test functions."""
         return [
-            test_rag_service_instance_caching,
-            test_rag_service_resource_cleanup,
-            test_rag_service_instance_limits,
-            test_rag_service_statistics_accuracy,
+            test_embedding_service_instance_caching,
+            test_embedding_service_resource_cleanup,
+            test_embedding_service_instance_limits,
+            test_embedding_service_statistics_accuracy,
             test_resources_api_endpoints,
         ]
 

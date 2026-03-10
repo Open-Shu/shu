@@ -9,12 +9,23 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
+from shu.core.config import get_settings_instance
+
 
 class KnowledgeBaseStatus(str, Enum):
     """Knowledge base status options."""
 
     ACTIVE = "active"
     INACTIVE = "inactive"
+    ERROR = "error"
+
+
+class EmbeddingStatus(str, Enum):
+    """Embedding status for a knowledge base."""
+
+    CURRENT = "current"
+    STALE = "stale"
+    RE_EMBEDDING = "re_embedding"
     ERROR = "error"
 
 
@@ -152,7 +163,10 @@ class KnowledgeBaseBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Knowledge base name")
     description: str | None = Field(None, description="Knowledge base description")
     sync_enabled: bool = Field(True, description="Whether sync is enabled")
-    embedding_model: str = Field("sentence-transformers/all-MiniLM-L6-v2", description="Embedding model to use")
+    embedding_model: str = Field(
+        default_factory=lambda: get_settings_instance().default_embedding_model,
+        description="Embedding model to use",
+    )
     chunk_size: int = Field(1000, ge=100, le=5000, description="Text chunk size")
     chunk_overlap: int = Field(200, ge=0, le=1000, description="Chunk overlap size")
 
@@ -197,6 +211,8 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
 
     id: str = Field(..., description="Knowledge base ID")
     status: KnowledgeBaseStatus = Field(..., description="Knowledge base status")
+    embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
+    re_embedding_progress: dict | None = Field(None, description="Re-embedding progress when status is re_embedding")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")
@@ -227,6 +243,7 @@ class KnowledgeBaseSummary(BaseModel):
     description: str | None = Field(None, description="Knowledge base description")
     source_types: list[str] = Field(..., description="Source types used in this knowledge base")
     status: KnowledgeBaseStatus = Field(..., description="Status")
+    embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")
