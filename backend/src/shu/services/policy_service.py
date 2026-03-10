@@ -68,14 +68,15 @@ class PolicyService:
         )
         self.db.add(policy)
         await self.db.flush()
+        await self.db.refresh(policy, attribute_names=["bindings", "statements"])
 
-        self._set_children(policy, data)
+        await self._set_children(policy, data)
 
         await self.db.commit()
         await self.db.refresh(policy, attribute_names=["bindings", "statements"])
 
         POLICY_CACHE.invalidate()
-        logger.info("policy.created", extra={"policy_id": policy.id, "name": data.name})
+        logger.info("policy.created", extra={"policy_id": policy.id, "policy_name": data.name})
         return policy
 
     async def list_policies(self, offset: int = 0, limit: int = 50, search: str | None = None) -> PolicyListResponse:
@@ -152,7 +153,7 @@ class PolicyService:
         policy.effect = data.effect
         policy.is_active = data.is_active
 
-        self._set_children(policy, data)
+        await self._set_children(policy, data)
 
         await self.db.commit()
         await self.db.refresh(policy, attribute_names=["bindings", "statements"])
@@ -287,10 +288,12 @@ class PolicyService:
             if found != len(set(group_ids)):
                 raise ValidationError("One or more group IDs do not exist")
 
-    @staticmethod
-    def _set_children(policy: AccessPolicy, data: PolicyInput) -> None:
+    async def _set_children(self, policy: AccessPolicy, data: PolicyInput) -> None:
         """Clear and re-create bindings and statements from the input document."""
         policy.bindings.clear()
+        policy.statements.clear()
+        await self.db.flush()
+
         for b in data.bindings:
             policy.bindings.append(
                 AccessPolicyBinding(
@@ -300,7 +303,6 @@ class PolicyService:
                 )
             )
 
-        policy.statements.clear()
         for s in data.statements:
             policy.statements.append(
                 AccessPolicyStatement(

@@ -1,11 +1,11 @@
 """
-Unit tests for experience API manual-trigger guard.
+Unit tests for experience API run endpoint.
 
 Tests cover:
-- Non-admin cannot manually trigger a shared experience (returns 403)
 - Admin manually triggering a shared experience streams successfully
 - Shared experience with inactive creator returns 403
 - User-scoped experience manual trigger still works normally (regression)
+- Experience not found returns 404
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,35 +26,7 @@ def _mock_user(*, is_admin: bool = False, user_id: str = "user-1", is_active: bo
 
 
 class TestManualRunSharedGuard:
-    """Tests for the manual-trigger guard on shared experiences."""
-
-    @pytest.mark.asyncio
-    async def test_manual_run_shared_experience_non_admin_returns_403(self):
-        """Non-admin trying to manually run a shared experience gets a 403."""
-        db = AsyncMock()
-        current_user = _mock_user(is_admin=False)
-
-        with patch("shu.api.experiences.ExperienceService") as mock_svc_class:
-            mock_svc = MagicMock()
-            mock_svc.run = AsyncMock(
-                side_effect=AuthorizationError(
-                    "Shared experiences can only be triggered manually by admins.",
-                    details={"code": "SHARED_EXPERIENCE_NON_ADMIN"},
-                )
-            )
-            mock_svc_class.return_value = mock_svc
-
-            response = await run_experience(
-                experience_id="exp-1",
-                run_request=None,
-                current_user=current_user,
-                db=db,
-            )
-
-        assert response.status_code == 403
-        body = response.body.decode()
-        assert "Shared" in body
-        assert "SHARED_EXPERIENCE_NON_ADMIN" in body
+    """Tests for the run endpoint guard on shared experiences."""
 
     @pytest.mark.asyncio
     async def test_manual_run_shared_experience_admin_streams_successfully(self):

@@ -1,17 +1,31 @@
-"""Migration 008_0002: Add access policy tables
+"""Migration 008_0002: Add access policy tables and experience slug column
 
 Creates the three tables for the Policy-Based Access Control engine:
 - access_policies: Named policies with allow/deny effect
 - access_policy_bindings: Bind policies to users or groups
 - access_policy_statements: Actions and resources governed by each policy
 
+Also adds a ``slug`` column to the ``experiences`` table so PBAC resource
+identifiers use human-readable, wildcard-friendly names instead of UUIDs.
+
 Part of SHU-613: Policy-Based Access Control Engine.
 """
+
+import re
+import unicodedata
 
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.helpers import drop_table_if_exists, table_exists
+from migrations.helpers import add_column_if_not_exists, column_exists, drop_column_if_exists, drop_table_if_exists, index_exists, table_exists
+
+
+def _slugify(value: str) -> str:
+    """Inline slugify for migration (mirrors shu.core.text.slugify)."""
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    return value.strip("-")
 
 # revision identifiers, used by Alembic.
 revision = "008_0002"
@@ -128,10 +142,41 @@ def upgrade() -> None:
         )
 
 
+    # ========================================================================
+    # Part 4: Add slug column to experiences table
+    # ========================================================================
+    if not column_exists(inspector, "experiences", "slug"):
+        # Add column as nullable first so we can backfill existing rows.
+        op.add_column("experiences", sa.Column("slug", sa.String(100), nullable=True))
+
+        # Backfill slugs from existing experience names.
+        experiences_table = sa.table(
+            "experiences",
+            sa.column("id", sa.String),
+            sa.column("name", sa.String),
+            sa.column("slug", sa.String),
+        )
+        rows = conn.execute(sa.select(experiences_table.c.id, experiences_table.c.name)).fetchall()
+        for row in rows:
+            conn.execute(
+                experiences_table.update()
+                .where(experiences_table.c.id == row.id)
+                .values(slug=_slugify(row.name))
+            )
+
+        # Now make it non-nullable and add unique index.
+        op.alter_column("experiences", "slug", nullable=False)
+        op.create_index("ix_experiences_slug", "experiences", ["slug"], unique=True)
+
+
 def downgrade() -> None:
-    """Drop access policy tables in reverse dependency order."""
+    """Drop access policy tables and experience slug column."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+
+    if index_exists(inspector, "experiences", "ix_experiences_slug"):
+        op.drop_index("ix_experiences_slug", table_name="experiences")
+    drop_column_if_exists(inspector, "experiences", "slug")
 
     drop_table_if_exists(inspector, "access_policy_statements")
     drop_table_if_exists(inspector, "access_policy_bindings")

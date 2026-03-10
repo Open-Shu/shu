@@ -31,6 +31,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from ..core.config import get_config_manager
 from ..core.exceptions import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
+from ..core.text import slugify
 from ..models.experience import Experience, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
@@ -54,6 +55,7 @@ from ..schemas.experience import (
 )
 from ..services.experience_executor import ExperienceExecutor
 from ..services.plugin_identity import check_plugin_user_auth
+from ..services.policy_engine import POLICY_CACHE, enforce_admin, enforce_pbac
 
 logger = get_logger(__name__)
 
@@ -165,9 +167,10 @@ class ExperienceService:
             ConflictError: If experience with same name already exists
 
         """
-        # Check for existing experience with same name
-        existing = await self._get_experience_by_name(experience_data.name)
-        if existing:
+        await enforce_admin(created_by, self.db)
+
+        slug = slugify(experience_data.name)
+        if await self._get_experience_by_slug(slug):
             raise ConflictError(f"Experience '{experience_data.name}' already exists")
 
         # Validate trigger config
@@ -188,6 +191,7 @@ class ExperienceService:
         experience = Experience(
             id=str(uuid.uuid4()),
             name=experience_data.name,
+            slug=slug,
             description=experience_data.description,
             created_by=created_by,
             visibility=experience_data.visibility.value,
@@ -241,17 +245,15 @@ class ExperienceService:
             AuthorizationError: If the user lacks permission to run the experience.
 
         """
-        is_admin = current_user.can_manage_users()
-
-        # Visibility check
-        experience_resp = await self.get_experience(
-            experience_id=experience_id, user_id=str(current_user.id), is_admin=is_admin
-        )
+        # Visibility + experience.read PBAC check (via get_experience)
+        experience_resp = await self.get_experience(experience_id=experience_id, user_id=str(current_user.id))
         if not experience_resp:
             raise NotFoundError(
                 f"Experience '{experience_id}' not found or access denied",
                 details={"code": "EXPERIENCE_NOT_FOUND"},
             )
+
+        await enforce_pbac(str(current_user.id), "experience.run", f"experience:{experience_resp.slug}", self.db)
 
         # Load full ORM model with relationships needed for execution
         result = await self.db.execute(
@@ -268,18 +270,12 @@ class ExperienceService:
 
         # Shared-experience guard
         is_shared = experience.scope == ExperienceScope.SHARED.value
-        if is_shared:
-            if not is_admin:
-                raise AuthorizationError(
-                    "Shared experiences can only be triggered manually by admins.",
-                    details={"code": "SHARED_EXPERIENCE_NON_ADMIN"},
-                )
-            if not experience.creator or not experience.creator.is_active:
-                raise AuthorizationError(
-                    "The creator of this shared experience is inactive. "
-                    "Re-activate their account or reassign the experience.",
-                    details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
-                )
+        if is_shared and (not experience.creator or not experience.creator.is_active):
+            raise AuthorizationError(
+                "The creator of this shared experience is inactive. "
+                "Re-activate their account or reassign the experience.",
+                details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
+            )
 
         # Resolve execution identity
         run_user_id = None if is_shared else str(current_user.id)
@@ -294,15 +290,12 @@ class ExperienceService:
             current_user=run_current_user,
         )
 
-    async def get_experience(
-        self, experience_id: str, user_id: str | None = None, is_admin: bool = False
-    ) -> ExperienceResponse | None:
+    async def get_experience(self, experience_id: str, user_id: str) -> ExperienceResponse | None:
         """Get an experience by ID with visibility check.
 
         Args:
             experience_id: Experience ID
-            user_id: Current user ID (for visibility check)
-            is_admin: Whether current user is admin
+            user_id: Current user ID (for visibility and PBAC checks)
 
         Returns:
             Experience if found and visible, None otherwise
@@ -315,18 +308,20 @@ class ExperienceService:
         if not experience:
             return None
 
+        await enforce_pbac(user_id, "experience.read", f"experience:{experience.slug}", self.db)
+
         # Visibility check
-        if not self._check_visibility(experience, user_id, is_admin):
+        if not await self._check_visibility(experience, user_id):
             return None
 
         return self._experience_to_response(experience)
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def update_experience(  # noqa: PLR0912
+    async def update_experience(  # noqa: PLR0912, PLR0915
         self,
         experience_id: str,
         update_data: ExperienceUpdate,
-        current_user: Optional["User"] = None,
+        current_user: "User",
     ) -> ExperienceResponse:
         """Update an existing experience.
 
@@ -344,15 +339,17 @@ class ExperienceService:
             ValidationError: If validation fails
 
         """
+        await enforce_admin(str(current_user.id), self.db)
+
         experience = await self._get_experience_by_id(experience_id)
         if not experience:
             raise NotFoundError(f"Experience {experience_id} not found")
 
-        # Check for name conflicts if name is being updated
         if update_data.name and update_data.name != experience.name:
-            existing = await self._get_experience_by_name(update_data.name)
-            if existing and existing.id != experience_id:
+            new_slug = slugify(update_data.name)
+            if await self._get_experience_by_slug(new_slug, exclude_id=experience_id):
                 raise ConflictError(f"Experience '{update_data.name}' already exists")
+            experience.slug = new_slug
 
         # Validate templates if being updated
         if update_data.inline_prompt_template:
@@ -428,16 +425,19 @@ class ExperienceService:
         logger.info(f"Updated experience '{experience.name}' (ID: {experience_id})")
         return self._experience_to_response(experience)
 
-    async def delete_experience(self, experience_id: str) -> bool:
+    async def delete_experience(self, experience_id: str, user_id: str) -> bool:
         """Delete an experience and all its steps and runs.
 
         Args:
             experience_id: Experience ID
+            user_id: Current user ID (must be admin)
 
         Returns:
             True if deleted, False if not found
 
         """
+        await enforce_admin(user_id, self.db)
+
         experience = await self._get_experience_by_id(experience_id)
         if not experience:
             return False
@@ -450,8 +450,7 @@ class ExperienceService:
 
     async def list_experiences(
         self,
-        user_id: str | None = None,
-        is_admin: bool = False,
+        user_id: str,
         visibility_filter: ExperienceVisibility | None = None,
         search: str | None = None,
         limit: int = 50,
@@ -461,7 +460,6 @@ class ExperienceService:
 
         Args:
             user_id: Current user ID
-            is_admin: Whether current user is admin
             visibility_filter: Optional visibility filter
             search: Optional search term
             limit: Maximum number of results
@@ -475,13 +473,13 @@ class ExperienceService:
         stmt = self._base_experience_query(include_prompt=True)
 
         # Build visibility conditions
-        if is_admin:
+        is_admin_user = await POLICY_CACHE.is_admin(user_id, self.db)
+        if is_admin_user:
             # Admins see all experiences
             if visibility_filter:
                 stmt = stmt.where(Experience.visibility == visibility_filter.value)
         else:
             # Non-admins only see published experiences
-            # (drafts and admin_only are visible only to admins who create/manage them)
             stmt = stmt.where(Experience.visibility == ExperienceVisibility.PUBLISHED.value)
 
         # Apply search filter
@@ -494,7 +492,10 @@ class ExperienceService:
             stmt, order_by=Experience.name, offset=offset, limit=limit
         )
 
-        items = [self._experience_to_response(exp) for exp in experiences]
+        items = [
+            self._experience_to_response(exp)
+            async for exp in self._pbac_filter(user_id, "experience.read", "experience", experiences)
+        ]
         return self._build_paginated_response(ExperienceList, items, total, offset, limit)
 
     # =========================================================================
@@ -720,7 +721,6 @@ class ExperienceService:
         self,
         experience_id: str,
         user_id: str,
-        is_admin: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> ExperienceRunList:
@@ -729,7 +729,6 @@ class ExperienceService:
         Args:
             experience_id: Experience ID
             user_id: Current user ID
-            is_admin: Whether current user is admin
             limit: Maximum number of results
             offset: Number of results to skip
 
@@ -737,14 +736,19 @@ class ExperienceService:
             Paginated list of runs
 
         """
-        # Run history inherits parent experience visibility rules.
-        if not await self._can_access_experience_runs(experience_id, user_id, is_admin):
+        experience = await self._get_experience_by_id(experience_id)
+        if not experience:
+            return self._build_paginated_response(ExperienceRunList, [], total=0, offset=offset, limit=limit)
+
+        await enforce_pbac(user_id, "experience.read", f"experience:{experience.slug}", self.db)
+
+        if not await self._check_visibility(experience, user_id):
             return self._build_paginated_response(ExperienceRunList, [], total=0, offset=offset, limit=limit)
 
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
         # Non-admins see their own runs and shared runs (user_id IS NULL)
-        if not is_admin:
+        if not await POLICY_CACHE.is_admin(user_id, self.db):
             stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
         # Execute with pagination
@@ -786,30 +790,32 @@ class ExperienceService:
             }
         return users_by_id
 
-    async def get_run(self, run_id: str, user_id: str, is_admin: bool = False) -> ExperienceRunResponse | None:
+    async def get_run(self, run_id: str, user_id: str) -> ExperienceRunResponse | None:
         """Get a specific run by ID.
 
         Args:
             run_id: Run ID
             user_id: Current user ID
-            is_admin: Whether current user is admin
 
         Returns:
             Run if found and accessible, None otherwise
 
         """
-        stmt = select(ExperienceRun).where(ExperienceRun.id == run_id)
+        stmt = select(ExperienceRun).options(selectinload(ExperienceRun.experience)).where(ExperienceRun.id == run_id)
         result = await self.db.execute(stmt)
         run = result.scalar_one_or_none()
 
-        if not run:
+        if not run or not run.experience:
             return None
+
+        await enforce_pbac(user_id, "experience.read", f"experience:{run.experience.slug}", self.db)
 
         # Ownership check for non-admins; shared runs (user_id IS NULL) are visible to all
-        if not is_admin and run.user_id is not None and run.user_id != user_id:
+        is_admin_user = await POLICY_CACHE.is_admin(user_id, self.db)
+        if not is_admin_user and run.user_id is not None and run.user_id != user_id:
             return None
 
-        if not await self._can_access_experience_runs(run.experience_id, user_id, is_admin):
+        if not await self._check_visibility(run.experience, user_id):
             return None
 
         return self._run_to_response(run)
@@ -849,9 +855,19 @@ class ExperienceService:
         if not experiences:
             return UserExperienceResults(experiences=[], total=0)
 
+        # Filter by PBAC and collect IDs for the runs query
+        allowed_experiences = []
+        experience_ids = []
+        for exp in experiences:
+            if await POLICY_CACHE.check(user_id, "experience.read", f"experience:{exp.slug}", self.db):
+                allowed_experiences.append(exp)
+                experience_ids.append(exp.id)
+        experiences = allowed_experiences
+
+        if not experiences:
+            return UserExperienceResults(experiences=[], total=0)
+
         # Get the latest run for each experience for this user in a single query
-        # using a window function to rank runs by created_at
-        experience_ids = [exp.id for exp in experiences]
         latest_runs_stmt = (
             select(ExperienceRun)
             .where(
@@ -983,7 +999,31 @@ class ExperienceService:
 
         return f"{safe_name}-experience.yaml"
 
-    def export_experience_to_yaml(self, experience: ExperienceResponse) -> tuple[str, str]:
+    async def export_experience(self, experience_id: str, user_id: str) -> tuple[str, str]:
+        """Fetch an experience and export it to YAML.
+
+        Performs PBAC and visibility checks before exporting.
+
+        Args:
+            experience_id: Experience ID to export
+            user_id: Current user ID (for PBAC and visibility checks)
+
+        Returns:
+            Tuple of (yaml_content, file_name)
+
+        Raises:
+            NotFoundError: If experience not found or not visible
+
+        """
+        experience = await self.get_experience(experience_id, user_id)
+        if not experience:
+            raise NotFoundError(
+                f"Experience '{experience_id}' not found or access denied",
+                details={"code": "EXPERIENCE_NOT_FOUND"},
+            )
+        return self._export_experience_to_yaml(experience)
+
+    def _export_experience_to_yaml(self, experience: ExperienceResponse) -> tuple[str, str]:
         """Export an experience to YAML format with placeholders for user-specific values.
 
         Args:
@@ -996,7 +1036,7 @@ class ExperienceService:
         # Build the YAML structure
         yaml_data = {
             "experience_yaml_version": 1,
-            "id": f"{experience.name.lower().replace(' ', '-')}-v{experience.version}",
+            "id": f"{experience.slug}-v{experience.version}",
             "name": experience.name,
             "description": experience.description,
             "version": experience.version,
@@ -1174,39 +1214,30 @@ class ExperienceService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_experience_by_name(self, name: str) -> Experience | None:
-        """Get experience by name."""
-        stmt = select(Experience).where(Experience.name == name)
+    async def _get_experience_by_slug(self, slug: str, exclude_id: str | None = None) -> Experience | None:
+        """Get experience by slug, optionally excluding a specific experience."""
+        stmt = select(Experience).where(Experience.slug == slug)
+        if exclude_id:
+            stmt = stmt.where(Experience.id != exclude_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    def _check_visibility(self, experience: Experience, user_id: str | None, is_admin: bool) -> bool:
+    async def _check_visibility(self, experience: Experience, user_id: str | None) -> bool:
         """Check if user can see the experience based on visibility.
 
         Since only admins can create experiences, draft and admin_only
-        experiences are only visible to admins.
+        experiences are only visible to admins.  Admin status is resolved
+        via the PBAC policy cache.
         """
-        if is_admin:
+        if user_id and await POLICY_CACHE.is_admin(user_id, self.db):
             return True
-        # Non-admins only see published experiences
         return experience.visibility == ExperienceVisibility.PUBLISHED.value
 
-    async def _can_access_experience_runs(self, experience_id: str, user_id: str, is_admin: bool) -> bool:
-        """Check whether a user can access run history for an experience."""
-        if not user_id and not is_admin:
-            logger.warning(
-                "Run access check failed: missing user_id for non-admin",
-                extra={"experience_id": experience_id},
-            )
-            return False
-
-        stmt = select(Experience).where(Experience.id == experience_id)
-        result = await self.db.execute(stmt)
-        experience = result.scalar_one_or_none()
-        if not experience:
-            return False
-
-        return self._check_visibility(experience, user_id, is_admin)
+    async def _pbac_filter(self, user_id: str, action: str, resource_type: str, items: list) -> AsyncGenerator:
+        """Yield items the user is allowed to access per PBAC."""
+        for item in items:
+            if await POLICY_CACHE.check(user_id, action, f"{resource_type}:{item.slug}", self.db):
+                yield item
 
     def _get_last_run_timestamp(self, experience: Experience) -> datetime | None:
         """Get the last run timestamp for an experience.
@@ -1274,6 +1305,7 @@ class ExperienceService:
         return ExperienceResponse(
             id=experience.id,
             name=experience.name,
+            slug=experience.slug,
             description=experience.description,
             created_by=experience.created_by,
             visibility=ExperienceVisibility(experience.visibility),

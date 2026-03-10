@@ -24,11 +24,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.core.exceptions import NotFoundError
 from shu.services.policy_engine import (
     CachedPolicy,
     CachedStatement,
     PolicyCache,
     _split_patterns,
+    enforce_pbac,
 )
 
 
@@ -698,3 +700,29 @@ class TestInactivePolicyExclusion:
             "user-1", "experience.read", "experience", ["a", "b"], AsyncMock()
         )
         assert denied == set()
+
+
+class TestEnforcePbac:
+    """Tests for the enforce_pbac helper."""
+
+    @pytest.mark.asyncio
+    async def test_allowed_does_not_raise(self):
+        with patch("shu.services.policy_engine.POLICY_CACHE") as mock_cache:
+            mock_cache.check = AsyncMock(return_value=True)
+            await enforce_pbac("user-1", "experience.read", "experience:exp-1", AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_denied_raises_not_found(self):
+        with patch("shu.services.policy_engine.POLICY_CACHE") as mock_cache:
+            mock_cache.check = AsyncMock(return_value=False)
+            with pytest.raises(NotFoundError) as exc_info:
+                await enforce_pbac("user-1", "experience.read", "experience:exp-1", AsyncMock())
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_passes_args_to_cache_check(self):
+        mock_db = AsyncMock()
+        with patch("shu.services.policy_engine.POLICY_CACHE") as mock_cache:
+            mock_cache.check = AsyncMock(return_value=True)
+            await enforce_pbac("uid-7", "experience.run", "experience:exp-42", mock_db)
+        mock_cache.check.assert_called_once_with("uid-7", "experience.run", "experience:exp-42", mock_db)

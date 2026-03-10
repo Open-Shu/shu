@@ -224,6 +224,7 @@ class ExperienceResponse(ExperienceBase):
     """Schema for experience responses."""
 
     id: str
+    slug: str
     created_by: str
     created_at: datetime
     updated_at: datetime

@@ -38,6 +38,7 @@ class Experience(BaseModel):
 
     # Basic information
     name = Column(String(100), nullable=False, index=True)
+    slug = Column(String(100), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
 
     # Ownership & visibility

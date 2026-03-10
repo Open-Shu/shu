@@ -23,6 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from shu.auth.models import User, UserRole
 from shu.core.config import Settings, get_settings
+from shu.core.exceptions import AuthorizationError, NotFoundError
 from shu.core.logging import get_logger
 from shu.models.access_policy import AccessPolicy
 from shu.models.rbac import UserGroupMembership
@@ -279,6 +280,11 @@ class PolicyCache:
 
         return self._resolve_policy_ids(user_id)
 
+    async def is_admin(self, user_id: str, db: AsyncSession) -> bool:
+        """Return whether the user has the admin role (cached)."""
+        await self._maybe_refresh(db)
+        return user_id in self._admin_user_ids
+
     async def check(self, user_id: str, action: str, resource: str, db: AsyncSession) -> bool:
         """Evaluate whether a user is allowed to perform an action on a resource.
 
@@ -356,3 +362,24 @@ class PolicyCache:
 
 
 POLICY_CACHE = PolicyCache()
+
+
+async def enforce_pbac(user_id: str, action: str, resource: str, db: AsyncSession) -> None:
+    """Raise ``NotFoundError`` if the user is denied access.
+
+    Wraps ``POLICY_CACHE.check`` so callers can enforce PBAC with a single
+    ``await`` — no conditional logic at the call site.  Returns 404 (not 403)
+    to avoid leaking resource existence.
+    """
+    if not await POLICY_CACHE.check(user_id, action, resource, db):
+        raise NotFoundError("Not found")
+
+
+async def enforce_admin(user_id: str, db: AsyncSession) -> None:
+    """Raise ``AuthorizationError`` if the user is not an admin.
+
+    Wraps ``POLICY_CACHE.is_admin`` so callers can gate admin-only operations
+    with a single ``await``.
+    """
+    if not await POLICY_CACHE.is_admin(user_id, db):
+        raise AuthorizationError("Admin access required")
