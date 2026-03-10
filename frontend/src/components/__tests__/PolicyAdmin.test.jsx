@@ -14,6 +14,7 @@ vi.mock('../../services/api', () => ({
     delete: vi.fn(),
   },
   extractItemsFromResponse: vi.fn(),
+  extractPaginationFromResponse: vi.fn(),
   formatError: vi.fn((err) => err?.message || 'Something went wrong'),
 }));
 
@@ -63,8 +64,9 @@ const MOCK_DENY_POLICY = {
 
 describe('PolicyAdmin', () => {
   beforeEach(() => {
-    api.policyAPI.list.mockResolvedValue({ data: { items: [] } });
+    api.policyAPI.list.mockResolvedValue({ data: { items: [], total: 0 } });
     api.extractItemsFromResponse.mockReturnValue([]);
+    api.extractPaginationFromResponse.mockReturnValue({ total: 0 });
   });
 
   afterEach(() => {
@@ -86,6 +88,7 @@ describe('PolicyAdmin', () => {
 
   test('renders policy table with data', async () => {
     api.extractItemsFromResponse.mockReturnValue([MOCK_POLICY, MOCK_DENY_POLICY]);
+    api.extractPaginationFromResponse.mockReturnValue({ total: 2 });
     renderWithProviders(<PolicyAdmin />);
 
     await waitFor(() => {
@@ -100,6 +103,13 @@ describe('PolicyAdmin', () => {
     // Active/Inactive chips (multiple "Active" nodes possible from effect + status)
     expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Inactive')).toBeInTheDocument();
+  });
+
+  test('passes pagination params to API', async () => {
+    renderWithProviders(<PolicyAdmin />);
+    await waitFor(() => {
+      expect(api.policyAPI.list).toHaveBeenCalledWith({ offset: 0, limit: 10 });
+    });
   });
 
   test('opens create dialog with template JSON', async () => {
@@ -118,15 +128,14 @@ describe('PolicyAdmin', () => {
 
   test('opens edit dialog with existing policy JSON', async () => {
     api.extractItemsFromResponse.mockReturnValue([MOCK_POLICY]);
+    api.extractPaginationFromResponse.mockReturnValue({ total: 1 });
     renderWithProviders(<PolicyAdmin />);
 
     await waitFor(() => {
       expect(screen.getByText('allow-engineering')).toBeInTheDocument();
     });
 
-    // Click the edit button (first icon button in the row)
-    const editButtons = screen.getAllByTestId('EditIcon');
-    fireEvent.click(editButtons[0].closest('button'));
+    fireEvent.click(screen.getByRole('button', { name: /edit policy/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Edit Policy')).toBeInTheDocument();
@@ -173,6 +182,7 @@ describe('PolicyAdmin', () => {
 
   test('opens and confirms delete dialog', async () => {
     api.extractItemsFromResponse.mockReturnValue([MOCK_POLICY]);
+    api.extractPaginationFromResponse.mockReturnValue({ total: 1 });
     api.policyAPI.delete.mockResolvedValue({});
     renderWithProviders(<PolicyAdmin />);
 
@@ -180,8 +190,7 @@ describe('PolicyAdmin', () => {
       expect(screen.getByText('allow-engineering')).toBeInTheDocument();
     });
 
-    const deleteButtons = screen.getAllByTestId('DeleteIcon');
-    fireEvent.click(deleteButtons[0].closest('button'));
+    fireEvent.click(screen.getByRole('button', { name: /delete policy/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/are you sure you want to delete/i)).toBeInTheDocument();

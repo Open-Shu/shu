@@ -229,7 +229,7 @@ class PolicyService:
 
         query = (
             select(AccessPolicy)
-            .where(AccessPolicy.id.in_(policy_ids))
+            .where(AccessPolicy.id.in_(policy_ids), AccessPolicy.is_active == True)  # noqa: E712
             .options(
                 selectinload(AccessPolicy.bindings),
                 selectinload(AccessPolicy.statements),

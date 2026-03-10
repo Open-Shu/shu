@@ -12,6 +12,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Paper,
   IconButton,
   Dialog,
@@ -24,7 +25,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, Policy as PolicyIcon } from '@mui/icons-material';
-import { policyAPI, extractItemsFromResponse, formatError } from '../services/api';
+import { policyAPI, extractItemsFromResponse, extractPaginationFromResponse, formatError } from '../services/api';
 import PageHelpHeader from './PageHelpHeader';
 
 const POLICY_TEMPLATE = {
@@ -37,6 +38,8 @@ const POLICY_TEMPLATE = {
 };
 
 const PolicyAdmin = () => {
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [editorOpen, setEditorOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState(null);
@@ -46,17 +49,24 @@ const PolicyAdmin = () => {
 
   const queryClient = useQueryClient();
 
-  const { data: policiesResponse, isLoading } = useQuery('policies', () => policyAPI.list(), {
-    onError: (err) => {
-      setError(formatError(err));
-    },
-  });
+  const { data: policiesResponse, isLoading } = useQuery(
+    ['policies', page, rowsPerPage],
+    () => policyAPI.list({ offset: page * rowsPerPage, limit: rowsPerPage }),
+    {
+      keepPreviousData: true,
+      onError: (err) => {
+        setError(formatError(err));
+      },
+    }
+  );
 
   const policies = extractItemsFromResponse(policiesResponse) || [];
+  const pagination = policiesResponse ? extractPaginationFromResponse(policiesResponse) : null;
+  const totalCount = pagination?.total || 0;
 
   const createMutation = useMutation((data) => policyAPI.create(data), {
     onSuccess: () => {
-      queryClient.invalidateQueries('policies');
+      queryClient.invalidateQueries(['policies']);
       setEditorOpen(false);
       setJsonError(null);
       setError(null);
@@ -68,7 +78,7 @@ const PolicyAdmin = () => {
 
   const updateMutation = useMutation(({ id, data }) => policyAPI.update(id, data), {
     onSuccess: () => {
-      queryClient.invalidateQueries('policies');
+      queryClient.invalidateQueries(['policies']);
       setEditorOpen(false);
       setSelectedPolicy(null);
       setJsonError(null);
@@ -81,7 +91,7 @@ const PolicyAdmin = () => {
 
   const deleteMutation = useMutation((id) => policyAPI.delete(id), {
     onSuccess: () => {
-      queryClient.invalidateQueries('policies');
+      queryClient.invalidateQueries(['policies']);
       setDeleteDialogOpen(false);
       setSelectedPolicy(null);
       setError(null);
@@ -247,10 +257,15 @@ const PolicyAdmin = () => {
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        <IconButton size="small" onClick={() => handleEdit(policy)}>
+                        <IconButton size="small" aria-label="Edit policy" onClick={() => handleEdit(policy)}>
                           <EditIcon fontSize="small" />
                         </IconButton>
-                        <IconButton size="small" color="error" onClick={() => handleDelete(policy)}>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          aria-label="Delete policy"
+                          onClick={() => handleDelete(policy)}
+                        >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </TableCell>
@@ -259,6 +274,18 @@ const PolicyAdmin = () => {
                 )}
               </TableBody>
             </Table>
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50]}
+              component="div"
+              count={totalCount}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={(_event, newPage) => setPage(newPage)}
+              onRowsPerPageChange={(event) => {
+                setRowsPerPage(parseInt(event.target.value, 10));
+                setPage(0);
+              }}
+            />
           </TableContainer>
         </CardContent>
       </Card>
