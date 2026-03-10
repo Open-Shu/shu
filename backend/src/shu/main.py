@@ -289,75 +289,91 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             # Resume re-embedding jobs lost due to queue backend restart (in-memory
             # or Redis data loss).  With a persistent Redis backend the job is still
             # in the queue or processing set and will be redelivered automatically,
-            # so we only re-enqueue when the queue is empty.
+            # so we only re-enqueue KBs whose heartbeat appears stale.
             try:
-                queue_name = WorkloadType.RE_EMBEDDING.queue_name
-                existing_jobs = await backend.total_count(queue_name)
+                from datetime import UTC, datetime, timedelta
 
-                if existing_jobs == 0:
-                    from sqlalchemy import select
+                from sqlalchemy import select
 
-                    from .core.database import get_async_session_local
-                    from .core.workload_routing import enqueue_job
-                    from .models.knowledge_base import KnowledgeBase
+                from .core.database import get_async_session_local
+                from .core.workload_routing import enqueue_job
+                from .models.knowledge_base import KnowledgeBase
 
-                    session_factory = get_async_session_local()
-                    async with session_factory() as session:
-                        result = await session.execute(
-                            select(KnowledgeBase).where(KnowledgeBase.embedding_status == "re_embedding")
-                        )
-                        stuck_kbs = list(result.scalars().all())
+                stale_after = timedelta(minutes=3)
+                resumed_count = 0
+                session_factory = get_async_session_local()
+                async with session_factory() as session:
+                    result = await session.execute(
+                        select(KnowledgeBase).where(KnowledgeBase.embedding_status == "re_embedding")
+                    )
+                    stuck_kbs = list(result.scalars().all())
 
-                        for kb in stuck_kbs:
-                            progress = kb.re_embedding_progress or {}
-                            phase = progress.get("phase", "chunks")
-                            chunks_done = progress.get("chunks_done", 0)
-                            chunks_total = progress.get("chunks_total", "?")
-                            sub_jobs_total = progress.get("sub_jobs_total", 1)
-                            sub_jobs_completed = progress.get("sub_jobs_completed", 0)
+                    for kb in stuck_kbs:
+                        last_updated = kb.updated_at
+                        if last_updated is not None and last_updated.tzinfo is None:
+                            last_updated = last_updated.replace(tzinfo=UTC)
+                        is_stale = last_updated is None or (datetime.now(UTC) - last_updated) >= stale_after
+                        if not is_stale:
                             logger.info(
-                                f"Resuming re-embedding for KB {kb.id}, "
-                                f"phase={phase}, chunks_done={chunks_done}/{chunks_total}, "
-                                f"sub_jobs={sub_jobs_completed}/{sub_jobs_total}"
+                                "Skipping re-embedding recovery for KB with fresh heartbeat",
+                                extra={
+                                    "knowledge_base_id": str(kb.id),
+                                    "last_updated": str(last_updated),
+                                    "stale_after_seconds": int(stale_after.total_seconds()),
+                                },
                             )
+                            continue
 
-                            if phase == "chunks":
-                                # Re-enqueue chunk sub-jobs for remaining work
-                                remaining_sub_jobs = max(1, sub_jobs_total - sub_jobs_completed)
-                                # Reset sub_jobs_completed since we're re-enqueueing
-                                progress["sub_jobs_completed"] = 0
-                                progress["sub_jobs_total"] = remaining_sub_jobs
-                                kb.re_embedding_progress = progress
-                                await session.commit()
+                        progress = kb.re_embedding_progress or {}
+                        phase = progress.get("phase", "chunks")
+                        chunks_done = progress.get("chunks_done", 0)
+                        chunks_total = progress.get("chunks_total", "?")
+                        sub_jobs_total = progress.get("sub_jobs_total", 1)
+                        sub_jobs_completed = progress.get("sub_jobs_completed", 0)
+                        logger.info(
+                            f"Resuming re-embedding for KB {kb.id}, "
+                            f"phase={phase}, chunks_done={chunks_done}/{chunks_total}, "
+                            f"sub_jobs={sub_jobs_completed}/{sub_jobs_total}"
+                        )
 
-                                for i in range(remaining_sub_jobs):
-                                    await enqueue_job(
-                                        backend,
-                                        WorkloadType.RE_EMBEDDING,
-                                        payload={
-                                            "knowledge_base_id": str(kb.id),
-                                            "action": "re_embed_chunks",
-                                            "sub_job_index": i,
-                                            "sub_jobs_total": remaining_sub_jobs,
-                                        },
-                                        max_attempts=3,
-                                        visibility_timeout=600,
-                                    )
-                            else:
-                                # Past chunks phase — enqueue finalization only
+                        if phase == "chunks":
+                            # Re-enqueue chunk sub-jobs for remaining work
+                            remaining_sub_jobs = max(1, sub_jobs_total - sub_jobs_completed)
+                            # Reset sub_jobs_completed since we're re-enqueueing
+                            progress["sub_jobs_completed"] = 0
+                            progress["sub_jobs_total"] = remaining_sub_jobs
+                            kb.re_embedding_progress = progress
+                            await session.commit()
+
+                            for i in range(remaining_sub_jobs):
                                 await enqueue_job(
                                     backend,
                                     WorkloadType.RE_EMBEDDING,
                                     payload={
                                         "knowledge_base_id": str(kb.id),
-                                        "action": "re_embed_finalize",
+                                        "action": "re_embed_chunks",
+                                        "sub_job_index": i,
+                                        "sub_jobs_total": remaining_sub_jobs,
                                     },
                                     max_attempts=3,
                                     visibility_timeout=600,
                                 )
+                        else:
+                            # Past chunks phase — enqueue finalization only
+                            await enqueue_job(
+                                backend,
+                                WorkloadType.RE_EMBEDDING,
+                                payload={
+                                    "knowledge_base_id": str(kb.id),
+                                    "action": "re_embed_finalize",
+                                },
+                                max_attempts=3,
+                                visibility_timeout=600,
+                            )
+                        resumed_count += 1
 
-                        if stuck_kbs:
-                            logger.info(f"Re-enqueued {len(stuck_kbs)} interrupted re-embedding job(s)")
+                    if resumed_count:
+                        logger.info(f"Re-enqueued {resumed_count} interrupted re-embedding job(s)")
             except Exception as e:
                 logger.error(f"Failed to recover interrupted re-embedding jobs: {e}", exc_info=True)
 
