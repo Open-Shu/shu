@@ -137,8 +137,10 @@ class TestExperienceSource:
         mock_exp.schedule_next.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_enqueue_due_fans_out_per_user(self):
+    @patch("shu.services.scheduler_service.POLICY_CACHE")
+    async def test_enqueue_due_fans_out_per_user(self, mock_policy_cache):
         """Each due experience enqueues one job per active user."""
+        mock_policy_cache.check = AsyncMock(return_value=True)
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
@@ -147,6 +149,7 @@ class TestExperienceSource:
         # Mock experience
         mock_exp = MagicMock()
         mock_exp.id = "exp-1"
+        mock_exp.slug = "exp-1"
         mock_exp.trigger_type = "cron"
         mock_exp.created_by = "creator-1"
         mock_exp.model_configuration_id = None
@@ -316,8 +319,10 @@ class TestExperienceSource:
         mock_exp.schedule_next.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enqueue_due_skips_active_user_run_pairs(self):
+    @patch("shu.services.scheduler_service.POLICY_CACHE")
+    async def test_enqueue_due_skips_active_user_run_pairs(self, mock_policy_cache):
         """User-scoped experience skips users that already have a queued/running run."""
+        mock_policy_cache.check = AsyncMock(return_value=True)
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
@@ -325,6 +330,7 @@ class TestExperienceSource:
 
         mock_exp = MagicMock()
         mock_exp.id = "exp-1"
+        mock_exp.slug = "exp-1"
         mock_exp.trigger_type = "cron"
         mock_exp.created_by = None
         mock_exp.model_configuration_id = None
@@ -432,8 +438,10 @@ class TestExperienceSource:
         mock_exp.schedule_next.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enqueue_due_no_active_pairs_enqueues_all(self):
+    @patch("shu.services.scheduler_service.POLICY_CACHE")
+    async def test_enqueue_due_no_active_pairs_enqueues_all(self, mock_policy_cache):
         """When no active runs exist, all users are enqueued (baseline behavior)."""
+        mock_policy_cache.check = AsyncMock(return_value=True)
         source = ExperienceSource()
         db = AsyncMock()
         db.commit = AsyncMock()
@@ -441,6 +449,7 @@ class TestExperienceSource:
 
         mock_exp = MagicMock()
         mock_exp.id = "exp-1"
+        mock_exp.slug = "exp-1"
         mock_exp.trigger_type = "cron"
         mock_exp.created_by = None
         mock_exp.model_configuration_id = None
@@ -532,6 +541,61 @@ class TestExperienceSource:
         assert result["skipped_active_user_runs"] == 0
         assert mock_enqueue_run.call_count == 1
         assert mock_enqueue_run.call_args.kwargs["user_id"] is None
+
+    @pytest.mark.asyncio
+    @patch("shu.services.scheduler_service.POLICY_CACHE")
+    async def test_enqueue_due_skips_denied_users(self, mock_policy_cache):
+        """Users denied experience.run by PBAC are skipped during fan-out."""
+        mock_policy_cache.check = AsyncMock(side_effect=lambda uid, action, resource, db: uid == "user-1")
+        source = ExperienceSource()
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        queue = AsyncMock()
+
+        mock_exp = MagicMock()
+        mock_exp.id = "exp-1"
+        mock_exp.slug = "exp-1"
+        mock_exp.trigger_type = "cron"
+        mock_exp.created_by = None
+        mock_exp.model_configuration_id = None
+        mock_exp.scope = "user"
+        mock_exp.schedule_next = MagicMock()
+
+        mock_user1 = MagicMock()
+        mock_user1.id = "user-1"
+        mock_user2 = MagicMock()
+        mock_user2.id = "user-2"
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalars.return_value.all.return_value = [mock_exp]
+            elif call_count == 2:
+                result.scalars.return_value.all.return_value = [mock_user1, mock_user2]
+            elif call_count == 3:
+                result.__iter__ = MagicMock(return_value=iter([]))
+            else:
+                result.scalar_one_or_none.return_value = None
+            return result
+
+        db.execute = mock_execute
+
+        with patch(
+            "shu.services.scheduler_service._enqueue_experience_run",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_enqueue_run:
+            result = await source.enqueue_due(db, queue, limit=10)
+
+        # user-1 allowed, user-2 denied
+        assert result["queue_enqueued"] == 1
+        assert result["skipped_denied"] == 1
+        assert mock_enqueue_run.call_count == 1
+        assert mock_enqueue_run.call_args.kwargs["user_id"] == "user-1"
 
 
 class TestAttachmentCleanupSource:

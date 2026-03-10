@@ -358,7 +358,10 @@ class TestRunDueExperiences:
             }
         )
 
-        result = await service.run_due_experiences(limit=10)
+        mock_pbac = MagicMock()
+        mock_pbac.check = AsyncMock(return_value=True)
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", mock_pbac):
+            result = await service.run_due_experiences(limit=10)
 
         assert result["due"] == 1
         assert result["user_runs"] == 2  # Ran for both users
@@ -394,7 +397,10 @@ class TestRunDueExperiences:
             ]
         )
 
-        result = await service.run_due_experiences(limit=10)
+        mock_pbac = MagicMock()
+        mock_pbac.check = AsyncMock(return_value=True)
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", mock_pbac):
+            result = await service.run_due_experiences(limit=10)
 
         assert result["user_runs"] == 1
         assert result["user_failures"] == 1

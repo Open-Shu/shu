@@ -38,17 +38,15 @@ import asyncio
 import sys
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from .auth.models import User
-from .core.config import get_config_manager, get_settings_instance
+from .core.config import get_settings_instance
 from .core.database import get_async_session_local, init_db
 from .core.logging import get_logger, setup_logging
 from .core.queue_backend import get_queue_backend
 from .core.worker import Worker, WorkerConfig
 from .core.workload_routing import WorkloadType
-from .models.experience import Experience
-from .services.experience_executor import ExperienceExecutor
+from .services.experience_service import ExperienceService
 from .services.ingestion_service import _ERR_FILE_STAGING
 
 logger = get_logger(__name__)
@@ -706,54 +704,11 @@ async def _fail_queued_run(session, run_id: str | None, error: str) -> None:
         pass
 
 
-async def _resolve_experience_user(session, experience, user_id, job_id):
-    """Resolve the execution user for an experience job.
-
-    For user-scoped experiences, loads the user by user_id.
-    For shared experiences, uses the experience creator.
-
-    Returns (user, error_reason) — user is None on failure.
-    """
-    if user_id:
-        user_result = await session.execute(select(User).where(User.id == user_id))
-        user = user_result.scalar_one_or_none()
-        if not user:
-            logger.warning("User not found, skipping", extra={"job_id": job_id, "user_id": user_id})
-            return None, "user_not_found"
-        if not user.is_active:  # type: ignore[truthy-bool]
-            logger.debug("User inactive, skipping experience execution", extra={"job_id": job_id, "user_id": user_id})
-            return None, "user_inactive"
-        return user, None
-
-    if experience.scope != "shared":
-        logger.warning(
-            "Non-shared experience missing user_id, failing run",
-            extra={"job_id": job_id, "experience_id": experience.id, "scope": experience.scope},
-        )
-        return None, "missing_user_id"
-
-    # Shared experience: use creator identity
-    user = experience.creator
-    if not user:
-        logger.warning(
-            "Shared experience has no creator, failing run", extra={"job_id": job_id, "experience_id": experience.id}
-        )
-        return None, "missing_creator"
-    if not user.is_active:
-        logger.warning(
-            "Shared experience creator is inactive, failing run",
-            extra={"job_id": job_id, "experience_id": experience.id, "creator_id": str(user.id)},
-        )
-        return None, "creator_inactive"
-    return user, None
-
-
 async def _handle_experience_execution_job(job) -> None:
     """Handle an LLM_WORKFLOW experience execution job.
 
-    Loads the Experience and User, instantiates ExperienceExecutor, and
-    runs the experience in non-streaming mode. Creates an ExperienceRun
-    record via the executor.
+    Delegates to ExperienceService.execute() which handles authorization,
+    experience loading, shared-experience identity resolution, and execution.
 
     Args:
         job: The job containing experience_id, user_id, and input_params
@@ -769,7 +724,6 @@ async def _handle_experience_execution_job(job) -> None:
         raise ValueError("Experience execution job missing experience_id in payload")
 
     user_id = job.payload.get("user_id")
-
     input_params = job.payload.get("input_params", {})
     run_id = job.payload.get("run_id")
 
@@ -786,35 +740,25 @@ async def _handle_experience_execution_job(job) -> None:
     session_local = get_async_session_local()
 
     async with session_local() as session:
-        # Load experience with steps eagerly loaded
-        exp_result = await session.execute(
-            select(Experience)
-            .options(selectinload(Experience.steps), selectinload(Experience.creator))
-            .where(Experience.id == experience_id)
-        )
-        experience = exp_result.scalar_one_or_none()
-
-        if not experience:
-            logger.warning(
-                "Experience not found, skipping",
-                extra={"job_id": job.id, "experience_id": experience_id},
-            )
-            await _fail_queued_run(session, run_id, "experience_not_found")
-            return
-
-        user, error = await _resolve_experience_user(session, experience, user_id, job.id)
-        if error:
-            await _fail_queued_run(session, run_id, error)
-            return
+        user = None
+        if user_id:
+            user_result = await session.execute(select(User).where(User.id == user_id))
+            user = user_result.scalar_one_or_none()
+            if not user:
+                logger.warning("User not found, skipping", extra={"job_id": job.id, "user_id": user_id})
+                await _fail_queued_run(session, run_id, "user_not_found")
+                return
+            if not user.is_active:  # type: ignore[truthy-bool]
+                logger.debug("User inactive, skipping", extra={"job_id": job.id, "user_id": user_id})
+                await _fail_queued_run(session, run_id, "user_inactive")
+                return
 
         try:
-            config_manager = get_config_manager()
-            executor = ExperienceExecutor(session, config_manager)
-            run = await executor.execute(
-                experience=experience,
-                user_id=user_id,
-                input_params=input_params,
+            service = ExperienceService(session)
+            run = await service.execute(
+                experience_id=experience_id,
                 current_user=user,
+                input_params=input_params,
                 run_id=run_id,
             )
 
@@ -835,7 +779,7 @@ async def _handle_experience_execution_job(job) -> None:
                 experience_id,
                 user_id,
             )
-            # Let the queue retry mechanism handle transient failures
+            await _fail_queued_run(session, run_id, "execution_error")
             raise
 
 

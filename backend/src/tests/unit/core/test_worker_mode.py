@@ -291,21 +291,25 @@ async def test_workers_enabled_starts_with_api():
         app = FastAPI()
 
 
-        # Mock the worker components to avoid actual worker startup
+        # Mock the worker components and expensive lifespan operations
         with patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
              patch('shu.core.worker.Worker') as mock_worker_class, \
-             patch('shu.main.init_db') as mock_init_db:
+             patch('shu.main.init_db') as mock_init_db, \
+             patch('shu.services.rag_processing_service.RAGProcessingService.get_instance'), \
+             patch('shu.services.scheduler_service.start_scheduler', new_callable=AsyncMock) as mock_scheduler, \
+             patch('shu.main._initialize_policy_cache', new_callable=AsyncMock):
 
             # Setup mocks
             mock_backend = AsyncMock()
             mock_get_backend.return_value = mock_backend
             mock_init_db.return_value = None
-
+            mock_scheduler_task = MagicMock()
+            mock_scheduler_task.done.return_value = True
+            mock_scheduler.return_value = mock_scheduler_task
 
             mock_worker = MagicMock()
             mock_worker.run = AsyncMock()
             mock_worker_class.return_value = mock_worker
-
 
             # Run lifespan startup
             async with lifespan(app):
@@ -350,16 +354,22 @@ async def test_workers_enabled_with_concurrency():
     mock_settings.experiences_scheduler_enabled = False
     mock_settings.attachment_cleanup_enabled = False
 
-    # Mock the worker components to avoid actual worker startup
+    # Mock the worker components and expensive lifespan operations
     with patch('shu.main.settings', mock_settings), \
          patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
          patch('shu.core.worker.Worker') as mock_worker_class, \
-         patch('shu.main.init_db') as mock_init_db:
+         patch('shu.main.init_db') as mock_init_db, \
+         patch('shu.services.rag_processing_service.RAGProcessingService.get_instance'), \
+         patch('shu.services.scheduler_service.start_scheduler', new_callable=AsyncMock) as mock_scheduler, \
+         patch('shu.main._initialize_policy_cache', new_callable=AsyncMock):
 
         # Setup mocks
         mock_backend = AsyncMock()
         mock_get_backend.return_value = mock_backend
         mock_init_db.return_value = None
+        mock_scheduler_task = MagicMock()
+        mock_scheduler_task.done.return_value = True
+        mock_scheduler.return_value = mock_scheduler_task
 
         mock_worker = MagicMock()
         mock_worker.run = AsyncMock()

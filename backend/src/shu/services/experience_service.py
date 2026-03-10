@@ -221,41 +221,30 @@ class ExperienceService:
         logger.info(f"Created experience '{experience.name}' with {len(experience_data.steps)} steps")
         return self._experience_to_response(experience)
 
-    async def run(
+    async def _load_and_resolve_identity(
         self,
         experience_id: str,
-        current_user: "User",
-        input_params: dict[str, Any] | None = None,
-    ) -> AsyncGenerator:
-        """Validate, authorize, and start streaming execution of an experience.
+        current_user: "User | None",
+    ) -> tuple[Experience, str | None, "User"]:
+        """Load an experience and resolve execution identity.
 
-        Performs visibility check, shared-experience authorization, identity
-        resolution, and returns the streaming event generator.
+        Loads the full ORM model, applies the shared-experience guard,
+        and resolves execution identity (creator for shared, caller otherwise).
 
         Args:
-            experience_id: Experience ID to run.
-            current_user: The authenticated user initiating the run.
-            input_params: Optional user-provided input parameters.
+            experience_id: The experience to load.
+            current_user: The calling user. Required for user-scoped experiences,
+                may be None for shared experiences (identity resolved from creator).
 
         Returns:
-            Async generator of ExperienceEvent objects for SSE streaming.
+            Tuple of (experience, run_user_id, run_current_user).
 
         Raises:
-            NotFoundError: If the experience does not exist or is not visible.
-            AuthorizationError: If the user lacks permission to run the experience.
+            NotFoundError: If the experience does not exist.
+            AuthorizationError: If the shared experience creator is inactive,
+                or if current_user is None for a non-shared experience.
 
         """
-        # Visibility + experience.read PBAC check (via get_experience)
-        experience_resp = await self.get_experience(experience_id=experience_id, user_id=str(current_user.id))
-        if not experience_resp:
-            raise NotFoundError(
-                f"Experience '{experience_id}' not found or access denied",
-                details={"code": "EXPERIENCE_NOT_FOUND"},
-            )
-
-        await enforce_pbac(str(current_user.id), "experience.run", f"experience:{experience_resp.slug}", self.db)
-
-        # Load full ORM model with relationships needed for execution
         result = await self.db.execute(
             select(Experience)
             .options(selectinload(Experience.steps), selectinload(Experience.prompt), selectinload(Experience.creator))
@@ -278,8 +267,42 @@ class ExperienceService:
             )
 
         # Resolve execution identity
-        run_user_id = None if is_shared else str(current_user.id)
-        run_current_user = experience.creator if is_shared else current_user
+        if is_shared:
+            run_user_id = None
+            run_current_user = experience.creator
+        else:
+            if not current_user:
+                raise AuthorizationError(
+                    "current_user is required for non-shared experiences",
+                    details={"code": "MISSING_CURRENT_USER"},
+                )
+            run_user_id = str(current_user.id)
+            run_current_user = current_user
+
+        return experience, run_user_id, run_current_user
+
+    async def run(
+        self,
+        experience_id: str,
+        current_user: "User",
+        input_params: dict[str, Any] | None = None,
+    ) -> AsyncGenerator:
+        """Validate, authorize, and start streaming execution of an experience.
+
+        User-facing entry point: enforces experience.run PBAC, then streams
+        execution events.
+
+        Returns:
+            Async generator of ExperienceEvent objects for SSE streaming.
+
+        Raises:
+            NotFoundError: If the experience does not exist or is not visible.
+            AuthorizationError: If the user lacks permission to run the experience.
+
+        """
+        experience, run_user_id, run_current_user = await self._load_and_resolve_identity(experience_id, current_user)
+
+        await enforce_pbac(str(current_user.id), "experience.run", f"experience:{experience.slug}", self.db)
 
         config_manager = get_config_manager()
         executor = ExperienceExecutor(self.db, config_manager)
@@ -288,6 +311,41 @@ class ExperienceService:
             user_id=run_user_id,
             input_params=input_params or {},
             current_user=run_current_user,
+        )
+
+    async def execute(
+        self,
+        experience_id: str,
+        current_user: "User | None" = None,
+        input_params: dict[str, Any] | None = None,
+        run_id: str | None = None,
+    ) -> "ExperienceRun":
+        """Authorize and execute an experience (non-streaming).
+
+        System-initiated entry point (workers/schedulers): enforces
+        experience.run PBAC but skips visibility checks (the scheduler
+        already selected the experience).
+
+        For shared experiences, current_user may be None — the execution
+        identity is resolved from the experience creator.
+
+        Raises:
+            NotFoundError: If the experience does not exist.
+            AuthorizationError: If the user lacks experience.run permission.
+
+        """
+        experience, run_user_id, run_current_user = await self._load_and_resolve_identity(experience_id, current_user)
+
+        await enforce_pbac(str(run_current_user.id), "experience.run", f"experience:{experience.slug}", self.db)
+
+        config_manager = get_config_manager()
+        executor = ExperienceExecutor(self.db, config_manager)
+        return await executor.execute(
+            experience=experience,
+            user_id=run_user_id,
+            input_params=input_params or {},
+            current_user=run_current_user,
+            run_id=run_id,
         )
 
     async def get_experience(self, experience_id: str, user_id: str) -> ExperienceResponse | None:
