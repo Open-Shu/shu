@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   Box,
   Card,
@@ -19,7 +20,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
   Chip,
   Alert,
   CircularProgress,
@@ -27,25 +27,18 @@ import {
 import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, Policy as PolicyIcon } from '@mui/icons-material';
 import { policyAPI, extractItemsFromResponse, extractPaginationFromResponse, formatError } from '../services/api';
 import PageHelpHeader from './PageHelpHeader';
-
-const POLICY_TEMPLATE = {
-  name: 'example-policy',
-  description: 'Allow Engineering group to read all experiences',
-  effect: 'allow',
-  is_active: true,
-  bindings: [{ actor_type: 'group', actor_id: '<group-id>' }],
-  statements: [{ actions: ['experience.read'], resources: ['experience:*'] }],
-};
+import PolicyEditorDialog from './PolicyEditorDialog';
 
 const PolicyAdmin = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [editorOpen, setEditorOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState(null);
-  const [jsonText, setJsonText] = useState('');
-  const [jsonError, setJsonError] = useState(null);
   const [error, setError] = useState(null);
+  const [saveError, setSaveError] = useState(null);
+  const [pendingPolicyId, setPendingPolicyId] = useState(() => searchParams.get('policyId'));
 
   const queryClient = useQueryClient();
 
@@ -67,25 +60,20 @@ const PolicyAdmin = () => {
   const createMutation = useMutation((data) => policyAPI.create(data), {
     onSuccess: () => {
       queryClient.invalidateQueries(['policies']);
-      setEditorOpen(false);
-      setJsonError(null);
-      setError(null);
+      closeEditor();
     },
     onError: (err) => {
-      setError(formatError(err));
+      setSaveError(formatError(err));
     },
   });
 
   const updateMutation = useMutation(({ id, data }) => policyAPI.update(id, data), {
     onSuccess: () => {
       queryClient.invalidateQueries(['policies']);
-      setEditorOpen(false);
-      setSelectedPolicy(null);
-      setJsonError(null);
-      setError(null);
+      closeEditor();
     },
     onError: (err) => {
-      setError(formatError(err));
+      setSaveError(formatError(err));
     },
   });
 
@@ -101,27 +89,42 @@ const PolicyAdmin = () => {
     },
   });
 
+  const clearPolicyParam = useCallback(() => {
+    setSearchParams({}, { replace: true });
+  }, [setSearchParams]);
+
+  const closeEditor = useCallback(() => {
+    setEditorOpen(false);
+    setSelectedPolicy(null);
+    setSaveError(null);
+    clearPolicyParam();
+  }, [clearPolicyParam]);
+
   const handleCreate = () => {
     setSelectedPolicy(null);
-    setJsonText(JSON.stringify(POLICY_TEMPLATE, null, 2));
-    setJsonError(null);
     setEditorOpen(true);
+    clearPolicyParam();
   };
 
-  const handleEdit = (policy) => {
-    setSelectedPolicy(policy);
-    const doc = {
-      name: policy.name,
-      description: policy.description,
-      effect: policy.effect,
-      is_active: policy.is_active,
-      bindings: policy.bindings || [],
-      statements: policy.statements || [],
-    };
-    setJsonText(JSON.stringify(doc, null, 2));
-    setJsonError(null);
-    setEditorOpen(true);
-  };
+  const handleEdit = useCallback(
+    (policy) => {
+      setSelectedPolicy(policy);
+      setEditorOpen(true);
+      setSearchParams({ policyId: policy.id }, { replace: true });
+    },
+    [setSearchParams]
+  );
+
+  useEffect(() => {
+    if (!pendingPolicyId || policies.length === 0) {
+      return;
+    }
+    const match = policies.find((p) => p.id === pendingPolicyId);
+    if (match) {
+      handleEdit(match);
+      setPendingPolicyId(null);
+    }
+  }, [pendingPolicyId, policies, handleEdit]);
 
   const handleDelete = (policy) => {
     setSelectedPolicy(policy);
@@ -134,20 +137,11 @@ const PolicyAdmin = () => {
     }
   };
 
-  const handleSave = () => {
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch {
-      setJsonError('Invalid JSON. Please check your syntax and try again.');
-      return;
-    }
-    setJsonError(null);
-
+  const handleSave = (data) => {
     if (selectedPolicy) {
-      updateMutation.mutate({ id: selectedPolicy.id, data: parsed });
+      updateMutation.mutate({ id: selectedPolicy.id, data });
     } else {
-      createMutation.mutate(parsed);
+      createMutation.mutate(data);
     }
   };
 
@@ -290,39 +284,14 @@ const PolicyAdmin = () => {
         </CardContent>
       </Card>
 
-      {/* Create/Edit JSON Editor Dialog */}
-      <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>{selectedPolicy ? 'Edit Policy' : 'Create Policy'}</DialogTitle>
-        <DialogContent>
-          {jsonError && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {jsonError}
-            </Alert>
-          )}
-          <TextField
-            autoFocus
-            fullWidth
-            multiline
-            rows={20}
-            variant="outlined"
-            value={jsonText}
-            onChange={(e) => {
-              setJsonText(e.target.value);
-              setJsonError(null);
-            }}
-            InputProps={{
-              sx: { fontFamily: 'monospace', fontSize: '0.875rem' },
-            }}
-            sx={{ mt: 1 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
-          <Button onClick={handleSave} variant="contained" disabled={isSaving}>
-            {isSaving ? <CircularProgress size={20} /> : 'Save'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <PolicyEditorDialog
+        open={editorOpen}
+        onClose={closeEditor}
+        policy={selectedPolicy}
+        onSave={handleSave}
+        isSaving={isSaving}
+        saveError={saveError}
+      />
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="sm">
