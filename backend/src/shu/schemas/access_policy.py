@@ -135,3 +135,16 @@ class EffectivePoliciesResponse(BaseModel):
 
     user_id: str = Field(..., description="User ID the policies are resolved for")
     policies: list[PolicyResponse] = Field(..., description="All effective policies for the user")
+
+
+class PolicyActionOption(BaseModel):
+    """A known action that can be used in policy statements."""
+
+    value: str = Field(..., description="Action string (e.g., 'experience.read')")
+    label: str = Field(..., description="Human-readable description")
+
+
+class PolicyActionsResponse(BaseModel):
+    """Available actions for building policy statements."""
+
+    actions: list[PolicyActionOption] = Field(..., description="Known actions")

@@ -24,7 +24,15 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { Delete as DeleteIcon, Add as AddIcon } from '@mui/icons-material';
-import { authAPI, groupsAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
+import {
+  authAPI,
+  groupsAPI,
+  policyAPI,
+  experiencesAPI,
+  extractDataFromResponse,
+  extractItemsFromResponse,
+} from '../services/api';
+import { pluginsAPI } from '../services/pluginsApi';
 import { resolveUserId } from '../utils/userHelpers';
 
 const EMPTY_FORM = {
@@ -87,7 +95,7 @@ const BindingRow = ({ binding, index, onUpdate, onRemove, userOptions, groupOpti
   </Paper>
 );
 
-const StatementRow = ({ statement, index, onUpdate, onRemove }) => (
+const StatementRow = ({ statement, index, onUpdate, onRemove, actionOptions, resourceOptions }) => (
   <Paper variant="outlined" sx={{ p: 2 }}>
     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
       <Typography variant="body2" fontWeight="medium">
@@ -102,26 +110,19 @@ const StatementRow = ({ statement, index, onUpdate, onRemove }) => (
         multiple
         freeSolo
         size="small"
-        options={[]}
+        options={actionOptions.filter((o) => !statement.actions.includes(o))}
         value={statement.actions}
         onChange={(_, newVal) => onUpdate(index, { actions: newVal })}
         renderTags={(value, getTagProps) =>
           value.map((action, i) => <Chip key={action} label={action} size="small" {...getTagProps({ index: i })} />)
         }
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label="Actions"
-            placeholder="Type and press Enter"
-            helperText="e.g. experience.read, plugin.execute"
-          />
-        )}
+        renderInput={(params) => <TextField {...params} label="Actions" placeholder="Select or type a custom action" />}
       />
       <Autocomplete
         multiple
         freeSolo
         size="small"
-        options={[]}
+        options={resourceOptions.filter((o) => !statement.resources.includes(o))}
         value={statement.resources}
         onChange={(_, newVal) => onUpdate(index, { resources: newVal })}
         renderTags={(value, getTagProps) =>
@@ -130,12 +131,7 @@ const StatementRow = ({ statement, index, onUpdate, onRemove }) => (
           ))
         }
         renderInput={(params) => (
-          <TextField
-            {...params}
-            label="Resources"
-            placeholder="Type and press Enter"
-            helperText="e.g. experience:*, plugin:shu_gmail_*"
-          />
+          <TextField {...params} label="Resources" placeholder="Select or type a custom resource" />
         )}
       />
     </Stack>
@@ -150,6 +146,9 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
 
   const { data: usersResponse } = useQuery('users', authAPI.getUsers, { enabled: open });
   const { data: groupsResponse } = useQuery('groups', groupsAPI.list, { enabled: open });
+  const { data: actionsResponse } = useQuery('policyActions', policyAPI.actions, { enabled: open });
+  const { data: experiencesResponse } = useQuery('experiences', () => experiencesAPI.list(), { enabled: open });
+  const { data: pluginsResponse } = useQuery(['plugins', 'list'], pluginsAPI.list, { enabled: open });
 
   const userOptions = useMemo(() => {
     const users = extractDataFromResponse(usersResponse) || [];
@@ -163,6 +162,17 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
     const groups = extractItemsFromResponse(groupsResponse) || [];
     return groups.map((g) => ({ label: g.name, value: g.id }));
   }, [groupsResponse]);
+
+  const actionOptions = useMemo(() => {
+    const data = extractDataFromResponse(actionsResponse);
+    return (data?.actions || []).map((a) => a.value);
+  }, [actionsResponse]);
+
+  const resourceOptions = useMemo(() => {
+    const experiences = extractItemsFromResponse(experiencesResponse) || [];
+    const plugins = extractDataFromResponse(pluginsResponse) || [];
+    return [...experiences.map((e) => `experience:${e.slug || e.id}`), ...plugins.map((p) => `plugin:${p.name}`)];
+  }, [experiencesResponse, pluginsResponse]);
 
   useEffect(() => {
     if (!open) {
@@ -262,6 +272,9 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
         </Button>
       </DialogTitle>
       <DialogContent dividers>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Policy changes can take up to 5 minutes to propagate.
+        </Alert>
         {saveError && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {saveError}
@@ -366,6 +379,8 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
                     index={i}
                     onUpdate={updateStatement}
                     onRemove={removeStatement}
+                    actionOptions={actionOptions}
+                    resourceOptions={resourceOptions}
                   />
                 ))}
               </Stack>
