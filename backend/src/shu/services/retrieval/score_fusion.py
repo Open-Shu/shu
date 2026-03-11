@@ -37,7 +37,7 @@ DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
 MAX_SNIPPET_LENGTH = 200
 
 
-def _ensure_uuid(val: "UUID | str") -> UUID:
+def _ensure_uuid(val: UUID | str) -> UUID:
     """Convert a value to UUID, handling both string and UUID inputs.
 
     asyncpg returns UUID columns as uuid.UUID objects, while some test mocks
@@ -249,7 +249,7 @@ class ScoreFusionService:
 
     async def _load_document_metadata(
         self, doc_ids: list[UUID], db: AsyncSession
-    ) -> dict[UUID, tuple[str, str, str | None, str | None, "datetime | None"]]:
+    ) -> dict[UUID, tuple[str, str, str | None, str | None, datetime | None]]:
         """Load document metadata for a list of document IDs.
 
         Args:

@@ -70,6 +70,7 @@ class ProfilingOrchestrator:
                 chunk_profiles=[],
                 profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=False,
+                skipped=True,
                 error=f"Document {document_id} not found",
             )
 

@@ -877,6 +877,13 @@ async def _handle_profiling_job(job) -> None:
 
         result = await orchestrator.run_for_document(document_id)
 
+        if result.skipped:
+            logger.info(
+                "Profiling job skipped - precondition not met",
+                extra={"job_id": job.id, "document_id": document_id, "reason": result.error},
+            )
+            return
+
         if result.success:
             # Set document pipeline status to PROCESSED (final state)
             # The orchestrator already updated profiling_status to "complete"

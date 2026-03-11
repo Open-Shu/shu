@@ -131,6 +131,7 @@ class ProfilingResult(BaseModel):
     chunk_profiles: list[ChunkProfileResult] = Field(default_factory=list, description="Profiles for each chunk")
     profiling_mode: ProfilingMode = Field(..., description="How the document was profiled (always CHUNK_AGGREGATION)")
     success: bool = Field(True, description="Overall success status")
+    skipped: bool = Field(False, description="True if job had nothing to do (e.g., document not found)")
     error: str | None = Field(None, description="Error message if failed")
     tokens_used: int = Field(0, description="Total tokens used for profiling")
     duration_ms: int = Field(0, description="Total profiling duration in milliseconds")
