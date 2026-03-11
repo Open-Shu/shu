@@ -743,6 +743,12 @@ class QueryService:
             # Verify knowledge base exists
             knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
 
+            # Block vector search on stale or re-embedding KBs
+            if knowledge_base.embedding_status not in ("current",):
+                from ..core.exceptions import KnowledgeBaseStaleEmbeddingsError
+
+                raise KnowledgeBaseStaleEmbeddingsError(knowledge_base_id, knowledge_base.embedding_status)
+
             # Extract parameters from request
             query = request.query
             limit = request.limit
@@ -756,23 +762,46 @@ class QueryService:
                 f"Similarity search preprocessing: original='{query[:100]}...' -> processed='{processed['similarity_query'][:100]}...' -> terms={len(processed['keyword_terms'])} terms"
             )
 
-            # Generate embedding for the processed query using the knowledge base's embedding model
-            from ..services.rag_processing_service import RAGProcessingService
+            # Generate embedding for the processed query
+            from ..core.embedding_service import get_embedding_service
 
-            # Use the knowledge base's embedding model to ensure consistency
-            rag_service = RAGProcessingService.get_instance(embedding_model=str(knowledge_base.embedding_model))
-            query_embedding = rag_service.model.encode([processed["similarity_query"]])[0].tolist()
+            embedding_service = await get_embedding_service()
+            query_embedding = await embedding_service.embed_query(processed["similarity_query"])
 
-            # Perform vector similarity search using pgvector
-            from pgvector.sqlalchemy import Vector
-            from sqlalchemy import bindparam, text
+            # Perform vector similarity search via VectorStore
+            from ..core.vector_store import get_vector_store
 
-            # Use cosine distance for similarity (pgvector's <-> operator)
-            # Lower distance = higher similarity
-            # Note: Cosine distance ranges from 0 (identical) to 2 (opposite)
-            # We convert to similarity score: 1 - distance (so 1 = identical, -1 = opposite)
-            # Return multiple chunks per document for better context coverage
-            similarity_query = text("""
+            vector_store = await get_vector_store()
+            search_results = await vector_store.search(
+                "chunks",
+                query_vector=query_embedding,
+                db=self.db,
+                limit=limit,
+                threshold=threshold,
+                filters={"knowledge_base_id": knowledge_base_id},
+                extra_where=("(chunk_metadata->>'chunk_type' != 'title' " "OR chunk_metadata->>'chunk_type' IS NULL)"),
+            )
+
+            if not search_results:
+                from ..schemas.query import SimilaritySearchResponse
+
+                return SimilaritySearchResponse(
+                    results=[],
+                    total_results=0,
+                    query=query,
+                    threshold=threshold,
+                    execution_time=0.0,
+                    embedding_model=str(knowledge_base.embedding_model),
+                ).model_dump()
+
+            # Build score lookup from vector results
+            score_map = {r.id: r.score for r in search_results}
+            chunk_ids = list(score_map.keys())
+
+            # Load full chunk + document metadata for matched chunks
+            from sqlalchemy import text
+
+            metadata_query = text("""
                 SELECT
                     dc.id,
                     dc.document_id,
@@ -792,49 +821,18 @@ class QueryService:
                     d.source_url,
                     d.file_type,
                     d.source_type,
-                    GREATEST(0, 1 - (dc.embedding <=> :query_embedding)) as similarity_score,
                     (SELECT COUNT(*) FROM document_chunks dc2
                      WHERE dc2.document_id = dc.document_id
                      AND dc2.knowledge_base_id = dc.knowledge_base_id
-                     AND (dc2.chunk_metadata->>'chunk_type' != 'title' OR dc2.chunk_metadata->>'chunk_type' IS NULL)
+                     AND (dc2.chunk_metadata->>'chunk_type' != 'title'
+                          OR dc2.chunk_metadata->>'chunk_type' IS NULL)
                     ) as total_content_chunks
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
-                WHERE dc.knowledge_base_id = :kb_id
-                AND dc.embedding IS NOT NULL
-                AND (dc.chunk_metadata->>'chunk_type' != 'title' OR dc.chunk_metadata->>'chunk_type' IS NULL)
-                AND 1 - (dc.embedding <=> :query_embedding) >= :threshold
-                ORDER BY dc.embedding <=> :query_embedding
-                LIMIT :limit
+                WHERE dc.id = ANY(:chunk_ids)
             """)
-
-            # Bind the query_embedding as a Vector type
-            similarity_query = similarity_query.bindparams(bindparam("query_embedding", type_=Vector(384)))
-
-            result = await self.db.execute(
-                similarity_query,
-                {
-                    "kb_id": knowledge_base_id,
-                    "query_embedding": query_embedding,
-                    "threshold": threshold,
-                    "limit": limit,
-                },
-            )
-
+            result = await self.db.execute(metadata_query, {"chunk_ids": chunk_ids})
             chunks = result.fetchall()
-
-            if not chunks:
-                # Return empty results if no matches found
-                from ..schemas.query import SimilaritySearchResponse
-
-                return SimilaritySearchResponse(
-                    results=[],
-                    total_results=0,
-                    query=query,
-                    threshold=threshold,
-                    execution_time=0.0,
-                    embedding_model=str(knowledge_base.embedding_model),
-                ).model_dump()
 
             # Convert results to DocumentChunkWithScore objects
             # De-duplicate documents while preserving top-k chunks per document
@@ -855,11 +853,9 @@ class QueryService:
 
             # Flatten results, maintaining order by similarity score
             results = []
-            # Document deduplication: Limit chunks per document based on configuration
-            # This prevents the same document from appearing multiple times while allowing multiple relevant chunks
             for _, doc_chunks in document_chunks.items():
                 # Sort chunks within each document by similarity score (descending)
-                doc_chunks.sort(key=lambda x: float(x.similarity_score), reverse=True)
+                doc_chunks.sort(key=lambda x: score_map.get(x.id, 0.0), reverse=True)
                 # Add up to max_chunks_per_doc chunks for this document
                 chunks_to_add = doc_chunks[:max_chunks_per_doc]
                 for chunk in chunks_to_add:
@@ -874,11 +870,11 @@ class QueryService:
                         "token_count": chunk.token_count,
                         "start_char": chunk.start_char,
                         "end_char": chunk.end_char,
-                        "has_embedding": True,  # Since we filtered for embedding IS NOT NULL
+                        "has_embedding": True,
                         "embedding_model": chunk.embedding_model,
                         "embedding_created_at": chunk.embedding_created_at,
                         "created_at": chunk.created_at,
-                        "similarity_score": float(chunk.similarity_score),
+                        "similarity_score": score_map.get(chunk.id, 0.0),
                         "document_title": chunk.document_title or "Unknown Document",
                         "source_id": chunk.source_id,
                         "source_url": chunk.source_url,
@@ -887,9 +883,11 @@ class QueryService:
                         "total_chunks": getattr(chunk, "total_content_chunks", 0),
                     }
 
-                    # Create proper DocumentChunkWithScore object
                     chunk_obj = DocumentChunkWithScore(**chunk_data)
                     results.append(chunk_obj)
+
+            # Sort final results by score descending (chunks may be interleaved after grouping)
+            results.sort(key=lambda x: x.similarity_score, reverse=True)
 
             from ..schemas.query import SimilaritySearchResponse
 
@@ -1682,13 +1680,13 @@ class QueryService:
             # Score each chunk against the original query using existing logic
             scored_chunks = []
 
-            # Get query embedding for similarity scoring using the knowledge base's embedding model
+            # Get query embedding for similarity scoring
             from scipy.spatial.distance import cosine
 
-            from ..services.rag_processing_service import RAGProcessingService
+            from ..core.embedding_service import get_embedding_service
 
-            rag_service = RAGProcessingService.get_instance(embedding_model=str(knowledge_base.embedding_model))
-            query_embedding = rag_service.model.encode([query])[0]
+            embedding_service = await get_embedding_service()
+            query_embedding = await embedding_service.embed_query(query)
 
             for chunk in chunks:
                 # Calculate similarity score
@@ -1756,270 +1754,8 @@ class QueryService:
 
         return matches / total_terms if total_terms > 0 else 0.0
 
-    # TODO: Refactor this function. It's too complex (number of branches and statements).
     @measure_execution_time
-    async def title_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:  # noqa: PLR0915
-        """Perform dedicated title search with highest priority scoring.
-        This method specifically searches document titles and gives them maximum weight.
-        For title-matched documents, finds the most relevant chunks within each document.
-        """
-        try:
-            # Verify knowledge base exists
-            knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
-
-            # Preprocess query using unified preprocessing
-            processed = self.preprocess_query(query)
-
-            # Log the preprocessing results for debugging
-            logger.info(
-                f"Title search preprocessing: original='{query}' -> processed='{processed['similarity_query']}' -> terms={processed['keyword_terms']}"
-            )
-
-            # Build SQLAlchemy conditions for title-focused search (whole word matches only)
-
-            # Filter out stop words and short terms for title matching
-            meaningful_terms = [
-                term
-                for term in processed["keyword_terms"]
-                if len(term) >= 3
-                and term.lower()
-                not in {
-                    "the",
-                    "and",
-                    "for",
-                    "are",
-                    "but",
-                    "not",
-                    "you",
-                    "all",
-                    "can",
-                    "had",
-                    "her",
-                    "was",
-                    "one",
-                    "our",
-                    "out",
-                    "day",
-                    "get",
-                    "has",
-                    "him",
-                    "his",
-                    "how",
-                    "its",
-                    "may",
-                    "new",
-                    "now",
-                    "old",
-                    "see",
-                    "two",
-                    "who",
-                    "boy",
-                    "did",
-                    "she",
-                    "use",
-                    "way",
-                    "what",
-                    "when",
-                    "with",
-                    "have",
-                    "this",
-                    "will",
-                    "your",
-                    "from",
-                    "they",
-                    "know",
-                    "want",
-                    "been",
-                    "good",
-                    "much",
-                    "some",
-                    "time",
-                    "very",
-                    "come",
-                    "here",
-                    "just",
-                    "like",
-                    "long",
-                    "make",
-                    "many",
-                    "over",
-                    "such",
-                    "take",
-                    "than",
-                    "them",
-                    "well",
-                    "were",
-                }
-            ]
-
-            # Build parameterized query for title search (SECURITY FIX)
-            # Create individual parameters for each term to avoid SQL injection
-            params = {"kb_id": knowledge_base_id, "limit": limit}
-            where_conditions = []
-
-            for i, term in enumerate(meaningful_terms):
-                # Each term gets its own parameter for safe binding
-                title_param = f"title_pattern_{i}"
-                params[title_param] = f"\\m{re.escape(term)}\\M"
-                where_conditions.append(f"d.title ~* :{title_param}")
-
-            # Include literal filename matches (e.g., ModernChat.js, foo.py)
-            for j, fname in enumerate(processed.get("filename_terms", [])):
-                p = f"fname_like_{j}"
-                params[p] = f"%{fname}%"
-                where_conditions.append(f"d.title ILIKE :{p}")
-
-            # Build the WHERE clause safely - all parameters are pre-defined
-            if where_conditions:
-                where_clause = " OR ".join(where_conditions)
-            elif len(query.strip()) >= 3:
-                # Fallback for exact query match if no meaningful terms
-                params["fallback_pattern"] = f"\\m{re.escape(query.strip())}\\M"
-                where_clause = "d.title ~* :fallback_pattern"
-            else:
-                # No valid search terms, return empty results
-                from datetime import datetime
-
-                from ..schemas.query import QueryResponse, QueryType
-
-                response = QueryResponse(
-                    results=[],
-                    total_results=0,
-                    query=query,
-                    query_type=QueryType.KEYWORD,
-                    execution_time=0.0,
-                    similarity_threshold=0.0,
-                    embedding_model=str(knowledge_base.embedding_model),
-                    processed_at=datetime.now(UTC),
-                )
-                return response.model_dump()
-
-            # Build exact pattern parameter
-            params["exact_pattern"] = f"\\m{re.escape(query.strip())}\\M"
-
-            # Execute parameterized query (SECURE - all user input is parameterized)
-            from sqlalchemy import text
-
-            title_query = text(f"""
-                SELECT
-                    dc.id, dc.document_id, dc.knowledge_base_id, dc.chunk_index,
-                    dc.content, dc.char_count, dc.word_count, dc.token_count,
-                    dc.start_char, dc.end_char, dc.embedding_model, dc.embedding_created_at,
-                    dc.created_at, d.title as document_title, d.source_id, d.source_url,
-                    d.file_type, d.source_type, dc.chunk_metadata,
-                    CASE
-                        WHEN d.title ~* :exact_pattern THEN 10.0  -- Highest score for exact title matches
-                        WHEN ({where_clause}) THEN 8.0  -- High score for partial title matches
-                        WHEN (dc.chunk_metadata->>'chunk_type' = 'title') THEN 6.0  -- High score for title chunks
-                        ELSE 1.0  -- Lower score for content matches
-                    END as title_score
-                FROM document_chunks dc
-                JOIN documents d ON dc.document_id = d.id
-                WHERE dc.knowledge_base_id = :kb_id
-                AND ({where_clause})
-                ORDER BY title_score DESC, d.title, dc.chunk_index
-                LIMIT :limit
-            """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not
-            # possible here
-
-            result = await self.db.execute(title_query, params)
-            chunks = result.fetchall()
-
-            if not chunks:
-                # Return empty results if no matches found
-                from datetime import datetime
-
-                from ..schemas.query import QueryResponse, QueryType
-
-                response = QueryResponse(
-                    results=[],
-                    total_results=0,
-                    query=query,
-                    query_type=QueryType.KEYWORD,  # Use KEYWORD type for title search
-                    execution_time=0.0,
-                    similarity_threshold=0.0,
-                    embedding_model=str(knowledge_base.embedding_model),
-                    processed_at=datetime.now(UTC),
-                )
-                return response.model_dump()
-
-            # For title-matched documents, get the most relevant chunks within each document
-            from datetime import datetime
-
-            from ..schemas.query import QueryResponse, QueryResult, QueryType
-
-            # Group results by document to get best chunks per document
-            documents_found = {}
-            for chunk in chunks:
-                doc_id = chunk.document_id
-                if doc_id not in documents_found:
-                    documents_found[doc_id] = {
-                        "title_score": float(chunk.title_score),
-                        "document_title": chunk.document_title or "Unknown Document",
-                    }
-                else:
-                    # Keep the highest title score for this document
-                    documents_found[doc_id]["title_score"] = max(
-                        documents_found[doc_id]["title_score"], float(chunk.title_score)
-                    )
-
-            # Get the best chunks for each title-matched document
-            query_results = []
-            max_chunks_per_doc = 3  # Get top 3 chunks per title-matched document
-
-            for doc_id, doc_info in documents_found.items():
-                # Get relevant chunks for this document
-                doc_chunks = await self._get_title_match_chunks(
-                    document_id=doc_id,
-                    query=query,
-                    max_chunks=max_chunks_per_doc,
-                    knowledge_base_id=knowledge_base_id,
-                    knowledge_base=knowledge_base,
-                )
-
-                # Convert to QueryResult objects with title boost
-                for chunk_data in doc_chunks:
-                    # Boost the score based on title match quality
-                    title_boost = (doc_info["title_score"] / 10.0) * 0.3  # Normalize and apply boost
-                    boosted_score = chunk_data["similarity_score"] + title_boost
-
-                    query_result = QueryResult(
-                        chunk_id=chunk_data["chunk_id"],
-                        document_id=chunk_data["document_id"],
-                        document_title=chunk_data["document_title"],
-                        content=chunk_data["content"],
-                        similarity_score=min(1.0, boosted_score),  # Cap at 1.0
-                        chunk_index=chunk_data["chunk_index"],
-                        start_char=chunk_data["start_char"],
-                        end_char=chunk_data["end_char"],
-                        file_type=chunk_data["file_type"],
-                        source_url=chunk_data["source_url"],
-                        source_id=chunk_data["source_id"],
-                        created_at=chunk_data["created_at"],
-                    )
-                    query_results.append(query_result)
-
-            # Sort by boosted score and limit results
-            query_results.sort(key=lambda x: x.similarity_score, reverse=True)
-            query_results = query_results[:limit]
-
-            response = QueryResponse(
-                results=query_results,
-                total_results=len(query_results),
-                query=query,
-                query_type=QueryType.KEYWORD,  # Use KEYWORD type for title search
-                execution_time=0.0,  # Will be set by decorator
-                similarity_threshold=0.0,
-                embedding_model=str(knowledge_base.embedding_model),
-                processed_at=datetime.now(UTC),
-            )
-            return response.model_dump()
-        except Exception as e:
-            logger.error(f"Failed to perform title search: {e}", exc_info=True)
-            raise ShuException(f"Failed to perform title search: {e!s}", "TITLE_SEARCH_ERROR")
-
-    @measure_execution_time
-    async def hybrid_search(
+    async def hybrid_search(  # noqa: PLR0915
         self, knowledge_base_id: str, query: str, limit: int = 10, threshold: float = 0.0
     ) -> dict[str, Any]:
         """Perform hybrid search (combination of similarity and keyword).
@@ -2047,18 +1783,27 @@ class QueryService:
                 f"Hybrid search: query='{query[:100]}...' kb_id={knowledge_base_id} limit={limit} threshold={threshold}"
             )
 
-            # Get similarity search results
-            similarity_request = SimilaritySearchRequest(
-                query=query,
-                limit=limit,
-                threshold=threshold,
-                include_embeddings=False,
-                document_ids=None,
-                file_types=None,
-                created_after=None,
-                created_before=None,
-            )
-            similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+            # Get similarity search results (may fail if KB has stale embeddings)
+            similarity_response = None
+            try:
+                similarity_request = SimilaritySearchRequest(
+                    query=query,
+                    limit=limit,
+                    threshold=threshold,
+                    include_embeddings=False,
+                    document_ids=None,
+                    file_types=None,
+                    created_after=None,
+                    created_before=None,
+                )
+                similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+            except ShuException as e:
+                if e.error_code == "KNOWLEDGE_BASE_STALE_EMBEDDINGS":
+                    logger.warning(
+                        f"Hybrid search falling back to keyword-only: KB {knowledge_base_id} has stale embeddings"
+                    )
+                else:
+                    raise
 
             # Get keyword search results (this handles stop word filtering correctly)
             keyword_response = await self.keyword_search(knowledge_base_id, query, limit)
@@ -2067,6 +1812,24 @@ class QueryService:
             logger.info(
                 f"Hybrid search keyword results: total={keyword_response.get('total_results', 0)}, top_docs={[r.get('document_title', 'unknown')[:50] for r in keyword_response.get('results', [])[:3]]}"
             )
+
+            # If similarity search was skipped (stale KB), return keyword-only results
+            if similarity_response is None:
+                from datetime import datetime
+
+                from ..schemas.query import QueryResponse, QueryType
+
+                response = QueryResponse(
+                    results=keyword_response["results"],
+                    total_results=keyword_response["total_results"],
+                    query=query,
+                    query_type=QueryType.HYBRID,
+                    execution_time=0.0,
+                    similarity_threshold=threshold,
+                    embedding_model=str(knowledge_base.embedding_model),
+                    processed_at=datetime.now(UTC),
+                )
+                return response.model_dump()
 
             # If keyword search returned empty results due to stop words, return only similarity results
             if keyword_response["total_results"] == 0:
@@ -2151,16 +1914,12 @@ class QueryService:
             for _, doc_results in document_results.items():
                 doc_results.sort(key=lambda x: x["combined_score"], reverse=True)
 
-            # Flatten results, maintaining order by combined score
+            # Flatten results with per-document cap, then re-sort globally
             sorted_results = []
-            # Document deduplication: Limit chunks per document based on configuration
-            # This prevents the same document from appearing multiple times while allowing multiple relevant chunks
             for _, doc_results in document_results.items():
-                # Add up to max_chunks_per_doc results for this document
-                results_to_add = doc_results[:max_chunks_per_doc]
-                sorted_results.extend(results_to_add)
+                sorted_results.extend(doc_results[:max_chunks_per_doc])
 
-            # Apply limit
+            sorted_results.sort(key=lambda x: x["combined_score"], reverse=True)
             sorted_results = sorted_results[:limit]
 
             # Convert to QueryResponse format

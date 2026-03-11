@@ -64,6 +64,10 @@ class WorkloadType(Enum):
             Examples: Generating document summaries, extracting metadata,
             analyzing document content, creating document profiles.
 
+        RE_EMBEDDING: Re-embedding stale knowledge bases.
+            Examples: Re-generating embeddings for all chunks, synopses,
+            and queries in a KB after the system embedding model changes.
+
     Example:
         # Scale ingestion workers independently
         # docker-compose.yml:
@@ -83,6 +87,7 @@ class WorkloadType(Enum):
     LLM_WORKFLOW = "llm_workflow"
     MAINTENANCE = "maintenance"
     PROFILING = "profiling"
+    RE_EMBEDDING = "re_embedding"
 
     @property
     def queue_name(self) -> str:

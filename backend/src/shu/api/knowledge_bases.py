@@ -83,6 +83,8 @@ async def list_knowledge_bases(
                     "chunk_size": kb.chunk_size,
                     "chunk_overlap": kb.chunk_overlap,
                     "status": kb.status or "active",
+                    "embedding_status": kb.embedding_status or "current",
+                    "re_embedding_progress": kb.re_embedding_progress,
                     "document_count": kb.document_count,
                     "total_chunks": kb.total_chunks,
                     "last_sync_at": kb.last_sync_at.isoformat() if kb.last_sync_at is not None else None,
@@ -986,3 +988,77 @@ async def upload_documents(
             "results": results,
         }
     )
+
+
+@router.post(
+    "/{kb_id}/re-embed",
+    summary="Trigger re-embedding for a knowledge base",
+    description="Enqueue a re-embedding job for a KB whose embeddings are stale.",
+)
+async def trigger_re_embedding(
+    kb_id: str = Path(..., description="Knowledge base ID"),
+    current_user: User = Depends(require_kb_manage_default),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger re-embedding of all vectors in a knowledge base.
+
+    The KB must have embedding_status='stale'. The job re-embeds all chunks,
+    synopses, and queries using the currently configured embedding model.
+    """
+    from ..core.embedding_service import get_embedding_service
+    from ..core.queue_backend import get_queue_backend
+
+    try:
+        embedding_service = await get_embedding_service()
+        queue_backend = await get_queue_backend()
+
+        service = KnowledgeBaseService(db)
+        result = await service.trigger_re_embedding(
+            kb_id,
+            embedding_service=embedding_service,
+            queue_backend=queue_backend,
+        )
+        return ShuResponse.success(result)
+
+    except ShuException as e:
+        logger.error("API: Failed to trigger re-embedding", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to trigger re-embedding", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.get(
+    "/{kb_id}/re-embed/status",
+    summary="Get re-embedding status",
+    description="Get the current embedding status and re-embedding progress for a KB.",
+)
+async def get_re_embedding_status(
+    kb_id: str = Path(..., description="Knowledge base ID"),
+    current_user: User = Depends(require_kb_query_default),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the embedding status and re-embedding progress for a knowledge base."""
+    from ..models.knowledge_base import KnowledgeBase
+
+    try:
+        kb = await db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            from ..core.exceptions import KnowledgeBaseNotFoundError
+
+            raise KnowledgeBaseNotFoundError(kb_id)
+
+        return ShuResponse.success(
+            {
+                "knowledge_base_id": kb_id,
+                "embedding_status": kb.embedding_status,
+                "embedding_model": kb.embedding_model,
+                "re_embedding_progress": kb.re_embedding_progress,
+            }
+        )
+
+    except ShuException as e:
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to get re-embedding status", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)

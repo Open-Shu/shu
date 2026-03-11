@@ -17,7 +17,7 @@ try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
     # Fallback for development without pgvector
-    def Vector(dim):  # noqa: N802
+    def Vector(dim=None):  # noqa: N802
         return Text
 
 
@@ -133,7 +133,7 @@ class Document(BaseModel):
     # Shu RAG Document Profile (SHU-342)
     # Synopsis: One-paragraph summary for document-level retrieval
     synopsis = Column(Text, nullable=True)
-    synopsis_embedding = Column(Vector(384), nullable=True)
+    synopsis_embedding = Column(Vector(), nullable=True)
 
     # Document type classification (narrative, transactional, technical, conversational)
     document_type = Column(String(50), nullable=True)
@@ -345,8 +345,8 @@ class DocumentChunk(BaseModel):
     chunk_index = Column(Integer, nullable=False)  # Position within the document
     content = Column(Text, nullable=False)  # Chunk text content
 
-    # Vector embedding (384 dimensions for all-MiniLM-L6-v2)
-    embedding = Column(Vector(384), nullable=True)
+    # Vector embedding — dimensionless; dimension derived from embedding model at runtime
+    embedding = Column(Vector(), nullable=True)
 
     # Chunk metadata
     char_count = Column(Integer, nullable=False)
@@ -440,43 +440,6 @@ class DocumentChunk(BaseModel):
             return self.content
         return self.content[:max_chars] + "..."
 
-    def calculate_similarity_score(self, query_embedding: list[float]) -> float:
-        """Calculate cosine similarity with query embedding.
-
-        Note: In production, similarity search is done at the database level
-        with pgvector for efficiency. This method exists for testing and
-        fallback scenarios.
-
-        Raises:
-            ValueError: If embedding dimensions don't match (likely due to
-                embedding model change in configuration).
-
-        """
-        if not self.embedding or not query_embedding:
-            return 0.0
-
-        # Validate dimension match - mismatched dimensions indicate embedding
-        # model configuration change, which would produce incorrect results
-        if len(self.embedding) != len(query_embedding):
-            raise ValueError(
-                f"Embedding dimension mismatch: chunk has {len(self.embedding)} dimensions, "
-                f"query has {len(query_embedding)} dimensions. This usually indicates the "
-                "embedding model was changed after documents were indexed. Re-index the "
-                "knowledge base to fix this."
-            )
-
-        # Simple cosine similarity calculation
-        import math
-
-        dot_product = sum(a * b for a, b in zip(self.embedding, query_embedding, strict=False))
-        magnitude_a = math.sqrt(sum(a * a for a in self.embedding))
-        magnitude_b = math.sqrt(sum(b * b for b in query_embedding))
-
-        if magnitude_a == 0 or magnitude_b == 0:
-            return 0.0
-
-        return dot_product / (magnitude_a * magnitude_b)
-
     @classmethod
     def create_from_text(
         cls,
@@ -532,8 +495,8 @@ class DocumentQuery(BaseModel):
     # Query content
     query_text = Column(Text, nullable=False)
 
-    # Vector embedding for similarity search (384 dimensions for MiniLM)
-    query_embedding = Column(Vector(384), nullable=True)
+    # Vector embedding for similarity search — dimensionless; dimension derived from embedding model at runtime
+    query_embedding = Column(Vector(), nullable=True)
 
     # Relationships
     document = relationship("Document", back_populates="queries")

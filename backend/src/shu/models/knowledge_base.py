@@ -11,6 +11,8 @@ from sqlalchemy import JSON, Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
 
+from shu.core.config import get_settings_instance
+
 from .base import BaseModel
 
 
@@ -32,7 +34,9 @@ class KnowledgeBase(BaseModel):
     last_sync_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # Processing configuration
-    embedding_model = Column(String(100), default="sentence-transformers/all-MiniLM-L6-v2", nullable=False)
+    embedding_model = Column(
+        String(100), default=lambda: get_settings_instance().default_embedding_model, nullable=False
+    )
     chunk_size = Column(Integer, default=1000, nullable=False)
     chunk_overlap = Column(Integer, default=200, nullable=False)
 
@@ -68,6 +72,10 @@ class KnowledgeBase(BaseModel):
 
     # Status and metadata
     status = Column(String(50), default="active", nullable=False)  # 'active', 'inactive', 'error'
+    embedding_status = Column(
+        String(20), default="current", nullable=False
+    )  # 'current', 'stale', 're_embedding', 'error'
+    re_embedding_progress = Column(JSON, nullable=True)
     document_count = Column(Integer, default=0, nullable=False)
     total_chunks = Column(Integer, default=0, nullable=False)
 
@@ -118,6 +126,56 @@ class KnowledgeBase(BaseModel):
     def mark_sync_completed(self) -> None:
         """Mark the last sync time as now."""
         self.last_sync_at = datetime.now(UTC)
+
+    def is_embedding_stale(self, system_model: str) -> bool:
+        """Check if this KB's embeddings are from a different model than the system model."""
+        return self.embedding_model != system_model
+
+    def mark_re_embedding_started(self, total_chunks: int) -> None:
+        """Mark this KB as undergoing re-embedding."""
+        self.embedding_status = "re_embedding"
+        self.re_embedding_progress = {
+            "chunks_done": 0,
+            "chunks_total": total_chunks,
+            "phase": "chunks",
+            "started_at": datetime.now(UTC).isoformat(),
+        }
+
+    def update_re_embedding_progress(self, chunks_done: int) -> None:
+        """Update re-embedding progress counter."""
+        if self.re_embedding_progress is not None:
+            self.re_embedding_progress = {
+                **self.re_embedding_progress,
+                "chunks_done": chunks_done,
+            }
+
+    def update_re_embedding_phase(self, phase: str) -> None:
+        """Update the current re-embedding phase.
+
+        Valid phases: 'chunks', 'synopses', 'queries', 'indexes'.
+        """
+        if self.re_embedding_progress is not None:
+            self.re_embedding_progress = {
+                **self.re_embedding_progress,
+                "phase": phase,
+            }
+
+    def mark_re_embedding_complete(self, model_name: str) -> None:
+        """Mark re-embedding as complete, update the recorded model."""
+        self.embedding_model = model_name
+        self.embedding_status = "current"
+        self.re_embedding_progress = None
+
+    def mark_re_embedding_failed(self, error: str) -> None:
+        """Mark re-embedding as failed."""
+        self.embedding_status = "error"
+        if self.re_embedding_progress is not None:
+            self.re_embedding_progress = {
+                **self.re_embedding_progress,
+                "error": error,
+            }
+        else:
+            self.re_embedding_progress = {"error": error}
 
     def get_source_types(self) -> set:
         """Get all source types used by documents in this knowledge base."""

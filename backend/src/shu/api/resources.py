@@ -1,7 +1,7 @@
 """Resource Management API for Shu RAG Backend.
 
 Provides endpoints for monitoring and managing system resources,
-particularly for RAG processing services and caches.
+particularly for embedding services and caches.
 """
 
 import logging
@@ -10,12 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
-from ..core.response import ShuResponse
-from ..services.rag_processing_service import (
-    cleanup_rag_services,
-    clear_rag_service_cache,
-    get_rag_service_stats,
+from ..core.embedding_service import (
+    cleanup_embedding_services,
+    clear_embedding_service_cache,
+    get_embedding_service_stats,
 )
+from ..core.response import ShuResponse
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +25,16 @@ router = APIRouter(prefix="/resources", tags=["resources"])
 @router.get(
     "/stats",
     summary="Get system resource usage statistics",
-    description="Get detailed statistics about system resource usage including RAG services and caches",
+    description="Get detailed statistics about system resource usage including embedding services and caches",
 )
 async def get_resource_stats(current_user: User = Depends(require_admin)):
     """Get comprehensive system resource usage statistics."""
     try:
-        # Get RAG service statistics
-        rag_stats = get_rag_service_stats()
+        embedding_stats = get_embedding_service_stats()
 
         # Get cache statistics (if available)
         cache_stats = {}
         try:
-            # This would need to be implemented if we have a global cache instance
-            # For now, we'll provide placeholder stats
             cache_stats = {
                 "config_cache": "Not implemented",
                 "note": "Cache statistics would be available if ConfigCache is globally accessible",
@@ -47,7 +44,7 @@ async def get_resource_stats(current_user: User = Depends(require_admin)):
             cache_stats = {"error": "Cache statistics unavailable"}
 
         stats = {
-            "rag_services": rag_stats,
+            "embedding_services": embedding_stats,
             "caches": cache_stats,
             "resource_management": {"cleanup_available": True, "clear_cache_available": True},
         }
@@ -62,19 +59,16 @@ async def get_resource_stats(current_user: User = Depends(require_admin)):
 @router.post(
     "/cleanup",
     summary="Cleanup expired system resources",
-    description="Clean up expired RAG service instances and cache entries",
+    description="Clean up expired embedding service instances and cache entries",
 )
 async def cleanup_resources(current_user: User = Depends(require_admin)):
     """Clean up expired system resources."""
     try:
-        # Get stats before cleanup
-        before_stats = get_rag_service_stats()
+        before_stats = get_embedding_service_stats()
 
-        # Perform cleanup
-        cleanup_rag_services()
+        cleanup_embedding_services()
 
-        # Get stats after cleanup
-        after_stats = get_rag_service_stats()
+        after_stats = get_embedding_service_stats()
 
         cleanup_result = {
             "before": before_stats,
@@ -95,19 +89,16 @@ async def cleanup_resources(current_user: User = Depends(require_admin)):
 @router.post(
     "/clear-cache",
     summary="Clear all cached resources",
-    description="Clear all RAG service instances and cached data. Use with caution in production.",
+    description="Clear all embedding service instances and cached data. Use with caution in production.",
 )
 async def clear_all_cache(current_user: User = Depends(require_admin)):
     """Clear all cached resources."""
     try:
-        # Get stats before clearing
-        before_stats = get_rag_service_stats()
+        before_stats = get_embedding_service_stats()
 
-        # Clear all caches
-        clear_rag_service_cache()
+        clear_embedding_service_cache()
 
-        # Get stats after clearing
-        after_stats = get_rag_service_stats()
+        after_stats = get_embedding_service_stats()
 
         clear_result = {
             "before": before_stats,
@@ -134,9 +125,8 @@ async def clear_all_cache(current_user: User = Depends(require_admin)):
 async def check_resource_health(current_user: User = Depends(get_current_user)):
     """Check system resource health and provide recommendations."""
     try:
-        stats = get_rag_service_stats()
+        stats = get_embedding_service_stats()
 
-        # Analyze health
         active_instances = stats["active_instances"]
         max_instances = stats["max_instances"]
 
@@ -145,20 +135,20 @@ async def check_resource_health(current_user: User = Depends(get_current_user)):
 
         if active_instances >= max_instances:
             health_status = "warning"
-            recommendations.append("Maximum RAG service instances reached. Consider cleanup.")
-
-        if active_instances >= max_instances * 0.8:
+            recommendations.append("Maximum embedding service instances reached. Consider cleanup.")
+        elif active_instances >= max_instances * 0.8:
             health_status = "caution"
-            recommendations.append("RAG service instances approaching limit.")
+            recommendations.append("Embedding service instances approaching limit.")
 
-        # Check for old instances
         old_instances = 0
         for instance_info in stats.get("instances", {}).values():
             if instance_info.get("age_seconds", 0) > 7200:  # 2 hours
                 old_instances += 1
 
         if old_instances > 0:
-            recommendations.append(f"{old_instances} RAG service instances are over 2 hours old. Consider cleanup.")
+            recommendations.append(
+                f"{old_instances} embedding service instances are over 2 hours old. Consider cleanup."
+            )
 
         health_result = {
             "status": health_status,

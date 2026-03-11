@@ -85,6 +85,22 @@ class InvalidKnowledgeBaseConfigError(ShuException):
         )
 
 
+class KnowledgeBaseStaleEmbeddingsError(ShuException):
+    """Raised when a KB's embeddings are from a different model than the configured one."""
+
+    def __init__(self, knowledge_base_id: str, embedding_status: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            message=(
+                f"Knowledge base '{knowledge_base_id}' has stale embeddings "
+                f"(status={embedding_status}). Vector search is unavailable until "
+                f"re-embedding is complete."
+            ),
+            error_code="KNOWLEDGE_BASE_STALE_EMBEDDINGS",
+            status_code=409,
+            details=details or {"knowledge_base_id": knowledge_base_id, "embedding_status": embedding_status},
+        )
+
+
 # Document Exceptions
 class DocumentNotFoundError(ShuException):
     """Raised when a document is not found."""

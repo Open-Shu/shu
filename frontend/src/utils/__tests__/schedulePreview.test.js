@@ -10,7 +10,7 @@ describe('schedulePreview', () => {
     it('generates human-readable description for daily schedule', () => {
       const result = describeSchedule('0 9 * * *', 'America/New_York');
       expect(result).toContain('9:00 AM');
-      expect(result).toMatch(/E[SD]T/); // DST ignore
+      expect(result).toMatch(/EST|EDT/);
     });
 
     it('generates human-readable description for weekday schedule', () => {

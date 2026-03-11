@@ -19,7 +19,10 @@ import {
   IconButton,
   Chip,
   Alert,
+  AlertTitle,
   CircularProgress,
+  LinearProgress,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -30,6 +33,7 @@ import {
   Description as DocumentsIcon,
   RssFeed as FeedsIcon,
   Storage as KBIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import PageHelpHeader from './PageHelpHeader';
 
@@ -38,6 +42,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { keyframes } from '@mui/system';
 
 import KBConfigDialog from './KBConfigDialog';
+import ReEmbedConfirmDialog from './ReEmbedConfirmDialog';
 import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
@@ -67,7 +72,19 @@ function KnowledgeBases() {
 
   const queryClient = useQueryClient();
 
-  const { data: knowledgeBasesResponse, isLoading, error, refetch } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
+  const [reEmbedTarget, setReEmbedTarget] = useState(null);
+
+  const {
+    data: knowledgeBasesResponse,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery('knowledgeBases', knowledgeBaseAPI.list, {
+    refetchInterval: (data) => {
+      const items = extractItemsFromResponse(data);
+      return items?.some((kb) => kb.embedding_status === 're_embedding') ? 5000 : false;
+    },
+  });
 
   // Extract data from envelope format
   const knowledgeBases = extractItemsFromResponse(knowledgeBasesResponse);
@@ -93,6 +110,13 @@ function KnowledgeBases() {
   const deleteMutation = useMutation(knowledgeBaseAPI.delete, {
     onSuccess: () => {
       queryClient.invalidateQueries('knowledgeBases');
+    },
+  });
+
+  const reEmbedMutation = useMutation((id) => knowledgeBaseAPI.triggerReEmbed(id), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('knowledgeBases');
+      setReEmbedTarget(null);
     },
   });
 
@@ -167,6 +191,15 @@ function KnowledgeBases() {
           Knowledge Base to add documents.
         </Alert>
       )}
+      {knowledgeBases?.some((kb) => ['stale', 'error', 're_embedding'].includes(kb.embedding_status)) && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          <AlertTitle>Embedding Model Changed</AlertTitle>
+          One or more knowledge bases have embeddings from an outdated model. Vector search is disabled for these KBs
+          until re-embedding is complete. Use the re-embed button (
+          <RefreshIcon fontSize="small" sx={{ verticalAlign: 'middle', mx: 0.5 }} />) on each affected KB to update its
+          embeddings. Keyword search continues working normally.
+        </Alert>
+      )}
       <Box display="flex" justifyContent="flex-end" alignItems="center" mb={2}>
         <Box>
           <Button variant="outlined" onClick={() => refetch()} sx={{ mr: 2 }}>
@@ -201,6 +234,7 @@ function KnowledgeBases() {
               <TableRow>
                 <TableCell>Name & Description</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell>Embedding</TableCell>
                 <TableCell>Documents</TableCell>
                 <TableCell>Chunks</TableCell>
                 <TableCell>Sync</TableCell>
@@ -224,6 +258,34 @@ function KnowledgeBases() {
                   </TableCell>
                   <TableCell>
                     <Chip label={kb.status} color={kb.status === 'active' ? 'success' : 'default'} size="small" />
+                  </TableCell>
+                  <TableCell>
+                    {kb.embedding_status === 're_embedding' ? (
+                      <Box>
+                        <Chip label="Re-embedding" color="info" size="small" />
+                        {kb.re_embedding_progress && (
+                          <Tooltip
+                            title={`${kb.re_embedding_progress.chunks_done || 0} / ${kb.re_embedding_progress.chunks_total || '?'} chunks — phase: ${kb.re_embedding_progress.phase || 'chunks'}`}
+                          >
+                            <LinearProgress
+                              variant="determinate"
+                              value={
+                                kb.re_embedding_progress.chunks_total
+                                  ? (kb.re_embedding_progress.chunks_done / kb.re_embedding_progress.chunks_total) * 100
+                                  : 0
+                              }
+                              sx={{ mt: 0.5, borderRadius: 1 }}
+                            />
+                          </Tooltip>
+                        )}
+                      </Box>
+                    ) : kb.embedding_status === 'stale' ? (
+                      <Chip label="Stale" color="warning" size="small" />
+                    ) : kb.embedding_status === 'error' ? (
+                      <Chip label="Error" color="error" size="small" />
+                    ) : (
+                      <Chip label="Current" color="success" size="small" />
+                    )}
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2">{kb.document_count || 0}</Typography>
@@ -297,6 +359,16 @@ function KnowledgeBases() {
                       >
                         <ConfigIcon />
                       </IconButton>
+                      {(kb.embedding_status === 'stale' || kb.embedding_status === 'error') && (
+                        <IconButton
+                          size="small"
+                          onClick={() => setReEmbedTarget(kb)}
+                          title="Re-embed Knowledge Base"
+                          color="warning"
+                        >
+                          <RefreshIcon />
+                        </IconButton>
+                      )}
                       <IconButton size="small" onClick={() => handleDelete(kb.id)} title="Delete" color="error">
                         <DeleteIcon />
                       </IconButton>
@@ -423,6 +495,15 @@ function KnowledgeBases() {
           setSelectedKBForManagement(null);
         }}
         knowledgeBase={selectedKBForManagement}
+      />
+
+      {/* Re-embed Confirmation Dialog */}
+      <ReEmbedConfirmDialog
+        knowledgeBase={reEmbedTarget}
+        onClose={() => setReEmbedTarget(null)}
+        onConfirm={() => reEmbedMutation.mutate(reEmbedTarget.id)}
+        isLoading={reEmbedMutation.isLoading}
+        error={reEmbedMutation.isError ? reEmbedMutation.error : null}
       />
     </Box>
   );
