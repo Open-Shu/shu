@@ -427,7 +427,7 @@ class Settings(BaseSettings):
     llm_temperature_default: float = Field(0.7, alias="SHU_LLM_TEMPERATURE_DEFAULT")
 
     # RAG Configuration Defaults (global fallbacks)
-    rag_search_threshold_default: float = Field(0.7, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
+    rag_search_threshold_default: float = Field(0.3, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
     rag_max_results_default: int = Field(10, alias="SHU_RAG_MAX_RESULTS_DEFAULT")
     rag_chunk_overlap_ratio_default: float = Field(0.2, alias="SHU_RAG_CHUNK_OVERLAP_RATIO_DEFAULT")
     rag_search_type_default: str = Field("hybrid", alias="SHU_RAG_SEARCH_TYPE_DEFAULT")

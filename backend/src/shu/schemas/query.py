@@ -58,6 +58,20 @@ class QueryRequest(BaseModel):
         default=RagRewriteMode.RAW_QUERY,
         description="Strategy for preparing the retrieval query before execution",
     )
+    # Title weighting options (for keyword and hybrid search)
+    title_weighting_enabled: bool | None = Field(
+        None, description="Enable title weighting boost (None = use KB config default)"
+    )
+    title_weight_multiplier: float | None = Field(
+        None, ge=1.0, le=10.0, description="Title weight multiplier (None = use KB config default)"
+    )
+    # Multi-surface search weights (for multi_surface search type)
+    chunk_vector_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for chunk vector surface (None = use config default)"
+    )
+    synopsis_match_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for synopsis match surface (None = use config default)"
+    )
 
     @field_validator("query")
     @classmethod

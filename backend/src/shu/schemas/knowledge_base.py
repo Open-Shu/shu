@@ -131,7 +131,7 @@ class RAGConfigResponse(BaseModel):
     reference_format: str = Field("markdown", description="Reference format")
     context_format: str = Field("detailed", description="Context format")
     prompt_template: str = Field("custom", description="Prompt template type")
-    search_threshold: float = Field(0.7, description="Minimum similarity score for relevance")
+    search_threshold: float = Field(0.3, description="Minimum similarity score for relevance")
     max_results: int = Field(10, description="Maximum number of chunks to retrieve")
     chunk_overlap_ratio: float = Field(0.2, description="Chunk overlap ratio for context continuity")
     search_type: str = Field("hybrid", description="Search type: similarity, keyword, or hybrid")

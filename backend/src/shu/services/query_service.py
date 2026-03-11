@@ -992,14 +992,30 @@ class QueryService:
                     processed_at=datetime.now(UTC),
                 )
             elif search_type == "keyword":
-                query_response = await self.keyword_search(knowledge_base_id, query, limit)
+                query_response = await self.keyword_search(
+                    knowledge_base_id,
+                    query,
+                    limit,
+                    title_weighting_enabled=request.title_weighting_enabled,
+                    title_weight_multiplier=request.title_weight_multiplier,
+                )
             elif search_type == "hybrid":
                 query_response = await self.hybrid_search(
-                    knowledge_base_id, query, limit, request.similarity_threshold or 0.0
+                    knowledge_base_id,
+                    query,
+                    limit,
+                    request.similarity_threshold or 0.0,
+                    title_weighting_enabled=request.title_weighting_enabled,
+                    title_weight_multiplier=request.title_weight_multiplier,
                 )
             elif search_type == "multi_surface":
                 query_response = await self._multi_surface_search(
-                    knowledge_base_id, query, limit, request.similarity_threshold or 0.0
+                    knowledge_base_id,
+                    query,
+                    limit,
+                    request.similarity_threshold or 0.0,
+                    chunk_vector_weight=request.chunk_vector_weight,
+                    synopsis_match_weight=request.synopsis_match_weight,
                 )
             else:
                 raise ShuException(f"Unsupported search type: {search_type}", "UNSUPPORTED_SEARCH_TYPE")
@@ -1141,7 +1157,15 @@ class QueryService:
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
     @measure_execution_time
-    async def keyword_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
+    async def keyword_search(  # noqa: PLR0912, PLR0915
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        *,
+        title_weighting_enabled: bool | None = None,
+        title_weight_multiplier: float | None = None,
+    ) -> dict[str, Any]:
         """Perform keyword search on document chunks with improved term extraction."""
         try:
             # Verify knowledge base exists
@@ -1263,13 +1287,23 @@ class QueryService:
 
             # Note: where_clauses used for building SQLAlchemy conditions below
 
-            # Get title weighting configuration
+            # Get title weighting configuration (request params override KB config)
             kb_config = knowledge_base.get_rag_config()
-            title_weighting_enabled = self.config_manager.get_title_weighting_enabled(kb_config=kb_config)
-            title_weight_multiplier = self.config_manager.get_title_weight_multiplier(kb_config=kb_config)
+            effective_title_weighting_enabled = (
+                title_weighting_enabled
+                if title_weighting_enabled is not None
+                else self.config_manager.get_title_weighting_enabled(kb_config=kb_config)
+            )
+            effective_title_weight_multiplier = (
+                title_weight_multiplier
+                if title_weight_multiplier is not None
+                else self.config_manager.get_title_weight_multiplier(kb_config=kb_config)
+            )
 
             logger.info(
-                f"Keyword search title weighting: enabled={title_weighting_enabled}, multiplier={title_weight_multiplier}, kb_config_title_weighting={kb_config.get('title_weighting_enabled')}"
+                f"Keyword search title weighting: enabled={effective_title_weighting_enabled}, "
+                f"multiplier={effective_title_weight_multiplier}, "
+                f"from_request={title_weighting_enabled is not None}"
             )
 
             # Build title match conditions for enhanced scoring (whole word matches only)
@@ -1374,7 +1408,7 @@ class QueryService:
             title_match_sql = " OR ".join(title_match_conditions) if title_match_conditions else "FALSE"
 
             # Check if title weighting is enabled and we have title matches
-            if title_weighting_enabled:
+            if effective_title_weighting_enabled:
                 # First, find documents with title matches
                 from sqlalchemy import text
 
@@ -1415,7 +1449,7 @@ class QueryService:
 
                         # Convert to the expected format and apply title boost
                         for chunk_data in doc_chunks:
-                            title_boost = (float(title_match.title_score) / 10.0) * title_weight_multiplier
+                            title_boost = (float(title_match.title_score) / 10.0) * effective_title_weight_multiplier
                             boosted_score = chunk_data["similarity_score"] + title_boost
 
                             # Create a chunk-like object for compatibility
@@ -1765,7 +1799,14 @@ class QueryService:
 
     @measure_execution_time
     async def hybrid_search(  # noqa: PLR0915
-        self, knowledge_base_id: str, query: str, limit: int = 10, threshold: float = 0.0
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        threshold: float = 0.0,
+        *,
+        title_weighting_enabled: bool | None = None,
+        title_weight_multiplier: float | None = None,
     ) -> dict[str, Any]:
         """Perform hybrid search (combination of similarity and keyword).
 
@@ -1815,7 +1856,13 @@ class QueryService:
                     raise
 
             # Get keyword search results (this handles stop word filtering correctly)
-            keyword_response = await self.keyword_search(knowledge_base_id, query, limit)
+            keyword_response = await self.keyword_search(
+                knowledge_base_id,
+                query,
+                limit,
+                title_weighting_enabled=title_weighting_enabled,
+                title_weight_multiplier=title_weight_multiplier,
+            )
 
             # Log keyword search results for debugging
             logger.info(
@@ -1981,7 +2028,14 @@ class QueryService:
 
     @measure_execution_time
     async def _multi_surface_search(
-        self, knowledge_base_id: str, query: str, limit: int = 10, threshold: float = 0.0
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        threshold: float = 0.0,
+        *,
+        chunk_vector_weight: float | None = None,
+        synopsis_match_weight: float | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
@@ -1993,6 +2047,8 @@ class QueryService:
             query: Search query
             limit: Maximum number of documents to return
             threshold: Minimum score threshold for filtering results
+            chunk_vector_weight: Weight for chunk vector surface (None = use config default)
+            synopsis_match_weight: Weight for synopsis match surface (None = use config default)
 
         Returns:
             Dictionary with search results in QueryResponse format
@@ -2021,12 +2077,21 @@ class QueryService:
             vector_store = await get_vector_store()
             embedding_service = await get_embedding_service()
 
-            # Get weights from config
+            # Get weights (request params override config defaults)
             settings = self.config_manager.settings
             weights = {
-                "chunk_vector": settings.multi_surface_chunk_vector_weight,
-                "synopsis_match": settings.multi_surface_synopsis_match_weight,
+                "chunk_vector": (
+                    chunk_vector_weight
+                    if chunk_vector_weight is not None
+                    else settings.multi_surface_chunk_vector_weight
+                ),
+                "synopsis_match": (
+                    synopsis_match_weight
+                    if synopsis_match_weight is not None
+                    else settings.multi_surface_synopsis_match_weight
+                ),
             }
+            logger.info(f"Multi-surface weights: {weights}")
 
             # Create surfaces
             surfaces = [

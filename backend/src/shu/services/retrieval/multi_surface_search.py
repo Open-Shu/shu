@@ -88,7 +88,7 @@ class MultiSurfaceSearchService:
         # Step 1: Generate query embedding
         query_vector = await self._embedding_service.embed_query(query)
 
-        # Step 3: Execute all surfaces in parallel
+        # Step 2: Execute all surfaces in parallel
         tasks = [
             self._execute_surface(
                 surface,
@@ -103,7 +103,7 @@ class MultiSurfaceSearchService:
 
         surface_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Step 4: Filter out exceptions and log warnings
+        # Step 3: Filter out exceptions and collect valid results
         valid_results: list[SurfaceResult] = []
         for i, result in enumerate(surface_results):
             if isinstance(result, Exception):
