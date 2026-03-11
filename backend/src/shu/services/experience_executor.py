@@ -757,7 +757,7 @@ class ExperienceExecutor:
                 query=query,
                 query_type=rag_config.get("search_type", "hybrid"),
                 limit=rag_config.get("max_results", 10),
-                similarity_threshold=rag_config.get("search_threshold", 0.7),
+                similarity_threshold=rag_config.get("search_threshold", 0.3),
                 include_metadata=True,
             )
 

@@ -1747,8 +1747,10 @@ class QueryService:
                 processed = self.preprocess_query(query)
                 keyword_score = self._calculate_keyword_score(chunk.content, processed["keyword_terms"])
 
-                # Combine scores (same weights as hybrid search)
-                combined_score = similarity_score * 0.7 + keyword_score * 0.3
+                # Combine scores using configured hybrid search weights
+                similarity_weight = self.config_manager.get_hybrid_similarity_weight()
+                keyword_weight = self.config_manager.get_hybrid_keyword_weight()
+                combined_score = similarity_score * similarity_weight + keyword_score * keyword_weight
 
                 scored_chunks.append((chunk, combined_score))
 
