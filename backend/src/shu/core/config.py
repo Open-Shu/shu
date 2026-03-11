@@ -538,6 +538,22 @@ class Settings(BaseSettings):
             raise ValueError(f"Embedding dtype must be one of: {valid_dtypes}")
         return v.lower()
 
+    @field_validator("embedding_batch_size")
+    @classmethod
+    def validate_embedding_batch_size(cls, v: int) -> int:
+        """Validate embedding batch size is positive."""
+        if v <= 0:
+            raise ValueError("embedding_batch_size must be a positive integer")
+        return v
+
+    @field_validator("worker_concurrency")
+    @classmethod
+    def validate_worker_concurrency(cls, v: int) -> int:
+        """Validate worker concurrency is positive."""
+        if v <= 0:
+            raise ValueError("worker_concurrency must be a positive integer")
+        return v
+
     @field_validator("vector_index_type")
     @classmethod
     def validate_vector_index_type(cls, v: str) -> str:
