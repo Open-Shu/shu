@@ -437,7 +437,7 @@ class Settings(BaseSettings):
     rag_prompt_template_default: str = Field("custom", alias="SHU_RAG_PROMPT_TEMPLATE_DEFAULT")
 
     # Hybrid Search Configuration (global defaults)
-    hybrid_similarity_weight_default: float = Field(0.7, alias="SHU_HYBRID_SIMILARITY_WEIGHT_DEFAULT")
+    hybrid_similarity_weight_default: float = Field(0.3, alias="SHU_HYBRID_SIMILARITY_WEIGHT_DEFAULT")
     hybrid_keyword_weight_default: float = Field(0.3, alias="SHU_HYBRID_KEYWORD_WEIGHT_DEFAULT")
 
     # Title Search Configuration (global defaults)

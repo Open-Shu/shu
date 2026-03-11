@@ -136,16 +136,23 @@ class ScoreFusionService:
             total_weight = 0.0
 
             for surface_name, hits in surface_hits.items():
+                weight = self._weights.get(surface_name, 0.1)
+                if weight <= 0:
+                    # Skip surfaces with non-positive weights
+                    continue
+
                 # Use max score from this surface for this document
                 max_score = max(h.score for h in hits)
                 surface_scores[surface_name] = max_score
-
-                weight = self._weights.get(surface_name, 0.1)
                 weighted_sum += max_score * weight
                 total_weight += weight
 
+            # Skip documents with no valid surface contributions
+            if total_weight == 0:
+                continue
+
             # Normalize by total weight used
-            final_score = weighted_sum / total_weight if total_weight > 0 else 0.0
+            final_score = weighted_sum / total_weight
             doc_scores[doc_id] = (final_score, surface_scores)
 
         # Step 5: Filter by threshold and sort

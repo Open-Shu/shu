@@ -41,9 +41,9 @@ class TestScoreFusionService:
             execution_time_ms=10.0,
         )
 
-        # Mock document metadata lookup
+        # Mock document metadata lookup (title, file_type, source_url, source_id, created_at)
         with patch.object(
-            service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "pdf")}
+            service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "pdf", None, None, None)}
         ):
             with patch.object(service, "_load_chunk_details", return_value={}):
                 result = await service.fuse([surface_result], db=mock_db)
@@ -80,12 +80,12 @@ class TestScoreFusionService:
             service, "_resolve_chunk_documents", return_value={chunk_id: doc_id}
         ):
             with patch.object(
-                service, "_load_document_metadata", return_value={doc_id: ("Combined Doc", "txt")}
+                service, "_load_document_metadata", return_value={doc_id: ("Combined Doc", "txt", None, None, None)}
             ):
                 with patch.object(
                     service,
                     "_load_chunk_details",
-                    return_value={chunk_id: (0, "Chunk content...", None)},
+                    return_value={chunk_id: (0, "Chunk content...", None, None, None)},
                 ):
                     result = await service.fuse(
                         [chunk_surface, synopsis_surface], db=mock_db
@@ -110,7 +110,7 @@ class TestScoreFusionService:
         )
 
         with patch.object(
-            service, "_load_document_metadata", return_value={doc_id: ("Low Score Doc", "txt")}
+            service, "_load_document_metadata", return_value={doc_id: ("Low Score Doc", "txt", None, None, None)}
         ):
             with patch.object(service, "_load_chunk_details", return_value={}):
                 result = await service.fuse(
@@ -137,7 +137,7 @@ class TestScoreFusionService:
             execution_time_ms=10.0,
         )
 
-        metadata = {did: (f"Doc {i}", "txt") for i, did in enumerate(doc_ids)}
+        metadata = {did: (f"Doc {i}", "txt", None, None, None) for i, did in enumerate(doc_ids)}
         with patch.object(service, "_load_document_metadata", return_value=metadata):
             with patch.object(service, "_load_chunk_details", return_value={}):
                 result = await service.fuse(
@@ -173,14 +173,14 @@ class TestScoreFusionService:
             return_value={chunk1_id: doc_id, chunk2_id: doc_id},
         ):
             with patch.object(
-                service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "txt")}
+                service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "txt", None, None, None)}
             ):
                 with patch.object(
                     service,
                     "_load_chunk_details",
                     return_value={
-                        chunk1_id: (0, "First chunk content...", "Summary 1"),
-                        chunk2_id: (1, "Second chunk content...", None),
+                        chunk1_id: (0, "First chunk content...", "Summary 1", 0, 100),
+                        chunk2_id: (1, "Second chunk content...", None, 100, 200),
                     },
                 ):
                     result = await service.fuse([surface_result], db=mock_db)

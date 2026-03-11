@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..core.config import ConfigurationManager
+from ..core.database import get_async_session_local
 from ..core.embedding_service import get_embedding_service
 from ..core.exceptions import ShuException
 from ..core.vector_store import get_vector_store
@@ -2111,7 +2112,7 @@ class QueryService:
                 timeout_ms=settings.multi_surface_timeout_ms,
             )
 
-            # Execute search
+            # Execute search (pass session factory for safe parallel execution)
             kb_uuid = UUID(knowledge_base_id)
             fused_results = await search_service.search(
                 query=query,
@@ -2119,7 +2120,7 @@ class QueryService:
                 keyword_terms=keyword_terms,
                 limit=limit,
                 threshold=threshold,
-                db=self.db,
+                session_factory=get_async_session_local(),
             )
 
             # Convert FusedResult to QueryResult format
@@ -2140,7 +2141,7 @@ class QueryService:
                     end_char = top_chunk.end_char
 
                 query_result = QueryResult(
-                    chunk_id=chunk_id or str(result.document_id),
+                    chunk_id=chunk_id,
                     document_id=str(result.document_id),
                     document_title=result.document_title,
                     content=content,
@@ -2151,7 +2152,7 @@ class QueryService:
                     file_type=result.file_type,
                     source_url=result.source_url,
                     source_id=result.source_id,
-                    created_at=result.created_at or datetime.now(UTC),
+                    created_at=result.created_at,
                 )
                 query_results.append(query_result)
 

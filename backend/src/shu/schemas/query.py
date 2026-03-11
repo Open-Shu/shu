@@ -103,12 +103,12 @@ class QueryRequest(BaseModel):
 class QueryResult(BaseModel):
     """Schema for individual query results."""
 
-    chunk_id: str = Field(..., description="Document chunk ID")
+    chunk_id: str | None = Field(None, description="Document chunk ID (None for document-level matches)")
     document_id: str = Field(..., description="Document ID")
     document_title: str = Field(..., description="Document title")
     content: str = Field(..., description="Chunk content")
     similarity_score: float = Field(..., description="Similarity score")
-    chunk_index: int = Field(..., description="Chunk position in document")
+    chunk_index: int | None = Field(None, description="Chunk position in document (None for document-level matches)")
     start_char: int | None = Field(None, description="Start position in document")
     end_char: int | None = Field(None, description="End position in document")
 
@@ -116,7 +116,7 @@ class QueryResult(BaseModel):
     file_type: str = Field(..., description="Document file type")
     source_url: str | None = Field(None, description="Source URL")
     source_id: str | None = Field(None, description="Original source ID")
-    created_at: datetime = Field(..., description="Document creation timestamp")
+    created_at: datetime | None = Field(None, description="Document creation timestamp")
 
     class Config:
         """Pydantic configuration."""

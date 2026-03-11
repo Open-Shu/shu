@@ -72,13 +72,6 @@ async def test_query_similarity_search(client, db, auth_headers):
     assert kb_response.status_code == 201
     kb_id = extract_data(kb_response)["id"]
 
-    # Test similarity search
-    similarity_data = {
-        "query": "artificial intelligence machine learning",
-        "limit": 10,
-        "threshold": 0.7,
-    }
-
     # Update to use unified search endpoint
     unified_similarity_data = {
         "query": "test similarity search",

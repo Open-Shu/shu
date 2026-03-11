@@ -57,7 +57,7 @@ class RAGConfig(BaseModel):
         description="Prompt template type: 'academic', 'business', 'technical', or 'custom'",
     )
     search_threshold: float = Field(
-        default=0.7,
+        default=0.3,
         ge=0.1,
         le=1.0,
         description="Minimum similarity score for content to be considered relevant (0.1-1.0)",

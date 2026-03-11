@@ -15,7 +15,12 @@ function safeGet(obj, keys, fallback = '') {
  * Detect if this is a multi-surface result (has surface_scores and final_score)
  */
 function isMultiSurfaceResult(item) {
-  return item && typeof item.surface_scores === 'object' && typeof item.final_score === 'number';
+  return (
+    item &&
+    item.surface_scores !== null &&
+    typeof item.surface_scores === 'object' &&
+    typeof item.final_score === 'number'
+  );
 }
 
 /**
@@ -86,9 +91,9 @@ function MultiSurfaceItem({ result, rank }) {
             </Box>
             <Collapse in={expanded}>
               <Box sx={{ mt: 1 }}>
-                {chunks.slice(0, 5).map((chunk) => (
+                {chunks.slice(0, 5).map((chunk, index) => (
                   <Box
-                    key={chunk.chunk_id}
+                    key={chunk.chunk_id || `chunk-${chunk.chunk_index ?? index}`}
                     sx={{
                       bgcolor: 'grey.100',
                       p: 1,
@@ -99,18 +104,22 @@ function MultiSurfaceItem({ result, rank }) {
                   >
                     <Box display="flex" alignItems="center" gap={1} mb={0.5}>
                       <Chip
-                        label={`#${chunk.chunk_index}`}
+                        label={`#${chunk.chunk_index ?? '?'}`}
                         size="small"
                         color="default"
                         sx={{ fontWeight: 'bold', minWidth: 45 }}
                       />
                       <Chip
-                        label={chunk.surface}
+                        label={chunk.surface || 'unknown'}
                         size="small"
                         variant="outlined"
                         color={chunk.surface === 'chunk_vector' ? 'info' : 'secondary'}
                       />
-                      <Chip label={`${(chunk.score * 100).toFixed(1)}%`} size="small" variant="outlined" />
+                      <Chip
+                        label={typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A'}
+                        size="small"
+                        variant="outlined"
+                      />
                     </Box>
                     <Typography variant="body2" sx={{ mt: 0.5 }}>
                       {chunk.snippet}
@@ -141,7 +150,7 @@ function MultiSurfaceItem({ result, rank }) {
  */
 function GroupedDocumentItem({ group, rank }) {
   const [expanded, setExpanded] = React.useState(true);
-  const chunks = group.chunks.sort((a, b) => b.score - a.score);
+  const chunks = [...group.chunks].sort((a, b) => b.score - a.score);
 
   return (
     <Card variant="outlined" sx={{ mb: 2 }}>

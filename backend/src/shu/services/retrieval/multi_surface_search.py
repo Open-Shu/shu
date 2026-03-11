@@ -11,13 +11,13 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from ...core.logging import get_logger
 from .protocol import FusedResult, RetrievalSurface, SurfaceResult
 from .score_fusion import ScoreFusionService
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     from shu.core.embedding_service import EmbeddingService
 
 logger = get_logger(__name__)
@@ -67,7 +67,7 @@ class MultiSurfaceSearchService:
         keyword_terms: list[str],
         limit: int = 10,
         threshold: float = 0.0,
-        db: AsyncSession,
+        session_factory: async_sessionmaker,
     ) -> list[FusedResult]:
         """Execute multi-surface search and return fused results.
 
@@ -77,7 +77,8 @@ class MultiSurfaceSearchService:
             keyword_terms: Pre-extracted keyword terms from query preprocessing.
             limit: Maximum number of documents to return.
             threshold: Minimum final score threshold.
-            db: Async database session.
+            session_factory: Factory for creating database sessions. Each surface
+                gets its own session to allow safe parallel execution.
 
         Returns:
             List of FusedResult sorted by final_score descending.
@@ -88,7 +89,10 @@ class MultiSurfaceSearchService:
         # Step 1: Generate query embedding
         query_vector = await self._embedding_service.embed_query(query)
 
-        # Step 2: Execute all surfaces in parallel
+        # Step 2: Execute all surfaces in parallel (each gets its own session)
+        # NOTE: Each surface checks out a connection from the pool. With N surfaces + 1 fusion,
+        # that's N+1 connections per search. If pool pressure becomes an issue under load,
+        # add an asyncio.Semaphore here to limit concurrent surface execution.
         tasks = [
             self._execute_surface(
                 surface,
@@ -96,7 +100,7 @@ class MultiSurfaceSearchService:
                 query_vector=query_vector,
                 keyword_terms=keyword_terms,
                 kb_id=kb_id,
-                db=db,
+                session_factory=session_factory,
             )
             for surface in self._surfaces
         ]
@@ -126,13 +130,14 @@ class MultiSurfaceSearchService:
             )
             return []
 
-        # Step 5: Fuse results
-        fused_results = await self._fusion_service.fuse(
-            valid_results,
-            limit=limit,
-            threshold=threshold,
-            db=db,
-        )
+        # Step 5: Fuse results (fusion gets its own session)
+        async with session_factory() as db:
+            fused_results = await self._fusion_service.fuse(
+                valid_results,
+                limit=limit,
+                threshold=threshold,
+                db=db,
+            )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
@@ -156,9 +161,12 @@ class MultiSurfaceSearchService:
         query_vector: list[float],
         keyword_terms: list[str],
         kb_id: UUID,
-        db: AsyncSession,
+        session_factory: async_sessionmaker,
     ) -> SurfaceResult:
         """Execute a single surface with timeout.
+
+        Each surface gets its own database session to allow safe parallel
+        execution without sharing AsyncSession across concurrent coroutines.
 
         Args:
             surface: The surface to execute.
@@ -166,7 +174,7 @@ class MultiSurfaceSearchService:
             query_vector: Pre-computed query embedding.
             keyword_terms: Extracted keyword terms.
             kb_id: Knowledge base ID.
-            db: Database session.
+            session_factory: Factory for creating database sessions.
 
         Returns:
             SurfaceResult from the surface.
@@ -177,15 +185,16 @@ class MultiSurfaceSearchService:
         """
         timeout_seconds = self._timeout_ms / 1000
 
-        return await asyncio.wait_for(
-            surface.search(
-                query_text,
-                query_vector,
-                keyword_terms,
-                kb_id=kb_id,
-                limit=self._surface_limit,
-                threshold=0.0,  # Let fusion handle threshold
-                db=db,
-            ),
-            timeout=timeout_seconds,
-        )
+        async with session_factory() as db:
+            return await asyncio.wait_for(
+                surface.search(
+                    query_text,
+                    query_vector,
+                    keyword_terms,
+                    kb_id=kb_id,
+                    limit=self._surface_limit,
+                    threshold=0.0,  # Let fusion handle threshold
+                    db=db,
+                ),
+                timeout=timeout_seconds,
+            )
