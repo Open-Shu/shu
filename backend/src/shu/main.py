@@ -286,104 +286,13 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             # Get queue backend (shared by all workers)
             backend = await get_queue_backend()
 
-            # Resume re-embedding jobs lost due to queue backend restart (in-memory
-            # or Redis data loss).  With a persistent Redis backend the job is still
-            # in the queue or processing set and will be redelivered automatically,
-            # so we only re-enqueue KBs whose heartbeat appears stale.
+            # Resume re-embedding jobs lost due to queue backend restart
             try:
-                from datetime import UTC, datetime, timedelta
+                from .re_embedding_handler import recover_interrupted_re_embedding_jobs
 
-                from sqlalchemy import select
-
-                from .core.database import get_async_session_local
-                from .core.workload_routing import enqueue_job
-                from .models.knowledge_base import KnowledgeBase
-
-                stale_after = timedelta(minutes=3)
-                resumed_count = 0
-                session_factory = get_async_session_local()
-                async with session_factory() as session:
-                    result = await session.execute(
-                        select(KnowledgeBase)
-                        .where(KnowledgeBase.embedding_status == "re_embedding")
-                        .with_for_update(skip_locked=True)
-                    )
-                    stuck_kbs = list(result.scalars().all())
-
-                    for kb in stuck_kbs:
-                        last_updated = kb.updated_at
-                        if last_updated is not None and last_updated.tzinfo is None:
-                            last_updated = last_updated.replace(tzinfo=UTC)
-                        is_stale = last_updated is None or (datetime.now(UTC) - last_updated) >= stale_after
-                        if not is_stale:
-                            logger.info(
-                                "Skipping re-embedding recovery for KB with fresh heartbeat",
-                                extra={
-                                    "knowledge_base_id": str(kb.id),
-                                    "last_updated": str(last_updated),
-                                    "stale_after_seconds": int(stale_after.total_seconds()),
-                                },
-                            )
-                            continue
-
-                        progress: dict = kb.re_embedding_progress if kb.re_embedding_progress else {}
-                        phase = progress.get("phase", "chunks")
-                        chunks_done = progress.get("chunks_done", 0)
-                        chunks_total = progress.get("chunks_total", "?")
-                        workers_total = progress.get("workers_total", 1)
-                        workers_completed = progress.get("workers_completed", 0)
-                        logger.info(
-                            f"Resuming re-embedding for KB {kb.id}, "
-                            f"phase={phase}, chunks_done={chunks_done}/{chunks_total}, "
-                            f"workers={workers_completed}/{workers_total}"
-                        )
-
-                        if phase == "chunks":
-                            # Re-enqueue chunk jobs for remaining work
-                            remaining_workers = max(1, workers_total - workers_completed)
-
-                            for i in range(remaining_workers):
-                                await enqueue_job(
-                                    backend,
-                                    WorkloadType.RE_EMBEDDING,
-                                    payload={
-                                        "knowledge_base_id": str(kb.id),
-                                        "action": "re_embed_chunks",
-                                        "worker_index": i,
-                                        "workers_total": remaining_workers,
-                                    },
-                                    max_attempts=3,
-                                    visibility_timeout=600,
-                                )
-
-                            # Commit progress update only after all jobs are
-                            # enqueued so a mid-loop failure doesn't leave
-                            # workers_total out of sync with actual queue state.
-                            # Create a new dict so SQLAlchemy detects the change
-                            # (plain JSON column, no MutableDict).
-                            kb.re_embedding_progress = {
-                                **progress,
-                                "workers_completed": 0,
-                                "workers_total": remaining_workers,
-                            }
-                            await session.commit()
-                        else:
-                            # Past chunks phase — enqueue finalization only
-                            await enqueue_job(
-                                backend,
-                                WorkloadType.RE_EMBEDDING,
-                                payload={
-                                    "knowledge_base_id": str(kb.id),
-                                    "action": "re_embed_finalize",
-                                },
-                                max_attempts=3,
-                                visibility_timeout=600,
-                            )
-                            await session.commit()
-                        resumed_count += 1
-
-                    if resumed_count:
-                        logger.info(f"Re-enqueued {resumed_count} interrupted re-embedding job(s)")
+                resumed = await recover_interrupted_re_embedding_jobs(backend)
+                if resumed:
+                    logger.info(f"Re-enqueued {resumed} interrupted re-embedding job(s)")
             except Exception as e:
                 logger.error(f"Failed to recover interrupted re-embedding jobs: {e}", exc_info=True)
 
