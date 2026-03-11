@@ -6,16 +6,31 @@ import { vi } from 'vitest';
 import PolicyAdmin from '../PolicyAdmin';
 import * as api from '../../services/api';
 
-vi.mock('../../services/api', () => ({
-  policyAPI: {
-    list: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-  },
-  extractItemsFromResponse: vi.fn(),
-  extractPaginationFromResponse: vi.fn(),
-  formatError: vi.fn((err) => err?.message || 'Something went wrong'),
+vi.mock('../../services/api', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    policyAPI: {
+      ...actual.policyAPI,
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      actions: vi.fn().mockResolvedValue({ data: { data: [] } }),
+    },
+    authAPI: { ...actual.authAPI, getUsers: vi.fn().mockResolvedValue({ data: { data: [] } }) },
+    groupsAPI: { ...actual.groupsAPI, list: vi.fn().mockResolvedValue({ data: { data: [] } }) },
+    experiencesAPI: { ...actual.experiencesAPI, list: vi.fn().mockResolvedValue({ data: { items: [] } }) },
+    extractItemsFromResponse: vi.fn(),
+    extractDataFromResponse: vi.fn(),
+    extractPaginationFromResponse: vi.fn(),
+    formatError: vi.fn((err) => err?.message || 'Something went wrong'),
+  };
+});
+
+vi.mock('../../services/pluginsApi', () => ({
+  pluginsAPI: { list: vi.fn().mockResolvedValue({ data: { data: [] } }) },
 }));
 
 vi.mock('../PageHelpHeader', () => ({
@@ -120,10 +135,12 @@ describe('PolicyAdmin', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /create policy/i }));
 
-    // Dialog title + button both say "Create Policy"; check the dialog opened via the textbox
-    // Template JSON should contain the example policy name
+    // Switch to JSON mode to inspect the serialized template
+    fireEvent.click(screen.getByRole('button', { name: /json editor/i }));
+
     const textField = screen.getByRole('textbox');
-    expect(textField.value).toContain('example-policy');
+    expect(textField.value).toContain('"effect"');
+    expect(textField.value).toContain('"is_active"');
   });
 
   test('opens edit dialog with existing policy JSON', async () => {
@@ -140,6 +157,10 @@ describe('PolicyAdmin', () => {
     await waitFor(() => {
       expect(screen.getByText('Edit Policy')).toBeInTheDocument();
     });
+
+    // Switch to JSON mode to inspect the serialized policy
+    fireEvent.click(screen.getByRole('button', { name: /json editor/i }));
+
     const textField = screen.getByRole('textbox');
     expect(textField.value).toContain('allow-engineering');
   });
@@ -151,6 +172,9 @@ describe('PolicyAdmin', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /create policy/i }));
+
+    // Switch to JSON mode and enter invalid JSON
+    fireEvent.click(screen.getByRole('button', { name: /json editor/i }));
 
     const textField = screen.getByRole('textbox');
     fireEvent.change(textField, { target: { value: '{not valid json' } });
@@ -169,6 +193,9 @@ describe('PolicyAdmin', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /create policy/i }));
+
+    // Switch to JSON mode and enter policy JSON
+    fireEvent.click(screen.getByRole('button', { name: /json editor/i }));
 
     const policyJson = JSON.stringify({ name: 'new-policy', effect: 'allow' });
     const textField = screen.getByRole('textbox');

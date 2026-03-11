@@ -25,7 +25,7 @@ const StatementList = ({ statements }) => (
           <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
             Actions
           </Typography>
-          {stmt.actions.map((action) => (
+          {(stmt.actions || []).map((action) => (
             <Chip key={action} label={action} size="small" variant="outlined" sx={{ display: 'flex', mb: 0.5 }} />
           ))}
         </Box>
@@ -33,7 +33,7 @@ const StatementList = ({ statements }) => (
           <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
             Resources
           </Typography>
-          {stmt.resources.map((resource) => (
+          {(stmt.resources || []).map((resource) => (
             <Chip key={resource} label={resource} size="small" variant="outlined" sx={{ display: 'flex', mb: 0.5 }} />
           ))}
         </Box>

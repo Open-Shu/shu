@@ -192,6 +192,16 @@ MOCK_EXP_SHARED_DENIED = _make_mock_experience(
 )
 MOCK_EXP_SHARED_DENIED.scope = ExperienceScope.SHARED.value
 MOCK_EXP_SHARED_DENIED.creator = _shared_denied_creator
+
+SHARED_INACTIVE_EXP_ID = "exp-shared-inactive"
+_shared_inactive_creator = MagicMock(is_active=False)
+_shared_inactive_creator.id = REGULAR_USER_ID
+MOCK_EXP_SHARED_INACTIVE = _make_mock_experience(
+    exp_id=SHARED_INACTIVE_EXP_ID, name=DENIED_EXP_NAME, slug=DENIED_EXP_SLUG
+)
+MOCK_EXP_SHARED_INACTIVE.scope = ExperienceScope.SHARED.value
+MOCK_EXP_SHARED_INACTIVE.creator = _shared_inactive_creator
+
 RESP_ALLOWED = _make_experience_response(exp_id=ALLOWED_EXP_ID, name=ALLOWED_EXP_NAME, slug=ALLOWED_EXP_SLUG)
 RESP_DENIED = _make_experience_response(exp_id=DENIED_EXP_ID, name=DENIED_EXP_NAME, slug=DENIED_EXP_SLUG)
 MOCK_RUN_ALLOWED = _make_mock_run(run_id=ALLOWED_RUN_ID, experience=MOCK_EXP_ALLOWED, user_id=REGULAR_USER_ID)
@@ -359,13 +369,15 @@ class TestPbacGetExperience:
             await service.get_experience(DENIED_EXP_ID, user_id=REGULAR_USER_ID)
 
 
+def _make_orm_result(exp_mock: MagicMock) -> MagicMock:
+    """Build a mock DB execute result returning a single ORM Experience."""
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = exp_mock
+    return result
+
+
 class TestPbacRun:
     """run(): PBAC on experience.read + experience.run (no get_experience call)."""
-
-    def _make_orm_result(self, exp_mock: MagicMock) -> MagicMock:
-        result = MagicMock()
-        result.scalars.return_value.first.return_value = exp_mock
-        return result
 
     @pytest.mark.asyncio
     async def test_admin_runs_any_experience(self, service, db, pbac_cache):
@@ -377,7 +389,7 @@ class TestPbacRun:
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.get_config_manager"), \
              patch("shu.services.experience_service.ExperienceExecutor") as mock_executor:
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_DENIED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_DENIED)
             mock_executor.return_value.execute_streaming.return_value = AsyncMock()
             result = await service.run(DENIED_EXP_ID, current_user=admin_user)
         assert result is not None
@@ -392,7 +404,7 @@ class TestPbacRun:
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.get_config_manager"), \
              patch("shu.services.experience_service.ExperienceExecutor") as mock_executor:
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_ALLOWED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_ALLOWED)
             mock_executor.return_value.execute_streaming.return_value = AsyncMock()
             result = await service.run(ALLOWED_EXP_ID, current_user=user)
         assert result is not None
@@ -406,17 +418,12 @@ class TestPbacRun:
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              pytest.raises(NotFoundError):
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_DENIED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_DENIED)
             await service.run(DENIED_EXP_ID, current_user=user)
 
 
 class TestPbacExecute:
     """execute(): PBAC on experience.run (no visibility check)."""
-
-    def _make_orm_result(self, exp_mock: MagicMock) -> MagicMock:
-        result = MagicMock()
-        result.scalars.return_value.first.return_value = exp_mock
-        return result
 
     @pytest.mark.asyncio
     async def test_admin_executes_any_experience(self, service, db, pbac_cache):
@@ -428,7 +435,7 @@ class TestPbacExecute:
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.get_config_manager"), \
              patch("shu.services.experience_service.ExperienceExecutor") as mock_executor:
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_DENIED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_DENIED)
             mock_run = MagicMock()
             mock_run.id = "run-1"
             mock_run.status = "succeeded"
@@ -446,7 +453,7 @@ class TestPbacExecute:
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.get_config_manager"), \
              patch("shu.services.experience_service.ExperienceExecutor") as mock_executor:
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_ALLOWED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_ALLOWED)
             mock_run = MagicMock()
             mock_run.id = "run-1"
             mock_run.status = "succeeded"
@@ -463,7 +470,7 @@ class TestPbacExecute:
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              pytest.raises(NotFoundError):
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_DENIED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_DENIED)
             await service.execute(DENIED_EXP_ID, current_user=user)
 
     @pytest.mark.asyncio
@@ -473,7 +480,7 @@ class TestPbacExecute:
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.get_config_manager"), \
              patch("shu.services.experience_service.ExperienceExecutor") as mock_executor:
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_SHARED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_SHARED)
             mock_run = MagicMock()
             mock_run.id = "run-shared"
             mock_run.status = "succeeded"
@@ -491,8 +498,21 @@ class TestPbacExecute:
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
              pytest.raises(NotFoundError):
-            db.execute.return_value = self._make_orm_result(MOCK_EXP_SHARED_DENIED)
+            db.execute.return_value = _make_orm_result(MOCK_EXP_SHARED_DENIED)
             await service.execute(SHARED_DENIED_EXP_ID, current_user=None)
+
+    @pytest.mark.asyncio
+    async def test_shared_inactive_creator_returns_not_found_for_unauthorized_user(self, service, db, pbac_cache):
+        """Unauthorized user gets NotFoundError (not AuthorizationError) for a shared experience with inactive creator.
+
+        Ensures the PBAC denial fires before the creator-active guard to avoid
+        leaking resource existence.
+        """
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.experience_service.POLICY_CACHE", pbac_cache), \
+             pytest.raises(NotFoundError):
+            db.execute.return_value = _make_orm_result(MOCK_EXP_SHARED_INACTIVE)
+            await service.execute(SHARED_INACTIVE_EXP_ID, current_user=None)
 
 
 class TestPbacListRuns:

@@ -225,11 +225,11 @@ class ExperienceService:
         self,
         experience_id: str,
         current_user: "User | None",
-    ) -> tuple[Experience, str | None, "User"]:
+    ) -> tuple[Experience, str | None, "User | None"]:
         """Load an experience and resolve execution identity.
 
-        Loads the full ORM model, applies the shared-experience guard,
-        and resolves execution identity (creator for shared, caller otherwise).
+        Loads the full ORM model and resolves execution identity (creator for
+        shared, caller otherwise).
 
         Args:
             experience_id: The experience to load.
@@ -241,8 +241,7 @@ class ExperienceService:
 
         Raises:
             NotFoundError: If the experience does not exist.
-            AuthorizationError: If the shared experience creator is inactive,
-                or if current_user is None for a non-shared experience.
+            AuthorizationError: If current_user is None for a non-shared experience.
 
         """
         result = await self.db.execute(
@@ -257,16 +256,7 @@ class ExperienceService:
                 details={"code": "EXPERIENCE_NOT_FOUND"},
             )
 
-        # Shared-experience guard
         is_shared = experience.scope == ExperienceScope.SHARED.value
-        if is_shared and (not experience.creator or not experience.creator.is_active):
-            raise AuthorizationError(
-                "The creator of this shared experience is inactive. "
-                "Re-activate their account or reassign the experience.",
-                details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
-            )
-
-        # Resolve execution identity
         if is_shared:
             run_user_id = None
             run_current_user = experience.creator
@@ -280,6 +270,18 @@ class ExperienceService:
             run_current_user = current_user
 
         return experience, run_user_id, run_current_user
+
+    @staticmethod
+    def _guard_shared_creator(experience: "Experience") -> None:
+        """Raise if a shared experience's creator is missing or inactive."""
+        if experience.scope == ExperienceScope.SHARED.value and (
+            not experience.creator or not experience.creator.is_active
+        ):
+            raise AuthorizationError(
+                "The creator of this shared experience is inactive. "
+                "Re-activate their account or reassign the experience.",
+                details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
+            )
 
     async def run(
         self,
@@ -302,7 +304,14 @@ class ExperienceService:
         """
         experience, run_user_id, run_current_user = await self._load_and_resolve_identity(experience_id, current_user)
 
-        await enforce_pbac(str(current_user.id), "experience.run", f"experience:{experience.slug}", self.db)
+        await enforce_pbac(
+            str(current_user.id),
+            "experience.run",
+            f"experience:{experience.slug}",
+            self.db,
+            message=f"Experience '{experience.id}' not found",
+        )
+        self._guard_shared_creator(experience)
 
         config_manager = get_config_manager()
         executor = ExperienceExecutor(self.db, config_manager)
@@ -336,7 +345,20 @@ class ExperienceService:
         """
         experience, run_user_id, run_current_user = await self._load_and_resolve_identity(experience_id, current_user)
 
-        await enforce_pbac(str(run_current_user.id), "experience.run", f"experience:{experience.slug}", self.db)
+        if run_current_user is None:
+            raise AuthorizationError(
+                "The creator of this shared experience is missing or inactive.",
+                details={"code": "SHARED_EXPERIENCE_CREATOR_INACTIVE"},
+            )
+
+        await enforce_pbac(
+            str(run_current_user.id),
+            "experience.run",
+            f"experience:{experience.slug}",
+            self.db,
+            message=f"Experience '{experience.id}' not found",
+        )
+        self._guard_shared_creator(experience)
 
         config_manager = get_config_manager()
         executor = ExperienceExecutor(self.db, config_manager)
@@ -366,7 +388,13 @@ class ExperienceService:
         if not experience:
             return None
 
-        await enforce_pbac(user_id, "experience.read", f"experience:{experience.slug}", self.db)
+        await enforce_pbac(
+            user_id,
+            "experience.read",
+            f"experience:{experience.slug}",
+            self.db,
+            message=f"Experience '{experience_id}' not found",
+        )
 
         # Visibility check
         if not await self._check_visibility(experience, user_id):
@@ -797,7 +825,13 @@ class ExperienceService:
         if not experience:
             return self._build_paginated_response(ExperienceRunList, [], total=0, offset=offset, limit=limit)
 
-        await enforce_pbac(user_id, "experience.read", f"experience:{experience.slug}", self.db)
+        await enforce_pbac(
+            user_id,
+            "experience.read",
+            f"experience:{experience.slug}",
+            self.db,
+            message=f"Experience '{experience_id}' not found",
+        )
 
         if not await self._check_visibility(experience, user_id):
             return self._build_paginated_response(ExperienceRunList, [], total=0, offset=offset, limit=limit)
@@ -865,7 +899,13 @@ class ExperienceService:
         if not run or not run.experience:
             return None
 
-        await enforce_pbac(user_id, "experience.read", f"experience:{run.experience.slug}", self.db)
+        await enforce_pbac(
+            user_id,
+            "experience.read",
+            f"experience:{run.experience.slug}",
+            self.db,
+            message=f"Run '{run_id}' not found or access denied",
+        )
 
         # Ownership check for non-admins; shared runs (user_id IS NULL) are visible to all
         is_admin_user = await POLICY_CACHE.is_admin(user_id, self.db)

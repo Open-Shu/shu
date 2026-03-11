@@ -42,6 +42,7 @@ from sqlalchemy import select
 from .auth.models import User
 from .core.config import get_settings_instance
 from .core.database import get_async_session_local, init_db
+from .core.exceptions import ShuException
 from .core.logging import get_logger, setup_logging
 from .core.queue_backend import get_queue_backend
 from .core.worker import Worker, WorkerConfig
@@ -773,13 +774,22 @@ async def _handle_experience_execution_job(job) -> None:
                 },
             )
 
+        except ShuException as e:
+            logger.warning(
+                "Experience execution denied | experience=%s user=%s error=%s",
+                experience_id,
+                user_id,
+                str(e),
+            )
+            await _fail_queued_run(session, run_id, e.error_code)
         except Exception:
             logger.exception(
                 "Experience execution failed | experience=%s user=%s",
                 experience_id,
                 user_id,
             )
-            await _fail_queued_run(session, run_id, "execution_error")
+            if job.attempts >= job.max_attempts:
+                await _fail_queued_run(session, run_id, "execution_error")
             raise
 
 

@@ -28,7 +28,7 @@ async def get_allowed_plugin_names(user_id: str, manifest_names: set[str] | list
     enabled = {r.name for r in res.scalars().all()}
     candidate_names = [name for name in manifest_names if name in enabled]
     denied = await POLICY_CACHE.get_denied_resources(user_id, "plugin.read", "plugin", candidate_names, db)
-    return enabled - denied
+    return set(candidate_names) - denied
 
 
 async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[CallableTool]:

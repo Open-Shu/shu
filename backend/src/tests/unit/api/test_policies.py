@@ -23,6 +23,7 @@ from shu.api.policies import (
     delete_policy,
     get_effective_policies,
     get_policy,
+    list_actions,
     list_policies,
     policies_router,
     update_policy,
@@ -470,6 +471,25 @@ class TestEffectivePolicies:
         assert body["data"]["policies"] == []
 
 
+class TestListActions:
+    """GET /policies/actions -> known actions list."""
+
+    @pytest.mark.asyncio
+    async def test_list_actions_returns_known_actions(self):
+        """Returns the static KNOWN_ACTIONS list."""
+        user = _mock_user()
+        response = await list_actions(current_user=user)
+
+        body = _parse(response)
+        assert response.status_code == 200
+        actions = body["data"]["actions"]
+        values = {a["value"] for a in actions}
+        assert "experience.read" in values
+        assert "experience.run" in values
+        assert "plugin.read" in values
+        assert "plugin.execute" in values
+
+
 class TestRouterContract:
     """Router contract tests for path ordering and documented status codes."""
 
@@ -495,8 +515,10 @@ class TestRouterContract:
             raise AssertionError(f"Route not found: {path}")
 
         check_idx = _index("/policies/check")
+        actions_idx = _index("/policies/actions")
         effective_idx = _index("/policies/effective/{user_id}")
         policy_id_idx = _index("/policies/{policy_id}")
 
         assert check_idx < policy_id_idx
+        assert actions_idx < policy_id_idx
         assert effective_idx < policy_id_idx

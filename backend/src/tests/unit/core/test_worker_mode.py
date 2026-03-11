@@ -295,7 +295,6 @@ async def test_workers_enabled_starts_with_api():
         with patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
              patch('shu.core.worker.Worker') as mock_worker_class, \
              patch('shu.main.init_db') as mock_init_db, \
-             patch('shu.services.rag_processing_service.RAGProcessingService.get_instance'), \
              patch('shu.services.scheduler_service.start_scheduler', new_callable=AsyncMock) as mock_scheduler, \
              patch('shu.main._initialize_policy_cache', new_callable=AsyncMock):
 
@@ -321,7 +320,6 @@ async def test_workers_enabled_starts_with_api():
                 # Verify worker was created with correct config
                 mock_worker_class.assert_called()
                 call_args = mock_worker_class.call_args
-
 
                 # Check that config has all workload types
                 config = call_args[0][1]  # Second positional arg is config
@@ -359,7 +357,6 @@ async def test_workers_enabled_with_concurrency():
          patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
          patch('shu.core.worker.Worker') as mock_worker_class, \
          patch('shu.main.init_db') as mock_init_db, \
-         patch('shu.services.rag_processing_service.RAGProcessingService.get_instance'), \
          patch('shu.services.scheduler_service.start_scheduler', new_callable=AsyncMock) as mock_scheduler, \
          patch('shu.main._initialize_policy_cache', new_callable=AsyncMock):
 

@@ -27,6 +27,7 @@ from ..plugins.registry import REGISTRY
 from ..schemas.envelope import SuccessResponse
 from ..services.plugin_identity import get_provider_identities_map, resolve_user_email_for_execution
 from ..services.plugin_validation import enforce_input_limit, enforce_output_limit
+from ..services.policy_engine import POLICY_CACHE
 
 logger = get_logger(__name__)
 
@@ -62,9 +63,14 @@ async def list_plugins(
 
     manifest = REGISTRY.get_manifest(refresh_if_empty=True)
 
+    all_names = list((manifest or {}).keys())
+    denied = await POLICY_CACHE.get_denied_resources(str(user.id), "plugin.read", "plugin", all_names, db)
+
     db_by_name = {r.name: r for r in rows}
     out: list[PluginInfoResponse] = []
     for name, rec in (manifest or {}).items():
+        if name in denied:
+            continue
         try:
             r = db_by_name.get(name)
             caps = list(rec.capabilities or []) if getattr(rec, "capabilities", None) is not None else None
@@ -108,6 +114,9 @@ async def get_plugin(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if not await POLICY_CACHE.check(str(user.id), "plugin.read", f"plugin:{name}", db):
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
     res = await db.execute(select(PluginDefinition).where(PluginDefinition.name == name))
     row = res.scalars().first()
     if not row:
@@ -251,16 +260,23 @@ async def execute_plugin(  # noqa: PLR0912, PLR0915
     user_email_val = await resolve_user_email_for_execution(db, str(user.id), body.params, allow_impersonate=True)
     providers_map = await get_provider_identities_map(db, str(user.id))
 
-    result = await EXECUTOR.execute(
-        plugin=plugin,
-        user_id=str(user.id),
-        user_email=user_email_val,
-        agent_key=body.agent_key,
-        params=body.params or {},
-        limits=per_plugin_limits,
-        provider_identities=providers_map,
-        db_session=db,
-    )
+    try:
+        result = await EXECUTOR.execute(
+            plugin=plugin,
+            user_id=str(user.id),
+            user_email=user_email_val,
+            agent_key=body.agent_key,
+            params=body.params or {},
+            limits=per_plugin_limits,
+            provider_identities=providers_map,
+            db_session=db,
+        )
+    except Exception:
+        exec_rec.status = PluginExecutionStatus.FAILED
+        exec_rec.completed_at = datetime.now(UTC)
+        exec_rec.error = "execution_error"
+        await db.commit()
+        raise
 
     try:
         payload = result.model_dump()

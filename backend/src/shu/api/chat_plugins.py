@@ -177,7 +177,7 @@ async def execute_chat_plugin(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Validate plugin is enabled and op is declared chat-callable
+    # Validate plugin is enabled, allowed by PBAC, and op is declared chat-callable
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:
@@ -188,9 +188,14 @@ async def execute_chat_plugin(
     rec = manifest.get(body.name)
     if not rec:
         raise HTTPException(status_code=404, detail=f"Plugin '{body.name}' not found")
+
+    allowed = await get_allowed_plugin_names(str(user.id), set(manifest or {}), db)
+    if body.name not in allowed:
+        raise HTTPException(status_code=404, detail=f"Plugin '{body.name}' not found or disabled")
+
     res = await db.execute(select(PluginDefinition).where(PluginDefinition.name == body.name))
     row = res.scalars().first()
-    if not row or not row.enabled:
+    if not row:
         raise HTTPException(status_code=404, detail=f"Plugin '{body.name}' not found or disabled")
     chat_ops = list(getattr(rec, "chat_callable_ops", []) or [])
     if body.op not in chat_ops:

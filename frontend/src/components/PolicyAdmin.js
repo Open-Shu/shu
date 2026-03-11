@@ -25,9 +25,85 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, Policy as PolicyIcon } from '@mui/icons-material';
-import { policyAPI, extractItemsFromResponse, extractPaginationFromResponse, formatError } from '../services/api';
+import {
+  policyAPI,
+  extractDataFromResponse,
+  extractItemsFromResponse,
+  extractPaginationFromResponse,
+  formatError,
+} from '../services/api';
 import PageHelpHeader from './PageHelpHeader';
 import PolicyEditorDialog from './PolicyEditorDialog';
+
+const formatDate = (dateString) => {
+  if (!dateString) {
+    return 'N/A';
+  }
+  return new Date(dateString).toLocaleDateString();
+};
+
+const PolicyRow = ({ policy, onEdit, onDelete }) => (
+  <TableRow hover>
+    <TableCell>
+      <Typography variant="body2" fontWeight="medium">
+        {policy.name}
+      </Typography>
+      {policy.description && (
+        <Typography variant="caption" color="text.secondary">
+          {policy.description}
+        </Typography>
+      )}
+    </TableCell>
+    <TableCell>
+      <Chip label={policy.effect} color={policy.effect === 'allow' ? 'success' : 'error'} size="small" />
+    </TableCell>
+    <TableCell>
+      <Chip
+        label={policy.is_active ? 'Active' : 'Inactive'}
+        color={policy.is_active ? 'success' : 'default'}
+        size="small"
+        variant="outlined"
+      />
+    </TableCell>
+    <TableCell>
+      <Chip label={`${(policy.bindings || []).length}`} size="small" variant="outlined" />
+    </TableCell>
+    <TableCell>
+      <Chip label={`${(policy.statements || []).length}`} size="small" variant="outlined" />
+    </TableCell>
+    <TableCell>
+      <Typography variant="body2" color="text.secondary">
+        {formatDate(policy.created_at)}
+      </Typography>
+    </TableCell>
+    <TableCell align="right">
+      <IconButton size="small" aria-label="Edit policy" onClick={() => onEdit(policy)}>
+        <EditIcon fontSize="small" />
+      </IconButton>
+      <IconButton size="small" color="error" aria-label="Delete policy" onClick={() => onDelete(policy)}>
+        <DeleteIcon fontSize="small" />
+      </IconButton>
+    </TableCell>
+  </TableRow>
+);
+
+const DeletePolicyDialog = ({ open, onClose, policy, onConfirm, isDeleting }) => (
+  <Dialog open={open} onClose={onClose} maxWidth="sm">
+    <DialogTitle>Delete Policy</DialogTitle>
+    <DialogContent>
+      <Typography>Are you sure you want to delete the policy &quot;{policy?.name}&quot;?</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+        This action cannot be undone. All associated bindings and statements will be removed.
+      </Typography>
+    </DialogContent>
+    <DialogActions>
+      <Button onClick={onClose}>Cancel</Button>
+      <Button onClick={onConfirm} variant="contained" color="error" disabled={isDeleting}>
+        {isDeleting ? <CircularProgress size={20} /> : 'Delete'}
+      </Button>
+    </DialogActions>
+  </Dialog>
+);
 
 const PolicyAdmin = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -45,12 +121,7 @@ const PolicyAdmin = () => {
   const { data: policiesResponse, isLoading } = useQuery(
     ['policies', page, rowsPerPage],
     () => policyAPI.list({ offset: page * rowsPerPage, limit: rowsPerPage }),
-    {
-      keepPreviousData: true,
-      onError: (err) => {
-        setError(formatError(err));
-      },
-    }
+    { keepPreviousData: true, onError: (err) => setError(formatError(err)) }
   );
 
   const policies = extractItemsFromResponse(policiesResponse) || [];
@@ -115,27 +186,35 @@ const PolicyAdmin = () => {
     [setSearchParams]
   );
 
+  const handleDeepLinkError = useCallback(
+    (err) => {
+      setError(formatError(err));
+      setPendingPolicyId(null);
+      clearPolicyParam();
+    },
+    [clearPolicyParam]
+  );
+
+  const { data: deepLinkedPolicy } = useQuery(
+    ['policy', pendingPolicyId],
+    () => policyAPI.get(pendingPolicyId).then(extractDataFromResponse),
+    { enabled: !!pendingPolicyId, onError: handleDeepLinkError }
+  );
+
   useEffect(() => {
-    if (!pendingPolicyId || policies.length === 0) {
+    if (!deepLinkedPolicy) {
       return;
     }
-    const match = policies.find((p) => p.id === pendingPolicyId);
-    if (match) {
-      handleEdit(match);
-      setPendingPolicyId(null);
-    }
-  }, [pendingPolicyId, policies, handleEdit]);
+    handleEdit(deepLinkedPolicy);
+    setPendingPolicyId(null);
+  }, [deepLinkedPolicy, handleEdit]);
 
   const handleDelete = (policy) => {
     setSelectedPolicy(policy);
     setDeleteDialogOpen(true);
   };
 
-  const handleConfirmDelete = () => {
-    if (selectedPolicy) {
-      deleteMutation.mutate(selectedPolicy.id);
-    }
-  };
+  const handleConfirmDelete = () => selectedPolicy && deleteMutation.mutate(selectedPolicy.id);
 
   const handleSave = (data) => {
     if (selectedPolicy) {
@@ -143,13 +222,6 @@ const PolicyAdmin = () => {
     } else {
       createMutation.mutate(data);
     }
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) {
-      return 'N/A';
-    }
-    return new Date(dateString).toLocaleDateString();
   };
 
   const isSaving = createMutation.isLoading || updateMutation.isLoading;
@@ -213,57 +285,7 @@ const PolicyAdmin = () => {
                   </TableRow>
                 ) : (
                   policies.map((policy) => (
-                    <TableRow key={policy.id} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight="medium">
-                          {policy.name}
-                        </Typography>
-                        {policy.description && (
-                          <Typography variant="caption" color="text.secondary">
-                            {policy.description}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={policy.effect}
-                          color={policy.effect === 'allow' ? 'success' : 'error'}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={policy.is_active ? 'Active' : 'Inactive'}
-                          color={policy.is_active ? 'success' : 'default'}
-                          size="small"
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={`${(policy.bindings || []).length}`} size="small" variant="outlined" />
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={`${(policy.statements || []).length}`} size="small" variant="outlined" />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {formatDate(policy.created_at)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <IconButton size="small" aria-label="Edit policy" onClick={() => handleEdit(policy)}>
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          aria-label="Delete policy"
-                          onClick={() => handleDelete(policy)}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
+                    <PolicyRow key={policy.id} policy={policy} onEdit={handleEdit} onDelete={handleDelete} />
                   ))
                 )}
               </TableBody>
@@ -293,22 +315,13 @@ const PolicyAdmin = () => {
         saveError={saveError}
       />
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="sm">
-        <DialogTitle>Delete Policy</DialogTitle>
-        <DialogContent>
-          <Typography>Are you sure you want to delete the policy &quot;{selectedPolicy?.name}&quot;?</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            This action cannot be undone. All associated bindings and statements will be removed.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleConfirmDelete} variant="contained" color="error" disabled={deleteMutation.isLoading}>
-            {deleteMutation.isLoading ? <CircularProgress size={20} /> : 'Delete'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <DeletePolicyDialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        policy={selectedPolicy}
+        onConfirm={handleConfirmDelete}
+        isDeleting={deleteMutation.isLoading}
+      />
     </Box>
   );
 };
