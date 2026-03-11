@@ -617,6 +617,17 @@ export const agentsAPI = {
     api.post('/agents/morning-briefing/run', params, { timeout: timeoutMs }),
 };
 
+// Policy management endpoints
+export const policyAPI = {
+  list: (params = {}) => api.get('/policies', { params }),
+  get: (id) => api.get(`/policies/${id}`),
+  create: (data) => api.post('/policies', data),
+  update: (id, data) => api.put(`/policies/${id}`, data),
+  delete: (id) => api.delete(`/policies/${id}`),
+  check: (params) => api.get('/policies/check', { params }),
+  effective: (userId) => api.get(`/policies/effective/${userId}`),
+};
+
 // Experiences endpoints
 export const experiencesAPI = {
   list: (params = {}) => api.get('/experiences', { params }),

@@ -33,6 +33,7 @@ from .api.llm import router as llm_router
 from .api.model_configuration import router as model_configuration_router
 from .api.permissions import router as permissions_router
 from .api.plugins_router import router as plugins_router
+from .api.policies import policies_router
 from .api.prompts import router as prompts_router
 from .api.query import router as query_router
 from .api.resources import router as resources_router
@@ -142,6 +143,20 @@ def log_exception_details(exc: Exception, request: Request, error_id: str, inclu
         logger.error("Unhandled exception with full details", extra=exception_details, exc_info=True)
     else:
         logger.error("Unhandled exception", extra=exception_details)
+
+
+async def _initialize_policy_cache() -> None:
+    """Load all active access policies into the in-memory PBAC cache."""
+    try:
+        from .core.database import get_async_session_local
+        from .services.policy_engine import POLICY_CACHE
+
+        session_maker = get_async_session_local()
+        async with session_maker() as db:
+            await POLICY_CACHE.initialize(db)
+        logger.info("Policy cache initialized")
+    except Exception as e:
+        logger.warning(f"Policy cache initialization failed: {e}")
 
 
 # TODO: Refactor this function. It's too complex (number of branches and statements).
@@ -339,6 +354,8 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             logger.info("Plugins auto-sync completed", extra={"stats": stats})
     except Exception as e:
         logger.warning(f"Plugins auto-sync failed: {e}")
+
+    await _initialize_policy_cache()
 
     logger.info("Shu startup complete")
 
@@ -726,6 +743,9 @@ def setup_routes(app: FastAPI) -> None:
     app.include_router(permissions_router, prefix=settings.api_v1_prefix)
     app.include_router(user_permissions_router, prefix=settings.api_v1_prefix)
 
+    # Policy-based access control routes
+    app.include_router(policies_router, prefix=settings.api_v1_prefix)
+
     # Experience Platform routes
     app.include_router(experiences_router, prefix=settings.api_v1_prefix)
 
@@ -753,6 +773,7 @@ def setup_routes(app: FastAPI) -> None:
             groups_router.prefix,
             permissions_router.prefix,
             user_permissions_router.prefix,
+            policies_router.prefix,
             experiences_router.prefix,
             side_call_router.prefix,
         ]

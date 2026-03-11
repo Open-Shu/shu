@@ -58,11 +58,9 @@ async def list_experiences(
 
     try:
         service = ExperienceService(db)
-        is_admin = current_user.can_manage_users()
 
         result = await service.list_experiences(
             user_id=current_user.id,
-            is_admin=is_admin,
             offset=offset,
             limit=limit,
             visibility_filter=visibility,
@@ -170,9 +168,8 @@ async def get_run(
 
     try:
         service = ExperienceService(db)
-        is_admin = current_user.can_manage_users()
 
-        result = await service.get_run(run_id=run_id, user_id=current_user.id, is_admin=is_admin)
+        result = await service.get_run(run_id=run_id, user_id=current_user.id)
 
         if not result:
             return ShuResponse.error(
@@ -205,9 +202,8 @@ async def get_experience(
 
     try:
         service = ExperienceService(db)
-        is_admin = current_user.can_manage_users()
 
-        result = await service.get_experience(experience_id=experience_id, user_id=current_user.id, is_admin=is_admin)
+        result = await service.get_experience(experience_id=experience_id, user_id=current_user.id)
 
         if not result:
             return ShuResponse.error(
@@ -282,7 +278,7 @@ async def delete_experience(
 
     try:
         service = ExperienceService(db)
-        deleted = await service.delete_experience(experience_id)
+        deleted = await service.delete_experience(experience_id, user_id=current_user.id)
 
         if not deleted:
             return ShuResponse.error(
@@ -379,22 +375,7 @@ async def export_experience(
 
     try:
         service = ExperienceService(db)
-        is_admin = current_user.can_manage_users()
-
-        # Get the experience with visibility check
-        experience = await service.get_experience(
-            experience_id=experience_id, user_id=current_user.id, is_admin=is_admin
-        )
-
-        if not experience:
-            return ShuResponse.error(
-                message=f"Experience '{experience_id}' not found or access denied",
-                code="EXPERIENCE_NOT_FOUND",
-                status_code=404,
-            )
-
-        # Export to YAML
-        yaml_content, file_name = service.export_experience_to_yaml(experience)
+        yaml_content, file_name = await service.export_experience(experience_id=experience_id, user_id=current_user.id)
 
         logger.info(
             "API: Exported experience to YAML",
@@ -410,6 +391,8 @@ async def export_experience(
             },
         )
 
+    except NotFoundError as e:
+        return ShuResponse.error(message=str(e), code="EXPERIENCE_NOT_FOUND", status_code=404)
     except ShuException as e:
         logger.error("API: Failed to export experience", extra={"error": str(e)}, exc_info=True)
         return ShuResponse.error(message=str(e), code="EXPERIENCE_EXPORT_ERROR", status_code=e.status_code)
@@ -443,12 +426,10 @@ async def list_experience_runs(
 
     try:
         service = ExperienceService(db)
-        is_admin = current_user.can_manage_users()
 
         result = await service.list_runs(
             experience_id=experience_id,
             user_id=current_user.id,
-            is_admin=is_admin,
             offset=offset,
             limit=limit,
         )

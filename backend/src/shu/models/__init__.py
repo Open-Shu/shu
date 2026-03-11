@@ -5,6 +5,7 @@ This package contains SQLAlchemy models for all database tables
 used by the Shu application.
 """
 
+from .access_policy import AccessPolicy, AccessPolicyBinding, AccessPolicyStatement
 from .agent_memory import AgentMemory
 from .attachment import Attachment, MessageAttachment
 from .base import Base
@@ -64,6 +65,9 @@ __all__ = [
     "ROLE_MENTIONED",
     "ROLE_RECIPIENT",
     "ROLE_SUBJECT",
+    "AccessPolicy",
+    "AccessPolicyBinding",
+    "AccessPolicyStatement",
     "AgentMemory",
     "Base",
     "CapabilityManifest",

@@ -79,6 +79,7 @@ def mock_experience_response():
     return ExperienceResponse(
         id="exp-123",
         name="Test Experience",
+        slug="test-experience",
         description="A test experience",
         created_by="user-123",
         visibility=ExperienceVisibility.DRAFT,
@@ -283,38 +284,50 @@ class TestVisibilityChecks:
     experiences are only visible to admins.
     """
 
-    def test_visibility_admin_sees_all(self, service):
+    @pytest.mark.asyncio
+    async def test_visibility_admin_sees_all(self, service):
         """Admin can see any visibility level."""
-        for visibility in [
-            ExperienceVisibility.DRAFT,
-            ExperienceVisibility.ADMIN_ONLY,
-            ExperienceVisibility.PUBLISHED,
-        ]:
-            experience = MagicMock()
-            experience.visibility = visibility.value
-            assert service._check_visibility(experience, "any-user", is_admin=True) is True
+        with patch("shu.services.experience_service.POLICY_CACHE") as mock_cache:
+            mock_cache.is_admin = AsyncMock(return_value=True)
+            for visibility in [
+                ExperienceVisibility.DRAFT,
+                ExperienceVisibility.ADMIN_ONLY,
+                ExperienceVisibility.PUBLISHED,
+            ]:
+                experience = MagicMock()
+                experience.visibility = visibility.value
+                assert await service._check_visibility(experience, "any-user") is True
 
-    def test_visibility_published_visible_to_all(self, service):
+    @pytest.mark.asyncio
+    async def test_visibility_published_visible_to_all(self, service):
         """Published experiences are visible to everyone."""
         experience = MagicMock()
         experience.visibility = ExperienceVisibility.PUBLISHED.value
 
-        assert service._check_visibility(experience, "any-user", is_admin=False) is True
-        assert service._check_visibility(experience, None, is_admin=False) is True
+        with patch("shu.services.experience_service.POLICY_CACHE") as mock_cache:
+            mock_cache.is_admin = AsyncMock(return_value=False)
+            assert await service._check_visibility(experience, "any-user") is True
+            assert await service._check_visibility(experience, None) is True
 
-    def test_visibility_draft_not_visible_to_non_admins(self, service):
+    @pytest.mark.asyncio
+    async def test_visibility_draft_not_visible_to_non_admins(self, service):
         """Draft experiences are only visible to admins."""
         experience = MagicMock()
         experience.visibility = ExperienceVisibility.DRAFT.value
 
-        assert service._check_visibility(experience, "any-user", is_admin=False) is False
+        with patch("shu.services.experience_service.POLICY_CACHE") as mock_cache:
+            mock_cache.is_admin = AsyncMock(return_value=False)
+            assert await service._check_visibility(experience, "any-user") is False
 
-    def test_visibility_admin_only_not_visible_to_non_admins(self, service):
+    @pytest.mark.asyncio
+    async def test_visibility_admin_only_not_visible_to_non_admins(self, service):
         """Admin-only experiences are not visible to regular users."""
         experience = MagicMock()
         experience.visibility = ExperienceVisibility.ADMIN_ONLY.value
 
-        assert service._check_visibility(experience, "any-user", is_admin=False) is False
+        with patch("shu.services.experience_service.POLICY_CACHE") as mock_cache:
+            mock_cache.is_admin = AsyncMock(return_value=False)
+            assert await service._check_visibility(experience, "any-user") is False
 
 
 class TestStepValidation:
@@ -436,9 +449,9 @@ class TestCreateExperience:
 
     @pytest.mark.asyncio
     @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
-    @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
+    @patch.object(ExperienceService, "_get_experience_by_slug", return_value=None)
     async def test_create_experience_success(
-        self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
+        self, mock_get_by_slug, mock_scopes, mock_db_session, mock_experience_response
     ):
         """Successfully create an experience with steps."""
         service = ExperienceService(mock_db_session)
@@ -464,7 +477,10 @@ class TestCreateExperience:
         )
 
         # Mock the response conversion to avoid datetime serialization issues
-        with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
+        with (
+            patch("shu.services.experience_service.enforce_admin", new_callable=AsyncMock),
+            patch.object(service, "_experience_to_response", return_value=mock_experience_response),
+        ):
             result = await service.create_experience(experience_data, created_by="admin-user")
 
         # Verify db operations
@@ -504,6 +520,7 @@ class TestUpdateExperience:
         existing_exp.created_by = "admin"
         existing_exp.created_at = datetime.now()
         existing_exp.updated_at = datetime.now()
+        existing_exp.slug = "old-name"
         existing_exp.steps = []
         existing_exp.runs = []
         existing_exp.prompt = None
@@ -517,9 +534,14 @@ class TestUpdateExperience:
         )
 
         # Patch internal methods
-        with patch.object(service, "_get_experience_by_id", return_value=existing_exp):
-            with patch.object(service, "_get_experience_by_name", return_value=None):
-                result = await service.update_experience("exp-123", update_data)
+        mock_user = MagicMock()
+        mock_user.id = "admin-1"
+        with (
+            patch("shu.services.experience_service.enforce_admin", new_callable=AsyncMock),
+            patch.object(service, "_get_experience_by_id", return_value=existing_exp),
+            patch.object(service, "_get_experience_by_slug", return_value=None),
+        ):
+            result = await service.update_experience("exp-123", update_data, current_user=mock_user)
 
         # Verify db operations
         mock_db_session.commit.assert_called_once()
@@ -538,6 +560,7 @@ class TestGetRun:
         run.user_id = user_id
         run.started_at = None
         run.finished_at = None
+        run.experience = MagicMock(slug="test-exp")
         return run
 
     async def _call_get_run(
@@ -555,14 +578,17 @@ class TestGetRun:
 
         service = ExperienceService(mock_db_session)
         with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch("shu.services.experience_service.POLICY_CACHE") as mock_cache,
             patch.object(service, "_run_to_response", return_value=MagicMock()),
             patch.object(
                 service,
-                "_can_access_experience_runs",
+                "_check_visibility",
                 new=AsyncMock(return_value=can_access_experience),
             ),
         ):
-            return await service.get_run("run-123", user_id=user_id, is_admin=is_admin)
+            mock_cache.is_admin = AsyncMock(return_value=is_admin)
+            return await service.get_run("run-123", user_id=user_id)
 
     @pytest.mark.asyncio
     async def test_get_run_not_found(self, mock_db_session):
@@ -612,55 +638,11 @@ class TestGetRun:
         assert result is None
 
 
-class TestRunVisibilityHelper:
-    """Tests for _can_access_experience_runs()."""
-
-    @pytest.mark.asyncio
-    async def test_can_access_experience_runs_non_admin_empty_user_id(self, mock_db_session):
-        service = ExperienceService(mock_db_session)
-        allowed = await service._can_access_experience_runs("exp-1", user_id="", is_admin=False)
-        assert allowed is False
-        mock_db_session.execute.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_can_access_experience_runs_false_when_missing(self, mock_db_session):
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db_session.execute.return_value = mock_result
-
-        service = ExperienceService(mock_db_session)
-        allowed = await service._can_access_experience_runs("exp-1", user_id="user-1", is_admin=False)
-        assert allowed is False
-
-    @pytest.mark.asyncio
-    async def test_can_access_experience_runs_non_admin_published(self, mock_db_session):
-        exp = MagicMock()
-        exp.visibility = ExperienceVisibility.PUBLISHED.value
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = exp
-        mock_db_session.execute.return_value = mock_result
-
-        service = ExperienceService(mock_db_session)
-        allowed = await service._can_access_experience_runs("exp-1", user_id="user-1", is_admin=False)
-        assert allowed is True
-
-    @pytest.mark.asyncio
-    async def test_can_access_experience_runs_non_admin_draft(self, mock_db_session):
-        exp = MagicMock()
-        exp.visibility = ExperienceVisibility.DRAFT.value
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = exp
-        mock_db_session.execute.return_value = mock_result
-
-        service = ExperienceService(mock_db_session)
-        allowed = await service._can_access_experience_runs("exp-1", user_id="user-1", is_admin=False)
-        assert allowed is False
-
-
 class TestExperienceExport:
     """Test experience export to YAML functionality."""
 
-    def test_export_experience_to_yaml_basic(self, service):
+    @pytest.mark.asyncio
+    async def test_export_experience_basic(self, service):
         """Test basic YAML export functionality."""
         from shu.schemas.experience import ExperienceResponse, ExperienceStepResponse
 
@@ -668,6 +650,7 @@ class TestExperienceExport:
         experience = ExperienceResponse(
             id="test-experience-id",
             name="Morning Briefing",
+            slug="morning-briefing",
             description="Daily summary of emails and calendar",
             created_by="user-123",
             visibility=ExperienceVisibility.PUBLISHED,
@@ -724,8 +707,9 @@ class TestExperienceExport:
             updated_at=datetime.now(),
         )
 
-        # Test the export
-        yaml_content, file_name = service.export_experience_to_yaml(experience)
+        # Test the export — mock get_experience to return the pre-built response
+        with patch.object(service, "get_experience", new=AsyncMock(return_value=experience)):
+            yaml_content, file_name = await service.export_experience("test-experience-id", "user-123")
 
         assert file_name == "morning-briefing-experience.yaml"
 
@@ -806,6 +790,7 @@ def _make_mock_run(user_id: str | None, run_id: str = "run-1") -> MagicMock:
     run.error_details = None
     run.created_at = now
     run.updated_at = now
+    run.experience = MagicMock(slug="test-exp")
     return run
 
 
@@ -814,9 +799,9 @@ class TestCreateSharedExperience:
 
     @pytest.mark.asyncio
     @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
-    @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
+    @patch.object(ExperienceService, "_get_experience_by_slug", return_value=None)
     async def test_create_shared_experience_stores_scope_field(
-        self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
+        self, mock_get_by_slug, mock_scopes, mock_db_session, mock_experience_response
     ):
         """Creating an experience with scope='shared' persists and returns the scope."""
         # Override the fixture response to have shared scope
@@ -833,7 +818,10 @@ class TestCreateSharedExperience:
             steps=[],
         )
 
-        with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
+        with (
+            patch("shu.services.experience_service.enforce_admin", new_callable=AsyncMock),
+            patch.object(service, "_experience_to_response", return_value=mock_experience_response),
+        ):
             result = await service.create_experience(experience_data, created_by="admin-1")
 
         assert result.scope == ExperienceScope.SHARED
@@ -845,9 +833,9 @@ class TestCreateSharedExperience:
 
     @pytest.mark.asyncio
     @patch.object(ExperienceService, "compute_required_scopes_for_step", return_value=[])
-    @patch.object(ExperienceService, "_get_experience_by_name", return_value=None)
+    @patch.object(ExperienceService, "_get_experience_by_slug", return_value=None)
     async def test_create_shared_experience_with_auth_steps_succeeds(
-        self, mock_get_by_name, mock_scopes, mock_db_session, mock_experience_response
+        self, mock_get_by_slug, mock_scopes, mock_db_session, mock_experience_response
     ):
         """No creation-time rejection even if steps declare user OAuth.
 
@@ -874,7 +862,10 @@ class TestCreateSharedExperience:
             steps=[step],
         )
 
-        with patch.object(service, "_experience_to_response", return_value=mock_experience_response):
+        with (
+            patch("shu.services.experience_service.enforce_admin", new_callable=AsyncMock),
+            patch.object(service, "_experience_to_response", return_value=mock_experience_response),
+        ):
             result = await service.create_experience(experience_data, created_by="admin-1")
 
         # If we got here without raising, creation succeeded
@@ -914,12 +905,20 @@ class TestListRunsSharedVisibility:
 
         mock_db_session.execute = mock_execute
 
+        mock_exp = MagicMock()
+        mock_exp.slug = "test-exp"
+
         service = ExperienceService(mock_db_session)
-        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+        with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch("shu.services.experience_service.POLICY_CACHE") as mock_cache,
+            patch.object(service, "_check_visibility", new=AsyncMock(return_value=True)),
+            patch.object(service, "_get_experience_by_id", new=AsyncMock(return_value=mock_exp)),
+        ):
+            mock_cache.is_admin = AsyncMock(return_value=False)
             result = await service.list_runs(
                 experience_id="exp-1",
                 user_id="user-1",
-                is_admin=False,
             )
 
         assert result.total == 2
@@ -958,13 +957,20 @@ class TestListRunsSharedVisibility:
             return result
 
         mock_db_session.execute = mock_execute
+        mock_exp = MagicMock()
+        mock_exp.slug = "test-exp"
 
         service = ExperienceService(mock_db_session)
-        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+        with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch("shu.services.experience_service.POLICY_CACHE") as mock_cache,
+            patch.object(service, "_check_visibility", new=AsyncMock(return_value=True)),
+            patch.object(service, "_get_experience_by_id", new=AsyncMock(return_value=mock_exp)),
+        ):
+            mock_cache.is_admin = AsyncMock(return_value=False)
             result = await service.list_runs(
                 experience_id="exp-1",
                 user_id="user-1",
-                is_admin=False,
             )
 
         run_ids = {r.id for r in result.items}
@@ -975,12 +981,18 @@ class TestListRunsSharedVisibility:
     @pytest.mark.asyncio
     async def test_list_runs_returns_empty_when_experience_not_visible(self, mock_db_session):
         """Returns an empty page when parent experience is not visible."""
+        mock_exp = MagicMock()
+        mock_exp.slug = "test-exp"
+
         service = ExperienceService(mock_db_session)
-        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=False)):
+        with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch.object(service, "_check_visibility", new=AsyncMock(return_value=False)),
+            patch.object(service, "_get_experience_by_id", new=AsyncMock(return_value=mock_exp)),
+        ):
             result = await service.list_runs(
                 experience_id="exp-1",
                 user_id="user-1",
-                is_admin=False,
             )
 
         assert result.total == 0
@@ -1018,13 +1030,20 @@ class TestListRunsSharedVisibility:
             return result
 
         mock_db_session.execute = mock_execute
+        mock_exp = MagicMock()
+        mock_exp.slug = "test-exp"
 
         service = ExperienceService(mock_db_session)
-        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+        with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch("shu.services.experience_service.POLICY_CACHE") as mock_cache,
+            patch.object(service, "_check_visibility", new=AsyncMock(return_value=True)),
+            patch.object(service, "_get_experience_by_id", new=AsyncMock(return_value=mock_exp)),
+        ):
+            mock_cache.is_admin = AsyncMock(return_value=False)
             non_admin_result = await service.list_runs(
                 experience_id="exp-1",
                 user_id="user-1",
-                is_admin=False,
             )
 
         non_admin_ids = {r.id for r in non_admin_result.items}
@@ -1051,11 +1070,16 @@ class TestListRunsSharedVisibility:
 
         mock_db_session.execute = admin_mock_execute
 
-        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+        with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch("shu.services.experience_service.POLICY_CACHE") as mock_cache,
+            patch.object(service, "_check_visibility", new=AsyncMock(return_value=True)),
+            patch.object(service, "_get_experience_by_id", new=AsyncMock(return_value=mock_exp)),
+        ):
+            mock_cache.is_admin = AsyncMock(return_value=True)
             admin_result = await service.list_runs(
                 experience_id="exp-1",
                 user_id="admin-1",
-                is_admin=True,
             )
 
         admin_ids = {r.id for r in admin_result.items}
@@ -1078,11 +1102,15 @@ class TestGetRunSharedAccess:
         service = ExperienceService(mock_db_session)
 
         # User "user-99" who did not create the run can still access it
-        with patch.object(service, "_can_access_experience_runs", new=AsyncMock(return_value=True)):
+        with (
+            patch("shu.services.experience_service.enforce_pbac", new_callable=AsyncMock),
+            patch("shu.services.experience_service.POLICY_CACHE") as mock_cache,
+            patch.object(service, "_check_visibility", new=AsyncMock(return_value=True)),
+        ):
+            mock_cache.is_admin = AsyncMock(return_value=False)
             result = await service.get_run(
                 run_id="run-shared",
                 user_id="user-99",
-                is_admin=False,
             )
 
         assert result is not None
