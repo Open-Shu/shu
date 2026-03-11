@@ -71,7 +71,7 @@ class TestInMemoryQueueSynchronousProcessing:
 
         # Verify jobs are immediately available (no async waiting needed)
         queue_name = WorkloadType.INGESTION.queue_name
-        queue_length = await backend.queue_length(queue_name)
+        queue_length = await backend.pending_count(queue_name)
         assert queue_length == num_jobs, (
             f"Expected {num_jobs} jobs in queue, got {queue_length}"
         )
@@ -109,7 +109,7 @@ class TestInMemoryQueueSynchronousProcessing:
         )
 
         # Verify queue is empty after processing
-        final_queue_length = await backend.queue_length(queue_name)
+        final_queue_length = await backend.pending_count(queue_name)
         assert final_queue_length == 0, (
             f"Queue should be empty after processing, got {final_queue_length}"
         )
@@ -269,5 +269,5 @@ class TestInMemoryQueueSynchronousProcessing:
 
         # Verify all queues are empty
         for queue_name in handlers:
-            length = await backend.queue_length(queue_name)
+            length = await backend.pending_count(queue_name)
             assert length == 0, f"Queue {queue_name} should be empty"

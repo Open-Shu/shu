@@ -804,7 +804,7 @@ class TestProperty7ThreadSafeConcurrentOperations:
         assert all(results), "All enqueue operations should succeed"
 
         # Queue length should equal number of jobs
-        length = await backend.queue_length(queue_name)
+        length = await backend.pending_count(queue_name)
         assert length == num_jobs, f"Expected {num_jobs} jobs, got {length}"
 
         # Dequeue all jobs and verify none are lost
@@ -905,7 +905,7 @@ class TestProperty7ThreadSafeConcurrentOperations:
         dequeued = [f.result() for f in dequeue_futures if f.result() is not None]
 
         # Remaining jobs in queue
-        remaining = await inmemory_queue_backend.queue_length(queue_name)
+        remaining = await inmemory_queue_backend.pending_count(queue_name)
 
         # Jobs in processing state (dequeued but not yet acknowledged)
         processing_count = len(inmemory_queue_backend._processing[queue_name])
@@ -1402,27 +1402,27 @@ class TestRedisQueueBackendSpecific:
         assert len(peeked) == 3
 
         # Queue length should still be 5
-        length = await redis_queue_backend.queue_length("test")
+        length = await redis_queue_backend.pending_count("test")
         assert length == 5
 
     @pytest.mark.asyncio
-    async def test_redis_queue_length(self, redis_queue_backend: RedisQueueBackend):
-        """Unit test: Queue length returns correct count."""
+    async def test_redis_pending_count(self, redis_queue_backend: RedisQueueBackend):
+        """Unit test: Pending count returns correct count."""
         queue_name = "length_test"
 
         # Empty queue
-        assert await redis_queue_backend.queue_length(queue_name) == 0
+        assert await redis_queue_backend.pending_count(queue_name) == 0
 
         # Add jobs
         for i in range(5):
             job = Job(queue_name=queue_name, payload={"index": i})
             await redis_queue_backend.enqueue(job)
 
-        assert await redis_queue_backend.queue_length(queue_name) == 5
+        assert await redis_queue_backend.pending_count(queue_name) == 5
 
         # Dequeue one
         await redis_queue_backend.dequeue(queue_name)
-        assert await redis_queue_backend.queue_length(queue_name) == 4
+        assert await redis_queue_backend.pending_count(queue_name) == 4
 
     @pytest.mark.asyncio
     async def test_redis_schedule(self, redis_queue_backend: RedisQueueBackend):

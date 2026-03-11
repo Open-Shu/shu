@@ -301,6 +301,16 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             # Get queue backend (shared by all workers)
             backend = await get_queue_backend()
 
+            # Resume re-embedding jobs lost due to queue backend restart
+            try:
+                from .re_embedding_handler import recover_interrupted_re_embedding_jobs
+
+                resumed = await recover_interrupted_re_embedding_jobs(backend)
+                if resumed:
+                    logger.info(f"Re-enqueued {resumed} interrupted re-embedding job(s)")
+            except Exception as e:
+                logger.error(f"Failed to recover interrupted re-embedding jobs: {e}", exc_info=True)
+
             # Create process-shared capacity limiter (ensures OCR/profiling limits
             # are enforced across all workers, not per-worker)
             capacity_limiter = WorkloadCapacityLimiter.from_settings()

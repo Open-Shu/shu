@@ -97,10 +97,15 @@ class Settings(BaseSettings):
     # re-embedding from the Admin Console. Keyword search continues working.
     # Re-embedding is CPU-intensive and processes all chunks, synopses, and queries.
     default_embedding_model: str = Field("Snowflake/snowflake-arctic-embed-l-v2.0", alias="SHU_EMBEDDING_MODEL")
-    embedding_device: str = "cpu"
+    # Device for embedding inference: "auto" (default), "cpu", "mps", or "cuda".
+    # "auto" probes cuda → mps → cpu at startup and picks the best available.
+    # Explicit values fail fast if the device is unavailable.
+    embedding_device: str = Field("auto", alias="SHU_EMBEDDING_DEVICE")
     embedding_batch_size: int = Field(32, alias="SHU_EMBEDDING_BATCH_SIZE")
-    # Model precision: "float32" (default) or "float16" (half memory, recommended for 1024-dim+ models)
-    embedding_dtype: str = Field("float32", alias="SHU_EMBEDDING_DTYPE")
+    # Model precision: "auto" (default), "float32", or "float16".
+    # "auto" picks float16 on GPU (cuda/mps) and float32 on CPU.
+    # WARNING: float16 on CPU is ~9x slower due to lack of native fp16 compute.
+    embedding_dtype: str = Field("auto", alias="SHU_EMBEDDING_DTYPE")
     # Text processing configuration
     default_chunk_size: int = Field(1000, alias="SHU_DEFAULT_CHUNK_SIZE")
     default_chunk_overlap: int = Field(200, alias="SHU_DEFAULT_CHUNK_OVERLAP")
@@ -459,7 +464,6 @@ class Settings(BaseSettings):
 
     # OCR Configuration
     ocr_primary_engine: str = Field(default="easyocr", description="Primary OCR engine: easyocr, tesseract")
-    ocr_use_gpu: bool = Field(default=False, description="Use GPU acceleration for OCR (if available)")
     ocr_confidence_threshold: float = Field(default=0.6, description="Minimum confidence threshold for OCR results")
     ocr_max_concurrent_jobs: int = Field(
         default=1,
@@ -535,10 +539,26 @@ class Settings(BaseSettings):
     @classmethod
     def validate_embedding_dtype(cls, v: str) -> str:
         """Validate embedding dtype."""
-        valid_dtypes = ["float32", "float16"]
+        valid_dtypes = ["auto", "float32", "float16"]
         if v.lower() not in valid_dtypes:
             raise ValueError(f"Embedding dtype must be one of: {valid_dtypes}")
         return v.lower()
+
+    @field_validator("embedding_batch_size")
+    @classmethod
+    def validate_embedding_batch_size(cls, v: int) -> int:
+        """Validate embedding batch size is positive."""
+        if v <= 0:
+            raise ValueError("embedding_batch_size must be a positive integer")
+        return v
+
+    @field_validator("worker_concurrency")
+    @classmethod
+    def validate_worker_concurrency(cls, v: int) -> int:
+        """Validate worker concurrency is positive."""
+        if v <= 0:
+            raise ValueError("worker_concurrency must be a positive integer")
+        return v
 
     @field_validator("vector_index_type")
     @classmethod

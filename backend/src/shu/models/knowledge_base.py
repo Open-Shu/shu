@@ -131,23 +131,48 @@ class KnowledgeBase(BaseModel):
         """Check if this KB's embeddings are from a different model than the system model."""
         return self.embedding_model != system_model
 
-    def mark_re_embedding_started(self, total_chunks: int) -> None:
+    def mark_re_embedding_started(self, total_chunks: int, workers_total: int = 1) -> None:
         """Mark this KB as undergoing re-embedding."""
         self.embedding_status = "re_embedding"
         self.re_embedding_progress = {
             "chunks_done": 0,
             "chunks_total": total_chunks,
+            "workers_total": workers_total,
+            "workers_completed": 0,
             "phase": "chunks",
             "started_at": datetime.now(UTC).isoformat(),
         }
 
-    def update_re_embedding_progress(self, chunks_done: int) -> None:
-        """Update re-embedding progress counter."""
+    def increment_re_embedding_progress(self, additional_chunks: int) -> None:
+        """Increment the chunks_done counter in re_embedding_progress.
+
+        NOT atomic on its own — caller MUST hold a row-level lock
+        (SELECT ... FOR UPDATE) on the KB row to prevent lost updates
+        from concurrent workers.  The lock serializes access; this
+        method only mutates the in-memory ORM state.
+        """
         if self.re_embedding_progress is not None:
+            current = self.re_embedding_progress.get("chunks_done", 0)
             self.re_embedding_progress = {
                 **self.re_embedding_progress,
-                "chunks_done": chunks_done,
+                "chunks_done": current + additional_chunks,
             }
+
+    def increment_workers_completed(self) -> bool:
+        """Increment workers_completed and return True if all workers are done.
+
+        Caller MUST hold a row-level lock (SELECT ... FOR UPDATE) to prevent
+        lost updates from concurrent workers.
+        """
+        if self.re_embedding_progress is None:
+            raise RuntimeError("re_embedding_progress is None in increment_workers_completed")
+        completed = self.re_embedding_progress.get("workers_completed", 0) + 1
+        total = self.re_embedding_progress.get("workers_total", 1)
+        self.re_embedding_progress = {
+            **self.re_embedding_progress,
+            "workers_completed": completed,
+        }
+        return completed >= total
 
     def update_re_embedding_phase(self, phase: str) -> None:
         """Update the current re-embedding phase.

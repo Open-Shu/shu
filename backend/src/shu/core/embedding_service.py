@@ -91,6 +91,75 @@ class EmbeddingService(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Device resolution
+# ---------------------------------------------------------------------------
+
+_VALID_DEVICES = ("auto", "cpu", "mps", "cuda")
+
+
+def resolve_embedding_device(requested: str) -> str:
+    """Resolve the embedding device string to a concrete PyTorch device.
+
+    - ``"auto"`` probes cuda → mps → cpu and picks the best available.
+    - Explicit values (``"cuda"``, ``"mps"``, ``"cpu"``) are validated;
+      unavailable devices raise ``RuntimeError`` so misconfigurations
+      fail fast rather than silently falling back to CPU.
+    """
+    if requested not in _VALID_DEVICES:
+        raise ValueError(f"Invalid SHU_EMBEDDING_DEVICE '{requested}'. Must be one of: {_VALID_DEVICES}")
+
+    import torch
+
+    if requested == "auto":
+        if torch.cuda.is_available():
+            logger.info("Auto-detected CUDA device for embeddings")
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logger.info("Auto-detected MPS (Apple Silicon) device for embeddings")
+            return "mps"
+        logger.info("No GPU detected, using CPU for embeddings")
+        return "cpu"
+
+    # Explicit device — fail fast if unavailable
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "SHU_EMBEDDING_DEVICE='cuda' but CUDA is not available. "
+            "Install a CUDA-enabled PyTorch build, or set SHU_EMBEDDING_DEVICE=auto."
+        )
+    if requested == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+        raise RuntimeError(
+            "SHU_EMBEDDING_DEVICE='mps' but MPS is not available. "
+            "Requires Apple Silicon with macOS 12.3+, or set SHU_EMBEDDING_DEVICE=auto."
+        )
+    return requested
+
+
+_VALID_DTYPES = ("auto", "float32", "float16")
+
+
+def resolve_embedding_dtype(requested: str, device: str) -> str:
+    """Resolve embedding dtype, optionally based on the resolved device.
+
+    - ``"auto"``: float16 on GPU (cuda/mps), float32 on CPU.
+    - Explicit values pass through with validation.
+    """
+    if requested not in _VALID_DTYPES:
+        raise ValueError(f"Invalid SHU_EMBEDDING_DTYPE '{requested}'. Must be one of: {_VALID_DTYPES}")
+
+    if requested == "auto":
+        if device in ("cuda", "mps"):
+            logger.info(f"Auto-selected float16 dtype for {device} device")
+            return "float16"
+        logger.info("Auto-selected float32 dtype for CPU (float16 is ~9x slower on CPU)")
+        return "float32"
+
+    if requested == "float16" and device == "cpu":
+        logger.warning("float16 on CPU is ~9x slower than float32 due to lack of native fp16 compute")
+
+    return requested
+
+
+# ---------------------------------------------------------------------------
 # LocalEmbeddingService
 # ---------------------------------------------------------------------------
 
@@ -149,12 +218,20 @@ class LocalEmbeddingService:
         # Cache dimension from the loaded model
         self._dimension: int = self._model.get_sentence_embedding_dimension()
 
-        # Cache query prompt name for asymmetric models (e.g., Snowflake arctic-embed).
-        # Models that define a "query" prompt use it to prefix queries differently from
-        # documents. Models without it (or with an empty prompt like MiniLM) work fine.
+        # Cache prompt names for asymmetric models (e.g., Snowflake arctic-embed, E5, BGE).
+        # Models define prompts in config_sentence_transformers.json. We detect supported
+        # prompt names at load time; unsupported names stay None (no prefix applied).
+        # sentence-transformers raises ValueError on unknown prompt_name, so we must check.
         self._query_prompt_name: str | None = "query" if "query" in self._model.prompts else None
+        self._document_prompt_name: str | None = next(
+            (name for name in ("document", "passage") if name in self._model.prompts), None
+        )
 
-        logger.info(f"Successfully loaded SentenceTransformer model: {model_name} (dim={self._dimension})")
+        logger.info(
+            f"Successfully loaded SentenceTransformer model: {model_name} (dim={self._dimension})"
+            f"{f', query_prompt={self._query_prompt_name!r}' if self._query_prompt_name else ''}"
+            f"{f', doc_prompt={self._document_prompt_name!r}' if self._document_prompt_name else ''}"
+        )
 
         # Preload model to ensure full initialization
         logger.debug("Preloading model with dummy text")
@@ -176,7 +253,12 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(texts, batch_size=self._batch_size, show_progress_bar=False),
+            lambda: self._model.encode_document(
+                texts,
+                batch_size=self._batch_size,
+                show_progress_bar=False,
+                prompt_name=self._document_prompt_name,
+            ),
         )
         return [e.tolist() for e in embeddings]
 
@@ -184,7 +266,7 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(
+            lambda: self._model.encode_query(
                 [text], batch_size=1, show_progress_bar=False, prompt_name=self._query_prompt_name
             )[0],
         )
@@ -197,7 +279,7 @@ class LocalEmbeddingService:
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.encode(
+            lambda: self._model.encode_query(
                 texts,
                 batch_size=self._batch_size,
                 show_progress_bar=False,
@@ -382,12 +464,14 @@ async def get_embedding_service() -> EmbeddingService:
         return _embedding_service
 
     settings = get_settings_instance()
+    device = resolve_embedding_device(settings.embedding_device)
+    dtype = resolve_embedding_dtype(settings.embedding_dtype, device)
 
     _embedding_service = _service_manager.get_service(
         model_name=settings.default_embedding_model,
-        device=settings.embedding_device,
+        device=device,
         batch_size=settings.embedding_batch_size,
-        dtype=settings.embedding_dtype,
+        dtype=dtype,
     )
 
     return _embedding_service
@@ -411,11 +495,13 @@ def get_embedding_service_dependency() -> EmbeddingService:
     # Fallback: create synchronously (startup should have initialized)
     logger.debug("get_embedding_service_dependency called before async initialization")
     settings = get_settings_instance()
+    device = resolve_embedding_device(settings.embedding_device)
+    dtype = resolve_embedding_dtype(settings.embedding_dtype, device)
     _embedding_service = _service_manager.get_service(
         model_name=settings.default_embedding_model,
-        device=settings.embedding_device,
+        device=device,
         batch_size=settings.embedding_batch_size,
-        dtype=settings.embedding_dtype,
+        dtype=dtype,
     )
     return _embedding_service
 

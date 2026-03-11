@@ -813,7 +813,24 @@ class KnowledgeBaseService:
             raise ValidationError("Knowledge base embeddings are already current")
 
         if kb.embedding_status == "re_embedding":
-            raise ConflictError("Re-embedding is already in progress for this knowledge base")
+            from datetime import UTC, datetime, timedelta
+
+            stale_after = timedelta(minutes=3)
+            last_updated = kb.updated_at
+            if last_updated is not None and last_updated.tzinfo is None:
+                last_updated = last_updated.replace(tzinfo=UTC)
+
+            is_stale = last_updated is None or (datetime.now(UTC) - last_updated) >= stale_after
+            if not is_stale:
+                raise ConflictError("Re-embedding is already in progress for this knowledge base")
+            logger.info(
+                "Re-embedding appears stale for KB, allowing re-trigger",
+                extra={
+                    "kb_id": kb_id,
+                    "last_updated": str(last_updated),
+                    "stale_after_seconds": int(stale_after.total_seconds()),
+                },
+            )
 
         # Count chunks for progress tracking
         result = await self.db.execute(
@@ -821,30 +838,46 @@ class KnowledgeBaseService:
         )
         total_chunks = result.scalar() or 0
 
+        # Determine number of parallel chunk workers
+        from ..core.config import get_settings_instance
+
+        settings = get_settings_instance()
+        batches_needed = max(1, -(-total_chunks // settings.embedding_batch_size))  # ceil division
+        num_workers = min(settings.worker_concurrency, batches_needed)
+
         # Capture original state so we can restore it on enqueue failure
         original_status = kb.embedding_status
         original_progress = kb.re_embedding_progress
 
         # Mark KB as re-embedding
-        kb.mark_re_embedding_started(total_chunks)
+        kb.mark_re_embedding_started(total_chunks, workers_total=num_workers)
         await self.db.commit()
 
-        # Enqueue the worker job; revert status on failure so admin can retry
+        # Enqueue parallel chunk jobs; revert status on failure so admin can retry
         try:
-            await enqueue_job(
-                queue_backend,
-                WorkloadType.RE_EMBEDDING,
-                payload={"knowledge_base_id": kb_id, "action": "re_embed_kb"},
-                max_attempts=3,
-                visibility_timeout=600,
-            )
+            for i in range(num_workers):
+                await enqueue_job(
+                    queue_backend,
+                    WorkloadType.RE_EMBEDDING,
+                    payload={
+                        "knowledge_base_id": kb_id,
+                        "action": "re_embed_chunks",
+                        "worker_index": i,
+                        "workers_total": num_workers,
+                    },
+                    max_attempts=3,
+                    visibility_timeout=600,
+                )
         except Exception:
             kb.embedding_status = original_status
             kb.re_embedding_progress = original_progress
             await self.db.commit()
             raise
 
-        logger.info("Re-embedding job enqueued", extra={"kb_id": kb_id, "total_chunks": total_chunks})
+        logger.info(
+            "Re-embedding jobs enqueued",
+            extra={"kb_id": kb_id, "total_chunks": total_chunks, "workers": num_workers},
+        )
 
         return {"status": "queued", "knowledge_base_id": kb_id, "total_chunks": total_chunks}
 

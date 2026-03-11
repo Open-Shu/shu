@@ -454,8 +454,8 @@ class QueueBackend(Protocol):
         """
         ...
 
-    async def queue_length(self, queue_name: str) -> int:
-        """Get the number of jobs waiting in the queue.
+    async def pending_count(self, queue_name: str) -> int:
+        """Get the number of jobs waiting to be picked up.
 
         Returns the count of jobs that are ready to be dequeued. Does not
         include jobs that are currently being processed (in-flight).
@@ -464,15 +464,43 @@ class QueueBackend(Protocol):
             queue_name: The queue to check.
 
         Returns:
-            Number of jobs in the queue (not including processing jobs).
+            Number of jobs waiting in the queue.
 
         Raises:
             QueueConnectionError: If the backend is unreachable.
 
-        Example:
-            length = await backend.queue_length("tasks")
-            if length > 100:
-                logger.warning(f"Queue backlog: {length} jobs")
+        """
+        ...
+
+    async def active_count(self, queue_name: str) -> int:
+        """Get the number of jobs currently being processed.
+
+        Returns the count of in-flight jobs that have been dequeued but
+        not yet acknowledged or rejected.
+
+        Args:
+            queue_name: The queue to check.
+
+        Returns:
+            Number of jobs currently being processed.
+
+        Raises:
+            QueueConnectionError: If the backend is unreachable.
+
+        """
+        ...
+
+    async def total_count(self, queue_name: str) -> int:
+        """Get the total number of jobs in the system (pending + active).
+
+        Args:
+            queue_name: The queue to check.
+
+        Returns:
+            Total number of jobs waiting or being processed.
+
+        Raises:
+            QueueConnectionError: If the backend is unreachable.
 
         """
         ...
@@ -962,25 +990,25 @@ class InMemoryQueueBackend:
 
             return jobs
 
-    async def queue_length(self, queue_name: str) -> int:
-        """Get the number of jobs waiting in the queue.
-
-        Returns the count of jobs that are ready to be dequeued. Does not
-        include jobs that are currently being processed (in-flight).
-
-        Args:
-            queue_name: The queue to check.
-
-        Returns:
-            Number of jobs in the queue (not including processing jobs).
-
-        """
+    async def pending_count(self, queue_name: str) -> int:
+        """Get the number of jobs waiting to be picked up."""
         with self._lock:
-            # First restore any expired jobs and move scheduled jobs
             self._restore_expired_jobs(queue_name)
             self._move_scheduled_jobs(queue_name)
-
             return len(self._queues[queue_name])
+
+    async def active_count(self, queue_name: str) -> int:
+        """Get the number of jobs currently being processed."""
+        with self._lock:
+            self._restore_expired_jobs(queue_name)
+            return len(self._processing[queue_name])
+
+    async def total_count(self, queue_name: str) -> int:
+        """Get the total number of jobs in the system (pending + active)."""
+        with self._lock:
+            self._restore_expired_jobs(queue_name)
+            self._move_scheduled_jobs(queue_name)
+            return len(self._queues[queue_name]) + len(self._processing[queue_name])
 
     async def schedule(
         self,
@@ -1575,38 +1603,44 @@ class RedisQueueBackend:
                 details={"queue_name": queue_name, "error": str(e)},
             ) from e
 
-    async def queue_length(self, queue_name: str) -> int:
-        """Get the number of jobs waiting in the queue.
-
-        Returns the count of jobs that are ready to be dequeued. Does not
-        include jobs that are currently being processed (in-flight).
-
-        Args:
-            queue_name: The queue to check.
-
-        Returns:
-            Number of jobs in the queue (not including processing jobs).
-
-        Raises:
-            QueueConnectionError: If the Redis server is unreachable.
-
-        """
+    async def pending_count(self, queue_name: str) -> int:
+        """Get the number of jobs waiting to be picked up."""
         queue_key = self._queue_key(queue_name)
-
         try:
-            # First restore any expired jobs and move scheduled jobs
             await self._restore_expired_jobs(queue_name)
             await self._move_scheduled_jobs(queue_name)
-
             return await self._client.llen(queue_key)
-
         except Exception as e:
-            logger.error(
-                f"Redis queue_length failed for queue '{queue_name}': {e}",
-                extra={"queue_name": queue_name, "error": str(e)},
-            )
             raise QueueConnectionError(
-                f"Failed to get length of queue '{queue_name}'",
+                f"Failed to get pending count for queue '{queue_name}'",
+                details={"queue_name": queue_name, "error": str(e)},
+            ) from e
+
+    async def active_count(self, queue_name: str) -> int:
+        """Get the number of jobs currently being processed."""
+        processing_key = self._processing_key(queue_name)
+        try:
+            await self._restore_expired_jobs(queue_name)
+            return await self._client.zcard(processing_key)
+        except Exception as e:
+            raise QueueConnectionError(
+                f"Failed to get active count for queue '{queue_name}'",
+                details={"queue_name": queue_name, "error": str(e)},
+            ) from e
+
+    async def total_count(self, queue_name: str) -> int:
+        """Get the total number of jobs in the system (pending + active)."""
+        queue_key = self._queue_key(queue_name)
+        processing_key = self._processing_key(queue_name)
+        try:
+            await self._restore_expired_jobs(queue_name)
+            await self._move_scheduled_jobs(queue_name)
+            pending = await self._client.llen(queue_key)
+            active = await self._client.zcard(processing_key)
+            return pending + active
+        except Exception as e:
+            raise QueueConnectionError(
+                f"Failed to get total count for queue '{queue_name}'",
                 details={"queue_name": queue_name, "error": str(e)},
             ) from e
 
