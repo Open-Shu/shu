@@ -127,6 +127,50 @@ async def test_query_hybrid_search(client, db, auth_headers):
     assert response.status_code in [200, 404]  # 404 if no documents found
 
 
+async def test_query_multi_surface_search(client, db, auth_headers):
+    """Test multi-surface search functionality.
+
+    Multi-surface search executes multiple retrieval surfaces in parallel
+    (chunk_vector, synopsis_match) and fuses their scores.
+    """
+    import uuid
+
+    unique_id = str(uuid.uuid4())[:8]
+
+    # Create knowledge base
+    kb_data = {
+        "name": f"Multi-Surface Search Test KB {unique_id}",
+        "description": "Knowledge base for multi-surface search testing",
+        "sync_enabled": True,
+    }
+
+    kb_response = await client.post("/api/v1/knowledge-bases", json=kb_data, headers=auth_headers)
+    assert kb_response.status_code == 201
+    kb_id = extract_data(kb_response)["id"]
+
+    # Test multi-surface search
+    multi_surface_data = {
+        "query": "machine learning algorithms",
+        "query_type": "multi_surface",
+        "limit": 10,
+        "similarity_threshold": 0.5,
+    }
+
+    response = await client.post(f"/api/v1/query/{kb_id}/search", json=multi_surface_data, headers=auth_headers)
+    # Should succeed even if no documents exist
+    assert response.status_code in [200, 404]
+
+    if response.status_code == 200:
+        data = extract_data(response)
+        assert "results" in data or "multi_surface_results" in data
+        # If multi_surface_results present, verify structure
+        if "multi_surface_results" in data:
+            for result in data["multi_surface_results"]:
+                assert "document_id" in result
+                assert "final_score" in result
+                assert "surface_scores" in result
+
+
 async def test_query_with_filters(client, db, auth_headers):
     """Test search with filters and metadata."""
     # Create knowledge base
@@ -315,6 +359,7 @@ class QueryIntegrationTestSuite(BaseIntegrationTestSuite):
             test_query_search_basic,
             test_query_similarity_search,
             test_query_hybrid_search,
+            test_query_multi_surface_search,
             test_query_with_filters,
             test_query_stats,
             test_query_invalid_knowledge_base,

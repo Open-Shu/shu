@@ -22,6 +22,7 @@ class QueryType(str, Enum):
     SIMILARITY = "similarity"
     KEYWORD = "keyword"
     HYBRID = "hybrid"
+    MULTI_SURFACE = "multi_surface"
 
 
 class RagRewriteMode(str, Enum):
@@ -70,7 +71,7 @@ class QueryRequest(BaseModel):
     @classmethod
     def validate_query_type(cls, v: str) -> str:
         """Validate query type."""
-        valid_types = ["similarity", "keyword", "hybrid"]
+        valid_types = ["similarity", "keyword", "hybrid", "multi_surface"]
         if v not in valid_types:
             raise ValueError(f"Query type must be one of: {valid_types}")
         return v
