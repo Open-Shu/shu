@@ -55,9 +55,9 @@ function QueryTester() {
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
   // Multi-surface search weights
-  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.30);
+  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.3);
   const [queryMatchWeight, setQueryMatchWeight] = useState(0.25);
-  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.20);
+  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.2);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 

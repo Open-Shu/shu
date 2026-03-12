@@ -1531,9 +1531,7 @@ class QueryService:
                     else settings.multi_surface_chunk_vector_weight
                 ),
                 "query_match": (
-                    query_match_weight
-                    if query_match_weight is not None
-                    else settings.multi_surface_query_match_weight
+                    query_match_weight if query_match_weight is not None else settings.multi_surface_query_match_weight
                 ),
                 "synopsis_match": (
                     synopsis_match_weight
