@@ -44,16 +44,30 @@ const EMPTY_FORM = {
   statements: [],
 };
 
+const toArray = (val) => {
+  if (Array.isArray(val)) {
+    return val;
+  }
+  if (val !== null && val !== '') {
+    return [val];
+  }
+  return [];
+};
+
 const policyToFormData = (policy) => ({
   name: policy.name || '',
   description: policy.description || '',
   effect: policy.effect || 'allow',
   is_active: policy.is_active !== undefined ? policy.is_active : true,
-  bindings: (policy.bindings || []).map((b) => ({ ...b })),
-  statements: (policy.statements || []).map((s) => ({
-    actions: [...(s.actions || [])],
-    resources: [...(s.resources || [])],
-  })),
+  bindings: toArray(policy.bindings)
+    .filter((b) => b && typeof b === 'object' && !Array.isArray(b))
+    .map((b) => ({ actor_type: b.actor_type || 'user', actor_id: b.actor_id || '' })),
+  statements: toArray(policy.statements)
+    .filter((s) => s && typeof s === 'object' && !Array.isArray(s))
+    .map((s) => ({
+      actions: toArray(s.actions).map(String),
+      resources: toArray(s.resources).map(String),
+    })),
 });
 
 const BindingRow = ({ binding, index, onUpdate, onRemove, userOptions, groupOptions }) => (
@@ -303,6 +317,7 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
               setJsonText(e.target.value);
               setJsonError(null);
             }}
+            inputProps={{ 'aria-label': 'Policy JSON editor' }}
             InputProps={{ sx: { fontFamily: 'monospace', fontSize: '0.875rem' } }}
             sx={{ mt: 1 }}
           />
