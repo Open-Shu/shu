@@ -27,7 +27,7 @@ async def test_params_validation_missing_required(client, db, auth_headers):
     from shu.plugins.executor import EXECUTOR
 
     try:
-        await EXECUTOR.execute(plugin=plugin, user_id="u1", user_email=None, agent_key=None, params={})
+        await EXECUTOR.execute(plugin=plugin, user_id="u1", user_email=None, agent_key=None, params={}, db_session=db)
         raise AssertionError("Expected HTTPException for missing required param 'q'")
     except HTTPException as e:
         assert e.status_code == 422
@@ -38,7 +38,7 @@ async def test_params_and_output_validation_success(client, db, auth_headers):
     plugin = await _load_test_plugin()
     from shu.plugins.executor import EXECUTOR
 
-    result = await EXECUTOR.execute(plugin=plugin, user_id="u1", user_email=None, agent_key=None, params={"q": "hello"})
+    result = await EXECUTOR.execute(plugin=plugin, user_id="u1", user_email=None, agent_key=None, params={"q": "hello"}, db_session=db)
     assert result.status == "success"
     assert result.data and result.data.get("echo") == "hello"
 

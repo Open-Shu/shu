@@ -364,15 +364,20 @@ class PolicyCache:
 POLICY_CACHE = PolicyCache()
 
 
-async def enforce_pbac(user_id: str, action: str, resource: str, db: AsyncSession) -> None:
+async def enforce_pbac(
+    user_id: str, action: str, resource: str, db: AsyncSession, *, message: str = "Not found"
+) -> None:
     """Raise ``NotFoundError`` if the user is denied access.
 
     Wraps ``POLICY_CACHE.check`` so callers can enforce PBAC with a single
     ``await`` — no conditional logic at the call site.  Returns 404 (not 403)
     to avoid leaking resource existence.
+
+    Pass a custom *message* to match the surrounding not-found wording so
+    that denied responses are indistinguishable from genuine misses.
     """
     if not await POLICY_CACHE.check(user_id, action, resource, db):
-        raise NotFoundError("Not found")
+        raise NotFoundError(message)
 
 
 async def enforce_admin(user_id: str, db: AsyncSession) -> None:

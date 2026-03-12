@@ -40,7 +40,7 @@ async def test_runtime_import_hook_blocks_dynamic_src_shu(client, db, auth_heade
 
     plugin = loader.load(records["runtime_bad_import"])  # No static violation; dynamic import during execute
 
-    result = await EXECUTOR.execute(plugin=plugin, user_id="u1", user_email=None, agent_key=None, params={})
+    result = await EXECUTOR.execute(plugin=plugin, user_id="u1", user_email=None, agent_key=None, params={}, db_session=db)
     assert result.status == "error", result
     assert result.error and "denied" in (result.error.get("message") or ""), result.error
 

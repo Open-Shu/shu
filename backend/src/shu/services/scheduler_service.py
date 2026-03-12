@@ -35,6 +35,7 @@ from ..core.workload_routing import WorkloadType, enqueue_job
 from ..models.experience import Experience, ExperienceRun
 from ..models.user_preferences import UserPreferences
 from ..schemas.experience import ExperienceScope
+from ..services.policy_engine import POLICY_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ class ExperienceSource:
         enqueued = 0
         queue_enqueued = 0
         skipped_active = 0
+        skipped_denied = 0
 
         for exp in due_experiences:
             exp_enqueued = 0
@@ -261,6 +263,10 @@ class ExperienceSource:
                     if (str(exp.id), str(user.id)) in active_run_keys:
                         skipped_active += 1
                         continue
+                    # Early exit of the executions so we don't attempt to run for users that don't have permissions
+                    if not await POLICY_CACHE.check(str(user.id), "experience.run", f"experience:{exp.slug}", db):
+                        skipped_denied += 1
+                        continue
                     if await _enqueue_experience_run(db, queue, exp, user_id=str(user.id)):
                         exp_enqueued += 1
 
@@ -279,12 +285,13 @@ class ExperienceSource:
         await db.commit()
 
         logger.info(
-            "Experience source tick | due=%d enqueued=%d queue_enqueued=%d users=%d skipped_active=%d",
+            "Experience source tick | due=%d enqueued=%d queue_enqueued=%d users=%d skipped_active=%d skipped_denied=%d",
             len(due_experiences),
             enqueued,
             queue_enqueued,
             len(all_users),
             skipped_active,
+            skipped_denied,
         )
 
         return {
@@ -292,6 +299,7 @@ class ExperienceSource:
             "enqueued": enqueued,
             "queue_enqueued": queue_enqueued,
             "skipped_active_user_runs": skipped_active,
+            "skipped_denied": skipped_denied,
             "no_users": 0,
         }
 

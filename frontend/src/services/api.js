@@ -626,6 +626,7 @@ export const policyAPI = {
   delete: (id) => api.delete(`/policies/${id}`),
   check: (params) => api.get('/policies/check', { params }),
   effective: (userId) => api.get(`/policies/effective/${userId}`),
+  actions: () => api.get('/policies/actions'),
 };
 
 // Experiences endpoints

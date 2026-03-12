@@ -17,6 +17,13 @@ from shu.models.experience import Experience
 from shu.services.experiences_scheduler_service import ExperiencesSchedulerService
 
 
+def _allow_all_pbac():
+    """Return a mock POLICY_CACHE that allows all access."""
+    mock = MagicMock()
+    mock.check = AsyncMock(return_value=True)
+    return mock
+
+
 class TestGetUserTimezone:
     """Tests for get_user_timezone method."""
 
@@ -358,7 +365,8 @@ class TestRunDueExperiences:
             }
         )
 
-        result = await service.run_due_experiences(limit=10)
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", _allow_all_pbac()):
+            result = await service.run_due_experiences(limit=10)
 
         assert result["due"] == 1
         assert result["user_runs"] == 2  # Ran for both users
@@ -394,7 +402,8 @@ class TestRunDueExperiences:
             ]
         )
 
-        result = await service.run_due_experiences(limit=10)
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", _allow_all_pbac()):
+            result = await service.run_due_experiences(limit=10)
 
         assert result["user_runs"] == 1
         assert result["user_failures"] == 1

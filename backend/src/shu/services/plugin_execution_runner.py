@@ -185,6 +185,7 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
         params=eff_params,
         limits=per_plugin_limits,
         provider_identities=providers_map,
+        db_session=session,
     )
 
     # Step 10: Normalize result to dict

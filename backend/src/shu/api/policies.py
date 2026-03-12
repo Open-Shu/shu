@@ -14,12 +14,21 @@ from ..auth.rbac import require_admin
 from ..core.exceptions import ConflictError, NotFoundError, ShuException, ValidationError
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
-from ..schemas.access_policy import PolicyInput, PolicyResponse
+from ..schemas.access_policy import PolicyActionOption, PolicyActionsResponse, PolicyInput, PolicyResponse
 from ..services.policy_service import PolicyService
 from .dependencies import get_db
 
 logger = get_logger(__name__)
 policies_router = APIRouter(prefix="/policies", tags=["policies"])
+
+# TODO: Right now the policy engine doesn't really care what actions are passed in, it just string matches.
+#       As actions grow, we might want to clean this up a bit.
+KNOWN_ACTIONS = [
+    PolicyActionOption(value="experience.read", label="View experiences and their runs"),
+    PolicyActionOption(value="experience.run", label="Execute experiences"),
+    PolicyActionOption(value="plugin.read", label="View plugins"),
+    PolicyActionOption(value="plugin.execute", label="Execute plugins"),
+]
 
 
 @policies_router.post(
@@ -145,6 +154,18 @@ async def check_access(
     except Exception as e:
         logger.error("API: Unexpected error checking access", extra={"error": str(e)}, exc_info=True)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@policies_router.get(
+    "/actions",
+    summary="List available actions",
+    description="List known actions that can be used in policy statements. Admin only.",
+)
+async def list_actions(
+    current_user: User = Depends(require_admin),
+) -> JSONResponse:
+    """Return known actions for the policy editor."""
+    return ShuResponse.success(PolicyActionsResponse(actions=KNOWN_ACTIONS).model_dump())
 
 
 @policies_router.get(
