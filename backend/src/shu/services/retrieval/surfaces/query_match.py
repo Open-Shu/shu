@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from ....models.document import DocumentQuery
-from ..protocol import SurfaceHit, SurfaceResult
+from ..protocol import RetrievalSurface, SurfaceHit, SurfaceResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from shu.core.vector_store import VectorStore
 
 
-class QueryMatchSurface:
+class QueryMatchSurface(RetrievalSurface):
     """Retrieval surface for vector similarity search on synthesized queries.
 
     This surface finds documents whose synthesized queries (generated during
