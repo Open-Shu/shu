@@ -10,7 +10,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ..protocol import SurfaceHit, SurfaceResult
+from ..protocol import RetrievalSurface, SurfaceHit, SurfaceResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from shu.core.vector_store import VectorStore
 
 
-class SynopsisMatchSurface:
+class SynopsisMatchSurface(RetrievalSurface):
     """Retrieval surface for vector similarity search on document synopses.
 
     This surface finds documents whose high-level synopsis (generated during

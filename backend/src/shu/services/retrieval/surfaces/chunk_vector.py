@@ -10,7 +10,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ..protocol import SurfaceHit, SurfaceResult
+from ..protocol import RetrievalSurface, SurfaceHit, SurfaceResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from shu.core.vector_store import VectorStore
 
 
-class ChunkVectorSurface:
+class ChunkVectorSurface(RetrievalSurface):
     """Retrieval surface for vector similarity search on chunks.
 
     This is the primary retrieval surface, finding chunks whose embeddings
