@@ -203,7 +203,14 @@ describe('PolicyAdmin', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
-      expect(api.policyAPI.create).toHaveBeenCalledWith({ name: 'new-policy', effect: 'allow' });
+      expect(api.policyAPI.create).toHaveBeenCalledWith({
+        name: 'new-policy',
+        description: '',
+        effect: 'allow',
+        is_active: true,
+        bindings: [],
+        statements: [],
+      });
     });
   });
 

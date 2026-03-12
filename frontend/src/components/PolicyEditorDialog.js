@@ -79,7 +79,9 @@ const BindingRow = ({ binding, index, onUpdate, onRemove, userOptions, groupOpti
         (binding.actor_type === 'user' ? userOptions : groupOptions).find((o) => o.value === binding.actor_id) ||
         (binding.actor_id ? { label: binding.actor_id, value: binding.actor_id } : null)
       }
-      onChange={(_, newVal) => onUpdate(index, { actor_id: newVal?.value || '' })}
+      onChange={(_, newVal) =>
+        onUpdate(index, { actor_id: (typeof newVal === 'string' ? newVal : newVal?.value) || '' })
+      }
       freeSolo
       renderInput={(params) => (
         <TextField
@@ -89,7 +91,7 @@ const BindingRow = ({ binding, index, onUpdate, onRemove, userOptions, groupOpti
         />
       )}
     />
-    <IconButton size="small" color="error" onClick={() => onRemove(index)}>
+    <IconButton size="small" color="error" aria-label={`Remove binding ${index + 1}`} onClick={() => onRemove(index)}>
       <DeleteIcon fontSize="small" />
     </IconButton>
   </Paper>
@@ -101,7 +103,12 @@ const StatementRow = ({ statement, index, onUpdate, onRemove, actionOptions, res
       <Typography variant="body2" fontWeight="medium">
         Statement {index + 1}
       </Typography>
-      <IconButton size="small" color="error" onClick={() => onRemove(index)}>
+      <IconButton
+        size="small"
+        color="error"
+        aria-label={`Remove statement ${index + 1}`}
+        onClick={() => onRemove(index)}
+      >
         <DeleteIcon fontSize="small" />
       </IconButton>
     </Box>
@@ -114,7 +121,7 @@ const StatementRow = ({ statement, index, onUpdate, onRemove, actionOptions, res
         value={statement.actions}
         onChange={(_, newVal) => onUpdate(index, { actions: newVal })}
         renderTags={(value, getTagProps) =>
-          value.map((action, i) => <Chip key={action} label={action} size="small" {...getTagProps({ index: i })} />)
+          value.map((action, i) => <Chip key={i} label={action} size="small" {...getTagProps({ index: i })} />)
         }
         renderInput={(params) => <TextField {...params} label="Actions" placeholder="Select or type a custom action" />}
       />
@@ -126,9 +133,7 @@ const StatementRow = ({ statement, index, onUpdate, onRemove, actionOptions, res
         value={statement.resources}
         onChange={(_, newVal) => onUpdate(index, { resources: newVal })}
         renderTags={(value, getTagProps) =>
-          value.map((resource, i) => (
-            <Chip key={resource} label={resource} size="small" {...getTagProps({ index: i })} />
-          ))
+          value.map((resource, i) => <Chip key={i} label={resource} size="small" {...getTagProps({ index: i })} />)
         }
         renderInput={(params) => (
           <TextField {...params} label="Resources" placeholder="Select or type a custom resource" />
@@ -254,7 +259,7 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
     if (viewMode === 'json') {
       try {
         const parsed = JSON.parse(jsonText);
-        onSave(parsed);
+        onSave(policyToFormData(parsed));
       } catch {
         setJsonError('Invalid JSON. Please check your syntax and try again.');
       }

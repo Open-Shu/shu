@@ -227,7 +227,7 @@ class UnifiedLLMClient:
         logger.info(f"Initialized LLM client for provider: {provider.name} ({provider.provider_type})")
 
     async def _build_tool_context(self, payload: dict[str, Any], tools_enabled: bool) -> dict[str, Any]:
-        if not tools_enabled:
+        if not tools_enabled or not self.conversation_owner_id:
             return payload
         tools: list[CallableTool] = await build_agent_tools(self.db_session, user_id=self.conversation_owner_id)
         return await self.provider_adapter.inject_tool_payload(tools, payload)
