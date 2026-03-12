@@ -7,18 +7,24 @@ import functools
 import logging
 import re
 import time
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..core.config import ConfigurationManager
+from ..core.database import get_async_session_local
+from ..core.embedding_service import get_embedding_service
 from ..core.exceptions import ShuException
+from ..core.vector_store import get_vector_store
 from ..models.document import Document
 from ..models.knowledge_base import KnowledgeBase
-from ..schemas.query import QueryRequest, SimilaritySearchRequest
+from ..schemas.query import QueryRequest, QueryResponse, QueryResult, QueryType, SimilaritySearchRequest
+from .retrieval import MultiSurfaceSearchService, ScoreFusionService
+from .retrieval.surfaces import ChunkVectorSurface, SynopsisMatchSurface
 
 logger = logging.getLogger(__name__)
 
@@ -987,10 +993,30 @@ class QueryService:
                     processed_at=datetime.now(UTC),
                 )
             elif search_type == "keyword":
-                query_response = await self.keyword_search(knowledge_base_id, query, limit)
+                query_response = await self.keyword_search(
+                    knowledge_base_id,
+                    query,
+                    limit,
+                    title_weighting_enabled=request.title_weighting_enabled,
+                    title_weight_multiplier=request.title_weight_multiplier,
+                )
             elif search_type == "hybrid":
                 query_response = await self.hybrid_search(
-                    knowledge_base_id, query, limit, request.similarity_threshold or 0.0
+                    knowledge_base_id,
+                    query,
+                    limit,
+                    request.similarity_threshold or 0.0,
+                    title_weighting_enabled=request.title_weighting_enabled,
+                    title_weight_multiplier=request.title_weight_multiplier,
+                )
+            elif search_type == "multi_surface":
+                query_response = await self._multi_surface_search(
+                    knowledge_base_id,
+                    query,
+                    limit,
+                    request.similarity_threshold or 0.0,
+                    chunk_vector_weight=request.chunk_vector_weight,
+                    synopsis_match_weight=request.synopsis_match_weight,
                 )
             else:
                 raise ShuException(f"Unsupported search type: {search_type}", "UNSUPPORTED_SEARCH_TYPE")
@@ -1132,7 +1158,15 @@ class QueryService:
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
     @measure_execution_time
-    async def keyword_search(self, knowledge_base_id: str, query: str, limit: int = 10) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
+    async def keyword_search(  # noqa: PLR0912, PLR0915
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        *,
+        title_weighting_enabled: bool | None = None,
+        title_weight_multiplier: float | None = None,
+    ) -> dict[str, Any]:
         """Perform keyword search on document chunks with improved term extraction."""
         try:
             # Verify knowledge base exists
@@ -1254,13 +1288,23 @@ class QueryService:
 
             # Note: where_clauses used for building SQLAlchemy conditions below
 
-            # Get title weighting configuration
+            # Get title weighting configuration (request params override KB config)
             kb_config = knowledge_base.get_rag_config()
-            title_weighting_enabled = self.config_manager.get_title_weighting_enabled(kb_config=kb_config)
-            title_weight_multiplier = self.config_manager.get_title_weight_multiplier(kb_config=kb_config)
+            effective_title_weighting_enabled = (
+                title_weighting_enabled
+                if title_weighting_enabled is not None
+                else self.config_manager.get_title_weighting_enabled(kb_config=kb_config)
+            )
+            effective_title_weight_multiplier = (
+                title_weight_multiplier
+                if title_weight_multiplier is not None
+                else self.config_manager.get_title_weight_multiplier(kb_config=kb_config)
+            )
 
             logger.info(
-                f"Keyword search title weighting: enabled={title_weighting_enabled}, multiplier={title_weight_multiplier}, kb_config_title_weighting={kb_config.get('title_weighting_enabled')}"
+                f"Keyword search title weighting: enabled={effective_title_weighting_enabled}, "
+                f"multiplier={effective_title_weight_multiplier}, "
+                f"from_request={title_weighting_enabled is not None}"
             )
 
             # Build title match conditions for enhanced scoring (whole word matches only)
@@ -1365,7 +1409,7 @@ class QueryService:
             title_match_sql = " OR ".join(title_match_conditions) if title_match_conditions else "FALSE"
 
             # Check if title weighting is enabled and we have title matches
-            if title_weighting_enabled:
+            if effective_title_weighting_enabled:
                 # First, find documents with title matches
                 from sqlalchemy import text
 
@@ -1406,7 +1450,7 @@ class QueryService:
 
                         # Convert to the expected format and apply title boost
                         for chunk_data in doc_chunks:
-                            title_boost = (float(title_match.title_score) / 10.0) * title_weight_multiplier
+                            title_boost = (float(title_match.title_score) / 10.0) * effective_title_weight_multiplier
                             boosted_score = chunk_data["similarity_score"] + title_boost
 
                             # Create a chunk-like object for compatibility
@@ -1703,8 +1747,10 @@ class QueryService:
                 processed = self.preprocess_query(query)
                 keyword_score = self._calculate_keyword_score(chunk.content, processed["keyword_terms"])
 
-                # Combine scores (same weights as hybrid search)
-                combined_score = similarity_score * 0.7 + keyword_score * 0.3
+                # Combine scores using configured hybrid search weights
+                similarity_weight = self.config_manager.get_hybrid_similarity_weight()
+                keyword_weight = self.config_manager.get_hybrid_keyword_weight()
+                combined_score = similarity_score * similarity_weight + keyword_score * keyword_weight
 
                 scored_chunks.append((chunk, combined_score))
 
@@ -1756,7 +1802,14 @@ class QueryService:
 
     @measure_execution_time
     async def hybrid_search(  # noqa: PLR0915
-        self, knowledge_base_id: str, query: str, limit: int = 10, threshold: float = 0.0
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        threshold: float = 0.0,
+        *,
+        title_weighting_enabled: bool | None = None,
+        title_weight_multiplier: float | None = None,
     ) -> dict[str, Any]:
         """Perform hybrid search (combination of similarity and keyword).
 
@@ -1806,7 +1859,13 @@ class QueryService:
                     raise
 
             # Get keyword search results (this handles stop word filtering correctly)
-            keyword_response = await self.keyword_search(knowledge_base_id, query, limit)
+            keyword_response = await self.keyword_search(
+                knowledge_base_id,
+                query,
+                limit,
+                title_weighting_enabled=title_weighting_enabled,
+                title_weight_multiplier=title_weight_multiplier,
+            )
 
             # Log keyword search results for debugging
             logger.info(
@@ -1969,3 +2028,175 @@ class QueryService:
         except Exception as e:
             logger.error(f"Failed to perform hybrid search: {e}", exc_info=True)
             raise ShuException(f"Failed to perform hybrid search: {e!s}", "HYBRID_SEARCH_ERROR")
+
+    @measure_execution_time
+    async def _multi_surface_search(
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        threshold: float = 0.0,
+        *,
+        chunk_vector_weight: float | None = None,
+        synopsis_match_weight: float | None = None,
+    ) -> dict[str, Any]:
+        """Perform multi-surface search across multiple retrieval strategies.
+
+        Executes chunk vector and synopsis match surfaces in parallel,
+        fuses scores, and returns document-level results.
+
+        Args:
+            knowledge_base_id: ID of the knowledge base to search
+            query: Search query
+            limit: Maximum number of documents to return
+            threshold: Minimum score threshold for filtering results
+            chunk_vector_weight: Weight for chunk vector surface (None = use config default)
+            synopsis_match_weight: Weight for synopsis match surface (None = use config default)
+
+        Returns:
+            Dictionary with search results in QueryResponse format
+
+        """
+        try:
+            # Verify knowledge base exists
+            knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
+
+            # Block vector search on stale or re-embedding KBs (same as similarity_search)
+            if knowledge_base.embedding_status not in ("current",):
+                from ..core.exceptions import KnowledgeBaseStaleEmbeddingsError
+
+                raise KnowledgeBaseStaleEmbeddingsError(knowledge_base_id, str(knowledge_base.embedding_status))
+
+            logger.info(
+                f"Multi-surface search: query='{query[:100]}...' kb_id={knowledge_base_id} "
+                f"limit={limit} threshold={threshold}"
+            )
+
+            # Preprocess query to extract keyword terms
+            preprocessed = self.preprocess_query(query)
+            keyword_terms = preprocessed["keyword_terms"]
+
+            # Get dependencies
+            vector_store = await get_vector_store()
+            embedding_service = await get_embedding_service()
+
+            # Get weights (request params override config defaults)
+            settings = self.config_manager.settings
+            weights = {
+                "chunk_vector": (
+                    chunk_vector_weight
+                    if chunk_vector_weight is not None
+                    else settings.multi_surface_chunk_vector_weight
+                ),
+                "synopsis_match": (
+                    synopsis_match_weight
+                    if synopsis_match_weight is not None
+                    else settings.multi_surface_synopsis_match_weight
+                ),
+            }
+            logger.info(f"Multi-surface weights: {weights}")
+
+            # Create surfaces
+            surfaces = [
+                ChunkVectorSurface(vector_store),
+                SynopsisMatchSurface(vector_store),
+            ]
+
+            # Create fusion service with configured weights
+            fusion_service = ScoreFusionService(weights=weights)
+
+            # Create orchestrator
+            search_service = MultiSurfaceSearchService(
+                surfaces=surfaces,
+                embedding_service=embedding_service,
+                fusion_service=fusion_service,
+                surface_limit=settings.multi_surface_chunk_limit,
+                timeout_ms=settings.multi_surface_timeout_ms,
+            )
+
+            # Execute search (pass session factory for safe parallel execution)
+            kb_uuid = UUID(knowledge_base_id)
+            fused_results = await search_service.search(
+                query=query,
+                kb_id=kb_uuid,
+                keyword_terms=keyword_terms,
+                limit=limit,
+                threshold=threshold,
+                session_factory=get_async_session_local(),
+            )
+
+            # Convert FusedResult to QueryResult format
+            query_results = []
+            for result in fused_results:
+                # Use first contributing chunk for content and chunk-level metadata if available
+                content = ""
+                chunk_id = None
+                chunk_index = 0
+                start_char = None
+                end_char = None
+                if result.contributing_chunks:
+                    top_chunk = result.contributing_chunks[0]
+                    content = top_chunk.snippet
+                    chunk_id = str(top_chunk.chunk_id)
+                    chunk_index = top_chunk.chunk_index
+                    start_char = top_chunk.start_char
+                    end_char = top_chunk.end_char
+
+                query_result = QueryResult(
+                    chunk_id=chunk_id,
+                    document_id=str(result.document_id),
+                    document_title=result.document_title,
+                    content=content,
+                    similarity_score=result.final_score,
+                    chunk_index=chunk_index,
+                    start_char=start_char,
+                    end_char=end_char,
+                    file_type=result.file_type,
+                    source_url=result.source_url,
+                    source_id=result.source_id,
+                    created_at=result.created_at,
+                )
+                query_results.append(query_result)
+
+            response = QueryResponse(
+                results=query_results,
+                total_results=len(query_results),
+                query=query,
+                query_type=QueryType.MULTI_SURFACE,
+                execution_time=0.0,  # Will be set by decorator
+                similarity_threshold=threshold,
+                embedding_model=str(knowledge_base.embedding_model),
+                processed_at=datetime.now(UTC),
+            )
+
+            # Add multi-surface metadata to response
+            response_dict = response.model_dump()
+            response_dict["multi_surface_results"] = [
+                {
+                    "document_id": str(r.document_id),
+                    "document_title": r.document_title,
+                    "final_score": r.final_score,
+                    "surface_scores": r.surface_scores,
+                    "contributing_chunks": [
+                        {
+                            "chunk_id": str(c.chunk_id),
+                            "chunk_index": c.chunk_index,
+                            "surface": c.surface,
+                            "score": c.score,
+                            "snippet": c.snippet,
+                            "summary": c.summary,
+                        }
+                        for c in r.contributing_chunks
+                    ],
+                }
+                for r in fused_results
+            ]
+
+            return response_dict
+
+        except ShuException:
+            # Re-raise ShuException without modification (preserves KnowledgeBaseNotFoundError, etc.)
+            raise
+        except Exception as e:
+            logger.error(f"Failed to perform multi-surface search: {e}", exc_info=True)
+            raise ShuException(f"Failed to perform multi-surface search: {e!s}", "MULTI_SURFACE_SEARCH_ERROR")

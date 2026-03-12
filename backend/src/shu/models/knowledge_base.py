@@ -47,7 +47,7 @@ class KnowledgeBase(BaseModel):
     rag_prompt_template = Column(
         String(20), default="custom", nullable=False
     )  # 'academic', 'business', 'technical', 'custom'
-    rag_search_threshold = Column(JSON, default=0.7, nullable=False)  # Float stored as JSON for precision
+    rag_search_threshold = Column(JSON, default=0.3, nullable=False)  # Float stored as JSON for precision
     rag_max_results = Column(Integer, default=10, nullable=False)
     rag_chunk_overlap_ratio = Column(JSON, default=0.2, nullable=False)  # Float stored as JSON for precision
     rag_search_type = Column(String(20), default="hybrid", nullable=False)  # 'similarity', 'keyword', 'hybrid'

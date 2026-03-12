@@ -54,6 +54,9 @@ function QueryTester() {
   const [titleWeightMultiplier, setTitleWeightMultiplier] = useState(3.0);
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
+  // Multi-surface search weights
+  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.6);
+  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.4);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -64,9 +67,10 @@ function QueryTester() {
   useQuery(['kb-config', selectedKB], () => (selectedKB ? knowledgeBaseAPI.getRAGConfig(selectedKB) : null), {
     enabled: !!selectedKB,
     onSuccess: (data) => {
-      if (data && threshold === null) {
+      if (data) {
         const config = extractDataFromResponse(data);
-        setThreshold(config.search_threshold || 0.7);
+        // Always update from KB config when KB changes
+        setThreshold(config.search_threshold || 0.3);
         setTitleWeightingEnabled(config.title_weighting_enabled ?? true);
         setTitleWeightMultiplier(config.title_weight_multiplier || 3.0);
       }
@@ -99,6 +103,16 @@ function QueryTester() {
         });
       }
 
+      if (params.searchType === 'multi_surface') {
+        return queryAPI.search(params.kbId, {
+          ...basePayload,
+          query_type: 'multi_surface',
+          similarity_threshold: params.threshold,
+          chunk_vector_weight: params.chunkVectorWeight,
+          synopsis_match_weight: params.synopsisMatchWeight,
+        });
+      }
+
       return queryAPI.search(params.kbId, {
         ...basePayload,
         query_type: 'hybrid',
@@ -128,6 +142,8 @@ function QueryTester() {
       titleWeightingEnabled: titleWeightingEnabled,
       titleWeightMultiplier: titleWeightMultiplier,
       ragRewriteMode,
+      chunkVectorWeight: chunkVectorWeight,
+      synopsisMatchWeight: synopsisMatchWeight,
     });
   };
 
@@ -151,6 +167,14 @@ function QueryTester() {
         similarity_threshold: parseFloat(threshold),
         title_weighting_enabled: titleWeightingEnabled,
         title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
+      };
+    } else if (searchType === 'multi_surface') {
+      return {
+        ...baseRequest,
+        query_type: 'multi_surface',
+        similarity_threshold: parseFloat(threshold),
+        chunk_vector_weight: chunkVectorWeight,
+        synopsis_match_weight: synopsisMatchWeight,
       };
     } else {
       return {
@@ -227,6 +251,7 @@ function QueryTester() {
                   <MenuItem value="similarity">Similarity Search</MenuItem>
                   <MenuItem value="keyword">Keyword Search</MenuItem>
                   <MenuItem value="hybrid">Hybrid Search</MenuItem>
+                  <MenuItem value="multi_surface">Multi-Surface Search</MenuItem>
                 </Select>
               </FormControl>
 
@@ -258,13 +283,16 @@ function QueryTester() {
                 inputProps={{ min: 1, max: 100 }}
               />
 
-              {(searchType === 'similarity' || searchType === 'keyword' || searchType === 'hybrid') && (
+              {(searchType === 'similarity' ||
+                searchType === 'keyword' ||
+                searchType === 'hybrid' ||
+                searchType === 'multi_surface') && (
                 <TextField
                   fullWidth
                   type="number"
                   value={threshold || ''}
                   onChange={(e) => setThreshold(e.target.value)}
-                  placeholder="Threshold (e.g., 0.7)"
+                  placeholder="Threshold (e.g., 0.3)"
                   sx={{ mb: 2 }}
                   inputProps={{ min: 0, max: 1, step: 0.1 }}
                   helperText={
@@ -354,6 +382,49 @@ function QueryTester() {
                 </Box>
               )}
 
+              {/* Multi-Surface Weight Controls */}
+              {searchType === 'multi_surface' && (
+                <Box sx={{ mb: 2 }}>
+                  <Divider sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Surface Weights
+                    </Typography>
+                  </Divider>
+
+                  <Box sx={{ px: 1 }}>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Chunk Vector: {chunkVectorWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={chunkVectorWeight}
+                      onChange={(_, newValue) => setChunkVectorWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 2 }}
+                    />
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Synopsis Match: {synopsisMatchWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={synopsisMatchWeight}
+                      onChange={(_, newValue) => setSynopsisMatchWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 1 }}
+                    />
+
+                    <Typography variant="caption" color="text.secondary">
+                      Adjust weights to control how much each surface contributes to the final score
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+
               <Button
                 fullWidth
                 variant="contained"
@@ -374,7 +445,11 @@ function QueryTester() {
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="h6">Results</Typography>
                 {queryResults && (
-                  <Chip label={`${queryResults.results?.length || 0} results`} color="primary" size="small" />
+                  <Chip
+                    label={`${queryResults.multi_surface_results?.length || queryResults.results?.length || 0} results`}
+                    color="primary"
+                    size="small"
+                  />
                 )}
               </Box>
 
@@ -416,7 +491,13 @@ function QueryTester() {
 
                   {activeTab === 0 && (
                     <Box>
-                      {queryResults.results && queryResults.results.length > 0 ? (
+                      {queryResults.multi_surface_results && queryResults.multi_surface_results.length > 0 ? (
+                        <SourcePreview
+                          sources={queryResults.multi_surface_results}
+                          title="Multi-Surface Results"
+                          searchQuery={queryText}
+                        />
+                      ) : queryResults.results && queryResults.results.length > 0 ? (
                         <SourcePreview sources={queryResults.results} title="Query Results" searchQuery={queryText} />
                       ) : (
                         <Alert severity="info">No results found for this query.</Alert>
@@ -425,20 +506,36 @@ function QueryTester() {
                   )}
 
                   {activeTab === 1 && (
-                    <Box>
+                    <Box sx={{ width: '100%', overflow: 'hidden' }}>
                       <Typography variant="subtitle2" gutterBottom>
                         Query Request
                       </Typography>
-                      <JSONPretty data={formatQueryRequest()} theme="monokai" />
+                      <Box
+                        sx={{
+                          overflowX: 'auto',
+                          maxWidth: '100%',
+                          '& pre': { whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+                        }}
+                      >
+                        <JSONPretty data={formatQueryRequest()} theme="monokai" />
+                      </Box>
                     </Box>
                   )}
 
                   {activeTab === 2 && (
-                    <Box>
+                    <Box sx={{ width: '100%', overflow: 'hidden' }}>
                       <Typography variant="subtitle2" gutterBottom>
                         Full Response
                       </Typography>
-                      <JSONPretty data={queryResults} theme="monokai" />
+                      <Box
+                        sx={{
+                          overflowX: 'auto',
+                          maxWidth: '100%',
+                          '& pre': { whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+                        }}
+                      >
+                        <JSONPretty data={queryResults} theme="monokai" />
+                      </Box>
                     </Box>
                   )}
                 </Box>

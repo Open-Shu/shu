@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     vector_index_type: str = Field("hnsw", alias="SHU_VECTOR_INDEX_TYPE")
     vector_index_lists: int = Field(100, alias="SHU_VECTOR_INDEX_LISTS")
 
+    # Multi-surface retrieval configuration
+    multi_surface_chunk_limit: int = Field(50, alias="SHU_MULTI_SURFACE_CHUNK_LIMIT")
+    multi_surface_timeout_ms: int = Field(2000, alias="SHU_MULTI_SURFACE_TIMEOUT_MS")
+    multi_surface_chunk_vector_weight: float = Field(0.60, alias="SHU_MULTI_SURFACE_CHUNK_VECTOR_WEIGHT")
+    multi_surface_synopsis_match_weight: float = Field(0.40, alias="SHU_MULTI_SURFACE_SYNOPSIS_MATCH_WEIGHT")
+
     # Performance configuration
     batch_size: int = Field(10, alias="SHU_BATCH_SIZE")
     embedding_threads: int = Field(4, alias="SHU_EMBEDDING_THREADS")  # Thread pool size for CPU-bound embedding work
@@ -421,7 +427,7 @@ class Settings(BaseSettings):
     llm_temperature_default: float = Field(0.7, alias="SHU_LLM_TEMPERATURE_DEFAULT")
 
     # RAG Configuration Defaults (global fallbacks)
-    rag_search_threshold_default: float = Field(0.7, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
+    rag_search_threshold_default: float = Field(0.3, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
     rag_max_results_default: int = Field(10, alias="SHU_RAG_MAX_RESULTS_DEFAULT")
     rag_chunk_overlap_ratio_default: float = Field(0.2, alias="SHU_RAG_CHUNK_OVERLAP_RATIO_DEFAULT")
     rag_search_type_default: str = Field("hybrid", alias="SHU_RAG_SEARCH_TYPE_DEFAULT")
@@ -431,7 +437,7 @@ class Settings(BaseSettings):
     rag_prompt_template_default: str = Field("custom", alias="SHU_RAG_PROMPT_TEMPLATE_DEFAULT")
 
     # Hybrid Search Configuration (global defaults)
-    hybrid_similarity_weight_default: float = Field(0.7, alias="SHU_HYBRID_SIMILARITY_WEIGHT_DEFAULT")
+    hybrid_similarity_weight_default: float = Field(0.3, alias="SHU_HYBRID_SIMILARITY_WEIGHT_DEFAULT")
     hybrid_keyword_weight_default: float = Field(0.3, alias="SHU_HYBRID_KEYWORD_WEIGHT_DEFAULT")
 
     # Title Search Configuration (global defaults)

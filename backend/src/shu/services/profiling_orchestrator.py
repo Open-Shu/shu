@@ -70,6 +70,7 @@ class ProfilingOrchestrator:
                 chunk_profiles=[],
                 profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=False,
+                skipped=True,
                 error=f"Document {document_id} not found",
             )
 
@@ -340,9 +341,9 @@ class ProfilingOrchestrator:
         queries_embedded = 0
         vector_store = await get_vector_store()
 
-        # Embed synopsis
+        # Embed synopsis using document encoder (synopses are paragraph-length text)
         if document.synopsis and document.synopsis.strip():
-            embeddings = await self._embed_texts([document.synopsis])
+            embeddings = await self._embed_texts([str(document.synopsis)])
             if not embeddings:
                 logger.warning("synopsis_embedding_empty", document_id=document.id)
             else:

@@ -22,6 +22,7 @@ class QueryType(str, Enum):
     SIMILARITY = "similarity"
     KEYWORD = "keyword"
     HYBRID = "hybrid"
+    MULTI_SURFACE = "multi_surface"
 
 
 class RagRewriteMode(str, Enum):
@@ -57,6 +58,20 @@ class QueryRequest(BaseModel):
         default=RagRewriteMode.RAW_QUERY,
         description="Strategy for preparing the retrieval query before execution",
     )
+    # Title weighting options (for keyword and hybrid search)
+    title_weighting_enabled: bool | None = Field(
+        None, description="Enable title weighting boost (None = use KB config default)"
+    )
+    title_weight_multiplier: float | None = Field(
+        None, ge=1.0, le=10.0, description="Title weight multiplier (None = use KB config default)"
+    )
+    # Multi-surface search weights (for multi_surface search type)
+    chunk_vector_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for chunk vector surface (None = use config default)"
+    )
+    synopsis_match_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for synopsis match surface (None = use config default)"
+    )
 
     @field_validator("query")
     @classmethod
@@ -70,7 +85,7 @@ class QueryRequest(BaseModel):
     @classmethod
     def validate_query_type(cls, v: str) -> str:
         """Validate query type."""
-        valid_types = ["similarity", "keyword", "hybrid"]
+        valid_types = ["similarity", "keyword", "hybrid", "multi_surface"]
         if v not in valid_types:
             raise ValueError(f"Query type must be one of: {valid_types}")
         return v
@@ -88,12 +103,12 @@ class QueryRequest(BaseModel):
 class QueryResult(BaseModel):
     """Schema for individual query results."""
 
-    chunk_id: str = Field(..., description="Document chunk ID")
+    chunk_id: str | None = Field(None, description="Document chunk ID (None for document-level matches)")
     document_id: str = Field(..., description="Document ID")
     document_title: str = Field(..., description="Document title")
     content: str = Field(..., description="Chunk content")
     similarity_score: float = Field(..., description="Similarity score")
-    chunk_index: int = Field(..., description="Chunk position in document")
+    chunk_index: int | None = Field(None, description="Chunk position in document (None for document-level matches)")
     start_char: int | None = Field(None, description="Start position in document")
     end_char: int | None = Field(None, description="End position in document")
 
@@ -101,7 +116,7 @@ class QueryResult(BaseModel):
     file_type: str = Field(..., description="Document file type")
     source_url: str | None = Field(None, description="Source URL")
     source_id: str | None = Field(None, description="Original source ID")
-    created_at: datetime = Field(..., description="Document creation timestamp")
+    created_at: datetime | None = Field(None, description="Document creation timestamp")
 
     class Config:
         """Pydantic configuration."""
