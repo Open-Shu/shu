@@ -69,6 +69,9 @@ class QueryRequest(BaseModel):
     chunk_vector_weight: float | None = Field(
         None, ge=0.0, le=1.0, description="Weight for chunk vector surface (None = use config default)"
     )
+    query_match_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for query match surface (None = use config default)"
+    )
     synopsis_match_weight: float | None = Field(
         None, ge=0.0, le=1.0, description="Weight for synopsis match surface (None = use config default)"
     )

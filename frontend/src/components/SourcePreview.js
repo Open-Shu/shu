@@ -72,10 +72,16 @@ function MultiSurfaceItem({ result, rank }) {
               label={`${surface}: ${(score * 100).toFixed(1)}%`}
               variant="outlined"
               size="small"
-              color={surface === 'chunk_vector' ? 'info' : 'secondary'}
+              color={surface === 'chunk_vector' ? 'info' : surface === 'query_match' ? 'success' : 'secondary'}
             />
           ))}
         </Box>
+        {/* Display matched query from query_match surface */}
+        {result.surface_metadata?.query_match?.matched_query && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontStyle: 'italic' }}>
+            Matched query: "{result.surface_metadata.query_match.matched_query}"
+          </Typography>
+        )}
         {chunks.length > 0 && (
           <Box>
             <Box display="flex" alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => setExpanded(!expanded)}>

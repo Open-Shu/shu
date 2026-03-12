@@ -24,7 +24,7 @@ from ..models.document import Document
 from ..models.knowledge_base import KnowledgeBase
 from ..schemas.query import QueryRequest, QueryResponse, QueryResult, QueryType, SimilaritySearchRequest
 from .retrieval import MultiSurfaceSearchService, ScoreFusionService
-from .retrieval.surfaces import ChunkVectorSurface, SynopsisMatchSurface
+from .retrieval.surfaces import ChunkVectorSurface, QueryMatchSurface, SynopsisMatchSurface
 
 logger = logging.getLogger(__name__)
 
@@ -1016,6 +1016,7 @@ class QueryService:
                     limit,
                     request.similarity_threshold or 0.0,
                     chunk_vector_weight=request.chunk_vector_weight,
+                    query_match_weight=request.query_match_weight,
                     synopsis_match_weight=request.synopsis_match_weight,
                 )
             else:
@@ -2038,11 +2039,12 @@ class QueryService:
         threshold: float = 0.0,
         *,
         chunk_vector_weight: float | None = None,
+        query_match_weight: float | None = None,
         synopsis_match_weight: float | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
-        Executes chunk vector and synopsis match surfaces in parallel,
+        Executes chunk vector, query match, and synopsis match surfaces in parallel,
         fuses scores, and returns document-level results.
 
         Args:
@@ -2051,6 +2053,7 @@ class QueryService:
             limit: Maximum number of documents to return
             threshold: Minimum score threshold for filtering results
             chunk_vector_weight: Weight for chunk vector surface (None = use config default)
+            query_match_weight: Weight for query match surface (None = use config default)
             synopsis_match_weight: Weight for synopsis match surface (None = use config default)
 
         Returns:
@@ -2088,6 +2091,11 @@ class QueryService:
                     if chunk_vector_weight is not None
                     else settings.multi_surface_chunk_vector_weight
                 ),
+                "query_match": (
+                    query_match_weight
+                    if query_match_weight is not None
+                    else settings.multi_surface_query_match_weight
+                ),
                 "synopsis_match": (
                     synopsis_match_weight
                     if synopsis_match_weight is not None
@@ -2099,6 +2107,7 @@ class QueryService:
             # Create surfaces
             surfaces = [
                 ChunkVectorSurface(vector_store),
+                QueryMatchSurface(vector_store),
                 SynopsisMatchSurface(vector_store),
             ]
 
