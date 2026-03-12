@@ -208,6 +208,7 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
     """Schema for knowledge base responses."""
 
     id: str = Field(..., description="Knowledge base ID")
+    slug: str = Field(..., description="URL-friendly slug derived from name")
     status: KnowledgeBaseStatus = Field(..., description="Knowledge base status")
     embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
     re_embedding_progress: dict | None = Field(None, description="Re-embedding progress when status is re_embedding")
@@ -237,6 +238,7 @@ class KnowledgeBaseSummary(BaseModel):
     """Schema for knowledge base summary information."""
 
     id: str = Field(..., description="Knowledge base ID")
+    slug: str = Field(..., description="URL-friendly slug derived from name")
     name: str = Field(..., description="Knowledge base name")
     description: str | None = Field(None, description="Knowledge base description")
     source_types: list[str] = Field(..., description="Source types used in this knowledge base")

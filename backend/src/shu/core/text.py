@@ -4,11 +4,12 @@ import re
 import unicodedata
 
 
-def slugify(value: str) -> str:
+def slugify(value: str, *, max_length: int = 100) -> str:
     """Convert a string to a URL-friendly slug.
 
     Normalizes unicode, lowercases, replaces non-alphanumeric characters with
-    hyphens, and collapses consecutive hyphens.
+    hyphens, and collapses consecutive hyphens.  The result is truncated to
+    *max_length* characters (trailing hyphens are stripped after truncation).
 
     >>> slugify("Morning Briefing")
     'morning-briefing'
@@ -18,4 +19,5 @@ def slugify(value: str) -> str:
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = value.lower()
     value = re.sub(r"[^a-z0-9]+", "-", value)
+    value = value[:max_length]
     return value.strip("-")

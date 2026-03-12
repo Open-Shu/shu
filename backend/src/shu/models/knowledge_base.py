@@ -27,6 +27,7 @@ class KnowledgeBase(BaseModel):
 
     # Basic information
     name = Column(String(255), nullable=False, index=True)
+    slug = Column(String(100), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
 
     # Sync configuration

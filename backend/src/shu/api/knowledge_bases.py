@@ -76,6 +76,7 @@ async def list_knowledge_bases(
             kb_items.append(
                 {
                     "id": kb.id,
+                    "slug": kb.slug,
                     "name": kb.name,
                     "description": kb.description,
                     "sync_enabled": kb.sync_enabled,
@@ -177,6 +178,7 @@ async def get_knowledge_base(
         # Convert SQLAlchemy model to dictionary
         response_data = {
             "id": result.id,
+            "slug": result.slug,
             "name": result.name,
             "description": result.description,
             "sync_enabled": result.sync_enabled,
@@ -225,6 +227,7 @@ async def create_knowledge_base(
         # Convert SQLAlchemy model to dictionary
         response_data = {
             "id": result.id,
+            "slug": result.slug,
             "name": result.name,
             "description": result.description,
             "sync_enabled": result.sync_enabled,
@@ -278,6 +281,7 @@ async def update_knowledge_base(
         # Convert SQLAlchemy model to dictionary
         response_data = {
             "id": result.id,
+            "slug": result.slug,
             "name": result.name,
             "description": result.description,
             "sync_enabled": result.sync_enabled,

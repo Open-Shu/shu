@@ -12,12 +12,12 @@ from sqlalchemy.orm import defer
 
 from ..core.exceptions import (
     ConflictError,
-    KnowledgeBaseAlreadyExistsError,
     KnowledgeBaseNotFoundError,
     ShuException,
     ValidationError,
 )
 from ..core.logging import get_logger
+from ..core.text import slugify
 from ..models.document import Document, DocumentChunk
 from ..models.knowledge_base import KnowledgeBase
 from ..schemas.knowledge_base import RAGConfig, RAGConfigResponse
@@ -30,11 +30,13 @@ class KnowledgeBaseService:
 
     def __init__(self, db: AsyncSession, config_manager=None) -> None:
         self.db = db
+
         # Use dependency injection for ConfigurationManager
         if config_manager is None:
             from ..core.config import get_config_manager
 
             config_manager = get_config_manager()
+
         self._config_manager = config_manager
 
     # Default templates for different use cases
@@ -359,6 +361,23 @@ class KnowledgeBaseService:
             logger.error(f"Failed to get knowledge base '{kb_id}': {e}", exc_info=True)
             raise ShuException(f"Failed to get knowledge base: {e!s}", "KNOWLEDGE_BASE_GET_ERROR")
 
+    async def _get_kb_by_slug(self, slug: str, exclude_id: str | None = None) -> KnowledgeBase | None:
+        """Get a knowledge base by slug, optionally excluding a specific KB.
+
+        Args:
+            slug: The slug to look up.
+            exclude_id: KB ID to exclude from the search (used during updates).
+
+        Returns:
+            KnowledgeBase if found, None otherwise.
+
+        """
+        stmt = select(KnowledgeBase).where(KnowledgeBase.slug == slug)
+        if exclude_id:
+            stmt = stmt.where(KnowledgeBase.id != exclude_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def create_knowledge_base(self, kb_data, owner_id: str | None = None) -> KnowledgeBase:
         """Create a new knowledge base.
 
@@ -371,13 +390,14 @@ class KnowledgeBaseService:
 
         """
         try:
-            # Check if knowledge base with same name already exists
-            existing_result = await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.name == kb_data.name))
-            if existing_result.scalar_one_or_none():
-                raise KnowledgeBaseAlreadyExistsError(kb_data.name)
-
             # Create new knowledge base from Pydantic model
             kb_dict = kb_data.model_dump()
+
+            slug = slugify(kb_data.name)
+            if await self._get_kb_by_slug(slug):
+                raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
+            kb_dict["slug"] = slug
+
             if owner_id:
                 kb_dict["owner_id"] = owner_id
             knowledge_base = KnowledgeBase(**kb_dict)
@@ -388,6 +408,9 @@ class KnowledgeBaseService:
             logger.info(f"Created knowledge base: {knowledge_base.name}")
             return knowledge_base
 
+        except ShuException:
+            await self.db.rollback()
+            raise
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)
@@ -411,6 +434,13 @@ class KnowledgeBaseService:
 
             # Update fields from Pydantic model
             update_dict = update_data.model_dump(exclude_unset=True)
+
+            if "name" in update_dict and update_dict["name"] != knowledge_base.name:
+                new_slug = slugify(update_dict["name"])
+                if await self._get_kb_by_slug(new_slug, exclude_id=kb_id):
+                    raise ConflictError(f"Knowledge base '{update_dict['name']}' already exists")
+                knowledge_base.slug = new_slug
+
             for field, value in update_dict.items():
                 if hasattr(knowledge_base, field):
                     setattr(knowledge_base, field, value)
@@ -421,6 +451,9 @@ class KnowledgeBaseService:
             logger.info(f"Updated knowledge base: {knowledge_base.name}")
             return knowledge_base
 
+        except ShuException:
+            await self.db.rollback()
+            raise
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to update knowledge base '{kb_id}': {e}", exc_info=True)
@@ -673,6 +706,7 @@ class KnowledgeBaseService:
             # Use denormalized stats directly from KB model
             return {
                 "id": kb.id,
+                "slug": kb.slug,
                 "name": kb.name,
                 "description": kb.description,
                 "source_types": source_types,
