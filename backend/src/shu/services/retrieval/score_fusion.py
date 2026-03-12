@@ -157,6 +157,12 @@ class ScoreFusionService:
             if total_weight == 0:
                 continue
 
+            # Fill in 0.0 for surfaces that didn't contribute to this document
+            # This provides explicit visibility that a surface ran but found nothing
+            for surface_name in self._weights:
+                if surface_name not in surface_scores:
+                    surface_scores[surface_name] = 0.0
+
             # Normalize by total weight used
             final_score = weighted_sum / total_weight
             doc_scores[doc_id] = (final_score, surface_scores, surface_metadata)

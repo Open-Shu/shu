@@ -66,21 +66,51 @@ function MultiSurfaceItem({ result, rank }) {
           <Chip label={`Score: ${(result.final_score * 100).toFixed(1)}%`} color="primary" size="small" />
         </Box>
         <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
-          {Object.entries(result.surface_scores || {}).map(([surface, score]) => (
-            <Chip
-              key={surface}
-              label={`${surface}: ${(score * 100).toFixed(1)}%`}
-              variant="outlined"
-              size="small"
-              color={surface === 'chunk_vector' ? 'info' : surface === 'query_match' ? 'success' : 'secondary'}
-            />
-          ))}
+          {Object.entries(result.surface_scores || {}).map(([surface, score]) => {
+            // Color coding for different surface types
+            let color = 'secondary';
+            if (surface === 'chunk_vector') color = 'info';
+            else if (surface === 'query_match') color = 'success';
+            else if (surface === 'keyword_match') color = 'warning';
+            else if (surface === 'topic_match') color = 'default';
+            return (
+              <Chip
+                key={surface}
+                label={`${surface}: ${(score * 100).toFixed(1)}%`}
+                variant="outlined"
+                size="small"
+                color={color}
+              />
+            );
+          })}
         </Box>
         {/* Display matched query from query_match surface */}
         {result.surface_metadata?.query_match?.matched_query && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontStyle: 'italic' }}>
             Matched query: "{result.surface_metadata.query_match.matched_query}"
           </Typography>
+        )}
+        {/* Display matched terms from keyword_match surface */}
+        {result.surface_metadata?.keyword_match?.matched_terms?.length > 0 && (
+          <Box sx={{ mb: 1 }}>
+            <Typography variant="body2" color="text.secondary" component="span">
+              Matched keywords:{' '}
+            </Typography>
+            {result.surface_metadata.keyword_match.matched_terms.map((term) => (
+              <Chip key={term} label={term} size="small" color="warning" variant="outlined" sx={{ mr: 0.5, mb: 0.5 }} />
+            ))}
+          </Box>
+        )}
+        {/* Display matched terms from topic_match surface */}
+        {result.surface_metadata?.topic_match?.matched_terms?.length > 0 && (
+          <Box sx={{ mb: 1 }}>
+            <Typography variant="body2" color="text.secondary" component="span">
+              Matched topics:{' '}
+            </Typography>
+            {result.surface_metadata.topic_match.matched_terms.map((term) => (
+              <Chip key={term} label={term} size="small" variant="outlined" sx={{ mr: 0.5, mb: 0.5 }} />
+            ))}
+          </Box>
         )}
         {chunks.length > 0 && (
           <Box>

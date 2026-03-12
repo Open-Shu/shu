@@ -58,6 +58,8 @@ function QueryTester() {
   const [chunkVectorWeight, setChunkVectorWeight] = useState(0.3);
   const [queryMatchWeight, setQueryMatchWeight] = useState(0.25);
   const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.2);
+  const [keywordMatchWeight, setKeywordMatchWeight] = useState(0.15);
+  const [topicMatchWeight, setTopicMatchWeight] = useState(0.1);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -112,6 +114,8 @@ function QueryTester() {
           chunk_vector_weight: params.chunkVectorWeight,
           query_match_weight: params.queryMatchWeight,
           synopsis_match_weight: params.synopsisMatchWeight,
+          keyword_match_weight: params.keywordMatchWeight,
+          topic_match_weight: params.topicMatchWeight,
         });
       }
 
@@ -147,6 +151,8 @@ function QueryTester() {
       chunkVectorWeight: chunkVectorWeight,
       queryMatchWeight: queryMatchWeight,
       synopsisMatchWeight: synopsisMatchWeight,
+      keywordMatchWeight: keywordMatchWeight,
+      topicMatchWeight: topicMatchWeight,
     });
   };
 
@@ -179,6 +185,8 @@ function QueryTester() {
         chunk_vector_weight: chunkVectorWeight,
         query_match_weight: queryMatchWeight,
         synopsis_match_weight: synopsisMatchWeight,
+        keyword_match_weight: keywordMatchWeight,
+        topic_match_weight: topicMatchWeight,
       };
     } else {
       return {
@@ -428,6 +436,32 @@ function QueryTester() {
                     <Slider
                       value={synopsisMatchWeight}
                       onChange={(_, newValue) => setSynopsisMatchWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 2 }}
+                    />
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Keyword Match: {keywordMatchWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={keywordMatchWeight}
+                      onChange={(_, newValue) => setKeywordMatchWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 2 }}
+                    />
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Topic Match: {topicMatchWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={topicMatchWeight}
+                      onChange={(_, newValue) => setTopicMatchWeight(newValue)}
                       min={0}
                       max={1}
                       step={0.05}

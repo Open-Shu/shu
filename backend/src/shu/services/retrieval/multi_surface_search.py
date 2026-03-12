@@ -112,13 +112,20 @@ class MultiSurfaceSearchService:
         for i, result in enumerate(surface_results):
             if isinstance(result, Exception):
                 surface_name = self._surfaces[i].name
+                # Log full exception details including cause chain
+                error_details = str(result)
+                if hasattr(result, "__cause__") and result.__cause__:
+                    error_details += f" | Caused by: {result.__cause__}"
+                if hasattr(result, "orig") and result.orig:  # SQLAlchemy wraps DB errors
+                    error_details += f" | Original: {result.orig}"
                 logger.warning(
                     "Surface execution failed",
                     extra={
                         "surface": surface_name,
-                        "error": str(result),
+                        "error": error_details,
                         "error_type": type(result).__name__,
                     },
+                    exc_info=result,  # Include full traceback
                 )
             elif isinstance(result, SurfaceResult):
                 valid_results.append(result)
