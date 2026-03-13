@@ -168,7 +168,7 @@ async def test_reference_handling_across_search_types(client, db, auth_headers):
     # Set RAG config with references enabled
     rag_config_response = await client.put(
         f"/api/v1/knowledge-bases/{kb_id}/rag-config",
-        json={"include_references": True, "search_threshold": 0.7, "max_results": 10},
+        json={"include_references": True, "search_threshold": 0.7, "max_chunks": 10},
         headers=auth_headers,
     )
     assert rag_config_response.status_code == 200

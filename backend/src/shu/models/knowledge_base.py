@@ -48,7 +48,7 @@ class KnowledgeBase(BaseModel):
         String(20), default="custom", nullable=False
     )  # 'academic', 'business', 'technical', 'custom'
     rag_search_threshold = Column(JSON, default=0.3, nullable=False)  # Float stored as JSON for precision
-    rag_max_results = Column(Integer, default=10, nullable=False)
+    rag_max_chunks = Column(Integer, default=10, nullable=False)
     rag_chunk_overlap_ratio = Column(JSON, default=0.2, nullable=False)  # Float stored as JSON for precision
     rag_search_type = Column(String(20), default="hybrid", nullable=False)  # 'similarity', 'keyword', 'hybrid'
     rag_config_version = Column(String(10), default="1.0", nullable=False)
@@ -236,7 +236,7 @@ class KnowledgeBase(BaseModel):
             "search_threshold": float(self.rag_search_threshold)
             if isinstance(self.rag_search_threshold, (int, float, str))
             else self.rag_search_threshold,
-            "max_results": self.rag_max_results,
+            "max_chunks": self.rag_max_chunks,
             "chunk_overlap_ratio": float(self.rag_chunk_overlap_ratio)
             if isinstance(self.rag_chunk_overlap_ratio, (int, float, str))
             else self.rag_chunk_overlap_ratio,
@@ -261,7 +261,7 @@ class KnowledgeBase(BaseModel):
             "context_format": config_manager.get_rag_context_format(kb_config=kb_config),
             "prompt_template": kb_config["prompt_template"] or config_manager.settings.rag_prompt_template_default,
             "search_threshold": config_manager.get_rag_search_threshold(kb_config=kb_config),
-            "max_results": config_manager.get_rag_max_results(kb_config=kb_config),
+            "max_chunks": config_manager.get_rag_max_chunks(kb_config=kb_config),
             "chunk_overlap_ratio": config_manager.get_rag_chunk_overlap_ratio(kb_config=kb_config),
             "search_type": config_manager.get_rag_search_type(kb_config=kb_config),
             "title_weighting_enabled": config_manager.get_title_weighting_enabled(kb_config=kb_config),
@@ -287,8 +287,8 @@ class KnowledgeBase(BaseModel):
             self.rag_prompt_template = config["prompt_template"]
         if "search_threshold" in config:
             self.rag_search_threshold = config["search_threshold"]
-        if "max_results" in config:
-            self.rag_max_results = config["max_results"]
+        if "max_chunks" in config:
+            self.rag_max_chunks = config["max_chunks"]
         if "chunk_overlap_ratio" in config:
             self.rag_chunk_overlap_ratio = config["chunk_overlap_ratio"]
         if "search_type" in config:

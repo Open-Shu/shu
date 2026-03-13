@@ -487,7 +487,7 @@ async def test_rag_config_api_title_weighting(client, db, auth_headers):
         "context_format": current_config["context_format"],
         "prompt_template": current_config["prompt_template"],
         "search_threshold": current_config["search_threshold"],
-        "max_results": current_config["max_results"],
+        "max_chunks": current_config["max_chunks"],
         "chunk_overlap_ratio": current_config["chunk_overlap_ratio"],
         "search_type": current_config["search_type"],
         "title_weighting_enabled": False,

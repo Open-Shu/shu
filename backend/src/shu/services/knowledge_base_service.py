@@ -99,7 +99,7 @@ class KnowledgeBaseService:
                 context_format=rag_config["context_format"],
                 prompt_template=rag_config["prompt_template"],
                 search_threshold=rag_config["search_threshold"],
-                max_results=rag_config["max_results"],
+                max_chunks=rag_config["max_chunks"],
                 max_chunks_per_document=rag_config["max_chunks_per_document"],
                 chunk_overlap_ratio=rag_config["chunk_overlap_ratio"],
                 search_type=rag_config["search_type"],
@@ -140,7 +140,7 @@ class KnowledgeBaseService:
                 "context_format": rag_config.context_format,
                 "prompt_template": rag_config.prompt_template,
                 "search_threshold": rag_config.search_threshold,
-                "max_results": rag_config.max_results,
+                "max_chunks": rag_config.max_chunks,
                 "chunk_overlap_ratio": rag_config.chunk_overlap_ratio,
                 "search_type": rag_config.search_type,
                 "title_weighting_enabled": rag_config.title_weighting_enabled,
@@ -179,7 +179,7 @@ class KnowledgeBaseService:
                 context_format=saved_config["context_format"],
                 prompt_template=saved_config["prompt_template"],
                 search_threshold=saved_config["search_threshold"],
-                max_results=saved_config["max_results"],
+                max_chunks=saved_config["max_chunks"],
                 max_chunks_per_document=saved_config["max_chunks_per_document"],
                 chunk_overlap_ratio=saved_config["chunk_overlap_ratio"],
                 search_type=saved_config["search_type"],
@@ -719,9 +719,9 @@ class KnowledgeBaseService:
             if thr is None or not (0 <= float(thr) <= 1):
                 errors.append("search_threshold must be between 0 and 1")
 
-            max_results = cfg.get("max_results")
-            if max_results is None or int(max_results) <= 0:
-                errors.append("max_results must be a positive integer")
+            max_chunks = cfg.get("max_chunks")
+            if max_chunks is None or int(max_chunks) <= 0:
+                errors.append("max_chunks must be a positive integer")
 
             overlap = cfg.get("chunk_overlap_ratio")
             if overlap is None or not (0 <= float(overlap) < 1):

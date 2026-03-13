@@ -400,9 +400,9 @@ class QueryService:
 
                 raise KnowledgeBaseStaleEmbeddingsError(knowledge_base_id, knowledge_base.embedding_status)
 
-            # Extract parameters from request
+            # Extract parameters from request, resolving None to config defaults
             query = request.query
-            limit = request.limit
+            limit = request.limit if request.limit is not None else self.config_manager.get_rag_max_chunks()
             threshold = request.threshold
 
             # Preprocess query using unified preprocessing
@@ -582,10 +582,10 @@ class QueryService:
             # Get RAG configuration for this knowledge base
             rag_config = await self._get_rag_config(knowledge_base_id)
 
-            # Extract parameters from request
+            # Extract parameters from request, resolving None to config defaults
             query = request.query
             search_type = request.query_type  # Already a string
-            limit = request.limit
+            limit = request.limit if request.limit is not None else self.config_manager.get_rag_max_chunks()
 
             logger.info(f"query_documents: search_type={search_type}, query='{(query or '')[:50]}...', limit={limit}")
 

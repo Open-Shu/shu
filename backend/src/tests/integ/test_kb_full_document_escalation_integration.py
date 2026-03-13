@@ -22,7 +22,7 @@ async def test_rag_config_full_doc_fields_roundtrip(client, db, auth_headers):
         "context_format": "detailed",
         "prompt_template": "custom",
         "search_threshold": 0.5,
-        "max_results": 5,
+        "max_chunks": 5,
         "chunk_overlap_ratio": 0.1,
         "search_type": "similarity",
         "title_weighting_enabled": True,

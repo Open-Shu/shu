@@ -62,9 +62,7 @@ class RAGConfig(BaseModel):
         le=1.0,
         description="Minimum similarity score for content to be considered relevant (0.1-1.0)",
     )
-    max_results: int = Field(
-        default=10, ge=1, le=50, description="Maximum number of relevant chunks to retrieve (1-50)"
-    )
+    max_chunks: int = Field(default=10, ge=1, le=50, description="Maximum number of relevant chunks to retrieve (1-50)")
     chunk_overlap_ratio: float = Field(
         default=0.2,
         ge=0.0,
@@ -132,7 +130,7 @@ class RAGConfigResponse(BaseModel):
     context_format: str = Field("detailed", description="Context format")
     prompt_template: str = Field("custom", description="Prompt template type")
     search_threshold: float = Field(0.3, description="Minimum similarity score for relevance")
-    max_results: int = Field(10, description="Maximum number of chunks to retrieve")
+    max_chunks: int = Field(10, description="Maximum number of chunks to retrieve")
     chunk_overlap_ratio: float = Field(0.2, description="Chunk overlap ratio for context continuity")
     search_type: str = Field("hybrid", description="Search type: similarity, keyword, or hybrid")
 
