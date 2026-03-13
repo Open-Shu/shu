@@ -435,79 +435,20 @@ class TestKeywordMatchSurface:
 
 
 class TestTopicMatchSurface:
-    """Tests for TopicMatchSurface."""
-
-    def _make_mock_db(self, rows: list[tuple] | None = None):
-        """Create a mock db session that returns the given rows."""
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = rows or []
-        mock_db.execute = AsyncMock(return_value=mock_result)
-        return mock_db
+    """Tests for TopicMatchSurface (stub — always returns empty)."""
 
     @pytest.mark.asyncio
-    async def test_search_returns_chunk_hits_with_matched_terms(self):
-        """search() should return chunk hits with matched_terms in metadata."""
-        chunk_id = uuid4()
-        doc_id = uuid4()
-        # Simulate row: (chunk_id, document_id, topics)
-        mock_rows = [(chunk_id, doc_id, ["authentication", "security", "api design"])]
-        mock_db = self._make_mock_db(mock_rows)
-
+    async def test_stub_returns_empty(self):
+        """Stub search() always returns empty results."""
         surface = TopicMatchSurface()
         result = await surface.search(
-            query_text="authentication methods",
+            query_text="anything",
             query_vector=[0.1] * 1024,
-            keyword_terms=["authentication", "methods"],
+            keyword_terms=["anything"],
             kb_id=uuid4(),
             limit=10,
             threshold=0.0,
-            db=mock_db,
-        )
-
-        assert result.surface_name == "topic_match"
-        assert len(result.hits) == 1
-        assert result.hits[0].id_type == "chunk"
-        assert result.hits[0].id == chunk_id
-        # 1 of 2 query terms matched ("authentication")
-        assert result.hits[0].score == 0.5
-        assert result.hits[0].metadata["matched_terms"] == ["authentication"]
-
-    @pytest.mark.asyncio
-    async def test_search_handles_empty_keyword_terms(self):
-        """search() should return empty results for empty keyword_terms."""
-        mock_db = self._make_mock_db([])
-
-        surface = TopicMatchSurface()
-        result = await surface.search(
-            query_text="",
-            query_vector=[0.1] * 1024,
-            keyword_terms=[],  # Empty keywords
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert result.surface_name == "topic_match"
-        assert len(result.hits) == 0
-        # Should not call db.execute when no keywords
-        mock_db.execute.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_search_handles_no_matches(self):
-        """search() should handle no matching chunks gracefully."""
-        mock_db = self._make_mock_db([])
-
-        surface = TopicMatchSurface()
-        result = await surface.search(
-            query_text="nonexistent",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["nonexistent"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
+            db=AsyncMock(),
         )
 
         assert result.surface_name == "topic_match"
