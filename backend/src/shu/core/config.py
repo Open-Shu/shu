@@ -125,8 +125,6 @@ class Settings(BaseSettings):
     multi_surface_synopsis_match_weight: float = Field(0.15, alias="SHU_MULTI_SURFACE_SYNOPSIS_MATCH_WEIGHT")
     multi_surface_keyword_match_weight: float = Field(0.15, alias="SHU_MULTI_SURFACE_KEYWORD_MATCH_WEIGHT")
     multi_surface_chunk_summary_weight: float = Field(0.25, alias="SHU_MULTI_SURFACE_CHUNK_SUMMARY_WEIGHT")
-    # Kept for backward compat with frontend slider; maps to chunk_summary_weight
-    multi_surface_topic_match_weight: float = Field(0.10, alias="SHU_MULTI_SURFACE_TOPIC_MATCH_WEIGHT")
 
     # Performance configuration
     batch_size: int = Field(10, alias="SHU_BATCH_SIZE")

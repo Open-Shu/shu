@@ -664,7 +664,7 @@ class QueryService:
                     query_match_weight=request.query_match_weight,
                     synopsis_match_weight=request.synopsis_match_weight,
                     keyword_match_weight=request.keyword_match_weight,
-                    topic_match_weight=request.topic_match_weight,
+                    chunk_summary_weight=request.chunk_summary_weight,
                 )
             else:
                 raise ShuException(f"Unsupported search type: {search_type}", "UNSUPPORTED_SEARCH_TYPE")
@@ -1489,7 +1489,7 @@ class QueryService:
         query_match_weight: float | None = None,
         synopsis_match_weight: float | None = None,
         keyword_match_weight: float | None = None,
-        topic_match_weight: float | None = None,
+        chunk_summary_weight: float | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
@@ -1505,7 +1505,7 @@ class QueryService:
             query_match_weight: Weight for query match surface (None = use config default)
             synopsis_match_weight: Weight for synopsis match surface (None = use config default)
             keyword_match_weight: Weight for keyword match surface (None = use config default)
-            topic_match_weight: Weight for chunk summary surface (repurposed from topic; None = use config default)
+            chunk_summary_weight: Weight for chunk summary surface (None = use config default)
 
         Returns:
             Dictionary with search results in QueryResponse format
@@ -1536,7 +1536,6 @@ class QueryService:
             embedding_service = await get_embedding_service()
 
             # Get weights (request params override config defaults)
-            # topic_match_weight from the request schema is repurposed for chunk_summary (SHU-632)
             settings = self.config_manager.settings
             weights = {
                 "chunk_vector": (
@@ -1558,8 +1557,8 @@ class QueryService:
                     else settings.multi_surface_keyword_match_weight
                 ),
                 "chunk_summary": (
-                    topic_match_weight
-                    if topic_match_weight is not None
+                    chunk_summary_weight
+                    if chunk_summary_weight is not None
                     else settings.multi_surface_chunk_summary_weight
                 ),
             }

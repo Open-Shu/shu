@@ -115,7 +115,7 @@ function QueryTester() {
           query_match_weight: params.queryMatchWeight,
           synopsis_match_weight: params.synopsisMatchWeight,
           keyword_match_weight: params.keywordMatchWeight,
-          topic_match_weight: params.chunkSummaryWeight,
+          chunk_summary_weight: params.chunkSummaryWeight,
         });
       }
 
@@ -186,7 +186,7 @@ function QueryTester() {
         query_match_weight: queryMatchWeight,
         synopsis_match_weight: synopsisMatchWeight,
         keyword_match_weight: keywordMatchWeight,
-        topic_match_weight: chunkSummaryWeight,
+        chunk_summary_weight: chunkSummaryWeight,
       };
     } else {
       return {

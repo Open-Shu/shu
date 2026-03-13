@@ -1,17 +1,13 @@
-"""TopicMatchSurface - stub for future topic-based retrieval.
+"""TopicMatchSurface - stub, not implemented.
 
-Topics are stored as multi-word phrases (e.g., "Intranasal dosing protocol")
-which are incompatible with the JSONB ?| exact-match approach used by
-KeywordMatchSurface. A future implementation could use embedding-based
-semantic similarity on the topics column, but the planned chunk summary
-embedding surface (SHU-632) likely covers the same semantic space, making
-a dedicated topic surface redundant. Keeping the stub so the surface
-protocol contract is preserved and can be revisited if needed.
+Topics are stored as multi-word phrases which are incompatible with JSONB
+exact-match. The chunk summary embedding surface (SHU-632) covers the same
+semantic space, making a dedicated topic surface redundant. This stub
+preserves the protocol contract for potential future use.
 """
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -22,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class TopicMatchSurface(RetrievalSurface):
-    """Stub — not yet implemented. See module docstring."""
+    """Stub — not implemented. ChunkSummaryVectorSurface covers this use case."""
 
     name = "topic_match"
 
@@ -37,10 +33,5 @@ class TopicMatchSurface(RetrievalSurface):
         threshold: float = 0.0,
         db: AsyncSession,
     ) -> SurfaceResult:
-        """Return empty results. Topic surface is not yet implemented."""
-        elapsed_ms = (time.perf_counter() - time.perf_counter()) * 1000
-        return SurfaceResult(
-            surface_name=self.name,
-            hits=[],
-            execution_time_ms=elapsed_ms,
-        )
+        """Return empty results immediately."""
+        return SurfaceResult(surface_name=self.name, hits=[], execution_time_ms=0.0)
