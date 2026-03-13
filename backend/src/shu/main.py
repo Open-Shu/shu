@@ -275,7 +275,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             from .core.vector_store import get_vector_store
 
             vs = await get_vector_store()
-            for collection in ("chunks", "synopses", "queries"):
+            for collection in ("chunks", "synopses", "queries", "chunk_summaries"):
                 await vs.ensure_index(collection, embedding_service.dimension, db=session)
             await session.commit()
     except Exception as e:

@@ -26,11 +26,11 @@ from ..schemas.query import QueryRequest, QueryResponse, QueryResult, QueryType,
 from .query_constants import COMPREHENSIVE_STOP_WORDS, TITLE_MATCH_STOP_WORDS
 from .retrieval import MultiSurfaceSearchService, ScoreFusionService
 from .retrieval.surfaces import (
+    ChunkSummaryVectorSurface,
     ChunkVectorSurface,
     KeywordMatchSurface,
     QueryMatchSurface,
     SynopsisMatchSurface,
-    # TopicMatchSurface,  # Disabled - see note in _multi_surface_search
 )
 
 logger = logging.getLogger(__name__)
@@ -1505,7 +1505,7 @@ class QueryService:
             query_match_weight: Weight for query match surface (None = use config default)
             synopsis_match_weight: Weight for synopsis match surface (None = use config default)
             keyword_match_weight: Weight for keyword match surface (None = use config default)
-            topic_match_weight: Weight for topic match surface (None = use config default)
+            topic_match_weight: Weight for chunk summary surface (repurposed from topic; None = use config default)
 
         Returns:
             Dictionary with search results in QueryResponse format
@@ -1536,6 +1536,7 @@ class QueryService:
             embedding_service = await get_embedding_service()
 
             # Get weights (request params override config defaults)
+            # topic_match_weight from the request schema is repurposed for chunk_summary (SHU-632)
             settings = self.config_manager.settings
             weights = {
                 "chunk_vector": (
@@ -1556,24 +1557,21 @@ class QueryService:
                     if keyword_match_weight is not None
                     else settings.multi_surface_keyword_match_weight
                 ),
-                # NOTE: topic_match disabled - topics are stored as phrases (e.g., "preclinical
-                # primate study overview") which don't match well with keyword-based search.
-                # Topic matching is better suited for agentic orchestration with semantic understanding.
-                # "topic_match": (
-                #     topic_match_weight
-                #     if topic_match_weight is not None
-                #     else settings.multi_surface_topic_match_weight
-                # ),
+                "chunk_summary": (
+                    topic_match_weight
+                    if topic_match_weight is not None
+                    else settings.multi_surface_chunk_summary_weight
+                ),
             }
             logger.info(f"Multi-surface weights: {weights}")
 
-            # Create surfaces (4 active, topic_match disabled - see note above)
+            # Create surfaces (5 active)
             surfaces = [
                 ChunkVectorSurface(vector_store),
+                ChunkSummaryVectorSurface(vector_store),
                 QueryMatchSurface(vector_store),
                 SynopsisMatchSurface(vector_store),
                 KeywordMatchSurface(),
-                # TopicMatchSurface(),  # Disabled - see note above
             ]
 
             # Create fusion service with configured weights

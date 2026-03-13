@@ -25,12 +25,11 @@ logger = get_logger(__name__)
 
 # Default surface weights (can be overridden via config)
 DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
-    "chunk_vector": 0.30,
-    "query_match": 0.25,
-    "synopsis_match": 0.20,
-    # Future surfaces (PR 3+):
-    # "keyword_match": 0.15,
-    # "topic_match": 0.10,
+    "chunk_vector": 0.25,
+    "chunk_summary": 0.25,
+    "query_match": 0.20,
+    "synopsis_match": 0.15,
+    "keyword_match": 0.15,
 }
 
 # Maximum snippet length for contributing chunks

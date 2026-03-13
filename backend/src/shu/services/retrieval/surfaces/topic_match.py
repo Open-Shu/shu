@@ -15,10 +15,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ....core.logging import get_logger
 from ..protocol import RetrievalSurface, SurfaceResult
-
-logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

@@ -367,6 +367,9 @@ class DocumentChunk(BaseModel):
     # Shu RAG Chunk Profile (SHU-342)
     # Summary: One-line description with specific content for agent scanning and retrieval
     summary = Column(Text, nullable=True)
+    # Summary embedding for semantic retrieval (SHU-632) — query-encoded because summaries
+    # are short (~1 sentence) and semantically closer to queries than documents
+    summary_embedding = Column(Vector(), nullable=True)
     # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
     keywords = Column(JSONB, nullable=True)
     # Topics: Conceptual categories the chunk relates to (broader themes, domains)

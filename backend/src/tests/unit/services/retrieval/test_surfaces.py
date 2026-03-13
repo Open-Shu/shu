@@ -7,6 +7,7 @@ import pytest
 
 from shu.core.vector_store import VectorSearchResult
 from shu.services.retrieval.surfaces import (
+    ChunkSummaryVectorSurface,
     ChunkVectorSurface,
     KeywordMatchSurface,
     QueryMatchSurface,
@@ -95,6 +96,79 @@ class TestChunkVectorSurface:
         """ChunkVectorSurface has the expected name."""
         surface, _ = self._make_surface()
         assert surface.name == "chunk_vector"
+
+
+class TestChunkSummaryVectorSurface:
+    """Tests for ChunkSummaryVectorSurface (SHU-632)."""
+
+    def _make_surface(self, mock_results: list[VectorSearchResult] | None = None):
+        """Create a ChunkSummaryVectorSurface with mocked VectorStore."""
+        mock_vector_store = MagicMock()
+        mock_vector_store.search = AsyncMock(return_value=mock_results or [])
+        return ChunkSummaryVectorSurface(mock_vector_store), mock_vector_store
+
+    @pytest.mark.asyncio
+    async def test_search_returns_chunk_hits(self):
+        """search() should return chunk hits from summary embeddings."""
+        chunk_id = str(uuid4())
+        mock_results = [VectorSearchResult(id=chunk_id, score=0.88)]
+        surface, mock_vs = self._make_surface(mock_results)
+
+        result = await surface.search(
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["test"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.5,
+            db=AsyncMock(),
+        )
+
+        assert result.surface_name == "chunk_summary"
+        assert len(result.hits) == 1
+        assert result.hits[0].id_type == "chunk"
+        assert result.hits[0].score == 0.88
+
+    @pytest.mark.asyncio
+    async def test_search_calls_vector_store_with_chunk_summaries_collection(self):
+        """search() should query the chunk_summaries collection."""
+        surface, mock_vs = self._make_surface([])
+        kb_id = uuid4()
+
+        await surface.search(
+            query_text="test",
+            query_vector=[0.5] * 1024,
+            keyword_terms=[],
+            kb_id=kb_id,
+            limit=20,
+            threshold=0.7,
+            db=AsyncMock(),
+        )
+
+        call_kwargs = mock_vs.search.call_args.kwargs
+        assert call_kwargs["collection"] == "chunk_summaries"
+        assert call_kwargs["filters"]["knowledge_base_id"] == str(kb_id)
+
+    @pytest.mark.asyncio
+    async def test_search_handles_empty_results(self):
+        """search() should handle no summary embeddings gracefully."""
+        surface, _ = self._make_surface([])
+
+        result = await surface.search(
+            query_text="no matches",
+            query_vector=[0.1] * 1024,
+            keyword_terms=[],
+            kb_id=uuid4(),
+            db=AsyncMock(),
+        )
+
+        assert result.surface_name == "chunk_summary"
+        assert len(result.hits) == 0
+
+    def test_surface_has_correct_name(self):
+        """ChunkSummaryVectorSurface has the expected name."""
+        surface, _ = self._make_surface()
+        assert surface.name == "chunk_summary"
 
 
 class TestSynopsisMatchSurface:

@@ -55,11 +55,11 @@ function QueryTester() {
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
   // Multi-surface search weights
-  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.3);
-  const [queryMatchWeight, setQueryMatchWeight] = useState(0.25);
-  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.2);
+  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.25);
+  const [queryMatchWeight, setQueryMatchWeight] = useState(0.2);
+  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.15);
   const [keywordMatchWeight, setKeywordMatchWeight] = useState(0.15);
-  const [topicMatchWeight, setTopicMatchWeight] = useState(0.1);
+  const [chunkSummaryWeight, setChunkSummaryWeight] = useState(0.25);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -115,7 +115,7 @@ function QueryTester() {
           query_match_weight: params.queryMatchWeight,
           synopsis_match_weight: params.synopsisMatchWeight,
           keyword_match_weight: params.keywordMatchWeight,
-          topic_match_weight: params.topicMatchWeight,
+          topic_match_weight: params.chunkSummaryWeight,
         });
       }
 
@@ -152,7 +152,7 @@ function QueryTester() {
       queryMatchWeight: queryMatchWeight,
       synopsisMatchWeight: synopsisMatchWeight,
       keywordMatchWeight: keywordMatchWeight,
-      topicMatchWeight: topicMatchWeight,
+      chunkSummaryWeight: chunkSummaryWeight,
     });
   };
 
@@ -186,7 +186,7 @@ function QueryTester() {
         query_match_weight: queryMatchWeight,
         synopsis_match_weight: synopsisMatchWeight,
         keyword_match_weight: keywordMatchWeight,
-        topic_match_weight: topicMatchWeight,
+        topic_match_weight: chunkSummaryWeight,
       };
     } else {
       return {
@@ -457,11 +457,11 @@ function QueryTester() {
                     />
 
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Topic Match: {topicMatchWeight.toFixed(2)}
+                      Chunk Summary: {chunkSummaryWeight.toFixed(2)}
                     </Typography>
                     <Slider
-                      value={topicMatchWeight}
-                      onChange={(_, newValue) => setTopicMatchWeight(newValue)}
+                      value={chunkSummaryWeight}
+                      onChange={(_, newValue) => setChunkSummaryWeight(newValue)}
                       min={0}
                       max={1}
                       step={0.05}
