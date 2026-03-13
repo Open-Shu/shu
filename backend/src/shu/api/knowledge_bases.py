@@ -163,14 +163,7 @@ async def get_knowledge_base(
 
     try:
         service = KnowledgeBaseService(db)
-        result = await service.get_knowledge_base(kb_id)
-
-        if not result:
-            return ShuResponse.error(
-                message=f"Knowledge base '{kb_id}' not found",
-                code="KNOWLEDGE_BASE_NOT_FOUND",
-                status_code=404,
-            )
+        result = await service.get_knowledge_base(kb_id, str(current_user.id))
 
         # Get actual statistics
         stats = await service.get_knowledge_base_stats(kb_id)
@@ -561,9 +554,7 @@ async def get_document_preview(
     try:
         # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
 
         # Get document with metadata
         document = await kb_service.get_document(kb_id, document_id)
@@ -623,9 +614,7 @@ async def get_document_extraction_details(
     try:
         # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
 
         # Get document with full metadata
         document = await kb_service.get_document(kb_id, document_id)
@@ -672,9 +661,7 @@ async def list_documents(
     try:
         # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
 
         # Get documents for this knowledge base
         documents, total = await kb_service.get_documents(
@@ -760,9 +747,7 @@ async def get_extraction_summary(
     try:
         # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
 
         # Get all documents for this knowledge base
         documents, _ = await kb_service.get_documents(kb_id)
@@ -854,11 +839,8 @@ async def upload_documents(
 
     Requires power_user or admin role. These roles have automatic access to all KBs.
     """
-    # Verify KB exists (require_kb_modify_default already validates access)
     kb_service = KnowledgeBaseService(db)
-    kb = await kb_service.get_knowledge_base(kb_id)
-    if not kb:
-        return ShuResponse.error(message="Knowledge base not found", code="KNOWLEDGE_BASE_NOT_FOUND", status_code=404)
+    await kb_service.enforce_kb_read(str(current_user.id), kb_id)
 
     # Get upload restrictions from KB-specific settings
     allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]

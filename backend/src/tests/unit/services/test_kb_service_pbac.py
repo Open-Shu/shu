@@ -1,0 +1,256 @@
+"""PBAC tests for KnowledgeBaseService.
+
+Uses a **real** PolicyCache (no mocking of check/is_admin) to verify that
+enforce_kb_read, filter_accessible_kb_ids, and check_kb_read_access
+enforce the correct action and resource slug.
+
+Setup:
+- Two knowledge bases: Research Papers (allowed) and Internal Docs (denied).
+- Two users: admin-1 (admin bypass) and user-1 (policy grants kb.*
+  on kb:research-papers only).
+"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from shu.core.exceptions import NotFoundError
+from shu.services.knowledge_base_service import KnowledgeBaseService
+from shu.services.policy_engine import CachedPolicy, CachedStatement, PolicyCache, _split_patterns
+
+ADMIN_USER_ID = "admin-1"
+REGULAR_USER_ID = "user-1"
+
+ALLOWED_KB_ID = "kb-allowed"
+ALLOWED_KB_NAME = "Research Papers"
+ALLOWED_KB_SLUG = "research-papers"
+
+DENIED_KB_ID = "kb-denied"
+DENIED_KB_NAME = "Internal Docs"
+DENIED_KB_SLUG = "internal-docs"
+
+POLICY_ID = "policy-kb-access"
+
+
+def _make_statement(actions: list[str], resources: list[str]) -> CachedStatement:
+    exact_a, wc_a = _split_patterns(actions)
+    exact_r, wc_r = _split_patterns(resources)
+    return CachedStatement(
+        exact_actions=exact_a,
+        wildcard_actions=wc_a,
+        exact_resources=exact_r,
+        wildcard_resources=wc_r,
+    )
+
+
+def _make_pbac_cache() -> PolicyCache:
+    """Build a PolicyCache granting user-1 access to research-papers only."""
+    settings = MagicMock()
+    settings.policy_cache_ttl = 9999
+    cache = PolicyCache(settings=settings)
+    cache._stale = False
+    cache._last_refresh = 1e12
+
+    cache._admin_user_ids = {ADMIN_USER_ID}
+    cache._policies = {
+        POLICY_ID: CachedPolicy(
+            id=POLICY_ID,
+            effect="allow",
+            statements=[
+                _make_statement(["kb.*"], [f"kb:{ALLOWED_KB_SLUG}"]),
+            ],
+        ),
+    }
+    cache._user_policies = {REGULAR_USER_ID: {POLICY_ID}}
+    cache._group_policies = {}
+    cache._user_groups = {}
+    return cache
+
+
+def _make_mock_kb(*, kb_id: str, name: str, slug: str) -> MagicMock:
+    """Build a mock ORM KnowledgeBase object."""
+    kb = MagicMock()
+    kb.id = kb_id
+    kb.name = name
+    kb.slug = slug
+    return kb
+
+
+MOCK_KB_ALLOWED = _make_mock_kb(kb_id=ALLOWED_KB_ID, name=ALLOWED_KB_NAME, slug=ALLOWED_KB_SLUG)
+MOCK_KB_DENIED = _make_mock_kb(kb_id=DENIED_KB_ID, name=DENIED_KB_NAME, slug=DENIED_KB_SLUG)
+
+
+@pytest.fixture
+def pbac_cache():
+    return _make_pbac_cache()
+
+
+@pytest.fixture
+def db():
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.add = MagicMock()
+    session.delete = AsyncMock()
+    session.execute = AsyncMock()
+    return session
+
+
+@pytest.fixture
+def service(db):
+    return KnowledgeBaseService(db, config_manager=MagicMock())
+
+
+VERIFIER_PATH = "shu.utils.knowledge_base_verifier.KnowledgeBaseVerifier"
+
+
+class TestEnforceKbRead:
+    """enforce_kb_read: single KB fetch + PBAC kb.read via get_knowledge_base."""
+
+    @pytest.mark.asyncio
+    async def test_admin_accesses_allowed_kb(self, service, pbac_cache):
+        """Admin bypasses PBAC and can access the allowed KB."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_ALLOWED):
+            result = await service.enforce_kb_read(ADMIN_USER_ID, ALLOWED_KB_ID)
+        assert result.id == ALLOWED_KB_ID
+        assert result.slug == ALLOWED_KB_SLUG
+
+    @pytest.mark.asyncio
+    async def test_admin_accesses_denied_kb(self, service, pbac_cache):
+        """Admin bypasses PBAC and can access KBs that regular users cannot."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_DENIED):
+            result = await service.enforce_kb_read(ADMIN_USER_ID, DENIED_KB_ID)
+        assert result.id == DENIED_KB_ID
+        assert result.slug == DENIED_KB_SLUG
+
+    @pytest.mark.asyncio
+    async def test_user_accesses_allowed_kb(self, service, pbac_cache):
+        """Regular user passes PBAC when the KB slug matches their policy."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_ALLOWED):
+            result = await service.enforce_kb_read(REGULAR_USER_ID, ALLOWED_KB_ID)
+        assert result.id == ALLOWED_KB_ID
+        assert result.slug == ALLOWED_KB_SLUG
+
+    @pytest.mark.asyncio
+    async def test_user_denied_on_other_kb(self, service, pbac_cache):
+        """Regular user is denied with NotFoundError when the KB slug is not in their policy."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_DENIED), \
+             pytest.raises(NotFoundError):
+            await service.enforce_kb_read(REGULAR_USER_ID, DENIED_KB_ID)
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_kb_raises_not_found(self, service, pbac_cache):
+        """NotFoundError is raised when the KB does not exist (same as PBAC deny)."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=None), \
+             pytest.raises(NotFoundError):
+            await service.enforce_kb_read(REGULAR_USER_ID, "nonexistent-kb")
+
+
+class TestFilterAccessibleKbIds:
+    """filter_accessible_kb_ids: batch filter returning accessible KB IDs."""
+
+    @pytest.mark.asyncio
+    async def test_admin_sees_all_kbs(self, service, pbac_cache):
+        """Admin bypasses PBAC so all KB IDs are returned."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.filter_accessible_kb_ids(
+                ADMIN_USER_ID, [MOCK_KB_ALLOWED, MOCK_KB_DENIED],
+            )
+        assert set(result) == {ALLOWED_KB_ID, DENIED_KB_ID}
+
+    @pytest.mark.asyncio
+    async def test_user_sees_only_allowed_kbs(self, service, pbac_cache):
+        """Regular user only gets IDs of KBs whose slug matches their policy."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.filter_accessible_kb_ids(
+                REGULAR_USER_ID, [MOCK_KB_ALLOWED, MOCK_KB_DENIED],
+            )
+        assert result == [ALLOWED_KB_ID]
+
+    @pytest.mark.asyncio
+    async def test_empty_list_returns_empty(self, service, pbac_cache):
+        """Empty input list returns empty output without calling PBAC."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.filter_accessible_kb_ids(REGULAR_USER_ID, [])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_all_denied_returns_empty(self, service, pbac_cache):
+        """When all KBs are denied, an empty list is returned."""
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.filter_accessible_kb_ids(
+                REGULAR_USER_ID, [MOCK_KB_DENIED],
+            )
+        assert result == []
+
+
+class TestCheckKbReadAccess:
+    """check_kb_read_access: batch check by UUID list, returns first denied ID or None."""
+
+    @pytest.mark.asyncio
+    async def test_admin_all_accessible(self, service, db, pbac_cache):
+        """Admin bypasses PBAC so None is returned (all accessible)."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [MOCK_KB_ALLOWED, MOCK_KB_DENIED]
+        db.execute.return_value = mock_result
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.check_kb_read_access(
+                ADMIN_USER_ID, [ALLOWED_KB_ID, DENIED_KB_ID],
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_user_all_accessible(self, service, db, pbac_cache):
+        """Regular user gets None when all requested KBs are in their policy."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [MOCK_KB_ALLOWED]
+        db.execute.return_value = mock_result
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.check_kb_read_access(
+                REGULAR_USER_ID, [ALLOWED_KB_ID],
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_user_gets_first_denied_id(self, service, db, pbac_cache):
+        """Regular user gets the first denied KB ID when some are inaccessible."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [MOCK_KB_ALLOWED, MOCK_KB_DENIED]
+        db.execute.return_value = mock_result
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.check_kb_read_access(
+                REGULAR_USER_ID, [ALLOWED_KB_ID, DENIED_KB_ID],
+            )
+        assert result == DENIED_KB_ID
+
+    @pytest.mark.asyncio
+    async def test_empty_ids_returns_none(self, service, db, pbac_cache):
+        """Empty KB ID list returns None (nothing denied)."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        db.execute.return_value = mock_result
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.check_kb_read_access(REGULAR_USER_ID, [])
+        assert result is None

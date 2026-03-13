@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from ..auth.models import User
-from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager, get_settings_instance
 from ..core.exceptions import (
     ConversationNotFoundError,
@@ -989,15 +988,6 @@ class ChatService:
         )
         result = await self.db_session.execute(stmt)
         conversation = result.scalar_one()
-
-        should_use_rag = rag_rewrite_mode != RagRewriteMode.NO_RAG
-        if knowledge_base_id and should_use_rag:
-            has_access = await rbac.can_access_knowledge_base(current_user, knowledge_base_id, self.db_session)
-            if not has_access:
-                raise ShuException(
-                    f"Access denied to knowledge base '{knowledge_base_id}'",
-                    "KNOWLEDGE_BASE_ACCESS_DENIED",
-                )
 
         turn_context = await self._prepare_turn_context(
             conversation=conversation,

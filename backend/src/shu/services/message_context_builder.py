@@ -8,7 +8,6 @@ from shu.services.prompt_service import PromptService
 from shu.services.query_service import QueryService
 
 from ..auth.models import User
-from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager
 from ..models.llm_provider import Conversation, LLMModel, Message
 from ..models.model_configuration import ModelConfiguration
@@ -17,6 +16,7 @@ from ..schemas.query import QueryRequest, RagRewriteMode
 from .chat_types import ChatContext, ChatMessage
 from .context_preferences_resolver import ContextPreferencesResolver
 from .context_window_manager import ContextWindowManager
+from .knowledge_base_service import KnowledgeBaseService
 from .message_utils import collapse_assistant_variants
 from .providers.adapter_base import get_adapter_from_provider
 from .rag_query_processing import execute_rag_queries
@@ -230,17 +230,14 @@ class MessageContextBuilder:
             conversation, "model_configuration", None
         )
         if knowledge_base_id:
+            kb_svc = KnowledgeBaseService(self.db_session)
+            await kb_svc.enforce_kb_read(str(current_user.id), knowledge_base_id)
             kb_ids = [knowledge_base_id]
         elif kb_source_config and getattr(kb_source_config, "knowledge_bases", None):
             try:
-                accessible: list[str] = []
-                for kb in kb_source_config.knowledge_bases:
-                    if not kb.is_active:
-                        continue
-                    has_access = await rbac.can_access_knowledge_base(current_user, kb.id, self.db_session)
-                    if has_access:
-                        accessible.append(kb.id)
-                kb_ids = accessible
+                active_kbs = [kb for kb in kb_source_config.knowledge_bases if kb.is_active]
+                kb_svc = KnowledgeBaseService(self.db_session)
+                kb_ids = await kb_svc.filter_accessible_kb_ids(str(current_user.id), active_kbs)
             except Exception as e:
                 logger.warning(f"Error accessing model configuration knowledge bases: {e}")
 

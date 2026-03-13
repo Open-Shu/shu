@@ -307,7 +307,7 @@ class KbCapability(ImmutableCapabilityMixin):
                 pass
 
     async def _check_kb_access(self, db: AsyncSession) -> dict[str, Any] | None:
-        """Verify the executing user has RBAC access to every bound KB.
+        """Verify the executing user has PBAC access to every bound KB.
 
         This check runs for all entry points (direct execute, experience executor,
         LLM tool-calling), so no entry point can bypass it.
@@ -317,30 +317,18 @@ class KbCapability(ImmutableCapabilityMixin):
 
         Returns:
             ``None`` if the user has access to all bound KBs, or a structured
-            error dict if the user is not found or is denied access to any KB.
+            error dict if the user is denied access to any KB.
 
         """
-        from sqlalchemy import select
+        from ...services.knowledge_base_service import KnowledgeBaseService
 
-        from ...auth.models import User
-        from ...auth.rbac import rbac as _rbac
-
-        user_result = await db.execute(select(User).where(User.id == self._user_id))
-        user = user_result.scalar_one_or_none()
-        if user is None:
+        svc = KnowledgeBaseService(db)
+        denied_kb_id = await svc.check_kb_read_access(self._user_id, self._knowledge_base_ids)
+        if denied_kb_id:
             return {
                 "status": "error",
-                "error": {"code": "user_not_found", "message": "Executing user not found."},
+                "error": {"code": "access_denied", "message": f"Access denied to knowledge base '{denied_kb_id}'."},
             }
-        for kb_id in self._knowledge_base_ids:
-            if not await _rbac.can_access_knowledge_base(user, kb_id, db):
-                return {
-                    "status": "error",
-                    "error": {
-                        "code": "access_denied",
-                        "message": f"Access denied to knowledge base '{kb_id}'.",
-                    },
-                }
         return None
 
     async def _with_search_service(self, op_name: str, **kwargs: Any) -> dict[str, Any]:

@@ -13,6 +13,7 @@ from sqlalchemy.orm import defer
 from ..core.exceptions import (
     ConflictError,
     KnowledgeBaseNotFoundError,
+    NotFoundError,
     ShuException,
     ValidationError,
 )
@@ -21,6 +22,7 @@ from ..core.text import slugify
 from ..models.document import Document, DocumentChunk
 from ..models.knowledge_base import KnowledgeBase
 from ..schemas.knowledge_base import RAGConfig, RAGConfigResponse
+from ..services.policy_engine import POLICY_CACHE, enforce_pbac
 
 logger = get_logger(__name__)
 
@@ -87,7 +89,7 @@ class KnowledgeBaseService:
 
         """
         try:
-            knowledge_base = await self.get_knowledge_base(kb_id)
+            knowledge_base = await self._get_knowledge_base(kb_id)
             if not knowledge_base:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -131,7 +133,7 @@ class KnowledgeBaseService:
 
         """
         try:
-            knowledge_base = await self.get_knowledge_base(kb_id)
+            knowledge_base = await self._get_knowledge_base(kb_id)
             if not knowledge_base:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -342,14 +344,12 @@ class KnowledgeBaseService:
             logger.error(f"Failed to list knowledge bases: {e}", exc_info=True)
             raise ShuException(f"Failed to list knowledge bases: {e!s}", "KNOWLEDGE_BASE_LIST_ERROR")
 
-    async def get_knowledge_base(self, kb_id: str) -> KnowledgeBase | None:
-        """Get a knowledge base by ID.
+    async def _get_knowledge_base(self, kb_id: str) -> KnowledgeBase | None:
+        """Fetch a KB by ID without access control.
 
-        Args:
-            kb_id: Knowledge base ID
-
-        Returns:
-            KnowledgeBase or None if not found
+        Use this only from admin/system code paths where there is no user
+        context (management operations behind role guards, background jobs).
+        User-facing code should call get_knowledge_base() instead.
 
         """
         try:
@@ -360,6 +360,35 @@ class KnowledgeBaseService:
         except Exception as e:
             logger.error(f"Failed to get knowledge base '{kb_id}': {e}", exc_info=True)
             raise ShuException(f"Failed to get knowledge base: {e!s}", "KNOWLEDGE_BASE_GET_ERROR")
+
+    async def get_knowledge_base(self, kb_id: str, user_id: str) -> KnowledgeBase:
+        """Get a knowledge base by ID with PBAC kb.read enforcement.
+
+        Raises NotFoundError if the KB does not exist or the user is denied,
+        using the same error to avoid leaking KB existence.
+
+        Args:
+            kb_id: Knowledge base ID.
+            user_id: The user to enforce access for.
+
+        Returns:
+            The KnowledgeBase if found and access is granted.
+
+        Raises:
+            NotFoundError: KB missing or access denied.
+
+        """
+        kb = await self._get_knowledge_base(kb_id)
+        if not kb:
+            raise NotFoundError(f"Knowledge base '{kb_id}' not found")
+        await enforce_pbac(
+            user_id,
+            "kb.read",
+            f"kb:{kb.slug}",
+            self.db,
+            message=f"Knowledge base '{kb_id}' not found",
+        )
+        return kb
 
     async def _get_kb_by_slug(self, slug: str, exclude_id: str | None = None) -> KnowledgeBase | None:
         """Get a knowledge base by slug, optionally excluding a specific KB.
@@ -428,7 +457,7 @@ class KnowledgeBaseService:
 
         """
         try:
-            knowledge_base = await self.get_knowledge_base(kb_id)
+            knowledge_base = await self._get_knowledge_base(kb_id)
             if not knowledge_base:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -467,7 +496,7 @@ class KnowledgeBaseService:
 
         """
         try:
-            knowledge_base = await self.get_knowledge_base(kb_id)
+            knowledge_base = await self._get_knowledge_base(kb_id)
             if not knowledge_base:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -541,7 +570,7 @@ class KnowledgeBaseService:
 
         """
         try:
-            knowledge_base = await self.get_knowledge_base(kb_id)
+            knowledge_base = await self._get_knowledge_base(kb_id)
             if not knowledge_base:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -568,7 +597,7 @@ class KnowledgeBaseService:
 
         """
         try:
-            knowledge_base = await self.get_knowledge_base(kb_id)
+            knowledge_base = await self._get_knowledge_base(kb_id)
             if not knowledge_base:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -692,7 +721,7 @@ class KnowledgeBaseService:
         and aggregate document/chunk counts.
         """
         try:
-            kb = await self.get_knowledge_base(kb_id)
+            kb = await self._get_knowledge_base(kb_id)
             if not kb:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -723,7 +752,7 @@ class KnowledgeBaseService:
         """Return distinct source types present in this knowledge base's documents."""
         try:
             # Ensure KB exists
-            kb = await self.get_knowledge_base(kb_id)
+            kb = await self._get_knowledge_base(kb_id)
             if not kb:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -740,7 +769,7 @@ class KnowledgeBaseService:
         This performs lightweight schema/range checks; it does not perform I/O validation.
         """
         try:
-            kb = await self.get_knowledge_base(kb_id)
+            kb = await self._get_knowledge_base(kb_id)
             if not kb:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -786,7 +815,7 @@ class KnowledgeBaseService:
     async def set_knowledge_base_status(self, kb_id: str, new_status: dict[str, Any]) -> KnowledgeBase:
         """Update the status field on a knowledge base with basic validation."""
         try:
-            kb = await self.get_knowledge_base(kb_id)
+            kb = await self._get_knowledge_base(kb_id)
             if not kb:
                 raise KnowledgeBaseNotFoundError(kb_id)
 
@@ -914,6 +943,42 @@ class KnowledgeBaseService:
         )
 
         return {"status": "queued", "knowledge_base_id": kb_id, "total_chunks": total_chunks}
+
+    async def enforce_kb_read(self, user_id: str, kb_id: str) -> KnowledgeBase:
+        """Get a KB by ID and enforce PBAC kb.read. Raises NotFoundError on deny or missing."""
+        return await self.get_knowledge_base(kb_id, user_id=user_id)
+
+    async def filter_accessible_kb_ids(self, user_id: str, kbs: list[KnowledgeBase]) -> list[str]:
+        """Filter a list of KB ORM objects, returning IDs of those the user can read."""
+        if not kbs:
+            return []
+        slug_to_id = {kb.slug: kb.id for kb in kbs}
+        denied = await POLICY_CACHE.get_denied_resources(
+            user_id,
+            "kb.read",
+            "kb",
+            list(slug_to_id.keys()),
+            self.db,
+        )
+        return [kb.id for kb in kbs if kb.slug not in denied]
+
+    async def check_kb_read_access(self, user_id: str, kb_ids: list[str]) -> str | None:
+        """Check PBAC kb.read for a list of KB IDs.
+
+        Returns None if all accessible, or the first denied KB ID.
+        """
+        kbs = (await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)))).scalars().all()
+        slug_to_id = {kb.slug: kb.id for kb in kbs}
+        denied = await POLICY_CACHE.get_denied_resources(
+            user_id,
+            "kb.read",
+            "kb",
+            list(slug_to_id.keys()),
+            self.db,
+        )
+        if denied:
+            return slug_to_id[next(iter(denied))]
+        return None
 
 
 async def detect_stale_kbs(db: AsyncSession, system_model: str) -> list[str]:

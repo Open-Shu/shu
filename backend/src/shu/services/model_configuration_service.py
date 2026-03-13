@@ -32,6 +32,7 @@ from ..schemas.model_configuration import (
     ModelConfigurationResponse,
     ModelConfigurationUpdate,
 )
+from .knowledge_base_service import KnowledgeBaseService
 
 logger = logging.getLogger(__name__)
 
@@ -214,20 +215,14 @@ class ModelConfigurationService:
             result = await self.db.execute(query)
             config = result.scalar_one_or_none()
 
-            # Check permissions if current_user is provided and config exists
-            if config and current_user:
-                from ..auth.rbac import rbac
-
-                # Check if user has access to all knowledge bases in this configuration
-                if hasattr(config, "knowledge_bases") and config.knowledge_bases:
-                    for kb in config.knowledge_bases:
-                        if not await rbac.can_access_knowledge_base(current_user, kb.id, self.db):
-                            logger.warning(
-                                f"User {current_user.email} denied access to KB {kb.id} in config {config.id}"
-                            )
-                            return None  # Return None to indicate access denied
-
-                logger.debug(f"User {current_user.email} has access to config {config.id}")
+            if config and current_user and hasattr(config, "knowledge_bases") and config.knowledge_bases:
+                kb_svc = KnowledgeBaseService(self.db)
+                accessible = await kb_svc.filter_accessible_kb_ids(str(current_user.id), config.knowledge_bases)
+                if len(accessible) < len(config.knowledge_bases):
+                    logger.warning(
+                        f"User {current_user.email} denied access to config {config.id} " f"(inaccessible KBs detected)"
+                    )
+                    return None
 
             return config
 
@@ -309,31 +304,20 @@ class ModelConfigurationService:
             result = await self.db.execute(query)
             configurations = result.scalars().all()
 
-            # Filter by user permissions if current_user is provided
             if current_user:
-                from ..auth.rbac import rbac
-
-                accessible_configurations = []
-
+                all_kbs = []
                 for config in configurations:
-                    # Check if user has access to all knowledge bases in this configuration
-                    has_access = True
                     if hasattr(config, "knowledge_bases") and config.knowledge_bases:
-                        for kb in config.knowledge_bases:
-                            if not await rbac.can_access_knowledge_base(current_user, kb.id, self.db):
-                                has_access = False
-                                logger.debug(
-                                    f"User {current_user.email} denied access to KB {kb.id} in config {config.id}"
-                                )
-                                break
+                        all_kbs.extend(config.knowledge_bases)
 
-                    if has_access:
-                        accessible_configurations.append(config)
-                        logger.debug(f"User {current_user.email} has access to config {config.id}")
-                    else:
-                        logger.debug(f"User {current_user.email} denied access to config {config.id}")
-
-                configurations = accessible_configurations
+                if all_kbs:
+                    kb_svc = KnowledgeBaseService(self.db)
+                    accessible_ids = set(await kb_svc.filter_accessible_kb_ids(str(current_user.id), all_kbs))
+                    configurations = [
+                        c
+                        for c in configurations
+                        if not any(kb.id not in accessible_ids for kb in (c.knowledge_bases or []))
+                    ]
 
             count_result = await self.db.execute(count_query)
             total = count_result.scalar()
