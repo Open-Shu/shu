@@ -250,7 +250,7 @@ class Settings(BaseSettings):
     # Shu RAG Document Profiling (SHU-343)
     enable_document_profiling: bool = Field(False, alias="SHU_ENABLE_DOCUMENT_PROFILING")
     # Hard ceiling on any single profiling LLM call (batch or final-batch aggregate)
-    profiling_max_input_tokens: int = Field(8000, alias="SHU_PROFILING_MAX_INPUT_TOKENS")
+    profiling_max_input_tokens: int = Field(20000, alias="SHU_PROFILING_MAX_INPUT_TOKENS")
     # Timeout for profiling LLM calls (longer than chat since it's a background task)
     profiling_timeout_seconds: int = Field(180, alias="SHU_PROFILING_TIMEOUT_SECONDS")
     # Process chunks in batches for efficiency
@@ -265,10 +265,11 @@ class Settings(BaseSettings):
 
     # Shu RAG Query Synthesis (SHU-353)
     # Query synthesis runs automatically as part of document profiling at no additional cost.
-    # Upper bound on queries per document (cost control)
-    query_synthesis_max_queries: int = Field(20, alias="SHU_QUERY_SYNTHESIS_MAX_QUERIES")
-    # Minimum queries for any document
-    query_synthesis_min_queries: int = Field(3, alias="SHU_QUERY_SYNTHESIS_MIN_QUERIES")
+    # Generates per-chunk queries with high and medium specificity for better retrieval coverage.
+    # Number of high-specificity + medium-specificity queries to generate per chunk
+    query_synthesis_queries_per_chunk: int = Field(2, alias="SHU_QUERY_SYNTHESIS_QUERIES_PER_CHUNK")
+    # Maximum total queries per document (cost control for large docs)
+    query_synthesis_max_total_queries: int = Field(100, alias="SHU_QUERY_SYNTHESIS_MAX_TOTAL_QUERIES")
     # Timeout for the document-metadata LLM call (synopsis, type, queries — heavier than chunk batches)
     profiling_metadata_timeout_seconds: int = Field(240, alias="SHU_PROFILING_METADATA_TIMEOUT_SECONDS")
 

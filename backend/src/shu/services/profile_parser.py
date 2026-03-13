@@ -28,16 +28,16 @@ class ProfileParser:
     MAX_SUMMARY_LENGTH = 500
     MAX_KEYWORDS = 15
     MAX_TOPICS = 10
-    DEFAULT_MAX_QUERIES = 20
+    DEFAULT_MAX_TOTAL_QUERIES = 100
 
-    def __init__(self, max_queries: int | None = None) -> None:
+    def __init__(self, max_total_queries: int | None = None) -> None:
         """Initialize parser with configurable limits.
 
         Args:
-            max_queries: Maximum number of synthesized queries to keep (default: 20)
+            max_total_queries: Maximum total queries per document (default: 100)
 
         """
-        self.max_queries = max_queries if max_queries is not None else self.DEFAULT_MAX_QUERIES
+        self.max_total_queries = max_total_queries if max_total_queries is not None else self.DEFAULT_MAX_TOTAL_QUERIES
 
     @staticmethod
     def _coerce_string(value: str | None) -> str:
@@ -90,32 +90,67 @@ class ProfileParser:
             question_domains=self._coerce_list(manifest_data.get("question_domains")),
         )
 
-    def _parse_synthesized_queries(self, queries: list | None) -> list[str]:
-        """Parse synthesized queries, handling both string and object formats.
+    def _parse_chunk_queries(self, chunk_queries: list | None) -> list[str]:
+        """Parse per-chunk queries into a flat list of query strings.
+
+        Handles the current chunk_queries structure:
+        [{"chunk_index": 0, "queries": [...]}, ...]
+
+        Also supports legacy formats for backward compatibility:
+        - {"chunk_index": N, "high": [...], "conversational": [...]}
+        - {"chunk_index": N, "high": [...], "medium": [...]}
+        - Flat list of strings
+        - [{"query_text": "..."}]
 
         Args:
-            queries: List of queries (strings or dicts with query_text)
+            chunk_queries: List of chunk query objects or legacy flat query list
 
         Returns:
-            List of non-empty query strings, capped at configured max_queries
+            Flat list of non-empty query strings, capped at max_total_queries
 
         """
-        if not queries:
+        if not chunk_queries:
             return []
+
         result = []
-        for q in queries:
-            if q is None:
+
+        for item in chunk_queries:
+            if item is None:
                 continue
-            if isinstance(q, dict):
-                value = q.get("query_text")
-                if value is None:
-                    continue
-                text = str(value).strip()
+
+            if isinstance(item, dict):
+                # Current format: {"chunk_index": N, "queries": [...]}
+                if "queries" in item:
+                    for query in self._coerce_list(item.get("queries")):
+                        text = str(query).strip() if query else ""
+                        if text:
+                            result.append(text)
+
+                # Legacy format: {"chunk_index": N, "high": [...], "conversational": [...]}
+                elif "high" in item or "conversational" in item or "medium" in item:
+                    for query in self._coerce_list(item.get("high")):
+                        text = str(query).strip() if query else ""
+                        if text:
+                            result.append(text)
+                    casual_queries = item.get("conversational") or item.get("medium")
+                    for query in self._coerce_list(casual_queries):
+                        text = str(query).strip() if query else ""
+                        if text:
+                            result.append(text)
+
+                # Legacy format: {"query_text": "..."}
+                elif "query_text" in item:
+                    text = str(item["query_text"]).strip()
+                    if text:
+                        result.append(text)
+
             else:
-                text = str(q).strip()
-            if text:
-                result.append(text)
-        return result[: self.max_queries]
+                # Legacy format: plain string
+                text = str(item).strip()
+                if text:
+                    result.append(text)
+
+        return result[: self.max_total_queries]
 
     def parse_document_metadata_response(self, content: str) -> DocumentMetadataResponse | None:
         """Parse document metadata synthesis LLM response.
@@ -149,11 +184,15 @@ class ProfileParser:
                     content_length=len(content) if content else 0,
                 )
 
+            # Parse queries - prefer new chunk_queries format, fallback to legacy synthesized_queries
+            queries_data = data.get("chunk_queries") or data.get("synthesized_queries")
+            parsed_queries = self._parse_chunk_queries(self._coerce_list(queries_data))
+
             return DocumentMetadataResponse(
                 synopsis=synopsis,
                 document_type=doc_type,
                 capability_manifest=self._parse_capability_manifest(data),
-                synthesized_queries=self._parse_synthesized_queries(self._coerce_list(data.get("synthesized_queries"))),
+                synthesized_queries=parsed_queries,
             )
         except Exception as e:
             logger.warning(
