@@ -25,10 +25,10 @@ logger = get_logger(__name__)
 
 # Default surface weights (can be overridden via config)
 DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
-    "chunk_vector": 0.60,
-    "synopsis_match": 0.40,
-    # Future surfaces (PR 2+):
-    # "query_match": 0.25,
+    "chunk_vector": 0.30,
+    "query_match": 0.25,
+    "synopsis_match": 0.20,
+    # Future surfaces (PR 3+):
     # "keyword_match": 0.15,
     # "topic_match": 0.10,
 }
@@ -129,9 +129,10 @@ class ScoreFusionService:
             return []
 
         # Step 4: Compute weighted scores per document
-        doc_scores: dict[UUID, tuple[float, dict[str, float]]] = {}
+        doc_scores: dict[UUID, tuple[float, dict[str, float], dict[str, dict]]] = {}
         for doc_id, surface_hits in doc_hits.items():
             surface_scores: dict[str, float] = {}
+            surface_metadata: dict[str, dict] = {}
             weighted_sum = 0.0
             total_weight = 0.0
 
@@ -142,10 +143,15 @@ class ScoreFusionService:
                     continue
 
                 # Use max score from this surface for this document
-                max_score = max(h.score for h in hits)
+                best_hit = max(hits, key=lambda h: h.score)
+                max_score = best_hit.score
                 surface_scores[surface_name] = max_score
                 weighted_sum += max_score * weight
                 total_weight += weight
+
+                # Collect metadata from best-scoring hit (for document-level surfaces)
+                if best_hit.metadata:
+                    surface_metadata[surface_name] = best_hit.metadata
 
             # Skip documents with no valid surface contributions
             if total_weight == 0:
@@ -153,12 +159,12 @@ class ScoreFusionService:
 
             # Normalize by total weight used
             final_score = weighted_sum / total_weight
-            doc_scores[doc_id] = (final_score, surface_scores)
+            doc_scores[doc_id] = (final_score, surface_scores, surface_metadata)
 
         # Step 5: Filter by threshold and sort
         filtered_docs = [
-            (doc_id, score, surface_scores)
-            for doc_id, (score, surface_scores) in doc_scores.items()
+            (doc_id, score, surface_scores, surface_metadata)
+            for doc_id, (score, surface_scores, surface_metadata) in doc_scores.items()
             if score >= threshold
         ]
         filtered_docs.sort(key=lambda x: x[1], reverse=True)
@@ -184,7 +190,7 @@ class ScoreFusionService:
 
         # Step 7: Build FusedResults
         results: list[FusedResult] = []
-        for doc_id, final_score, surface_scores in top_docs:
+        for doc_id, final_score, surface_scores, surface_metadata in top_docs:
             contributing_chunks: list[ContributingChunk] = []
 
             # Collect contributing chunks from all surfaces
@@ -223,6 +229,7 @@ class ScoreFusionService:
                     final_score=final_score,
                     surface_scores=surface_scores,
                     contributing_chunks=contributing_chunks,
+                    surface_metadata=surface_metadata,
                     file_type=file_type,
                     source_url=source_url,
                     source_id=source_id,

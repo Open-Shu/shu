@@ -85,6 +85,7 @@ class FusedResult:
         final_score: Weighted combined score from all surfaces.
         surface_scores: Per-surface scores that contributed to final_score.
         contributing_chunks: Chunks from this document across all surfaces.
+        surface_metadata: Per-surface metadata (e.g., matched_query from query_match).
         file_type: Document file type (e.g., "pdf", "txt", "docx").
         source_url: URL of the source document if available.
         source_id: External source identifier if available.
@@ -97,6 +98,7 @@ class FusedResult:
     final_score: float
     surface_scores: dict[str, float]
     contributing_chunks: list[ContributingChunk]
+    surface_metadata: dict[str, dict] = field(default_factory=dict)
     file_type: str = "txt"
     source_url: str | None = None
     source_id: str | None = None

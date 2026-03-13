@@ -55,8 +55,9 @@ function QueryTester() {
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
   // Multi-surface search weights
-  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.6);
-  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.4);
+  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.3);
+  const [queryMatchWeight, setQueryMatchWeight] = useState(0.25);
+  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.2);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -109,6 +110,7 @@ function QueryTester() {
           query_type: 'multi_surface',
           similarity_threshold: params.threshold,
           chunk_vector_weight: params.chunkVectorWeight,
+          query_match_weight: params.queryMatchWeight,
           synopsis_match_weight: params.synopsisMatchWeight,
         });
       }
@@ -143,6 +145,7 @@ function QueryTester() {
       titleWeightMultiplier: titleWeightMultiplier,
       ragRewriteMode,
       chunkVectorWeight: chunkVectorWeight,
+      queryMatchWeight: queryMatchWeight,
       synopsisMatchWeight: synopsisMatchWeight,
     });
   };
@@ -174,6 +177,7 @@ function QueryTester() {
         query_type: 'multi_surface',
         similarity_threshold: parseFloat(threshold),
         chunk_vector_weight: chunkVectorWeight,
+        query_match_weight: queryMatchWeight,
         synopsis_match_weight: synopsisMatchWeight,
       };
     } else {
@@ -398,6 +402,19 @@ function QueryTester() {
                     <Slider
                       value={chunkVectorWeight}
                       onChange={(_, newValue) => setChunkVectorWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 2 }}
+                    />
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Query Match: {queryMatchWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={queryMatchWeight}
+                      onChange={(_, newValue) => setQueryMatchWeight(newValue)}
                       min={0}
                       max={1}
                       step={0.05}
