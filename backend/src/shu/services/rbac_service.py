@@ -1,7 +1,7 @@
 """RBAC Service Layer.
 
 This module provides service layer functionality for managing RBAC operations
-including user groups, permissions, and access control.
+including user groups, memberships, and access control.
 """
 
 import logging
@@ -13,11 +13,8 @@ from sqlalchemy.orm import selectinload
 
 from ..auth.models import User
 from ..core.exceptions import ShuException
-from ..models.knowledge_base import KnowledgeBase
-from ..models.rbac import KnowledgeBasePermission, PermissionLevel, UserGroup, UserGroupMembership
+from ..models.rbac import UserGroup, UserGroupMembership
 from ..schemas.rbac import (
-    EffectivePermissionResponse,
-    KnowledgeBasePermissionCreate,
     UserGroupCreate,
     UserGroupMembershipCreate,
     UserGroupUpdate,
@@ -39,28 +36,11 @@ class GroupNotFoundError(RBACServiceError):
         super().__init__(f"User group '{group_id}' not found", "GROUP_NOT_FOUND")
 
 
-class PermissionNotFoundError(RBACServiceError):
-    """Raised when a permission is not found."""
-
-    def __init__(self, permission_id: str) -> None:
-        super().__init__(f"Permission '{permission_id}' not found", "PERMISSION_NOT_FOUND")
-
-
 class DuplicateGroupError(RBACServiceError):
     """Raised when trying to create a group with duplicate name."""
 
     def __init__(self, group_name: str) -> None:
         super().__init__(f"Group with name '{group_name}' already exists", "DUPLICATE_GROUP")
-
-
-class DuplicatePermissionError(RBACServiceError):
-    """Raised when trying to create duplicate permission."""
-
-    def __init__(self, target_type: str, target_id: str, kb_id: str) -> None:
-        super().__init__(
-            f"Permission already exists for {target_type} '{target_id}' on KB '{kb_id}'",
-            "DUPLICATE_PERMISSION",
-        )
 
 
 class RBACService:
@@ -274,137 +254,6 @@ class RBACService:
             .where(and_(UserGroupMembership.group_id == group_id, UserGroupMembership.is_active))
         )
         return list(result.scalars().all())
-
-    # Knowledge Base Permission Management
-    async def grant_kb_permission(
-        self, kb_id: str, permission_data: KnowledgeBasePermissionCreate, granted_by: str
-    ) -> KnowledgeBasePermission:
-        """Grant a knowledge base permission."""
-        try:
-            # Verify KB exists
-            kb_result = await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-            if not kb_result.scalar_one_or_none():
-                raise RBACServiceError(f"Knowledge base '{kb_id}' not found", "KB_NOT_FOUND")
-
-            # Check for duplicate permission
-            existing_result = await self.db.execute(
-                select(KnowledgeBasePermission).where(
-                    and_(
-                        KnowledgeBasePermission.knowledge_base_id == kb_id,
-                        KnowledgeBasePermission.user_id == permission_data.user_id,
-                        KnowledgeBasePermission.group_id == permission_data.group_id,
-                    )
-                )
-            )
-            existing_permission = existing_result.scalar_one_or_none()
-
-            if existing_permission:
-                if existing_permission.is_active:
-                    target_type = "user" if permission_data.user_id else "group"
-                    target_id = permission_data.user_id or permission_data.group_id
-                    raise DuplicatePermissionError(target_type, target_id, kb_id)
-                # Reactivate existing permission
-                existing_permission.is_active = True
-                existing_permission.permission_level = permission_data.permission_level
-                existing_permission.expires_at = permission_data.expires_at
-                existing_permission.granted_by = granted_by
-                existing_permission.granted_at = datetime.now(UTC)
-                await self.db.commit()
-                await self.db.refresh(existing_permission)
-                return existing_permission
-
-            # Create new permission
-            permission = KnowledgeBasePermission(
-                knowledge_base_id=kb_id,
-                user_id=permission_data.user_id,
-                group_id=permission_data.group_id,
-                permission_level=permission_data.permission_level,
-                expires_at=permission_data.expires_at,
-                granted_by=granted_by,
-            )
-            self.db.add(permission)
-            await self.db.commit()
-            await self.db.refresh(permission)
-
-            target_type = "user" if permission_data.user_id else "group"
-            target_id = permission_data.user_id or permission_data.group_id
-            logger.info(
-                f"Granted {permission_data.permission_level} permission to {target_type} {target_id} for KB {kb_id}"
-            )
-            return permission
-
-        except Exception as e:
-            await self.db.rollback()
-            if isinstance(e, RBACServiceError):
-                raise
-            logger.error(f"Failed to grant KB permission: {e}", exc_info=True)
-            raise RBACServiceError(f"Failed to grant KB permission: {e!s}", "PERMISSION_GRANT_ERROR")
-
-    async def revoke_kb_permission(self, permission_id: str) -> None:
-        """Revoke a knowledge base permission."""
-        try:
-            result = await self.db.execute(
-                select(KnowledgeBasePermission).where(KnowledgeBasePermission.id == permission_id)
-            )
-            permission = result.scalar_one_or_none()
-
-            if not permission:
-                raise PermissionNotFoundError(permission_id)
-
-            # Deactivate permission instead of deleting for audit trail
-            permission.is_active = False
-            await self.db.commit()
-
-            logger.info(f"Revoked permission {permission_id}")
-
-        except Exception as e:
-            await self.db.rollback()
-            if isinstance(e, RBACServiceError):
-                raise
-            logger.error(f"Failed to revoke KB permission: {e}", exc_info=True)
-            raise RBACServiceError(f"Failed to revoke KB permission: {e!s}", "PERMISSION_REVOKE_ERROR")
-
-    async def list_kb_permissions(self, kb_id: str) -> list[KnowledgeBasePermission]:
-        """List all permissions for a knowledge base."""
-        result = await self.db.execute(
-            select(KnowledgeBasePermission)
-            .options(
-                selectinload(KnowledgeBasePermission.user),
-                selectinload(KnowledgeBasePermission.group),
-                selectinload(KnowledgeBasePermission.granter),
-            )
-            .where(
-                and_(
-                    KnowledgeBasePermission.knowledge_base_id == kb_id,
-                    KnowledgeBasePermission.is_active,
-                )
-            )
-        )
-        return list(result.scalars().all())
-
-    async def get_effective_permission(self, user_id: str, kb_id: str) -> EffectivePermissionResponse | None:
-        """Get the effective permission level for a user on a knowledge base."""
-        from ..auth.rbac import rbac
-
-        # Use the existing RBAC service to get permission level
-        # We need a mock db session for this call
-        permission_level = await rbac.get_kb_permission_level(
-            user=await self._get_user(user_id), kb_id=kb_id, db=self.db
-        )
-
-        if not permission_level:
-            return None
-
-        # Determine source of permission
-        # This is a simplified version - in practice you'd want to track the exact source
-        return EffectivePermissionResponse(
-            user_id=user_id,
-            knowledge_base_id=kb_id,
-            effective_level=PermissionLevel(permission_level),
-            source="computed",  # Would need more logic to determine exact source
-            source_id=None,
-            expires_at=None,
-        )
 
     async def _get_user(self, user_id: str) -> User:
         """Get a user by ID helper function."""

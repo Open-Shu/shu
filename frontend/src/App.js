@@ -15,7 +15,6 @@ import LLMTester from './components/LLMTester';
 import HealthMonitor from './components/HealthMonitor';
 import UserManagement from './components/UserManagement';
 import UserGroups from './components/UserGroups';
-import KBPermissions from './components/KBPermissions';
 import LLMProviders from './components/LLMProviders';
 import ModelConfigurations from './components/ModelConfigurations';
 import Prompts from './pages/Prompts';
@@ -294,16 +293,6 @@ const AuthenticatedApp = () => {
               <RoleBasedRoute adminOnly>
                 <ProtectedRoute requiredRole="admin">
                   <UserGroups />
-                </ProtectedRoute>
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/admin/kb-permissions"
-            element={
-              <RoleBasedRoute adminOnly>
-                <ProtectedRoute requiredRole="admin">
-                  <KBPermissions />
                 </ProtectedRoute>
               </RoleBasedRoute>
             }

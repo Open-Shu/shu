@@ -10,12 +10,14 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
-from ..auth.rbac import require_kb_query_access
+from ..auth.rbac import get_current_user
 from ..core.config import ConfigurationManager, get_config_manager_dependency, get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
+from ..schemas.document import DocumentResponse
 from ..schemas.query import QueryRequest
+from ..services.knowledge_base_service import KnowledgeBaseService
 from ..services.query_service import QueryService
 from ..services.rag_query_processing import execute_rag_queries
 from .dependencies import get_db
@@ -31,11 +33,10 @@ settings = get_settings_instance()
     summary="Query documents",
     description="Query documents using vector similarity, keyword, or hybrid search. Supports both QueryRequest and SimilaritySearchRequest for backward compatibility.",
 )
-# RBAC: require_kb_query_access expects path param 'knowledge_base_id'
 async def query_documents(
     knowledge_base_id: str = Path(..., description="Knowledge base ID"),
     request: QueryRequest = ...,
-    current_user: User = Depends(require_kb_query_access("knowledge_base_id")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
@@ -75,6 +76,9 @@ async def query_documents(
     original_query = request.query
 
     try:
+        kb_svc = KnowledgeBaseService(db)
+        await kb_svc.enforce_kb_read(str(current_user.id), knowledge_base_id)
+
         query_service = QueryService(db, config_manager)
 
         def build_request(_: str, __: dict[str, Any], query_text: str) -> QueryRequest:
@@ -137,16 +141,14 @@ async def query_documents(
     summary="List documents",
     description="List documents in a knowledge base with optional filtering.",
 )
-# RBAC: require_kb_query_access expects path param 'knowledge_base_id'
 async def list_documents(
     knowledge_base_id: str = Path(..., description="Knowledge base ID"),
     limit: int = Query(50, ge=1, le=100, description="Number of documents to return"),
     offset: int = Query(0, ge=0, description="Number of documents to skip"),
     source_type: str | None = Query(None, description="Filter by source type"),
     file_type: str | None = Query(None, description="Filter by file type"),
-    current_user: User = Depends(require_kb_query_access("knowledge_base_id")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
     """List documents in a knowledge base with optional filtering.
 
@@ -180,25 +182,18 @@ async def list_documents(
     )
 
     try:
-        query_service = QueryService(db, config_manager)
-        result = await query_service.list_documents(
-            knowledge_base_id=knowledge_base_id,
+        kb_svc = KnowledgeBaseService(db)
+        documents, total_count = await kb_svc.get_documents(
+            kb_id=knowledge_base_id,
             limit=limit,
             offset=offset,
             source_type=source_type,
             file_type=file_type,
+            user_id=str(current_user.id),
         )
-
-        # Extract data from the new dictionary format
-        documents = result["documents"]
-        total_count = result["total_count"]
-
-        # Convert SQLAlchemy Document objects to Pydantic models
-        from ..schemas.document import DocumentResponse
 
         document_responses = [DocumentResponse.from_orm(doc) for doc in documents]
 
-        # Format response
         response_data = {
             "items": document_responses,
             "total": total_count,
@@ -225,14 +220,12 @@ async def list_documents(
     summary="Get document details",
     description="Get detailed information about a specific document.",
 )
-# RBAC: require_kb_query_access expects path param 'knowledge_base_id'
 async def get_document_details(
     knowledge_base_id: str = Path(..., description="Knowledge base ID"),
     document_id: str = Path(..., description="Document ID"),
     include_chunks: bool = Query(False, description="Include document chunks"),
-    current_user: User = Depends(require_kb_query_access("knowledge_base_id")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
     """Get detailed information about a specific document.
 
@@ -262,11 +255,12 @@ async def get_document_details(
     )
 
     try:
-        query_service = QueryService(db, config_manager)
-        document = await query_service.get_document_details(
-            knowledge_base_id=knowledge_base_id,
+        kb_svc = KnowledgeBaseService(db)
+        document = await kb_svc.get_document(
+            kb_id=knowledge_base_id,
             document_id=document_id,
             include_chunks=include_chunks,
+            user_id=str(current_user.id),
         )
 
         if not document:
@@ -275,9 +269,6 @@ async def get_document_details(
                 code="DOCUMENT_NOT_FOUND",
                 status_code=404,
             )
-
-        # Convert SQLAlchemy Document object to Pydantic model
-        from ..schemas.document import DocumentResponse
 
         document_response = DocumentResponse.from_orm(document)
         return ShuResponse.success(document_response)
@@ -301,10 +292,9 @@ async def get_document_details(
     summary="Get query statistics",
     description="Get query statistics for a knowledge base.",
 )
-# RBAC: require_kb_query_access expects path param 'knowledge_base_id'
 async def get_query_stats(
     knowledge_base_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_query_access("knowledge_base_id")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
 ):
@@ -327,6 +317,9 @@ async def get_query_stats(
     logger.info("Getting query statistics", extra={"kb_id": knowledge_base_id})
 
     try:
+        kb_svc = KnowledgeBaseService(db)
+        await kb_svc.enforce_kb_read(str(current_user.id), knowledge_base_id)
+
         query_service = QueryService(db, config_manager)
         stats = await query_service.get_query_stats(knowledge_base_id)
 

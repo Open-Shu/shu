@@ -46,12 +46,6 @@ class User(BaseModel):
         back_populates="user",
         cascade="all, delete-orphan",
     )
-    kb_permissions = relationship(
-        "KnowledgeBasePermission",
-        foreign_keys="KnowledgeBasePermission.user_id",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
     owned_knowledge_bases = relationship("KnowledgeBase", foreign_keys="KnowledgeBase.owner_id", back_populates="owner")
 
     # Provider relationships (OAuth identities and credentials)

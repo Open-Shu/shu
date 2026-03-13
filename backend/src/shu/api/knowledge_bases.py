@@ -15,9 +15,6 @@ from ..auth.models import User
 from ..auth.rbac import (
     get_current_user,
     require_admin,
-    require_kb_delete_default,
-    require_kb_manage_default,
-    require_kb_query_default,
     require_power_user,
 )
 from ..core.config import get_settings_instance
@@ -147,11 +144,9 @@ async def get_knowledge_base_stats(current_user: User = Depends(require_admin), 
 
 
 @router.get("/{kb_id}")
-# RBAC: require_kb_query_default expects path param 'kb_id'
 async def get_knowledge_base(
     kb_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific knowledge base by ID.
@@ -248,12 +243,10 @@ async def create_knowledge_base(
 
 
 @router.put("/{kb_id}")
-# RBAC: require_kb_manage_default expects path param 'kb_id'
 async def update_knowledge_base(
     kb_id: str,
     update_data: KnowledgeBaseUpdate,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing knowledge base.
@@ -302,11 +295,9 @@ async def update_knowledge_base(
 
 
 @router.delete("/{kb_id}")
-# RBAC: require_kb_delete_default expects path param 'kb_id'
 async def delete_knowledge_base(
     kb_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_delete_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a knowledge base.
@@ -333,10 +324,9 @@ async def delete_knowledge_base(
 
 
 @router.get("/{kb_id}/summary")
-# RBAC: require_kb_query_default expects path param 'kb_id'
 async def get_knowledge_base_summary(
     kb_id: str,
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get summary information for a knowledge base.
@@ -348,7 +338,7 @@ async def get_knowledge_base_summary(
 
     try:
         service = KnowledgeBaseService(db)
-        result = await service.get_knowledge_base_summary(kb_id)
+        result = await service.get_knowledge_base_summary(kb_id, user_id=str(current_user.id))
 
         logger.info("API: Retrieved knowledge base summary", extra={"kb_id": kb_id})
 
@@ -366,7 +356,7 @@ async def get_knowledge_base_summary(
 async def set_knowledge_base_status(
     kb_id: str,
     new_status: dict[str, Any],
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Set the status of a knowledge base.
@@ -394,8 +384,7 @@ async def set_knowledge_base_status(
 @router.get("/{kb_id}/validate")
 async def validate_knowledge_base_config(
     kb_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Validate knowledge base configuration.
@@ -435,7 +424,7 @@ async def validate_knowledge_base_config(
 )
 async def get_rag_config(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get RAG configuration for a knowledge base.
@@ -506,7 +495,7 @@ async def get_rag_templates(current_user: User = Depends(get_current_user), db: 
 async def update_rag_config(
     rag_config: RAGConfig,
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update RAG configuration for a knowledge base.
@@ -547,17 +536,13 @@ async def get_document_preview(
     kb_id: str,
     document_id: str,
     max_chars: int = Query(1000, description="Maximum characters to preview"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a preview of document content with extraction metadata."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
-
-        # Get document with metadata
-        document = await kb_service.get_document(kb_id, document_id)
+        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
@@ -607,17 +592,13 @@ async def get_document_preview(
 async def get_document_extraction_details(
     kb_id: str,
     document_id: str,
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed extraction information for a document."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
-
-        # Get document with full metadata
-        document = await kb_service.get_document(kb_id, document_id)
+        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
@@ -654,18 +635,19 @@ async def list_documents(
     offset: int = Query(0, description="Number of documents to skip"),
     search_query: str | None = Query(None, description="Document title to search by"),
     filter_by: str = Query("all", description="Document filter to apply to search"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get list of documents for a knowledge base."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
-
-        # Get documents for this knowledge base
         documents, total = await kb_service.get_documents(
-            kb_id, limit=limit, offset=offset, search_query=search_query, filter_by=filter_by
+            kb_id,
+            limit=limit,
+            offset=offset,
+            search_query=search_query,
+            filter_by=filter_by,
+            user_id=str(current_user.id),
         )
 
         # Use lightweight serialization to exclude heavy fields (content, embeddings, etc.)
@@ -697,9 +679,7 @@ async def delete_document(
     """
     try:
         kb_service = KnowledgeBaseService(db)
-
-        # Get the document - also validates it belongs to this KB
-        document = await kb_service.get_document(kb_id, document_id)
+        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
         if not document:
             return ShuResponse.error(
                 message="Document not found in this knowledge base",
@@ -740,17 +720,13 @@ async def delete_document(
 @router.get("/{kb_id}/documents/extraction-summary")
 async def get_extraction_summary(
     kb_id: str,
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get summary of extraction methods and accuracy across all documents."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
-
-        # Get all documents for this knowledge base
-        documents, _ = await kb_service.get_documents(kb_id)
+        documents, _ = await kb_service.get_documents(kb_id, user_id=str(current_user.id))
 
         # Analyze extraction methods
         extraction_stats = {}
@@ -975,7 +951,7 @@ async def upload_documents(
 )
 async def trigger_re_embedding(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger re-embedding of all vectors in a knowledge base.
@@ -1013,7 +989,7 @@ async def trigger_re_embedding(
 )
 async def get_re_embedding_status(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the embedding status and re-embedding progress for a knowledge base."""

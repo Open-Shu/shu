@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import defer, selectinload
 
 from ..core.exceptions import (
     ConflictError,
@@ -620,6 +620,10 @@ class KnowledgeBaseService:
         offset: int = 0,
         search_query: str | None = None,
         filter_by: str = "all",
+        source_type: str | None = None,
+        file_type: str | None = None,
+        *,
+        user_id: str,
     ) -> tuple[list[Document], int]:
         """Get documents for a knowledge base with pagination.
 
@@ -627,13 +631,22 @@ class KnowledgeBaseService:
             kb_id: Knowledge base ID
             limit: Maximum number of documents to return
             offset: Number of documents to skip
+            search_query: Optional title search term
+            filter_by: Extraction metadata filter (all/ocr/text/high-confidence/low-confidence)
+            source_type: Optional filter by document source type
+            file_type: Optional filter by file type
+            user_id: User ID for PBAC kb.read enforcement
 
         Returns:
             Tuple of (documents, total_count)
 
         """
         try:
-            document_filter_condition = self.get_document_filter_condition(kb_id, search_query, filter_by)
+            await self.enforce_kb_read(user_id, kb_id)
+
+            document_filter_condition = self.get_document_filter_condition(
+                kb_id, search_query, filter_by, source_type, file_type
+            )
 
             # Get total count
             count_query = select(func.count(Document.id)).where(document_filter_condition)
@@ -660,67 +673,81 @@ class KnowledgeBaseService:
             logger.error(f"Failed to get documents for knowledge base {kb_id}: {e}")
             raise ShuException(f"Failed to get documents: {e!s}", "DOCUMENT_LIST_ERROR")
 
-    def get_document_filter_condition(self, kb_id, search_query, filter_by):
+    def get_document_filter_condition(
+        self,
+        kb_id: str,
+        search_query: str | None,
+        filter_by: str,
+        source_type: str | None = None,
+        file_type: str | None = None,
+    ):
         conditions = [Document.knowledge_base_id == kb_id]
 
-        # Apply the search on the document title only (case-insensitive)
-        # Content search was removed for performance - full-text search on TEXT columns
-        # causes full table scans. Use dedicated search functionality if needed.
         if search_query:
-            # Escape SQL LIKE wildcards so they're treated as literals
             escaped = search_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             conditions.append(Document.title.ilike(f"%{escaped}%", escape="\\"))
 
-        # Apply filter_by options
+        if source_type:
+            conditions.append(Document.source_type == source_type)
+
+        if file_type:
+            conditions.append(Document.file_type == file_type)
+
         if filter_by and filter_by != "all":
             if filter_by == "ocr":
                 conditions.append(Document.extraction_method == "ocr")
             elif filter_by == "text":
                 conditions.append(Document.extraction_method == "text")
             elif filter_by == "high-confidence":
-                # Extraction confidence stored as 0..1
                 conditions.append(Document.extraction_confidence >= 0.8)
             elif filter_by == "low-confidence":
                 conditions.append(Document.extraction_confidence < 0.6)
-            else:
-                # Unknown filter: no-op (fallback to 'all')
-                pass
 
         return and_(*conditions)
 
-    async def get_document(self, kb_id: str, document_id: str) -> Document | None:
+    async def get_document(
+        self,
+        kb_id: str,
+        document_id: str,
+        include_chunks: bool = False,
+        *,
+        user_id: str,
+    ) -> Document | None:
         """Get a specific document from a knowledge base.
 
         Args:
             kb_id: Knowledge base ID
             document_id: Document ID
+            include_chunks: Whether to eager-load document chunks
+            user_id: User ID for PBAC kb.read enforcement
 
         Returns:
             Document instance or None if not found
 
         """
         try:
+            await self.enforce_kb_read(user_id, kb_id)
+
             query = select(Document).where(Document.knowledge_base_id == kb_id, Document.id == document_id)
+            if include_chunks:
+                query = query.options(selectinload(Document.chunks))
 
             result = await self.db.execute(query)
-            document = result.scalar_one_or_none()
+            return result.scalar_one_or_none()
 
-            if document:
-                logger.debug(f"Retrieved document {document_id} from KB {kb_id}")
-            else:
-                logger.debug(f"Document {document_id} not found in KB {kb_id}")
-
-            return document
-
+        except (NotFoundError, ShuException):
+            raise
         except Exception as e:
             logger.error(f"Failed to get document {document_id} from KB {kb_id}: {e}")
             raise ShuException(f"Failed to get document: {e!s}")
 
-    async def get_knowledge_base_summary(self, kb_id: str):
+    async def get_knowledge_base_summary(self, kb_id: str, *, user_id: str):
         """Build a high-level summary for a knowledge base including distinct source types
         and aggregate document/chunk counts.
         """
         try:
+            await self.enforce_kb_read(user_id, kb_id)
+
             kb = await self._get_knowledge_base(kb_id)
             if not kb:
                 raise KnowledgeBaseNotFoundError(kb_id)

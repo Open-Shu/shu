@@ -31,7 +31,6 @@ from .api.host_auth import router as host_auth_router
 from .api.knowledge_bases import router as knowledge_bases_router
 from .api.llm import router as llm_router
 from .api.model_configuration import router as model_configuration_router
-from .api.permissions import router as permissions_router
 from .api.plugins_router import router as plugins_router
 from .api.policies import policies_router
 from .api.prompts import router as prompts_router
@@ -750,7 +749,6 @@ def setup_routes(app: FastAPI) -> None:
 
     # RBAC management routes
     app.include_router(groups_router, prefix=settings.api_v1_prefix)
-    app.include_router(permissions_router, prefix=settings.api_v1_prefix)
     app.include_router(user_permissions_router, prefix=settings.api_v1_prefix)
 
     # Policy-based access control routes
@@ -781,7 +779,6 @@ def setup_routes(app: FastAPI) -> None:
             user_preferences_router.prefix,
             host_auth_router.prefix,
             groups_router.prefix,
-            permissions_router.prefix,
             user_permissions_router.prefix,
             policies_router.prefix,
             experiences_router.prefix,
