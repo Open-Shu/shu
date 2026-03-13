@@ -74,7 +74,7 @@ class QueryService:
 
         """
         # Extract all potential terms (words, numbers, codes with hyphens/commas)
-        all_terms = re.findall(r"\b[\w\-.,]+\b", query.lower())
+        all_terms = re.findall(r"\b[\w'\-.,]+\b", query.lower())
 
         # Filter and prioritize terms
         key_terms = []
@@ -114,7 +114,7 @@ class QueryService:
         # - (?:[-][A-Za-z0-9]+)* : Allow hyphens between alphanumeric parts
         # - (?:[,][0-9]+)* : Allow commas followed by numbers (for number notation like "22,510")
         # - (?:[.][0-9]+)? : Allow decimal points
-        raw_terms = re.findall(r"[A-Za-z0-9]+(?:[-][A-Za-z0-9]+)*(?:[,][0-9]+)*(?:[.][0-9]+)?", query)
+        raw_terms = re.findall(r"[A-Za-z0-9']+(?:[-][A-Za-z0-9]+)*(?:[,][0-9]+)*(?:[.][0-9]+)?", query)
         all_terms = []
         for term in raw_terms:
             # Clean up leading/trailing punctuation but preserve internal punctuation
@@ -1577,7 +1577,7 @@ class QueryService:
                 # Use first contributing chunk for content and chunk-level metadata if available
                 content = ""
                 chunk_id = None
-                chunk_index = 0
+                chunk_index = None
                 start_char = None
                 end_char = None
                 if result.contributing_chunks:
@@ -1587,6 +1587,12 @@ class QueryService:
                     chunk_index = top_chunk.chunk_index
                     start_char = top_chunk.start_char
                     end_char = top_chunk.end_char
+                elif result.surface_metadata:
+                    # Document-level hit (e.g., query_match): use best matched query as preview
+                    for meta in result.surface_metadata.values():
+                        if "matched_query" in meta:
+                            content = meta["matched_query"]
+                            break
 
                 query_result = QueryResult(
                     chunk_id=chunk_id,

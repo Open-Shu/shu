@@ -77,40 +77,51 @@ class QueryMatchSurface(RetrievalSurface):
         """
         start = time.perf_counter()
 
-        # Step 1: Search queries collection for matching query embeddings
-        results = await self._vector_store.search(
-            collection="queries",
-            query_vector=query_vector,
-            db=db,
-            limit=limit * 3,  # Fetch more since we aggregate by document
-            threshold=threshold,
-            filters={"knowledge_base_id": str(kb_id)},
-        )
+        # Steps 1-3: Page through vector results until we have `limit` distinct documents.
+        # A fixed multiplier can underfill when one document dominates the top-k slots.
+        page_size = limit * 3
+        max_pages = 5  # guard against looping on very small corpora
+        doc_best: dict[str, tuple[float, str]] = {}  # document_id -> (best_score, query_text)
 
-        if not results:
+        for page in range(max_pages):
+            offset = page * page_size
+            page_results = await self._vector_store.search(
+                collection="queries",
+                query_vector=query_vector,
+                db=db,
+                limit=page_size,
+                threshold=threshold,
+                filters={"knowledge_base_id": str(kb_id)},
+                offset=offset,
+            )
+
+            if not page_results:
+                break
+
+            score_by_query_id = {r.id: r.score for r in page_results}
+            query_ids = [r.id for r in page_results]
+
+            stmt = select(DocumentQuery.id, DocumentQuery.document_id, DocumentQuery.query_text).where(
+                DocumentQuery.id.in_(query_ids)
+            )
+            db_result = await db.execute(stmt)
+            query_records = db_result.fetchall()
+
+            for query_id, document_id, query_text_val in query_records:
+                score = score_by_query_id.get(str(query_id), 0.0)
+                if document_id not in doc_best or score > doc_best[document_id][0]:
+                    doc_best[document_id] = (score, query_text_val)
+
+            if len(doc_best) >= limit or len(page_results) < page_size:
+                break
+
+        if not doc_best:
             elapsed_ms = (time.perf_counter() - start) * 1000
             return SurfaceResult(
                 surface_name=self.name,
                 hits=[],
                 execution_time_ms=elapsed_ms,
             )
-
-        # Step 2: Fetch DocumentQuery records to get document_id and query_text
-        query_ids = [r.id for r in results]
-        score_by_query_id = {r.id: r.score for r in results}
-
-        stmt = select(DocumentQuery.id, DocumentQuery.document_id, DocumentQuery.query_text).where(
-            DocumentQuery.id.in_(query_ids)
-        )
-        db_result = await db.execute(stmt)
-        query_records = db_result.fetchall()
-
-        # Step 3: Aggregate by document_id using max score, keeping best query_text
-        doc_best: dict[str, tuple[float, str]] = {}  # document_id -> (best_score, query_text)
-        for query_id, document_id, query_text_val in query_records:
-            score = score_by_query_id.get(str(query_id), 0.0)
-            if document_id not in doc_best or score > doc_best[document_id][0]:
-                doc_best[document_id] = (score, query_text_val)
 
         # Step 4: Build hits sorted by score, limited to requested count
         sorted_docs = sorted(doc_best.items(), key=lambda x: x[1][0], reverse=True)[:limit]

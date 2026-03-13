@@ -89,6 +89,7 @@ class VectorStore(Protocol):
         threshold: float = 0.0,
         filters: dict[str, Any] | None = None,
         extra_where: str | None = None,
+        offset: int = 0,
     ) -> list[VectorSearchResult]:
         """Similarity search against a vector collection.
 
@@ -100,6 +101,7 @@ class VectorStore(Protocol):
             threshold: Minimum similarity score (0.0-1.0).
             filters: Equality filters on allowed columns (e.g., {"knowledge_base_id": "..."}).
             extra_where: Raw SQL WHERE clause fragment for collection-specific filtering.
+            offset: Number of results to skip (for pagination).
 
         Returns:
             Results sorted by score descending.
@@ -258,6 +260,7 @@ class PgVectorStore:
         threshold: float = 0.0,
         filters: dict[str, Any] | None = None,
         extra_where: str | None = None,
+        offset: int = 0,
     ) -> list[VectorSearchResult]:
         """Similarity search using pgvector distance operators."""
         from pgvector.sqlalchemy import Vector as PgVector
@@ -303,7 +306,7 @@ class PgVectorStore:
             FROM {tbl}
             WHERE {where_sql}
             ORDER BY {order_expr}
-            LIMIT :limit
+            LIMIT :limit OFFSET :offset
         """  # noqa: S608  # nosec B608
 
         from sqlalchemy import bindparam
@@ -312,6 +315,7 @@ class PgVectorStore:
         params["query_vector"] = query_vector
         params["threshold"] = threshold
         params["limit"] = limit
+        params["offset"] = offset
         params["dimension"] = dimension
 
         result = await db.execute(query, params)
