@@ -82,13 +82,13 @@ class KeywordMatchSurface(RetrievalSurface):
                 execution_time_ms=elapsed_ms,
             )
 
-        # Keep original case for SQL query (PostgreSQL ?| is case-sensitive)
-        # but use lowercase set for Python-side match ratio calculation
-        query_terms_set = {t.lower() for t in keyword_terms}
+        # Keywords are stored lowercase (normalized in DocumentChunk.set_profile).
+        # Lowercase query terms here so the SQL ?| index match is case-insensitive.
+        query_terms_lower = [t.lower() for t in keyword_terms]
+        query_terms_set = set(query_terms_lower)
 
-        # Query chunks where keywords array has any of the query terms
-        # The ?| operator checks if JSONB array contains any of the given values
-        # We query with original case to match how profiling stores keywords
+        # Query chunks where keywords array has any of the query terms.
+        # Both sides are lowercase so the GIN index is fully utilized.
         stmt = (
             select(
                 DocumentChunk.id,
@@ -98,7 +98,7 @@ class KeywordMatchSurface(RetrievalSurface):
             .where(
                 DocumentChunk.knowledge_base_id == str(kb_id),
                 DocumentChunk.keywords.isnot(None),
-                DocumentChunk.keywords.op("?|")(cast(keyword_terms, ARRAY(Text))),
+                DocumentChunk.keywords.op("?|")(cast(query_terms_lower, ARRAY(Text))),
             )
             .limit(limit * 3)  # Fetch extra to allow for threshold filtering
         )
@@ -130,7 +130,7 @@ class KeywordMatchSurface(RetrievalSurface):
             if not keywords:
                 continue
 
-            # keywords is a list of strings from JSONB
+            # keywords are stored lowercase; lower() here is a safety net
             chunk_keywords_lower = {k.lower() for k in keywords if isinstance(k, str)}
             matched = query_terms_set & chunk_keywords_lower
 

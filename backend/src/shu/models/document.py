@@ -426,7 +426,18 @@ class DocumentChunk(BaseModel):
 
         """
         self.summary = summary
-        self.keywords = keywords
+        # Normalize keywords: split any multi-word phrases the LLM emitted, lowercase,
+        # and deduplicate. This guards against prompt non-compliance and ensures the
+        # GIN ?| index matches correctly against lowercased query terms.
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for kw in keywords:
+            for token in kw.split():
+                lowered = token.lower()
+                if lowered and lowered not in seen:
+                    seen.add(lowered)
+                    normalized.append(lowered)
+        self.keywords = normalized
         self.topics = topics
 
     @property

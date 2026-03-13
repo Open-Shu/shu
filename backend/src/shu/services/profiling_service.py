@@ -35,7 +35,7 @@ PURPOSE: An AI agent scans these profiles to decide which chunks to retrieve. Ge
 For each chunk, generate:
 {
     "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
-    "keywords": ["extract", "every", "proper noun", "date", "version", "amount"],
+    "keywords": ["extract", "every", "proper noun", "technical", "term", "entity"],
     "topics": ["specific categories", "not just 'database' but 'PostgreSQL indexing'"]
 }
 
@@ -48,7 +48,8 @@ GOOD keywords: ["OAuth2", "admin API", "read:users scope", "JWT expiry"]
 
 Guidelines:
 - summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
-- keywords: Extract EVERY proper noun, date, version number, monetary amount, and technical term.
+- keywords: Extract EVERY specific identifier, proper noun, and entities that would help guide an LLM agent to the chunk. 
+  NO dates. NO timespans (not "0.5h", "1h", "day 4", "baseline"). NO raw numbers (not "100", "500").
 - topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
 Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
 
@@ -257,10 +258,9 @@ class ProfilingService:
         if self.settings.title_chunk_enabled_default and any(c.chunk_index == 0 for c in chunks):
             user_content += (
                 "\n\nNOTE: Chunk 1 is the document title/subject. Use context from the other chunks "
-                "to infer what acronyms and identifiers in the title mean. For chunk 1's profile, "
-                "extract BOTH the original terms AND their expanded forms as keywords "
-                "(e.g., if title contains 'NHP' and body suggests it's a primate study, "
-                "include both 'NHP' and 'non-human primate' as keywords)."
+                "to infer what acronyms and identifiers in the title mean. Keep keywords as single "
+                "tokens only — extract the abbreviation itself (e.g., 'IACUC'), not its expansion. "
+                "The expanded form belongs in the summary, not keywords."
             )
 
         # Validate input doesn't exceed max tokens
