@@ -140,8 +140,8 @@ class ProfilingOrchestrator:
             queries_embedded = 0
             if doc_profile:
                 try:
-                    synopsis_embedded, chunk_summaries_embedded, queries_embedded = (
-                        await self._embed_profile_artifacts(document, embed_queries=queries_persist_ok)
+                    synopsis_embedded, chunk_summaries_embedded, queries_embedded = await self._embed_profile_artifacts(
+                        document, embed_queries=queries_persist_ok
                     )
                 except Exception as e:
                     await self.db.rollback()
@@ -323,7 +323,9 @@ class ProfilingOrchestrator:
         embedding_service = await get_embedding_service()
         return await embedding_service.embed_queries(texts)
 
-    async def _embed_profile_artifacts(self, document: Document, *, embed_queries: bool = True) -> tuple[bool, int, int]:
+    async def _embed_profile_artifacts(
+        self, document: Document, *, embed_queries: bool = True
+    ) -> tuple[bool, int, int]:
         """Embed synopsis, chunk summaries, and synthesized query texts after profiling.
 
         Generates vector embeddings for the document's synopsis, chunk summaries
@@ -376,10 +378,7 @@ class ProfilingOrchestrator:
             try:
                 summary_texts = [str(c.summary) for c in chunks_to_embed]
                 embeddings = await self._embed_texts(summary_texts)
-                entries = [
-                    VectorEntry(id=c.id, vector=emb)
-                    for c, emb in zip(chunks_to_embed, embeddings, strict=True)
-                ]
+                entries = [VectorEntry(id=c.id, vector=emb) for c, emb in zip(chunks_to_embed, embeddings, strict=True)]
                 await vector_store.store_embeddings("chunk_summaries", entries, db=self.db)
                 chunk_summaries_embedded = len(entries)
             except Exception:

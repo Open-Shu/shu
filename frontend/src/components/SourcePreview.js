@@ -69,10 +69,15 @@ function MultiSurfaceItem({ result, rank }) {
           {Object.entries(result.surface_scores || {}).map(([surface, score]) => {
             // Color coding for different surface types
             let color = 'secondary';
-            if (surface === 'chunk_vector') color = 'info';
-            else if (surface === 'query_match') color = 'success';
-            else if (surface === 'keyword_match') color = 'warning';
-            else if (surface === 'chunk_summary') color = 'default';
+            if (surface === 'chunk_vector') {
+              color = 'info';
+            } else if (surface === 'query_match') {
+              color = 'success';
+            } else if (surface === 'keyword_match') {
+              color = 'warning';
+            } else if (surface === 'chunk_summary') {
+              color = 'default';
+            }
             return (
               <Chip
                 key={surface}
