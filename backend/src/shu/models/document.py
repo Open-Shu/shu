@@ -438,9 +438,9 @@ class DocumentChunk(BaseModel):
         seen: set[str] = set()
         for kw in keywords:
             for token in kw.split():
-                # Strip leading/trailing punctuation (e.g., "Q3," -> "Q3") but preserve
-                # internal punctuation for identifiers like "ICBN-123,445"
-                lowered = token.lower().strip(string.punctuation)
+                # Strip trailing punctuation (e.g., "Q3," -> "Q3") but preserve
+                # leading and internal punctuation for identifiers like "$2.5M", "ICBN-123,445"
+                lowered = token.lower().rstrip(string.punctuation)
                 if lowered and lowered not in seen:
                     seen.add(lowered)
                     normalized.append(lowered)

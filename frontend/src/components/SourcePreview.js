@@ -96,16 +96,24 @@ function MultiSurfaceItem({ result, rank }) {
           </Typography>
         )}
         {/* Display matched terms from keyword_match surface */}
-        {result.surface_metadata?.keyword_match?.matched_terms?.length > 0 && (
-          <Box sx={{ mb: 1 }}>
-            <Typography variant="body2" color="text.secondary" component="span">
-              Matched keywords:{' '}
-            </Typography>
-            {result.surface_metadata.keyword_match.matched_terms.map((term) => (
-              <Chip key={term} label={term} size="small" color="warning" variant="outlined" sx={{ mr: 0.5, mb: 0.5 }} />
-            ))}
-          </Box>
-        )}
+        {Array.isArray(result.surface_metadata?.keyword_match?.matched_terms) &&
+          result.surface_metadata.keyword_match.matched_terms.length > 0 && (
+            <Box sx={{ mb: 1 }}>
+              <Typography variant="body2" color="text.secondary" component="span">
+                Matched keywords:{' '}
+              </Typography>
+              {result.surface_metadata.keyword_match.matched_terms.map((term, index) => (
+                <Chip
+                  key={`${term}-${index}`}
+                  label={term}
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  sx={{ mr: 0.5, mb: 0.5 }}
+                />
+              ))}
+            </Box>
+          )}
         {chunks.length > 0 && (
           <Box>
             <Box display="flex" alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => setExpanded(!expanded)}>

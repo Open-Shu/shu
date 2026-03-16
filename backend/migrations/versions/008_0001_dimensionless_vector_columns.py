@@ -110,11 +110,11 @@ def downgrade() -> None:
         return
 
     # 1. Drop summary_embedding column (SHU-632)
-    op.drop_column("document_chunks", "summary_embedding")
+    op.execute("ALTER TABLE document_chunks DROP COLUMN IF EXISTS summary_embedding")
 
     # 2. Drop embedding status columns (SHU-605)
-    op.drop_column("knowledge_bases", "re_embedding_progress")
-    op.drop_column("knowledge_bases", "embedding_status")
+    op.execute("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS re_embedding_progress")
+    op.execute("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS embedding_status")
 
     # 3. ALTER columns back to vector(384)
     for table, column in _VECTOR_COLUMNS:

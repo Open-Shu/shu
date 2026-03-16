@@ -446,9 +446,10 @@ class TestEmbedProfileArtifacts:
                 new=AsyncMock(return_value=mock_vector_store),
             ),
         ):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is True
+        assert chunk_summaries_embedded == 0
         assert queries_embedded == 0
         mock_vector_store.store_embeddings.assert_called_once()
         call_args = mock_vector_store.store_embeddings.call_args
@@ -471,9 +472,12 @@ class TestEmbedProfileArtifacts:
             q.query_embedding = None
             mock_queries.append(q)
 
+        # First execute call is for chunk summaries (return empty), second is for queries
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
         mock_query_result = MagicMock()
         mock_query_result.scalars.return_value.all.return_value = mock_queries
-        mock_db.execute.return_value = mock_query_result
+        mock_db.execute.side_effect = [empty_result, mock_query_result]
 
         fake_embeddings = [[0.1 * i] * 384 for i in range(3)]
         mock_vector_store = AsyncMock()
@@ -485,9 +489,10 @@ class TestEmbedProfileArtifacts:
                 new=AsyncMock(return_value=mock_vector_store),
             ),
         ):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is False
+        assert chunk_summaries_embedded == 0
         assert queries_embedded == 3
         # Verify VectorStore was called for queries collection
         mock_vector_store.store_embeddings.assert_called_once()
@@ -507,9 +512,12 @@ class TestEmbedProfileArtifacts:
         mock_query.query_text = "What is this about?"
         mock_query.query_embedding = None
 
+        # First execute call is for chunk summaries (return empty), second is for queries
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
         mock_query_result = MagicMock()
         mock_query_result.scalars.return_value.all.return_value = [mock_query]
-        mock_db.execute.return_value = mock_query_result
+        mock_db.execute.side_effect = [empty_result, mock_query_result]
 
         synopsis_embedding = [0.5] * 384
         query_embedding = [0.3] * 384
@@ -533,9 +541,10 @@ class TestEmbedProfileArtifacts:
                 new=AsyncMock(return_value=mock_vector_store),
             ),
         ):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is True
+        assert chunk_summaries_embedded == 0
         assert queries_embedded == 1
         # VectorStore should be called twice: once for synopses, once for queries
         assert mock_vector_store.store_embeddings.call_count == 2
@@ -561,9 +570,10 @@ class TestEmbedProfileArtifacts:
                 new=AsyncMock(return_value=mock_vector_store),
             ),
         ):
-            synopsis_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
 
         assert synopsis_embedded is False
+        assert chunk_summaries_embedded == 0
         mock_embed.assert_not_called()
 
     @pytest.mark.asyncio
@@ -644,7 +654,7 @@ class TestEmbedProfileArtifacts:
             patch.object(
                 orchestrator,
                 "_embed_profile_artifacts",
-                new=AsyncMock(return_value=(True, 1)),
+                new=AsyncMock(return_value=(True, 0, 1)),
             ),
         ):
             result = await orchestrator.run_for_document("doc-123")

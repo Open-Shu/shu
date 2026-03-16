@@ -286,7 +286,8 @@ class TestDocumentChunk:
         )
 
         assert chunk.summary == "Q3 budget approval record"
-        assert chunk.keywords == ["Q3", "$2.5M", "Sarah"]
+        # Keywords are normalized: lowercased for GIN index matching
+        assert chunk.keywords == ["q3", "$2.5m", "sarah"]
         assert chunk.topics == ["budget planning", "approvals"]
         assert chunk.is_profiled is True
 
