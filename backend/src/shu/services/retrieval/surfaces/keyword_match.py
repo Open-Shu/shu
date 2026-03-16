@@ -89,18 +89,16 @@ class KeywordMatchSurface(RetrievalSurface):
 
         # Query chunks where keywords array has any of the query terms.
         # Both sides are lowercase so the GIN index is fully utilized.
-        stmt = (
-            select(
-                DocumentChunk.id,
-                DocumentChunk.document_id,
-                DocumentChunk.keywords,
-            )
-            .where(
-                DocumentChunk.knowledge_base_id == str(kb_id),
-                DocumentChunk.keywords.isnot(None),
-                DocumentChunk.keywords.op("?|")(cast(query_terms_lower, ARRAY(Text))),
-            )
-            .limit(limit * 3)  # Fetch extra to allow for threshold filtering
+        # NOTE: No SQL LIMIT here - we fetch all matching chunks and score/limit in Python.
+        # This ensures we don't arbitrarily exclude better-scoring chunks when many match.
+        stmt = select(
+            DocumentChunk.id,
+            DocumentChunk.document_id,
+            DocumentChunk.keywords,
+        ).where(
+            DocumentChunk.knowledge_base_id == str(kb_id),
+            DocumentChunk.keywords.isnot(None),
+            DocumentChunk.keywords.op("?|")(cast(query_terms_lower, ARRAY(Text))),
         )
 
         logger.debug(

@@ -49,7 +49,7 @@ GOOD keywords: ["OAuth2", "admin API", "read:users scope", "JWT expiry"]
 Guidelines:
 - summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
 - keywords: Extract EVERY specific identifier, proper noun, and entities that would help guide an LLM agent to the chunk. 
-  NO dates. NO timespans (not "0.5h", "1h", "day 4", "baseline"). NO raw numbers (not "100", "500").
+  NO dates. NO timespans (not "0.5h", "1h", "day 4"). NO raw numbers (not "100", "500").
 - topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
 Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
 

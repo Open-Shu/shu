@@ -4,6 +4,7 @@ This module defines the Document and DocumentChunk models which store
 document metadata, content, and vector embeddings.
 """
 
+import string
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, ClassVar
@@ -430,13 +431,16 @@ class DocumentChunk(BaseModel):
         """
         self.summary = summary
         # Normalize keywords: split any multi-word phrases the LLM emitted, lowercase,
-        # and deduplicate. This guards against prompt non-compliance and ensures the
-        # GIN ?| index matches correctly against lowercased query terms.
+        # strip trailing punctuation, and deduplicate. This guards against prompt
+        # non-compliance and ensures the GIN ?| index matches correctly against
+        # lowercased query terms.
         normalized: list[str] = []
         seen: set[str] = set()
         for kw in keywords:
             for token in kw.split():
-                lowered = token.lower()
+                # Strip leading/trailing punctuation (e.g., "Q3," -> "Q3") but preserve
+                # internal punctuation for identifiers like "ICBN-123,445"
+                lowered = token.lower().strip(string.punctuation)
                 if lowered and lowered not in seen:
                     seen.add(lowered)
                     normalized.append(lowered)
