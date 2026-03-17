@@ -77,7 +77,7 @@ async def query_documents(
 
     try:
         kb_svc = KnowledgeBaseService(db)
-        await kb_svc.enforce_kb_read(str(current_user.id), knowledge_base_id)
+        await kb_svc.get_knowledge_base(knowledge_base_id, str(current_user.id))
 
         query_service = QueryService(db, config_manager)
 
@@ -263,13 +263,6 @@ async def get_document_details(
             user_id=str(current_user.id),
         )
 
-        if not document:
-            return ShuResponse.error(
-                message=f"Document '{document_id}' not found in knowledge base '{knowledge_base_id}'",
-                code="DOCUMENT_NOT_FOUND",
-                status_code=404,
-            )
-
         document_response = DocumentResponse.from_orm(document)
         return ShuResponse.success(document_response)
 
@@ -318,7 +311,7 @@ async def get_query_stats(
 
     try:
         kb_svc = KnowledgeBaseService(db)
-        await kb_svc.enforce_kb_read(str(current_user.id), knowledge_base_id)
+        await kb_svc.get_knowledge_base(knowledge_base_id, str(current_user.id))
 
         query_service = QueryService(db, config_manager)
         stats = await query_service.get_query_stats(knowledge_base_id)

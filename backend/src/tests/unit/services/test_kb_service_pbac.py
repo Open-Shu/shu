@@ -1,7 +1,7 @@
 """PBAC tests for KnowledgeBaseService.
 
 Uses a **real** PolicyCache (no mocking of check/is_admin) to verify that
-enforce_kb_read, filter_accessible_kb_ids, and check_kb_read_access
+get_knowledge_base, filter_accessible_kb_ids, and check_kb_read_access
 enforce the correct action and resource slug.
 
 Setup:
@@ -104,8 +104,8 @@ def service(db):
 VERIFIER_PATH = "shu.utils.knowledge_base_verifier.KnowledgeBaseVerifier"
 
 
-class TestEnforceKbRead:
-    """enforce_kb_read: single KB fetch + PBAC kb.read via get_knowledge_base."""
+class TestGetKnowledgeBase:
+    """get_knowledge_base: single KB fetch + PBAC kb.read enforcement."""
 
     @pytest.mark.asyncio
     async def test_admin_accesses_allowed_kb(self, service, pbac_cache):
@@ -113,7 +113,7 @@ class TestEnforceKbRead:
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
              patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_ALLOWED):
-            result = await service.enforce_kb_read(ADMIN_USER_ID, ALLOWED_KB_ID)
+            result = await service.get_knowledge_base(ALLOWED_KB_ID, ADMIN_USER_ID)
         assert result.id == ALLOWED_KB_ID
         assert result.slug == ALLOWED_KB_SLUG
 
@@ -123,7 +123,7 @@ class TestEnforceKbRead:
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
              patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_DENIED):
-            result = await service.enforce_kb_read(ADMIN_USER_ID, DENIED_KB_ID)
+            result = await service.get_knowledge_base(DENIED_KB_ID, ADMIN_USER_ID)
         assert result.id == DENIED_KB_ID
         assert result.slug == DENIED_KB_SLUG
 
@@ -133,7 +133,7 @@ class TestEnforceKbRead:
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
              patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_ALLOWED):
-            result = await service.enforce_kb_read(REGULAR_USER_ID, ALLOWED_KB_ID)
+            result = await service.get_knowledge_base(ALLOWED_KB_ID, REGULAR_USER_ID)
         assert result.id == ALLOWED_KB_ID
         assert result.slug == ALLOWED_KB_SLUG
 
@@ -144,7 +144,7 @@ class TestEnforceKbRead:
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
              patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_DENIED), \
              pytest.raises(NotFoundError):
-            await service.enforce_kb_read(REGULAR_USER_ID, DENIED_KB_ID)
+            await service.get_knowledge_base(DENIED_KB_ID, REGULAR_USER_ID)
 
     @pytest.mark.asyncio
     async def test_nonexistent_kb_raises_not_found(self, service, pbac_cache):
@@ -153,7 +153,7 @@ class TestEnforceKbRead:
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
              patch(f"{VERIFIER_PATH}.get_optional", return_value=None), \
              pytest.raises(NotFoundError):
-            await service.enforce_kb_read(REGULAR_USER_ID, "nonexistent-kb")
+            await service.get_knowledge_base("nonexistent-kb", REGULAR_USER_ID)
 
 
 class TestFilterAccessibleKbIds:
@@ -246,30 +246,51 @@ class TestCheckKbReadAccess:
     @pytest.mark.asyncio
     async def test_empty_ids_returns_none(self, service, db, pbac_cache):
         """Empty KB ID list returns None (nothing denied)."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        db.execute.return_value = mock_result
-
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
             result = await service.check_kb_read_access(REGULAR_USER_ID, [])
         assert result is None
 
 
-def _mock_db_with_kbs(db, kbs: list[MagicMock]) -> None:
-    """Configure the mock db to return the given KBs from a select query."""
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = kbs
-    db.execute.return_value = mock_result
+def _make_slug_result(slugs: list[str]) -> MagicMock:
+    """Mock result for ``select(KnowledgeBase.slug)``."""
+    mock = MagicMock()
+    mock.fetchall.return_value = [(s,) for s in slugs]
+    return mock
+
+
+def _make_count_result(count: int) -> MagicMock:
+    """Mock result for ``select(func.count(...))``."""
+    mock = MagicMock()
+    mock.scalar.return_value = count
+    return mock
+
+
+def _make_kb_result(kbs: list[MagicMock]) -> MagicMock:
+    """Mock result for ``select(KnowledgeBase)``."""
+    mock = MagicMock()
+    mock.scalars.return_value.all.return_value = kbs
+    return mock
+
+
+def _make_document_result(doc: MagicMock | None) -> MagicMock:
+    """Mock result for ``select(Document)``."""
+    mock = MagicMock()
+    mock.scalar_one_or_none.return_value = doc
+    return mock
 
 
 class TestListKnowledgeBases:
-    """list_knowledge_bases: paginated list with PBAC kb.read filtering."""
+    """list_knowledge_bases: paginated list with SQL-level PBAC filtering."""
 
     @pytest.mark.asyncio
     async def test_admin_sees_all_kbs(self, service, db, pbac_cache):
         """Admin bypasses PBAC and sees every KB."""
-        _mock_db_with_kbs(db, [MOCK_KB_ALLOWED, MOCK_KB_DENIED])
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([ALLOWED_KB_SLUG, DENIED_KB_SLUG]),
+            _make_count_result(2),
+            _make_kb_result([MOCK_KB_ALLOWED, MOCK_KB_DENIED]),
+        ])
 
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
@@ -281,7 +302,11 @@ class TestListKnowledgeBases:
     @pytest.mark.asyncio
     async def test_user_sees_only_allowed_kbs(self, service, db, pbac_cache):
         """Regular user only sees KBs their policy grants access to."""
-        _mock_db_with_kbs(db, [MOCK_KB_ALLOWED, MOCK_KB_DENIED])
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([ALLOWED_KB_SLUG, DENIED_KB_SLUG]),
+            _make_count_result(1),
+            _make_kb_result([MOCK_KB_ALLOWED]),
+        ])
 
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
@@ -291,9 +316,13 @@ class TestListKnowledgeBases:
         assert kbs[0].id == ALLOWED_KB_ID
 
     @pytest.mark.asyncio
-    async def test_pagination_applied_after_filtering(self, service, db, pbac_cache):
-        """Offset and limit are applied to the PBAC-filtered list."""
-        _mock_db_with_kbs(db, [MOCK_KB_ALLOWED, MOCK_KB_DENIED])
+    async def test_pagination_applied(self, service, db, pbac_cache):
+        """Offset and limit are forwarded to the SQL query."""
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([ALLOWED_KB_SLUG, DENIED_KB_SLUG]),
+            _make_count_result(2),
+            _make_kb_result([MOCK_KB_DENIED]),
+        ])
 
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
@@ -303,12 +332,15 @@ class TestListKnowledgeBases:
 
         assert total == 2
         assert len(kbs) == 1
-        assert kbs[0].id == DENIED_KB_ID
 
     @pytest.mark.asyncio
     async def test_empty_database_returns_empty(self, service, db, pbac_cache):
         """No KBs in database returns empty list and zero count."""
-        _mock_db_with_kbs(db, [])
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([]),
+            _make_count_result(0),
+            _make_kb_result([]),
+        ])
 
         with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
@@ -316,3 +348,18 @@ class TestListKnowledgeBases:
 
         assert total == 0
         assert kbs == []
+
+
+class TestGetDocument:
+    """get_document: single document fetch raises NotFoundError on misses."""
+
+    @pytest.mark.asyncio
+    async def test_missing_document_raises_not_found(self, service, db, pbac_cache):
+        """Document misses surface as NotFoundError instead of returning None."""
+        db.execute.return_value = _make_document_result(None)
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=MOCK_KB_ALLOWED), \
+             pytest.raises(NotFoundError, match="Document 'doc-404' not found"):
+            await service.get_document(ALLOWED_KB_ID, "doc-404", user_id=REGULAR_USER_ID)

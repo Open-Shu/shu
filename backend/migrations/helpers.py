@@ -113,6 +113,9 @@ def slugify(value: str, *, max_length: int = 100) -> str:
     Returns:
         A lowercased, hyphen-separated, ASCII-only slug.
     """
+    if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length <= 0:
+        raise ValueError("max_length must be a positive integer")
+
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = value.lower()
     value = re.sub(r"[^a-z0-9]+", "-", value)

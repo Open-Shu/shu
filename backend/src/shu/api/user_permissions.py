@@ -4,14 +4,13 @@ This module provides REST API endpoints for querying user group
 memberships.
 """
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user
+from ..core.logging import get_logger
 from ..core.response import ShuResponse
 from ..models.rbac import UserGroup, UserGroupMembership
 from ..schemas.rbac import (
@@ -20,7 +19,7 @@ from ..schemas.rbac import (
 )
 from .dependencies import get_db
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/users", tags=["user-permissions"])
 
 

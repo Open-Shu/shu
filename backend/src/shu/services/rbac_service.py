@@ -4,7 +4,6 @@ This module provides service layer functionality for managing RBAC operations
 including user groups, memberships, and access control.
 """
 
-import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, select
@@ -13,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from ..auth.models import User
 from ..core.exceptions import ShuException
+from ..core.logging import get_logger
 from ..models.rbac import UserGroup, UserGroupMembership
 from ..schemas.rbac import (
     UserGroupCreate,
@@ -20,7 +20,7 @@ from ..schemas.rbac import (
     UserGroupUpdate,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RBACServiceError(ShuException):

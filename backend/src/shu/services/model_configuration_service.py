@@ -5,7 +5,6 @@ that combines base models + prompts + optional knowledge bases into user-facing
 configurations that users select for chat and other interactions.
 """
 
-import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import and_, func, or_, select
@@ -20,6 +19,7 @@ from shu.services.providers.parameter_definitions import serialize_parameter_map
 
 from ..auth.models import User
 from ..core.exceptions import ShuException, ValidationError
+from ..core.logging import get_logger
 from ..llm.param_mapping import build_provider_params
 from ..models.knowledge_base import KnowledgeBase
 from ..models.llm_provider import LLMModel, LLMProvider
@@ -34,7 +34,7 @@ from ..schemas.model_configuration import (
 )
 from .knowledge_base_service import KnowledgeBaseService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ModelConfigurationService:
@@ -220,7 +220,7 @@ class ModelConfigurationService:
                 accessible = await kb_svc.filter_accessible_kb_ids(str(current_user.id), config.knowledge_bases)
                 if len(accessible) < len(config.knowledge_bases):
                     logger.warning(
-                        f"User {current_user.email} denied access to config {config.id} " f"(inaccessible KBs detected)"
+                        f"User {current_user.id} denied access to config {config.id} (inaccessible KBs detected)"
                     )
                     return None
 

@@ -63,6 +63,11 @@ class TestSlugify:
         result = slugify("abc", max_length=200)
         assert result == "abc"
 
+    @pytest.mark.parametrize("max_length", [0, -1, None, "10", True])
+    def test_invalid_max_length_raises(self, max_length) -> None:
+        with pytest.raises(ValueError, match="max_length must be a positive integer"):
+            slugify("abc", max_length=max_length)
+
     @pytest.mark.parametrize(
         "name, max_length, expected",
         [

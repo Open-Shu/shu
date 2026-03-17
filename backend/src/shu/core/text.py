@@ -16,6 +16,9 @@ def slugify(value: str, *, max_length: int = 100) -> str:
     >>> slugify("Inbox Triage (v2)")
     'inbox-triage-v2'
     """
+    if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length <= 0:
+        raise ValueError("max_length must be a positive integer")
+
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = value.lower()
     value = re.sub(r"[^a-z0-9]+", "-", value)
