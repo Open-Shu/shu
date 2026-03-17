@@ -3,9 +3,7 @@
 Adds a ``slug`` column to the ``knowledge_bases`` table so PBAC resource
 identifiers use human-readable, wildcard-friendly names instead of UUIDs.
 
-Existing knowledge bases are backfilled from their ``name`` column. Duplicates
-are resolved by appending a numeric suffix (e.g., ``my-kb-2``), with the
-earliest-created KB receiving the canonical slug.
+Existing knowledge bases are backfilled from their ``name`` column.
 
 Then converts active, non-expired ``knowledge_base_permissions`` rows into PBAC
 access policies and drops the legacy table. For each knowledge base with
@@ -29,7 +27,7 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.helpers import column_exists, drop_column_if_exists, index_exists, slugify, table_exists
+from migrations.helpers import column_exists, slugify, table_exists
 
 
 # revision identifiers, used by Alembic.
@@ -201,36 +199,6 @@ def _create_policies(
             )
 
 
-def _delete_migrated_policies(conn: sa.engine.Connection) -> None:
-    """Delete all PBAC policies created by this migration (by name prefix)."""
-    policies = sa.table(
-        "access_policies",
-        sa.column("id", sa.String),
-        sa.column("name", sa.String),
-    )
-    migrated = conn.execute(
-        sa.select(policies.c.id).where(policies.c.name.like("kb-migrated-%"))
-    ).fetchall()
-
-    if not migrated:
-        return
-
-    policy_ids = [row.id for row in migrated]
-
-    stmts = sa.table(
-        "access_policy_statements",
-        sa.column("policy_id", sa.String),
-    )
-    conn.execute(stmts.delete().where(stmts.c.policy_id.in_(policy_ids)))
-
-    binds = sa.table(
-        "access_policy_bindings",
-        sa.column("policy_id", sa.String),
-    )
-    conn.execute(binds.delete().where(binds.c.policy_id.in_(policy_ids)))
-
-    conn.execute(policies.delete().where(policies.c.id.in_(policy_ids)))
-
 
 def upgrade() -> None:
     """Add slug column to knowledge_bases, migrate permissions to PBAC, drop legacy table."""
@@ -278,36 +246,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Delete migrated policies, recreate legacy table, drop slug column."""
-    conn = op.get_bind()
-    inspector = sa.inspect(conn)
-
-    _delete_migrated_policies(conn)
-
-    if not table_exists(inspector, "knowledge_base_permissions"):
-        op.create_table(
-            "knowledge_base_permissions",
-            sa.Column("id", sa.String(36), primary_key=True),
-            sa.Column("knowledge_base_id", sa.String(36), nullable=False),
-            sa.Column("user_id", sa.String(36), nullable=True),
-            sa.Column("group_id", sa.String(36), nullable=True),
-            sa.Column("permission_level", sa.String(50), nullable=False),
-            sa.Column("granted_by", sa.String(36), nullable=False),
-            sa.Column(
-                "granted_at",
-                sa.DateTime(timezone=True),
-                nullable=False,
-                server_default=sa.func.now(),
-            ),
-            sa.Column(
-                "is_active",
-                sa.Boolean,
-                nullable=False,
-                server_default=sa.text("true"),
-            ),
-            sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        )
-
-    if index_exists(inspector, "knowledge_bases", "ix_knowledge_bases_slug"):
-        op.drop_index("ix_knowledge_bases_slug", table_name="knowledge_bases")
-    drop_column_if_exists(inspector, "knowledge_bases", "slug")
+    """Downgrade is irreversible — original permission data cannot be restored."""
+    raise RuntimeError(
+        "Irreversible migration: 008_0003 (KB PBAC). "
+        "Legacy knowledge_base_permissions data was dropped during upgrade "
+        "and cannot be reconstructed. Restore from a database backup instead."
+    )

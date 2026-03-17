@@ -850,11 +850,12 @@ async def upload_documents(
             try:
                 file_bytes = await file.read()
             except Exception as e:
+                logger.error(f"Failed to read file '{filename}': {e}", exc_info=True)
                 results.append(
                     {
                         "filename": filename,
                         "success": False,
-                        "error": f"Failed to read file: {e!s}",
+                        "error": "Failed to read file",
                     }
                 )
                 continue
@@ -927,12 +928,12 @@ async def upload_documents(
                     }
                 )
             except Exception as e:
-                logger.error(f"Failed to ingest document {filename}: {e}", exc_info=True)
+                logger.error(f"Failed to ingest document '{filename}': {e}", exc_info=True)
                 results.append(
                     {
                         "filename": filename,
                         "success": False,
-                        "error": str(e),
+                        "error": "Failed to process file",
                     }
                 )
 

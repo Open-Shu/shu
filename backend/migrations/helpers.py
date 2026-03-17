@@ -118,6 +118,6 @@ def slugify(value: str, *, max_length: int = 100) -> str:
 
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = value.lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
     value = value[:max_length]
+    value = re.sub(r"[^a-z0-9]+", "-", value)
     return value.strip("-")

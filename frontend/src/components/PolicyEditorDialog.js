@@ -194,9 +194,9 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
     const plugins = extractDataFromResponse(pluginsResponse) || [];
     const kbs = extractItemsFromResponse(kbsResponse) || [];
     return [
-      ...experiences.map((e) => `experience:${e.slug || e.id}`),
-      ...plugins.map((p) => `plugin:${p.name}`),
-      ...kbs.map((kb) => `kb:${kb.slug}`),
+      ...experiences.filter((e) => e.slug).map((e) => `experience:${e.slug}`),
+      ...plugins.filter((p) => p.name).map((p) => `plugin:${p.name}`),
+      ...kbs.filter((kb) => kb.slug).map((kb) => `kb:${kb.slug}`),
     ];
   }, [experiencesResponse, pluginsResponse, kbsResponse]);
 
