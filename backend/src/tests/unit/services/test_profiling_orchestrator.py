@@ -159,7 +159,7 @@ class TestRunForDocument:
                 "profile_chunks_incremental",
                 new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300, 100.0)),
             ),
-            patch.object(orchestrator, "_embed_profile_artifacts", new=AsyncMock(return_value=(True, 2))),
+            patch.object(orchestrator, "_embed_profile_artifacts", new=AsyncMock(return_value=(True, 0, 2))),
         ):
             result = await orchestrator.run_for_document("doc-123")
 
