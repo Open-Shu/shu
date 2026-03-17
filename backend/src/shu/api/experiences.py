@@ -335,7 +335,7 @@ async def run_experience(
         return ShuResponse.error(message=str(e), code=error_code, status_code=e.status_code)
     except Exception:
         logger.exception("Unexpected error in run_experience", extra={"experience_id": experience_id})
-        return ShuResponse.error(message="Internal server error", code="INTERNAL_ERROR", status_code=500)
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
     sse_generator = create_sse_stream_generator(
         event_gen,

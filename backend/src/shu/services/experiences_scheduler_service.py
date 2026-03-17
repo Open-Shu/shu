@@ -24,6 +24,7 @@ from shu.core.config import get_settings_instance
 from shu.core.database import get_db_session
 from shu.models.experience import Experience
 from shu.models.user_preferences import UserPreferences
+from shu.services.policy_engine import POLICY_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,9 @@ class ExperiencesSchedulerService:
 
             # Execute for each user
             for user in all_users:
+                # PBAC enforcement: skip users denied experience.run
+                if not await POLICY_CACHE.check(str(user.id), "experience.run", f"experience:{exp.slug}", self.db):
+                    continue
                 try:
                     result = await self.execute_experience(exp, user.id)
 

@@ -34,11 +34,13 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BlockIcon from '@mui/icons-material/Block';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import PeopleIcon from '@mui/icons-material/People';
+import ShieldIcon from '@mui/icons-material/Shield';
 import { authAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { resolveUserId } from '../utils/userHelpers';
 import PageHelpHeader from './PageHelpHeader';
 import ResetPasswordDialog from './ResetPasswordDialog';
+import EffectivePermissionsDialog from './EffectivePermissionsDialog';
 
 const UserManagement = () => {
   const { canManageUsers } = useAuth();
@@ -48,6 +50,7 @@ const UserManagement = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
+  const [permissionsUser, setPermissionsUser] = useState(null);
   const [newUser, setNewUser] = useState({
     email: '',
     name: '',
@@ -337,6 +340,15 @@ const UserManagement = () => {
                         </IconButton>
                       )}
                       <IconButton
+                        onClick={() => setPermissionsUser(user)}
+                        size="small"
+                        color="info"
+                        title="View Permissions"
+                        disabled={!userId}
+                      >
+                        <ShieldIcon />
+                      </IconButton>
+                      <IconButton
                         onClick={() => handleDeleteUser(user)}
                         size="small"
                         color="error"
@@ -521,6 +533,13 @@ const UserManagement = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Effective Permissions Dialog */}
+      <EffectivePermissionsDialog
+        open={!!permissionsUser}
+        onClose={() => setPermissionsUser(null)}
+        user={permissionsUser}
+      />
 
       {/* Reset Password Dialog */}
       <ResetPasswordDialog

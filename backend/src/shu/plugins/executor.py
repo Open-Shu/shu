@@ -16,6 +16,7 @@ from importlib.abc import MetaPathFinder
 from typing import Any, ClassVar, Self
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .host.exceptions import HttpRequestFailed
 from .host.host_builder import make_host
@@ -27,6 +28,7 @@ except Exception:
     jsonschema = None  # type: ignore
 from ..core.cache_backend import CacheBackend, get_cache_backend
 from ..core.config import get_settings_instance  # type: ignore
+from ..services.policy_engine import POLICY_CACHE
 from .base import ExecuteContext, Plugin, PluginResult
 
 logger = logging.getLogger(__name__)
@@ -458,9 +460,9 @@ class Executor:
         agent_key: str | None,
         params: dict[str, Any],
         limits: dict[str, Any] | None = None,
+        db_session: AsyncSession,
         provider_identities: dict[str, list[dict[str, Any]]] | None = None,
     ) -> PluginResult:
-        # Split host-only overlay from plugin params (reserved key) BEFORE validation
         """Execute a plugin call with rate limiting, quotas, validation, and import-deny enforcement.
 
         This method enforces per-user and provider quotas/rate-limits, optionally acquires provider concurrency slots, validates input and output against plugin schemas when available, constructs the host execution context (including resolved provider auth and schedule id), runs the plugin under a runtime import deny policy, maps host HTTP failures to structured provider errors, and returns the plugin execution result.
@@ -484,6 +486,9 @@ class Executor:
             HTTPException: For quota, rate-limit, or provider concurrency violations (status 429) and for other HTTP-level rejections raised by the plugin execution path.
 
         """
+        if not await POLICY_CACHE.check(user_id, "plugin.execute", f"plugin:{plugin.name}", db_session):
+            raise HTTPException(status_code=404, detail="Not found")
+
         raw_params = dict(params or {})
         host_overlay = {}
         try:
