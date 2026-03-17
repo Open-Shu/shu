@@ -254,3 +254,65 @@ class TestCheckKbReadAccess:
              patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
             result = await service.check_kb_read_access(REGULAR_USER_ID, [])
         assert result is None
+
+
+def _mock_db_with_kbs(db, kbs: list[MagicMock]) -> None:
+    """Configure the mock db to return the given KBs from a select query."""
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = kbs
+    db.execute.return_value = mock_result
+
+
+class TestListKnowledgeBases:
+    """list_knowledge_bases: paginated list with PBAC kb.read filtering."""
+
+    @pytest.mark.asyncio
+    async def test_admin_sees_all_kbs(self, service, db, pbac_cache):
+        """Admin bypasses PBAC and sees every KB."""
+        _mock_db_with_kbs(db, [MOCK_KB_ALLOWED, MOCK_KB_DENIED])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(ADMIN_USER_ID)
+
+        assert total == 2
+        assert {kb.id for kb in kbs} == {ALLOWED_KB_ID, DENIED_KB_ID}
+
+    @pytest.mark.asyncio
+    async def test_user_sees_only_allowed_kbs(self, service, db, pbac_cache):
+        """Regular user only sees KBs their policy grants access to."""
+        _mock_db_with_kbs(db, [MOCK_KB_ALLOWED, MOCK_KB_DENIED])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(REGULAR_USER_ID)
+
+        assert total == 1
+        assert kbs[0].id == ALLOWED_KB_ID
+
+    @pytest.mark.asyncio
+    async def test_pagination_applied_after_filtering(self, service, db, pbac_cache):
+        """Offset and limit are applied to the PBAC-filtered list."""
+        _mock_db_with_kbs(db, [MOCK_KB_ALLOWED, MOCK_KB_DENIED])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(
+                ADMIN_USER_ID, limit=1, offset=1,
+            )
+
+        assert total == 2
+        assert len(kbs) == 1
+        assert kbs[0].id == DENIED_KB_ID
+
+    @pytest.mark.asyncio
+    async def test_empty_database_returns_empty(self, service, db, pbac_cache):
+        """No KBs in database returns empty list and zero count."""
+        _mock_db_with_kbs(db, [])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(REGULAR_USER_ID)
+
+        assert total == 0
+        assert kbs == []

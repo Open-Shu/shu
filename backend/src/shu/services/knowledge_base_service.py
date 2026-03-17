@@ -310,35 +310,39 @@ class KnowledgeBaseService:
             return {"document_count": 0, "total_chunks": 0}
 
     async def list_knowledge_bases(
-        self, limit: int = 50, offset: int = 0, search: str | None = None
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        search: str | None = None,
     ) -> tuple[list[KnowledgeBase], int]:
-        """List knowledge bases with optional filtering and pagination.
+        """List knowledge bases with optional filtering, pagination, and PBAC.
+
+        Results are filtered by ``kb.read`` PBAC for the given user.
 
         Args:
-            limit: Maximum number of knowledge bases to return
-            offset: Number of knowledge bases to skip
-            search: Optional search term for filtering by name
+            user_id: User ID for PBAC ``kb.read`` enforcement.
+            limit: Maximum number of knowledge bases to return.
+            offset: Number of knowledge bases to skip.
+            search: Optional search term for filtering by name.
 
         Returns:
-            Tuple of (knowledge_bases, total_count)
+            Tuple of (knowledge_bases, total_count).
 
         """
         try:
-            query = select(KnowledgeBase)
+            query = select(KnowledgeBase).order_by(KnowledgeBase.status, KnowledgeBase.name)
 
             if search:
                 query = query.where(KnowledgeBase.name.ilike(f"%{search}%"))
 
-            # Get total count
-            count_result = await self.db.execute(select(func.count()).select_from(query.subquery()))
-            total_count = count_result.scalar() or 0
+            result = await self.db.execute(query)
+            all_kbs = list(result.scalars().all())
 
-            # Apply pagination and get knowledge bases
-            query = query.offset(offset).limit(limit)
-            result = await self.db.execute(query.order_by(KnowledgeBase.status, KnowledgeBase.name))
-            knowledge_bases = list(result.scalars().all())
-
-            return knowledge_bases, int(total_count)
+            accessible_ids = set(await self.filter_accessible_kb_ids(user_id, all_kbs))
+            filtered = [kb for kb in all_kbs if kb.id in accessible_ids]
+            page = filtered[offset : offset + limit]
+            return page, len(filtered)
 
         except Exception as e:
             logger.error(f"Failed to list knowledge bases: {e}", exc_info=True)
@@ -551,7 +555,7 @@ class KnowledgeBaseService:
                 "total_documents": total_documents,
                 "total_chunks": total_chunks,
                 "sync_enabled_count": sync_enabled_count,
-                "source_type_breakdown": {},  # Would need to analyze documents
+                "source_type_breakdown": {},
                 "status_breakdown": {"active": active_kbs, "inactive": total_kbs - active_kbs},
             }
 

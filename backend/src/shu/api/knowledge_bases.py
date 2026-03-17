@@ -65,7 +65,12 @@ async def list_knowledge_bases(
 
     try:
         kb_service = KnowledgeBaseService(db)
-        knowledge_bases, total_count = await kb_service.list_knowledge_bases(limit=limit, offset=offset, search=search)
+        knowledge_bases, total_count = await kb_service.list_knowledge_bases(
+            user_id=str(current_user.id),
+            limit=limit,
+            offset=offset,
+            search=search,
+        )
 
         # Format response using denormalized stats (no per-KB COUNT queries)
         kb_items = []
@@ -444,6 +449,7 @@ async def get_rag_config(
 
     try:
         kb_service = KnowledgeBaseService(db)
+        await kb_service.enforce_kb_read(str(current_user.id), kb_id)
         rag_config = await kb_service.get_rag_config(kb_id)
 
         return ShuResponse.success(rag_config)
@@ -993,14 +999,9 @@ async def get_re_embedding_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the embedding status and re-embedding progress for a knowledge base."""
-    from ..models.knowledge_base import KnowledgeBase
-
     try:
-        kb = await db.get(KnowledgeBase, kb_id)
-        if kb is None:
-            from ..core.exceptions import KnowledgeBaseNotFoundError
-
-            raise KnowledgeBaseNotFoundError(kb_id)
+        kb_service = KnowledgeBaseService(db)
+        kb = await kb_service.enforce_kb_read(str(current_user.id), kb_id)
 
         return ShuResponse.success(
             {
