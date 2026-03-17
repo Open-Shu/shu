@@ -158,7 +158,7 @@ async def test_rag_config_validation(client, db, auth_headers):
     )
     assert response.status_code == 422, f"Should reject search_threshold > 1.0, got {response.status_code}"
 
-    # Test invalid max results
+    # Test invalid max chunks
     invalid_max_chunks = {"max_chunks": 100}
     response = await client.put(
         f"/api/v1/knowledge-bases/{kb_id}/rag-config",

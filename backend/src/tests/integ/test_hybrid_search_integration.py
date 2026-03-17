@@ -40,7 +40,7 @@ async def test_hybrid_search_stop_words_only(client, db, auth_headers):
     stop_word_queries = ["hi", "to", "out", "the", "and", "a", "an", "is", "are"]
 
     for query in stop_word_queries:
-        search_data = {"query": query, "search_type": "hybrid", "limit": 5}
+        search_data = {"query": query, "query_type": "hybrid", "limit": 5}
 
         response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
 
@@ -80,7 +80,7 @@ async def test_hybrid_search_mixed_stop_words(client, db, auth_headers):
     ]
 
     for query in mixed_queries:
-        search_data = {"query": query, "search_type": "hybrid", "limit": 8}
+        search_data = {"query": query, "query_type": "hybrid", "limit": 8}
 
         response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
 
@@ -120,7 +120,7 @@ async def test_hybrid_search_combines_results(client, db, auth_headers):
     # Test with query that should return both types of results
     search_data = {
         "query": "machine learning algorithms neural networks",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 10,
     }
 
@@ -162,7 +162,7 @@ async def test_hybrid_search_keyword_only_results(client, db, auth_headers):
     # Test with very specific technical terms that would only match keywords
     search_data = {
         "query": "MXB-22 compound synthesis protocol",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 5,
     }
 
@@ -197,7 +197,7 @@ async def test_hybrid_search_similarity_only_results(client, db, auth_headers):
     # Test with conceptual query that would match semantically but not keywords
     search_data = {
         "query": "artificial intelligence deep learning concepts",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 5,
     }
 
@@ -232,7 +232,7 @@ async def test_hybrid_search_handles_mixed_formats(client, db, auth_headers):
     # Test with query that exercises both search paths
     search_data = {
         "query": "research document analysis methodology",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 10,
     }
 
@@ -270,7 +270,7 @@ async def test_hybrid_search_performance(client, db, auth_headers):
     kb_id = extract_data(kb_response)["id"]
 
     # Test stop word query performance (should be very fast)
-    search_data = {"query": "the and or but", "search_type": "hybrid", "limit": 5}
+    search_data = {"query": "the and or but", "query_type": "hybrid", "limit": 5}
 
     import time
 
@@ -306,7 +306,7 @@ async def test_hybrid_search_cross_search_consistency(client, db, auth_headers):
     # Test keyword search
     keyword_response = await client.post(
         f"/api/v1/query/{kb_id}/search",
-        json={"query": stop_word_query, "search_type": "keyword", "limit": 5},
+        json={"query": stop_word_query, "query_type": "keyword", "limit": 5},
         headers=auth_headers,
     )
 
@@ -322,7 +322,7 @@ async def test_hybrid_search_cross_search_consistency(client, db, auth_headers):
     # Test hybrid search
     hybrid_response = await client.post(
         f"/api/v1/query/{kb_id}/search",
-        json={"query": stop_word_query, "search_type": "hybrid", "limit": 5},
+        json={"query": stop_word_query, "query_type": "hybrid", "limit": 5},
         headers=auth_headers,
     )
 

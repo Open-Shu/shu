@@ -296,9 +296,7 @@ class ProfilingOrchestrator:
 # ---------------------------------------------------------------------------
 
 
-async def embed_profile_artifacts(
-    db: AsyncSession, document: Document
-) -> tuple[bool, int, int]:
+async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple[bool, int, int]:
     """Embed synopsis, chunk summaries, and synthesized query vectors for a profiled document.
 
     This is a standalone function (not on ProfilingOrchestrator) because it only

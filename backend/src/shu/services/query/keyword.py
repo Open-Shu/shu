@@ -11,7 +11,6 @@ from typing import Any
 from sqlalchemy import text
 
 from ...core.exceptions import ShuException
-from ...models.knowledge_base import KnowledgeBase
 from .base import measure_execution_time
 from .constants import TITLE_MATCH_STOP_WORDS
 
@@ -64,26 +63,7 @@ class KeywordSearchMixin:
                 )
                 return response.model_dump()
 
-            # Build SQL with extracted terms
-            where_clauses = []
             params = {"kb_id": knowledge_base_id, "limit": limit}
-
-            for i, term in enumerate(processed["keyword_terms"]):
-                # Treat underscores, dots, and hyphens as separators in code/text; match term as a token
-                content_pattern = f"(^|[^A-Za-z0-9]){re.escape(term)}([^A-Za-z0-9]|$)"
-                params[f"pattern{i}"] = content_pattern
-                where_clauses.append(f"dc.content ~* :pattern{i}")
-
-                # Only add title matching for meaningful terms (3+ chars, not stop words)
-                if len(term) >= 3 and term.lower() not in TITLE_MATCH_STOP_WORDS:
-                    params[f"title_pattern{i}"] = f"\\m{re.escape(term)}\\M"
-                    params[f"title_norm_pattern{i}"] = f"\\m{re.escape(term)}\\M"
-                    params[f"title_like{i}"] = f"%{term}%"
-                    where_clauses.append(
-                        f"(d.title ~* :title_pattern{i} OR REGEXP_REPLACE(d.title, '[._-]', ' ', 'g') ~* :title_norm_pattern{i} OR d.title ILIKE :title_like{i})"
-                    )
-
-            # Note: where_clauses used for building SQLAlchemy conditions below
 
             # Get title weighting configuration (request params override KB config)
             kb_config = knowledge_base.get_rag_config()
@@ -172,7 +152,6 @@ class KeywordSearchMixin:
                             query=query,
                             max_chunks=max_chunks_per_doc,
                             knowledge_base_id=knowledge_base_id,
-                            knowledge_base=knowledge_base,
                         )
 
                         # Convert to the expected format and apply title boost
@@ -339,7 +318,6 @@ class KeywordSearchMixin:
         query: str,
         max_chunks: int,
         knowledge_base_id: str,
-        knowledge_base: KnowledgeBase,
     ) -> list[dict[str, Any]]:
         """For title-matched documents, find the most relevant chunks within that document.
         Uses the original query to find semantically and keyword relevant chunks.
@@ -385,6 +363,12 @@ class KeywordSearchMixin:
             embedding_service = await get_embedding_service()
             query_embedding = await embedding_service.embed_query(query)
 
+            # Preprocess query and get weights once (loop-invariant)
+            processed = self.preprocess_query(query)
+            keyword_terms = processed["keyword_terms"]
+            similarity_weight = self.config_manager.get_hybrid_similarity_weight()
+            keyword_weight = self.config_manager.get_hybrid_keyword_weight()
+
             for chunk in chunks:
                 # Calculate similarity score
                 chunk_embedding = chunk.embedding
@@ -396,13 +380,7 @@ class KeywordSearchMixin:
                 similarity_score = float(1 - cosine(query_embedding, chunk_embedding))
                 similarity_score = max(0, similarity_score)  # Ensure non-negative
 
-                # Calculate keyword score using existing preprocessing
-                processed = self.preprocess_query(query)
-                keyword_score = self._calculate_keyword_score(chunk.content, processed["keyword_terms"])
-
-                # Combine scores using configured hybrid search weights
-                similarity_weight = self.config_manager.get_hybrid_similarity_weight()
-                keyword_weight = self.config_manager.get_hybrid_keyword_weight()
+                keyword_score = self._calculate_keyword_score(chunk.content, keyword_terms)
                 combined_score = similarity_score * similarity_weight + keyword_score * keyword_weight
 
                 scored_chunks.append((chunk, combined_score))

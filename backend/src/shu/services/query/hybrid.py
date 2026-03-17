@@ -18,7 +18,7 @@ class HybridSearchMixin:
     """Mixin providing hybrid (similarity + keyword) search."""
 
     @measure_execution_time
-    async def hybrid_search(  # noqa: PLR0915
+    async def hybrid_search(  # noqa: PLR0915, PLR0912
         self,
         knowledge_base_id: str,
         query: str,
@@ -127,44 +127,40 @@ class HybridSearchMixin:
 
             # Combine and rank results from both searches
             combined_results = {}
+            similarity_weight = self.config_manager.get_hybrid_similarity_weight()
+            keyword_weight = self.config_manager.get_hybrid_keyword_weight()
 
             # Add similarity results
             for chunk in similarity_response["results"]:
-                # Handle both chunk_id and id fields for compatibility
                 chunk_id = chunk.get("chunk_id") or chunk.get("id")
+                if chunk_id is None:
+                    continue
+                sim_score = float(chunk.get("similarity_score", 0.0))
                 combined_results[chunk_id] = {
                     "chunk": chunk,
-                    "similarity_score": float(chunk.get("similarity_score", 0.0)),
+                    "similarity_score": sim_score,
                     "keyword_score": 0.0,
-                    "combined_score": float(chunk.get("similarity_score", 0.0))
-                    * self.config_manager.get_hybrid_similarity_weight(),
+                    "combined_score": sim_score * similarity_weight,
                 }
 
             # Add keyword results
             for chunk in keyword_response["results"]:
-                # Handle both chunk_id and id fields for compatibility
                 chunk_id = chunk.get("chunk_id") or chunk.get("id")
+                if chunk_id is None:
+                    continue
+                keyword_score = float(chunk.get("similarity_score", 0.8))
                 if chunk_id in combined_results:
-                    # Update existing result with keyword score
-                    keyword_score = float(
-                        chunk.get("similarity_score", 0.8)
-                    )  # Use similarity_score from keyword search
                     combined_results[chunk_id]["keyword_score"] = keyword_score
                     combined_results[chunk_id]["combined_score"] = (
-                        combined_results[chunk_id]["similarity_score"]
-                        * self.config_manager.get_hybrid_similarity_weight()
-                        + keyword_score * self.config_manager.get_hybrid_keyword_weight()
+                        combined_results[chunk_id]["similarity_score"] * similarity_weight
+                        + keyword_score * keyword_weight
                     )
                 else:
-                    # Create new result from keyword search
-                    keyword_score = float(
-                        chunk.get("similarity_score", 0.8)
-                    )  # Use similarity_score from keyword search
                     combined_results[chunk_id] = {
                         "chunk": chunk,
                         "similarity_score": 0.0,
                         "keyword_score": keyword_score,
-                        "combined_score": keyword_score * self.config_manager.get_hybrid_keyword_weight(),
+                        "combined_score": keyword_score * keyword_weight,
                     }
 
             # Get RAG configuration for chunk limits
@@ -176,8 +172,9 @@ class HybridSearchMixin:
             document_results = {}
             for result in combined_results.values():
                 chunk = result["chunk"]
-                # Handle both object and dictionary chunk formats
-                doc_id = chunk.document_id if hasattr(chunk, "document_id") else chunk["document_id"]
+                doc_id = chunk.document_id if hasattr(chunk, "document_id") else chunk.get("document_id")
+                if doc_id is None:
+                    continue
                 if doc_id not in document_results:
                     document_results[doc_id] = []
                 document_results[doc_id].append(result)
@@ -197,31 +194,32 @@ class HybridSearchMixin:
             # Convert to QueryResponse format
             from ...schemas.query import QueryResponse, QueryResult, QueryType
 
+            def _get_chunk_attr(obj: Any, attr: str, default: Any = None) -> Any:
+                """Safely get attribute from object or dict, with chunk_id/id mapping."""
+                if hasattr(obj, attr):
+                    return getattr(obj, attr)
+                if isinstance(obj, dict):
+                    if attr == "id" and "chunk_id" in obj:
+                        return obj["chunk_id"]
+                    return obj.get(attr, default)
+                return default
+
             query_results = []
             for result in sorted_results:
                 chunk = result["chunk"]
-
-                # Handle both object and dictionary chunk formats
-                def get_attr(obj, attr):
-                    if hasattr(obj, attr):
-                        return getattr(obj, attr)
-                    if attr == "id" and "chunk_id" in obj:
-                        return obj["chunk_id"]  # Handle chunk_id vs id mapping
-                    return obj[attr]
-
                 query_result = QueryResult(
-                    chunk_id=get_attr(chunk, "id"),
-                    document_id=get_attr(chunk, "document_id"),
-                    document_title=get_attr(chunk, "document_title") or "Unknown Document",
-                    content=get_attr(chunk, "content"),
+                    chunk_id=_get_chunk_attr(chunk, "id"),
+                    document_id=_get_chunk_attr(chunk, "document_id"),
+                    document_title=_get_chunk_attr(chunk, "document_title") or "Unknown Document",
+                    content=_get_chunk_attr(chunk, "content"),
                     similarity_score=result["combined_score"],
-                    chunk_index=get_attr(chunk, "chunk_index"),
-                    start_char=get_attr(chunk, "start_char"),
-                    end_char=get_attr(chunk, "end_char"),
-                    file_type=get_attr(chunk, "file_type") or "txt",
-                    source_url=get_attr(chunk, "source_url"),
-                    source_id=get_attr(chunk, "source_id"),
-                    created_at=get_attr(chunk, "created_at"),
+                    chunk_index=_get_chunk_attr(chunk, "chunk_index"),
+                    start_char=_get_chunk_attr(chunk, "start_char"),
+                    end_char=_get_chunk_attr(chunk, "end_char"),
+                    file_type=_get_chunk_attr(chunk, "file_type") or "txt",
+                    source_url=_get_chunk_attr(chunk, "source_url"),
+                    source_id=_get_chunk_attr(chunk, "source_id"),
+                    created_at=_get_chunk_attr(chunk, "created_at"),
                 )
                 query_results.append(query_result)
 
@@ -236,6 +234,8 @@ class HybridSearchMixin:
                 processed_at=datetime.now(UTC),
             )
             return response.model_dump()
+        except ShuException:
+            raise
         except Exception as e:
             logger.error(f"Failed to perform hybrid search: {e}", exc_info=True)
             raise ShuException(f"Failed to perform hybrid search: {e!s}", "HYBRID_SEARCH_ERROR")

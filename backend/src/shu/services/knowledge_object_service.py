@@ -154,7 +154,6 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
             document.source_modified_at = coerced if coerced is not None else document.source_modified_at
             document.extraction_metadata = ko.attributes.get("extraction_metadata") or document.extraction_metadata
         db.add(document)
-        await db.commit()
 
     await document_service.process_and_update_chunks(
         knowledge_base_id=knowledge_base_id,

@@ -539,8 +539,8 @@ async def _handle_profile_artifact_embed_job(job) -> None:
             document.update_status(DocumentStatus.ARTIFACT_EMBEDDING)
             await session.commit()
 
-            synopsis_embedded, chunk_summaries_embedded, queries_embedded = (
-                await embed_profile_artifacts(session, document)
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = await embed_profile_artifacts(
+                session, document
             )
 
             document.update_status(DocumentStatus.PROFILE_PROCESSED)

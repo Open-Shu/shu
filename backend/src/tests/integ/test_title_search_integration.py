@@ -218,7 +218,7 @@ async def test_query_preprocessing_technical_terms(client, db, auth_headers):
     for query, expected_terms in test_cases:
         search_response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": "keyword", "limit": 5},
+            json={"query": query, "query_type": "keyword", "limit": 5},
             headers=auth_headers,
         )
         # Should not fail due to preprocessing issues

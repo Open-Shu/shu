@@ -44,7 +44,7 @@ async def test_stop_word_consistency_across_search_types(client, db, auth_header
         # Test keyword search
         keyword_response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": "keyword", "limit": 5},
+            json={"query": query, "query_type": "keyword", "limit": 5},
             headers=auth_headers,
         )
 
@@ -63,7 +63,7 @@ async def test_stop_word_consistency_across_search_types(client, db, auth_header
         # Test hybrid search
         hybrid_response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": "hybrid", "limit": 5},
+            json={"query": query, "query_type": "hybrid", "limit": 5},
             headers=auth_headers,
         )
 
@@ -111,14 +111,14 @@ async def test_mixed_query_consistency(client, db, auth_headers):
         # Test keyword search
         keyword_response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": "keyword", "limit": 10},
+            json={"query": query, "query_type": "keyword", "limit": 10},
             headers=auth_headers,
         )
 
         # Test hybrid search
         hybrid_response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": "hybrid", "limit": 10},
+            json={"query": query, "query_type": "hybrid", "limit": 10},
             headers=auth_headers,
         )
 
@@ -181,7 +181,7 @@ async def test_reference_handling_across_search_types(client, db, auth_headers):
     for search_type in search_types:
         response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": search_type, "limit": 5},
+            json={"query": query, "query_type": search_type, "limit": 5},
             headers=auth_headers,
         )
 

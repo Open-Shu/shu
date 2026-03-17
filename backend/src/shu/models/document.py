@@ -88,11 +88,13 @@ class DocumentStatus(str, Enum):
     @classmethod
     def terminal_success_values(cls) -> frozenset[str]:
         """Return the set of terminal success status values."""
-        return frozenset({
-            cls.CONTENT_PROCESSED.value,
-            cls.RAG_PROCESSED.value,
-            cls.PROFILE_PROCESSED.value,
-        })
+        return frozenset(
+            {
+                cls.CONTENT_PROCESSED.value,
+                cls.RAG_PROCESSED.value,
+                cls.PROFILE_PROCESSED.value,
+            }
+        )
 
 
 class Document(BaseModel):
