@@ -738,6 +738,11 @@ async def ingest_email(
         await db.commit()
         raise
 
+    from ..models.document import DocumentStatus
+
+    document.update_status(DocumentStatus.CONTENT_PROCESSED)
+    await db.commit()
+
     # Trigger async profiling if enabled
     await _trigger_profiling_if_enabled(document.id)
 

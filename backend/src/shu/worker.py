@@ -312,8 +312,10 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
 async def _handle_embed_job(job) -> None:
     """Handle an INGESTION_EMBED workload job.
 
-    Retrieves the document from the database, generates chunks and embeddings,
-    and either enqueues a PROFILING job (if enabled) or sets status to PROCESSED.
+    Dispatches based on the ``action`` field in the job payload:
+    - ``embed_document`` (default): Chunk text and embed content vectors.
+    - ``embed_profile_artifacts``: Embed profile artifacts (synopsis, chunk
+      summaries, synthesized queries) after profiling completes.
 
     Args:
         job: The job containing document_id and knowledge_base_id in payload.
@@ -323,6 +325,17 @@ async def _handle_embed_job(job) -> None:
         Exception: If embedding generation fails (triggers retry).
 
     """
+    action = job.payload.get("action", "embed_document")
+
+    if action == "embed_profile_artifacts":
+        await _handle_profile_artifact_embed_job(job)
+        return
+
+    await _handle_content_embed_job(job)
+
+
+async def _handle_content_embed_job(job) -> None:
+    """Handle chunk content embedding (the original embed job logic)."""
     from sqlalchemy import select
 
     from .core.config import get_settings_instance
@@ -437,10 +450,29 @@ async def _handle_embed_job(job) -> None:
 
 
 async def _finalize_embed_job(job, session, document, document_id: str, profiling_enabled: bool) -> None:
-    """Enqueue a profiling job or mark the document PROCESSED after embedding."""
+    """Set CONTENT_PROCESSED, collect KB stats, then optionally enqueue profiling."""
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
     from .models.document import DocumentStatus
+    from .services.knowledge_base_service import KnowledgeBaseService
+
+    # Mark content processed — chunks + content vectors exist, document is searchable.
+    # This is the first reliable point for KB stats (chunks are committed).
+    document.update_status(DocumentStatus.CONTENT_PROCESSED)
+    await session.commit()
+
+    # Collect accurate KB stats now that chunks exist
+    kb_id = document.knowledge_base_id
+    if kb_id:
+        try:
+            kb_service = KnowledgeBaseService(session)
+            await kb_service.recalculate_kb_stats(kb_id)
+        except Exception:
+            logger.warning(
+                "Failed to recalculate KB stats after embedding",
+                extra={"job_id": job.id, "document_id": document_id, "kb_id": kb_id},
+                exc_info=True,
+            )
 
     if profiling_enabled:
         queue = await get_queue_backend()
@@ -460,12 +492,91 @@ async def _finalize_embed_job(job, session, document, document_id: str, profilin
             extra={"job_id": job.id, "document_id": document_id},
         )
     else:
-        document.update_status(DocumentStatus.PROCESSED)
-        await session.commit()
         logger.info(
             "Embedding job completed, document ready (profiling disabled)",
             extra={"job_id": job.id, "document_id": document_id},
         )
+
+
+async def _handle_profile_artifact_embed_job(job) -> None:
+    """Handle profile artifact embedding after profiling completes.
+
+    Embeds synopsis, chunk summaries, and synthesized queries that were
+    persisted as text during profiling. On success, transitions the document
+    to PROFILE_PROCESSED. On failure after max retries, leaves the document
+    at RAG_PROCESSED (still searchable via chunk content vectors + metadata).
+    """
+    from sqlalchemy import select
+
+    from .core.database import get_async_session_local
+    from .models.document import Document, DocumentStatus
+    from .services.profiling_orchestrator import embed_profile_artifacts
+
+    document_id = job.payload.get("document_id")
+    if not document_id:
+        raise ValueError("embed_profile_artifacts job missing document_id in payload")
+
+    logger.info(
+        "Processing profile artifact embedding job",
+        extra={"job_id": job.id, "document_id": document_id},
+    )
+
+    session_local = get_async_session_local()
+
+    async with session_local() as session:
+        stmt = select(Document).where(Document.id == document_id)
+        result = await session.execute(stmt)
+        document = result.scalar_one_or_none()
+
+        if not document:
+            logger.error(
+                "Document not found for artifact embed job, failing permanently",
+                extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
+
+        try:
+            document.update_status(DocumentStatus.ARTIFACT_EMBEDDING)
+            await session.commit()
+
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = (
+                await embed_profile_artifacts(session, document)
+            )
+
+            document.update_status(DocumentStatus.PROFILE_PROCESSED)
+            await session.commit()
+
+            logger.info(
+                "Profile artifact embedding completed",
+                extra={
+                    "job_id": job.id,
+                    "document_id": document_id,
+                    "synopsis_embedded": synopsis_embedded,
+                    "chunk_summaries_embedded": chunk_summaries_embedded,
+                    "queries_embedded": queries_embedded,
+                    "status": DocumentStatus.PROFILE_PROCESSED.value,
+                },
+            )
+
+        except Exception as e:
+            if job.attempts >= job.max_attempts:
+                # Leave at RAG_PROCESSED — document is still searchable via
+                # chunk content vectors and profiling metadata, just without
+                # multi-surface artifact vector search.
+                logger.error(
+                    "Profile artifact embedding failed after max attempts, leaving as RAG_PROCESSED",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": str(e),
+                    },
+                )
+                document.update_status(DocumentStatus.RAG_PROCESSED)
+                await session.commit()
+                return
+            raise
 
 
 async def _handle_plugin_execution_job(job) -> None:  # noqa: PLR0915
@@ -797,7 +908,8 @@ async def _handle_profiling_job(job) -> None:
     """Handle a PROFILING workload job.
 
     Runs the profiling orchestrator for the specified document. On success,
-    sets the document's pipeline status to PROCESSED (the final state).
+    sets the document's pipeline status to RAG_PROCESSED and enqueues an
+    INGESTION_EMBED job for artifact embedding (SHU-637).
 
     Args:
         job: The job containing document_id in payload.
@@ -840,26 +952,42 @@ async def _handle_profiling_job(job) -> None:
             return
 
         if result.success:
-            # Set document pipeline status to PROCESSED (final state)
-            # The orchestrator already updated profiling_status to "complete"
-            # Now we need to update the pipeline status field
+            # Set document pipeline status to RAG_PROCESSED — profiling text artifacts
+            # are persisted but artifact embeddings haven't been generated yet.
+            # Enqueue an INGESTION_EMBED job for artifact embedding.
             stmt = select(Document).where(Document.id == document_id)
             doc_result = await session.execute(stmt)
             document = doc_result.scalar_one_or_none()
 
             if document:
-                document.update_status(DocumentStatus.PROCESSED)
+                from .core.queue_backend import get_queue_backend
+                from .core.workload_routing import WorkloadType, enqueue_job
+
+                queue = await get_queue_backend()
+                await enqueue_job(
+                    queue,
+                    WorkloadType.INGESTION_EMBED,
+                    payload={
+                        "document_id": document_id,
+                        "knowledge_base_id": document.knowledge_base_id,
+                        "action": "embed_profile_artifacts",
+                    },
+                    max_attempts=3,
+                    visibility_timeout=300,
+                )
+                # Commit RAG_PROCESSED only after enqueue succeeds
+                document.update_status(DocumentStatus.RAG_PROCESSED)
                 await session.commit()
 
             logger.info(
-                "Profiling job completed successfully",
+                "Profiling job completed, enqueued artifact embedding",
                 extra={
                     "job_id": job.id,
                     "document_id": document_id,
                     "profiling_mode": result.profiling_mode.value if result.profiling_mode else None,
                     "tokens_used": result.tokens_used,
                     "duration_ms": result.duration_ms,
-                    "status": DocumentStatus.PROCESSED.value,
+                    "status": DocumentStatus.RAG_PROCESSED.value,
                 },
             )
         else:

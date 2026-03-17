@@ -14,6 +14,9 @@ Adds document_chunks.summary_embedding for chunk summary vector retrieval (SHU-6
 
 Renames knowledge_bases.rag_max_results to rag_max_chunks for clarity (SHU-631).
 
+Migrates documents.processing_status from single 'processed' to granular terminal
+statuses: content_processed, rag_processed, profile_processed (SHU-637).
+
 Columns altered:
 - document_chunks.embedding
 - documents.synopsis_embedding
@@ -24,6 +27,9 @@ Columns added:
 - knowledge_bases.embedding_status
 - knowledge_bases.re_embedding_progress
 - document_chunks.summary_embedding
+
+Data migrated:
+- documents.processing_status 'processed' → 'profile_processed' (if profiled) or 'content_processed'
 """
 
 import sqlalchemy as sa
@@ -55,31 +61,16 @@ def upgrade() -> None:
     """ALTER vector columns to dimensionless, drop IVFFlat indexes."""
     conn = op.get_bind()
 
-    # Check pgvector availability
-    pgvector_available = conn.execute(
-        sa.text("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')")
-    ).scalar()
+    # --- Non-pgvector steps (plain DDL/DML, always run) ---
 
-    if not pgvector_available:
-        return
-
-    # 1. ALTER columns from vector(384) to vector (dimensionless)
-    for table, column in _VECTOR_COLUMNS:
-        op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector")
-
-    # 2. Drop old IVFFlat indexes — new HNSW indexes are created at runtime
-    #    by VectorStore.ensure_index() based on the embedding model's dimension.
-    for index_name in _OLD_INDEXES:
-        op.execute(f"DROP INDEX IF EXISTS {index_name}")
-
-    # 3. Update default embedding model on knowledge_bases (SHU-606)
+    # 1. Update default embedding model on knowledge_bases (SHU-606)
     op.alter_column(
         "knowledge_bases",
         "embedding_model",
         server_default=sa.text("'Snowflake/snowflake-arctic-embed-l-v2.0'"),
     )
 
-    # 4. Add embedding status tracking columns (SHU-605)
+    # 2. Add embedding status tracking columns (SHU-605)
     op.add_column(
         "knowledge_bases",
         sa.Column(
@@ -94,12 +85,7 @@ def upgrade() -> None:
         sa.Column("re_embedding_progress", sa.JSON(), nullable=True),
     )
 
-    # 5. Add summary_embedding column for chunk summary vector retrieval (SHU-632)
-    op.execute(
-        "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS summary_embedding vector"
-    )
-
-    # 6. Rename rag_max_results → rag_max_chunks (SHU-631, idempotent)
+    # 3. Rename rag_max_results → rag_max_chunks (SHU-631, idempotent)
     has_old_col = conn.execute(
         sa.text(
             "SELECT EXISTS("
@@ -111,11 +97,24 @@ def upgrade() -> None:
     if has_old_col:
         op.alter_column("knowledge_bases", "rag_max_results", new_column_name="rag_max_chunks")
 
+    # 4. Migrate processing_status to granular terminal statuses (SHU-637, idempotent)
+    #    Documents with profiling_status='complete' had profiling + artifact embedding
+    #    done inline (old behavior), so they map to profile_processed.
+    #    All others map to content_processed.
+    op.execute(
+        sa.text(
+            "UPDATE documents SET processing_status = 'profile_processed' "
+            "WHERE processing_status = 'processed' AND profiling_status = 'complete'"
+        )
+    )
+    op.execute(
+        sa.text(
+            "UPDATE documents SET processing_status = 'content_processed' "
+            "WHERE processing_status = 'processed'"
+        )
+    )
 
-def downgrade() -> None:
-    """Restore Vector(384) columns and IVFFlat indexes."""
-    conn = op.get_bind()
-    inspector = sa.inspect(conn)
+    # --- pgvector-dependent steps ---
 
     pgvector_available = conn.execute(
         sa.text("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')")
@@ -124,7 +123,38 @@ def downgrade() -> None:
     if not pgvector_available:
         return
 
-    # 1. Rename rag_max_chunks back to rag_max_results (SHU-631, idempotent)
+    # 5. ALTER columns from vector(384) to vector (dimensionless)
+    for table, column in _VECTOR_COLUMNS:
+        op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector")
+
+    # 6. Drop old IVFFlat indexes — new HNSW indexes are created at runtime
+    #    by VectorStore.ensure_index() based on the embedding model's dimension.
+    for index_name in _OLD_INDEXES:
+        op.execute(f"DROP INDEX IF EXISTS {index_name}")
+
+    # 7. Add summary_embedding column for chunk summary vector retrieval (SHU-632)
+    op.execute(
+        "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS summary_embedding vector"
+    )
+
+
+def downgrade() -> None:
+    """Restore Vector(384) columns and IVFFlat indexes."""
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+
+    # --- Non-pgvector steps (plain DDL/DML, always run) ---
+
+    # 1. Collapse granular processing statuses back to 'processed' (SHU-637, idempotent)
+    op.execute(
+        sa.text(
+            "UPDATE documents SET processing_status = 'processed' "
+            "WHERE processing_status IN ('content_processed', 'rag_processed', "
+            "'profile_processed', 'artifact_embedding')"
+        )
+    )
+
+    # 2. Rename rag_max_chunks back to rag_max_results (SHU-631, idempotent)
     has_new_col = conn.execute(
         sa.text(
             "SELECT EXISTS("
@@ -136,25 +166,34 @@ def downgrade() -> None:
     if has_new_col:
         op.alter_column("knowledge_bases", "rag_max_chunks", new_column_name="rag_max_results")
 
-    # 2. Drop summary_embedding column (SHU-632)
-    op.execute("ALTER TABLE document_chunks DROP COLUMN IF EXISTS summary_embedding")
-
     # 3. Drop embedding status columns (SHU-605)
     op.execute("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS re_embedding_progress")
     op.execute("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS embedding_status")
 
-    # 4. ALTER columns back to vector(384)
-    for table, column in _VECTOR_COLUMNS:
-        op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector(384)")
-
-    # 5. Restore original embedding model default
+    # 4. Restore original embedding model default
     op.alter_column(
         "knowledge_bases",
         "embedding_model",
         server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'"),
     )
 
-    # 6. Recreate original IVFFlat indexes
+    # --- pgvector-dependent steps ---
+
+    pgvector_available = conn.execute(
+        sa.text("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+    ).scalar()
+
+    if not pgvector_available:
+        return
+
+    # 5. Drop summary_embedding column (SHU-632)
+    op.execute("ALTER TABLE document_chunks DROP COLUMN IF EXISTS summary_embedding")
+
+    # 6. ALTER columns back to vector(384)
+    for table, column in _VECTOR_COLUMNS:
+        op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector(384)")
+
+    # 7. Recreate original IVFFlat indexes
     if not index_exists(inspector, "document_chunks", "idx_document_chunks_embedding"):
         op.execute(
             """

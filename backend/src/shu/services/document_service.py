@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.exceptions import DocumentNotFoundError
 from ..core.logging import get_logger
-from ..models.document import Document, DocumentChunk
+from ..models.document import Document, DocumentChunk, DocumentStatus
 from ..schemas.document import (
     DocumentChunkResponse,
     DocumentCreate,
@@ -253,7 +253,7 @@ class DocumentService:
         total_result = await self.db.execute(select(func.count()).select_from(query.subquery()))
         total_documents = total_result.scalar()
 
-        processed_query = query.where(Document.processing_status == "processed")
+        processed_query = query.where(Document.processing_status.in_(DocumentStatus.terminal_success_values()))
         processed_result = await self.db.execute(select(func.count()).select_from(processed_query.subquery()))
         processed_documents = processed_result.scalar()
 
@@ -375,40 +375,12 @@ class DocumentService:
         character_count = len(content)
         chunk_count = len(chunks)
 
-        await self.mark_document_processed(
-            document.id,
-            word_count=word_count,
-            character_count=character_count,
-            chunk_count=chunk_count,
-        )
-
-        return word_count, character_count, chunk_count
-
-    async def mark_document_processed(
-        self, doc_id: str, word_count: int, character_count: int, chunk_count: int
-    ) -> None:
-        """Mark a document as processed with stats."""
-        logger.debug(
-            "Marking document as processed",
-            extra={
-                "doc_id": doc_id,
-                "word_count": word_count,
-                "character_count": character_count,
-                "chunk_count": chunk_count,
-            },
-        )
-
-        result = await self.db.execute(select(Document).where(Document.id == doc_id))
-        document = result.scalar_one_or_none()
-        if not document:
-            raise DocumentNotFoundError(doc_id)
-
-        document.mark_processed()
+        # Update content stats only — status transitions are managed by the
+        # worker job handlers (SHU-637).
         document.update_content_stats(word_count, character_count, chunk_count)
-
         await self.db.commit()
 
-        logger.debug("Marked document as processed", extra={"doc_id": doc_id})
+        return word_count, character_count, chunk_count
 
     async def mark_document_error(self, doc_id: str, error_message: str) -> None:
         """Mark a document as having an error."""

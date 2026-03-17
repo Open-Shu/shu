@@ -5,8 +5,11 @@ DB-aware layer that coordinates document and chunk profiling. This orchestrator:
 - Manages profiling_status transitions (pending -> in_progress -> complete/failed)
 - Delegates to ProfilingService for LLM work
 - Persists profile results back to the database
-- Embeds synopsis and synthesized queries after profiling (SHU-351, SHU-359)
 - Uses two-phase profiling: all chunks profiled first, then document metadata generated separately
+
+Artifact embedding (synopsis, chunk summaries, synthesized queries) is handled
+separately by embed_profile_artifacts(), called from the INGESTION_EMBED worker
+job handler after profiling completes. See SHU-637.
 """
 
 import time
@@ -16,6 +19,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
+from ..core.embedding_service import get_embedding_service
+from ..core.vector_store import VectorEntry, get_vector_store
 from ..models.document import Document, DocumentChunk, DocumentQuery
 from ..schemas.profiling import (
     ChunkData,
@@ -124,28 +129,16 @@ class ProfilingOrchestrator:
             # Persist synthesized queries (even if empty, to delete stale queries on re-profile)
             # Isolated from main try block so query failures don't mark profiling as failed
             queries_created = 0
-            queries_persist_ok = True
             if doc_profile:
                 try:
                     queries_created = await self._persist_queries(document, synthesized_queries)
                 except Exception as e:
-                    queries_persist_ok = False
                     await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
 
-            # Embed synopsis, chunk summaries, and synthesized queries
-            # Isolated so embedding failures don't fail the profiling job
-            synopsis_embedded = False
-            chunk_summaries_embedded = 0
-            queries_embedded = 0
-            if doc_profile:
-                try:
-                    synopsis_embedded, chunk_summaries_embedded, queries_embedded = await self._embed_profile_artifacts(
-                        document, embed_queries=queries_persist_ok
-                    )
-                except Exception as e:
-                    await self.db.rollback()
-                    logger.warning("profile_embedding_failed", document_id=document_id, error=str(e))
+            # NOTE: Artifact embedding (synopsis, chunk summaries, queries) is now
+            # handled by a separate INGESTION_EMBED job enqueued by the worker after
+            # profiling completes. See SHU-637.
 
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -154,9 +147,6 @@ class ProfilingOrchestrator:
                 document_id=document_id,
                 tokens_used=total_tokens,
                 queries_created=queries_created,
-                synopsis_embedded=synopsis_embedded,
-                chunk_summaries_embedded=chunk_summaries_embedded,
-                queries_embedded=queries_embedded,
                 coverage_percent=round(coverage_percent, 1),
                 duration_ms=duration_ms,
             )
@@ -171,9 +161,6 @@ class ProfilingOrchestrator:
                 tokens_used=total_tokens,
                 duration_ms=duration_ms,
                 chunk_coverage_percent=coverage_percent,
-                synopsis_embedded=synopsis_embedded,
-                chunk_summaries_embedded=chunk_summaries_embedded,
-                queries_embedded=queries_embedded,
             )
 
         except Exception as e:
@@ -294,143 +281,6 @@ class ProfilingOrchestrator:
             coverage_percent=round(coverage_percent, 1),
         )
 
-    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts using the system embedding service.
-
-        Args:
-            texts: List of text strings to embed
-
-        Returns:
-            List of embedding vectors (each a list of floats)
-
-        """
-        from ..core.embedding_service import get_embedding_service
-
-        embedding_service = await get_embedding_service()
-        return await embedding_service.embed_texts(texts)
-
-    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
-        """Embed query texts with the query prompt for asymmetric models.
-
-        Args:
-            texts: List of query strings to embed
-
-        Returns:
-            List of embedding vectors (each a list of floats)
-
-        """
-        from ..core.embedding_service import get_embedding_service
-
-        embedding_service = await get_embedding_service()
-        return await embedding_service.embed_queries(texts)
-
-    async def _embed_profile_artifacts(
-        self, document: Document, *, embed_queries: bool = True
-    ) -> tuple[bool, int, int]:
-        """Embed synopsis, chunk summaries, and synthesized query texts after profiling.
-
-        Generates vector embeddings for the document's synopsis, chunk summaries
-        (SHU-632), and all synthesized queries.
-
-        Args:
-            document: The profiled document (must have synopsis set)
-            embed_queries: Whether to embed synthesized queries
-
-        Returns:
-            Tuple of (synopsis_embedded, chunk_summaries_embedded_count, queries_embedded_count)
-
-        """
-        from ..core.vector_store import VectorEntry, get_vector_store
-
-        synopsis_embedded = False
-        chunk_summaries_embedded = 0
-        queries_embedded = 0
-        vector_store = await get_vector_store()
-
-        # Embed synopsis using document encoder (synopses are paragraph-length text)
-        if document.synopsis and document.synopsis.strip():
-            embeddings = await self._embed_texts([str(document.synopsis)])
-            if not embeddings:
-                logger.warning("synopsis_embedding_empty", document_id=document.id)
-            else:
-                await vector_store.store_embeddings(
-                    "synopses",
-                    [VectorEntry(id=document.id, vector=embeddings[0])],
-                    db=self.db,
-                )
-                synopsis_embedded = True
-
-        # Commit synopsis durably before attempting chunk summary embeddings
-        if synopsis_embedded:
-            await self.db.commit()
-
-        # Embed chunk summaries using document encoder (SHU-632)
-        # Summaries are searched by user queries — asymmetric model needs document encoding
-        stmt = (
-            select(DocumentChunk)
-            .where(DocumentChunk.document_id == document.id)
-            .where(DocumentChunk.summary.isnot(None))  # type: ignore[union-attr]
-            .where(DocumentChunk.summary_embedding.is_(None))  # type: ignore[union-attr]
-        )
-        result = await self.db.execute(stmt)
-        chunks_to_embed = list(result.scalars().all())
-
-        if chunks_to_embed:
-            try:
-                summary_texts = [str(c.summary) for c in chunks_to_embed]
-                embeddings = await self._embed_texts(summary_texts)
-                entries = [VectorEntry(id=c.id, vector=emb) for c, emb in zip(chunks_to_embed, embeddings, strict=True)]
-                await vector_store.store_embeddings("chunk_summaries", entries, db=self.db)
-                chunk_summaries_embedded = len(entries)
-            except Exception:
-                logger.warning(
-                    "chunk_summary_embedding_failed",
-                    document_id=document.id,
-                    exc_info=True,
-                )
-
-        if chunk_summaries_embedded:
-            await self.db.commit()
-
-        # Embed synthesized queries (skip if query persistence failed)
-        if embed_queries:
-            stmt = (
-                select(DocumentQuery)
-                .where(DocumentQuery.document_id == document.id)
-                .where(DocumentQuery.query_embedding.is_(None))
-            )
-            result = await self.db.execute(stmt)
-            queries = list(result.scalars().all())
-        else:
-            queries = []
-
-        if queries:
-            try:
-                query_texts = [q.query_text for q in queries]
-                embeddings = await self._embed_queries(query_texts)
-                entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
-                await vector_store.store_embeddings("queries", entries, db=self.db)
-                queries_embedded = len(queries)
-            except Exception:
-                logger.warning(
-                    "query_embedding_failed",
-                    document_id=document.id,
-                    exc_info=True,
-                )
-
-        await self.db.commit()
-
-        if synopsis_embedded or chunk_summaries_embedded or queries_embedded:
-            logger.info(
-                "profile_artifacts_embedded",
-                document_id=document.id,
-                synopsis_embedded=synopsis_embedded,
-                chunk_summaries_embedded=chunk_summaries_embedded,
-                queries_embedded=queries_embedded,
-            )
-
-        return synopsis_embedded, chunk_summaries_embedded, queries_embedded
-
     async def is_profiling_enabled(self) -> bool:
         """Check if document profiling is enabled."""
         return self.settings.enable_document_profiling
@@ -439,3 +289,109 @@ class ProfilingOrchestrator:
         """Get the current profiling status of a document."""
         document = await self.db.get(Document, document_id)
         return document.profiling_status if document else None
+
+
+# ---------------------------------------------------------------------------
+# Standalone artifact embedding (called from INGESTION_EMBED worker handler)
+# ---------------------------------------------------------------------------
+
+
+async def embed_profile_artifacts(
+    db: AsyncSession, document: Document
+) -> tuple[bool, int, int]:
+    """Embed synopsis, chunk summaries, and synthesized query vectors for a profiled document.
+
+    This is a standalone function (not on ProfilingOrchestrator) because it only
+    needs a DB session and the embedding service — no LLM client or profiling
+    settings. Called from the INGESTION_EMBED worker handler after profiling
+    completes. See SHU-637.
+
+    Encoder selection:
+    - Synopsis + chunk summaries: document encoder (``embed_texts`` / ``encode_document``)
+    - Synthesized queries: query encoder (``embed_queries`` / ``encode_query``)
+
+    Args:
+        db: Async database session.
+        document: The profiled document (must have synopsis set).
+
+    Returns:
+        Tuple of (synopsis_embedded, chunk_summaries_embedded_count, queries_embedded_count).
+
+    """
+    embedding_service = await get_embedding_service()
+    vector_store = await get_vector_store()
+
+    synopsis_embedded = False
+    chunk_summaries_embedded = 0
+    queries_embedded = 0
+
+    # Phase 1: Embed synopsis using document encoder
+    if document.synopsis and document.synopsis.strip():
+        embeddings = await embedding_service.embed_texts([str(document.synopsis)])
+        if not embeddings:
+            logger.warning("synopsis_embedding_empty", document_id=document.id)
+        else:
+            await vector_store.store_embeddings(
+                "synopses",
+                [VectorEntry(id=document.id, vector=embeddings[0])],
+                db=db,
+            )
+            synopsis_embedded = True
+
+    if synopsis_embedded:
+        await db.commit()
+
+    # Phase 2: Embed chunk summaries using document encoder (SHU-632)
+    stmt = (
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .where(DocumentChunk.summary.isnot(None))  # type: ignore[union-attr]
+        .where(DocumentChunk.summary_embedding.is_(None))  # type: ignore[union-attr]
+    )
+    result = await db.execute(stmt)
+    chunks_to_embed = list(result.scalars().all())
+
+    if chunks_to_embed:
+        try:
+            summary_texts = [str(c.summary) for c in chunks_to_embed]
+            embeddings = await embedding_service.embed_texts(summary_texts)
+            entries = [VectorEntry(id=c.id, vector=emb) for c, emb in zip(chunks_to_embed, embeddings, strict=True)]
+            await vector_store.store_embeddings("chunk_summaries", entries, db=db)
+            chunk_summaries_embedded = len(entries)
+        except Exception:
+            logger.warning("chunk_summary_embedding_failed", document_id=document.id, exc_info=True)
+
+    if chunk_summaries_embedded:
+        await db.commit()
+
+    # Phase 3: Embed synthesized queries using query encoder
+    stmt = (
+        select(DocumentQuery)
+        .where(DocumentQuery.document_id == document.id)
+        .where(DocumentQuery.query_embedding.is_(None))
+    )
+    result = await db.execute(stmt)
+    queries = list(result.scalars().all())
+
+    if queries:
+        try:
+            query_texts = [q.query_text for q in queries]
+            embeddings = await embedding_service.embed_queries(query_texts)
+            entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
+            await vector_store.store_embeddings("queries", entries, db=db)
+            queries_embedded = len(queries)
+        except Exception:
+            logger.warning("query_embedding_failed", document_id=document.id, exc_info=True)
+
+    await db.commit()
+
+    if synopsis_embedded or chunk_summaries_embedded or queries_embedded:
+        logger.info(
+            "profile_artifacts_embedded",
+            document_id=document.id,
+            synopsis_embedded=synopsis_embedded,
+            chunk_summaries_embedded=chunk_summaries_embedded,
+            queries_embedded=queries_embedded,
+        )
+
+    return synopsis_embedded, chunk_summaries_embedded, queries_embedded

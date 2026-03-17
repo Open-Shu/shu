@@ -163,6 +163,11 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
         content=content,
     )
 
+    from ..models.document import DocumentStatus
+
+    document.update_status(DocumentStatus.CONTENT_PROCESSED)
+    await db.commit()
+
     return ko.id
 
 

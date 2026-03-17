@@ -42,25 +42,22 @@ class TestDocument:
         # when the object is persisted to the database. Without DB, it's None.
 
     def test_is_processed_property(self):
-        """Test is_processed property."""
+        """Test is_processed returns True for all terminal success statuses."""
         doc = Document()
         doc.processing_status = "pending"
         assert doc.is_processed is False
 
-        doc.processing_status = "processed"
+        doc.processing_status = "content_processed"
         assert doc.is_processed is True
 
-    def test_mark_processed(self):
-        """Test mark_processed method."""
-        doc = Document()
-        doc.processing_status = "pending"
-        doc.processing_error = "Previous error"
+        doc.processing_status = "rag_processed"
+        assert doc.is_processed is True
 
-        doc.mark_processed()
+        doc.processing_status = "profile_processed"
+        assert doc.is_processed is True
 
-        assert doc.processing_status == "processed"
-        assert doc.processing_error is None
-        assert doc.processed_at is not None
+        doc.processing_status = "error"
+        assert doc.is_processed is False
 
     def test_mark_error(self):
         """Test mark_error method."""
@@ -187,20 +184,22 @@ class TestDocument:
 
         doc = Document()
 
-        # PROCESSED status
-        doc.update_status(DocumentStatus.PROCESSED)
-        assert doc.processing_status == "processed"
-        assert doc.processed_at is not None
-        assert doc.processing_error is None
+        # Terminal success statuses set processed_at
+        for status in [DocumentStatus.CONTENT_PROCESSED, DocumentStatus.RAG_PROCESSED, DocumentStatus.PROFILE_PROCESSED]:
+            doc.update_status(status)
+            assert doc.processing_status == status.value
+            assert doc.processed_at is not None
+            assert doc.processing_error is None
 
         # ERROR status
         doc.update_status(DocumentStatus.ERROR)
         assert doc.processing_status == "error"
         assert doc.processed_at is not None
 
-        # PENDING status
+        # PENDING status clears timestamps
         doc.update_status(DocumentStatus.PENDING)
         assert doc.processing_status == "pending"
+        assert doc.processed_at is None
 
         # Intermediate statuses
         doc.update_status(DocumentStatus.EXTRACTING)

@@ -37,6 +37,7 @@ class TestEmbedHandlerProfilingBranch:
         # Create mock document
         mock_document = MagicMock()
         mock_document.id = "doc-123"
+        mock_document.knowledge_base_id = "kb-456"
         mock_document.title = "Test Document"
         mock_document.content = "Test content for embedding"
         mock_document.update_status = MagicMock()
@@ -47,6 +48,7 @@ class TestEmbedHandlerProfilingBranch:
         mock_result.scalar_one_or_none.return_value = mock_document
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.commit = AsyncMock()
+        mock_session.get = AsyncMock(return_value=MagicMock())  # KB lookup
 
         # Create mock session context manager
         mock_session_local = MagicMock()
@@ -82,17 +84,18 @@ class TestEmbedHandlerProfilingBranch:
             patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=mock_queue)),
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.document_service.DocumentService", return_value=mock_doc_service),
+            patch("shu.services.knowledge_base_service.KnowledgeBaseService"),
         ):
             from shu.worker import _handle_embed_job
 
             await _handle_embed_job(job)
 
-        # Verify document status was updated: first EMBEDDING (before processing),
-        # then PROFILING (after successful enqueue).
-        assert mock_document.update_status.call_count == 2
+        # Verify document status was updated: EMBEDDING → CONTENT_PROCESSED → PROFILING
+        assert mock_document.update_status.call_count == 3
         calls = mock_document.update_status.call_args_list
         assert calls[0][0][0] == DocumentStatus.EMBEDDING
-        assert calls[1][0][0] == DocumentStatus.PROFILING
+        assert calls[1][0][0] == DocumentStatus.CONTENT_PROCESSED
+        assert calls[2][0][0] == DocumentStatus.PROFILING
 
         # Verify profiling job was enqueued
         mock_enqueue_job.assert_called_once()
@@ -102,14 +105,15 @@ class TestEmbedHandlerProfilingBranch:
         assert call_args[1]["payload"]["action"] == "profile_document"
 
     @pytest.mark.asyncio
-    async def test_profiling_disabled_sets_status_ready(self):
+    async def test_profiling_disabled_sets_content_processed(self):
         """
         Test that when profiling is disabled, the handler sets status EMBEDDING
-        before processing, then PROCESSED directly.
+        before processing, then CONTENT_PROCESSED (terminal).
         """
         # Create mock document
         mock_document = MagicMock()
         mock_document.id = "doc-123"
+        mock_document.knowledge_base_id = "kb-456"
         mock_document.title = "Test Document"
         mock_document.content = "Test content for embedding"
         mock_document.update_status = MagicMock()
@@ -120,6 +124,7 @@ class TestEmbedHandlerProfilingBranch:
         mock_result.scalar_one_or_none.return_value = mock_document
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.commit = AsyncMock()
+        mock_session.get = AsyncMock(return_value=MagicMock())  # KB lookup
 
         # Create mock session context manager
         mock_session_local = MagicMock()
@@ -151,17 +156,17 @@ class TestEmbedHandlerProfilingBranch:
             patch("shu.core.config.get_settings_instance", return_value=mock_settings),
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.document_service.DocumentService", return_value=mock_doc_service),
+            patch("shu.services.knowledge_base_service.KnowledgeBaseService"),
         ):
             from shu.worker import _handle_embed_job
 
             await _handle_embed_job(job)
 
-        # Verify document status was updated: first EMBEDDING (before processing),
-        # then PROCESSED (profiling disabled).
+        # Verify document status: EMBEDDING → CONTENT_PROCESSED (terminal, no profiling)
         assert mock_document.update_status.call_count == 2
         calls = mock_document.update_status.call_args_list
         assert calls[0][0][0] == DocumentStatus.EMBEDDING
-        assert calls[1][0][0] == DocumentStatus.PROCESSED
+        assert calls[1][0][0] == DocumentStatus.CONTENT_PROCESSED
 
         # Verify NO profiling job was enqueued
         mock_enqueue_job.assert_not_called()
