@@ -120,9 +120,11 @@ class Settings(BaseSettings):
     # Multi-surface retrieval configuration
     multi_surface_chunk_limit: int = Field(50, alias="SHU_MULTI_SURFACE_CHUNK_LIMIT")
     multi_surface_timeout_ms: int = Field(2000, alias="SHU_MULTI_SURFACE_TIMEOUT_MS")
-    multi_surface_chunk_vector_weight: float = Field(0.30, alias="SHU_MULTI_SURFACE_CHUNK_VECTOR_WEIGHT")
-    multi_surface_query_match_weight: float = Field(0.25, alias="SHU_MULTI_SURFACE_QUERY_MATCH_WEIGHT")
-    multi_surface_synopsis_match_weight: float = Field(0.20, alias="SHU_MULTI_SURFACE_SYNOPSIS_MATCH_WEIGHT")
+    multi_surface_chunk_vector_weight: float = Field(0.25, alias="SHU_MULTI_SURFACE_CHUNK_VECTOR_WEIGHT")
+    multi_surface_query_match_weight: float = Field(0.20, alias="SHU_MULTI_SURFACE_QUERY_MATCH_WEIGHT")
+    multi_surface_synopsis_match_weight: float = Field(0.15, alias="SHU_MULTI_SURFACE_SYNOPSIS_MATCH_WEIGHT")
+    multi_surface_keyword_match_weight: float = Field(0.15, alias="SHU_MULTI_SURFACE_KEYWORD_MATCH_WEIGHT")
+    multi_surface_chunk_summary_weight: float = Field(0.25, alias="SHU_MULTI_SURFACE_CHUNK_SUMMARY_WEIGHT")
 
     # Performance configuration
     batch_size: int = Field(10, alias="SHU_BATCH_SIZE")

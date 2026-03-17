@@ -211,6 +211,11 @@ _DEFAULT_COLLECTIONS: dict[str, CollectionConfig] = {
         embedding_column="query_embedding",
         filterable_columns=("knowledge_base_id", "document_id"),
     ),
+    "chunk_summaries": CollectionConfig(
+        table_name="document_chunks",
+        embedding_column="summary_embedding",
+        filterable_columns=("knowledge_base_id", "document_id"),
+    ),
 }
 
 

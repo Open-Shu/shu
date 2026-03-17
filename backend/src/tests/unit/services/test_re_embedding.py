@@ -481,6 +481,7 @@ class TestHandleReEmbedFinalizeJob:
         mock_session.execute = AsyncMock(side_effect=[
             synopses_result, empty_result,  # synopses: data, then empty
             queries_result, empty_result,   # queries: data, then empty
+            empty_result,                   # chunk_summaries: empty
         ])
         mock_session.commit = AsyncMock()
 
@@ -493,7 +494,9 @@ class TestHandleReEmbedFinalizeJob:
 
         mock_embedding.embed_texts.assert_called_once()  # synopses
         mock_embedding.embed_queries.assert_called_once()  # queries
-        assert mock_vs.ensure_index.call_count == 3  # chunks, synopses, queries
+        assert mock_vs.ensure_index.call_count == 4  # chunks, synopses, queries, chunk_summaries
+        # Verify all phases executed: synopses (2), queries (2), chunk_summaries (1)
+        assert mock_session.execute.call_count == 5
         mock_kb.mark_re_embedding_complete.assert_called_once_with("new-model")
 
     @pytest.mark.asyncio
@@ -526,7 +529,7 @@ class TestHandleReEmbedFinalizeJob:
         ):
             await _handle_re_embed_finalize_job(job)
 
-        assert mock_vs.ensure_index.call_count == 3
+        assert mock_vs.ensure_index.call_count == 4  # chunks, synopses, queries, chunk_summaries
         mock_kb.mark_re_embedding_complete.assert_called_once_with("new-model")
 
     @pytest.mark.asyncio

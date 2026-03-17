@@ -25,12 +25,11 @@ logger = get_logger(__name__)
 
 # Default surface weights (can be overridden via config)
 DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
-    "chunk_vector": 0.30,
-    "query_match": 0.25,
-    "synopsis_match": 0.20,
-    # Future surfaces (PR 3+):
-    # "keyword_match": 0.15,
-    # "topic_match": 0.10,
+    "chunk_vector": 0.25,
+    "chunk_summary": 0.25,
+    "query_match": 0.20,
+    "synopsis_match": 0.15,
+    "keyword_match": 0.15,
 }
 
 # Maximum snippet length for contributing chunks
@@ -156,6 +155,12 @@ class ScoreFusionService:
             # Skip documents with no valid surface contributions
             if total_weight == 0:
                 continue
+
+            # Fill in 0.0 for surfaces that didn't contribute to this document
+            # This provides explicit visibility that a surface ran but found nothing
+            for surface_name in self._weights:
+                if surface_name not in surface_scores:
+                    surface_scores[surface_name] = 0.0
 
             # Normalize by total weight used
             final_score = weighted_sum / total_weight

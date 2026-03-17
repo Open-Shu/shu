@@ -4,6 +4,7 @@ This module defines the Document and DocumentChunk models which store
 document metadata, content, and vector embeddings.
 """
 
+import string
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, ClassVar
@@ -367,6 +368,9 @@ class DocumentChunk(BaseModel):
     # Shu RAG Chunk Profile (SHU-342)
     # Summary: One-line description with specific content for agent scanning and retrieval
     summary = Column(Text, nullable=True)
+    # Summary embedding for semantic retrieval (SHU-632) — query-encoded because summaries
+    # are short (~1 sentence) and semantically closer to queries than documents
+    summary_embedding = Column(Vector(), nullable=True)
     # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
     keywords = Column(JSONB, nullable=True)
     # Topics: Conceptual categories the chunk relates to (broader themes, domains)
@@ -426,7 +430,21 @@ class DocumentChunk(BaseModel):
 
         """
         self.summary = summary
-        self.keywords = keywords
+        # Normalize keywords: split any multi-word phrases the LLM emitted, lowercase,
+        # strip trailing punctuation, and deduplicate. This guards against prompt
+        # non-compliance and ensures the GIN ?| index matches correctly against
+        # lowercased query terms.
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for kw in keywords:
+            for token in kw.split():
+                # Strip trailing punctuation (e.g., "Q3," -> "Q3") but preserve
+                # leading and internal punctuation for identifiers like "$2.5M", "ICBN-123,445"
+                lowered = token.lower().rstrip(string.punctuation)
+                if lowered and lowered not in seen:
+                    seen.add(lowered)
+                    normalized.append(lowered)
+        self.keywords = normalized
         self.topics = topics
 
     @property

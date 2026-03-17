@@ -55,9 +55,11 @@ function QueryTester() {
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
   // Multi-surface search weights
-  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.3);
-  const [queryMatchWeight, setQueryMatchWeight] = useState(0.25);
-  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.2);
+  const [chunkVectorWeight, setChunkVectorWeight] = useState(0.25);
+  const [queryMatchWeight, setQueryMatchWeight] = useState(0.2);
+  const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.15);
+  const [keywordMatchWeight, setKeywordMatchWeight] = useState(0.15);
+  const [chunkSummaryWeight, setChunkSummaryWeight] = useState(0.25);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -112,6 +114,8 @@ function QueryTester() {
           chunk_vector_weight: params.chunkVectorWeight,
           query_match_weight: params.queryMatchWeight,
           synopsis_match_weight: params.synopsisMatchWeight,
+          keyword_match_weight: params.keywordMatchWeight,
+          chunk_summary_weight: params.chunkSummaryWeight,
         });
       }
 
@@ -147,6 +151,8 @@ function QueryTester() {
       chunkVectorWeight: chunkVectorWeight,
       queryMatchWeight: queryMatchWeight,
       synopsisMatchWeight: synopsisMatchWeight,
+      keywordMatchWeight: keywordMatchWeight,
+      chunkSummaryWeight: chunkSummaryWeight,
     });
   };
 
@@ -179,6 +185,8 @@ function QueryTester() {
         chunk_vector_weight: chunkVectorWeight,
         query_match_weight: queryMatchWeight,
         synopsis_match_weight: synopsisMatchWeight,
+        keyword_match_weight: keywordMatchWeight,
+        chunk_summary_weight: chunkSummaryWeight,
       };
     } else {
       return {
@@ -428,6 +436,32 @@ function QueryTester() {
                     <Slider
                       value={synopsisMatchWeight}
                       onChange={(_, newValue) => setSynopsisMatchWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 2 }}
+                    />
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Keyword Match: {keywordMatchWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={keywordMatchWeight}
+                      onChange={(_, newValue) => setKeywordMatchWeight(newValue)}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      valueLabelDisplay="auto"
+                      sx={{ mb: 2 }}
+                    />
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Chunk Summary: {chunkSummaryWeight.toFixed(2)}
+                    </Typography>
+                    <Slider
+                      value={chunkSummaryWeight}
+                      onChange={(_, newValue) => setChunkSummaryWeight(newValue)}
                       min={0}
                       max={1}
                       step={0.05}

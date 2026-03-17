@@ -75,6 +75,12 @@ class QueryRequest(BaseModel):
     synopsis_match_weight: float | None = Field(
         None, ge=0.0, le=1.0, description="Weight for synopsis match surface (None = use config default)"
     )
+    keyword_match_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for keyword match surface (None = use config default)"
+    )
+    chunk_summary_weight: float | None = Field(
+        None, ge=0.0, le=1.0, description="Weight for chunk summary surface (None = use config default)"
+    )
 
     @field_validator("query")
     @classmethod

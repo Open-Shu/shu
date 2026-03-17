@@ -25,7 +25,13 @@ from ..models.knowledge_base import KnowledgeBase
 from ..schemas.query import QueryRequest, QueryResponse, QueryResult, QueryType, SimilaritySearchRequest
 from .query_constants import COMPREHENSIVE_STOP_WORDS, TITLE_MATCH_STOP_WORDS
 from .retrieval import MultiSurfaceSearchService, ScoreFusionService
-from .retrieval.surfaces import ChunkVectorSurface, QueryMatchSurface, SynopsisMatchSurface
+from .retrieval.surfaces import (
+    ChunkSummaryVectorSurface,
+    ChunkVectorSurface,
+    KeywordMatchSurface,
+    QueryMatchSurface,
+    SynopsisMatchSurface,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -657,6 +663,8 @@ class QueryService:
                     chunk_vector_weight=request.chunk_vector_weight,
                     query_match_weight=request.query_match_weight,
                     synopsis_match_weight=request.synopsis_match_weight,
+                    keyword_match_weight=request.keyword_match_weight,
+                    chunk_summary_weight=request.chunk_summary_weight,
                 )
             else:
                 raise ShuException(f"Unsupported search type: {search_type}", "UNSUPPORTED_SEARCH_TYPE")
@@ -1480,11 +1488,13 @@ class QueryService:
         chunk_vector_weight: float | None = None,
         query_match_weight: float | None = None,
         synopsis_match_weight: float | None = None,
+        keyword_match_weight: float | None = None,
+        chunk_summary_weight: float | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
-        Executes chunk vector, query match, and synopsis match surfaces in parallel,
-        fuses scores, and returns document-level results.
+        Executes all 5 retrieval surfaces in parallel, fuses scores, and returns
+        document-level results.
 
         Args:
             knowledge_base_id: ID of the knowledge base to search
@@ -1494,6 +1504,8 @@ class QueryService:
             chunk_vector_weight: Weight for chunk vector surface (None = use config default)
             query_match_weight: Weight for query match surface (None = use config default)
             synopsis_match_weight: Weight for synopsis match surface (None = use config default)
+            keyword_match_weight: Weight for keyword match surface (None = use config default)
+            chunk_summary_weight: Weight for chunk summary surface (None = use config default)
 
         Returns:
             Dictionary with search results in QueryResponse format
@@ -1517,6 +1529,7 @@ class QueryService:
             # Preprocess query to extract keyword terms
             preprocessed = self.preprocess_query(query)
             keyword_terms = preprocessed["keyword_terms"]
+            logger.debug(f"Multi-surface keyword_terms extracted: {keyword_terms}")
 
             # Get dependencies
             vector_store = await get_vector_store()
@@ -1538,14 +1551,26 @@ class QueryService:
                     if synopsis_match_weight is not None
                     else settings.multi_surface_synopsis_match_weight
                 ),
+                "keyword_match": (
+                    keyword_match_weight
+                    if keyword_match_weight is not None
+                    else settings.multi_surface_keyword_match_weight
+                ),
+                "chunk_summary": (
+                    chunk_summary_weight
+                    if chunk_summary_weight is not None
+                    else settings.multi_surface_chunk_summary_weight
+                ),
             }
             logger.info(f"Multi-surface weights: {weights}")
 
-            # Create surfaces
+            # Create surfaces (5 active)
             surfaces = [
                 ChunkVectorSurface(vector_store),
+                ChunkSummaryVectorSurface(vector_store),
                 QueryMatchSurface(vector_store),
                 SynopsisMatchSurface(vector_store),
+                KeywordMatchSurface(),
             ]
 
             # Create fusion service with configured weights

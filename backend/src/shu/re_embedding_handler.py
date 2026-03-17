@@ -516,7 +516,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0912, PLR0915
     from .core.database import get_async_session_local
     from .core.embedding_service import get_embedding_service
     from .core.vector_store import VectorEntry, get_vector_store
-    from .models.document import Document, DocumentQuery
+    from .models.document import Document, DocumentChunk, DocumentQuery
     from .models.knowledge_base import KnowledgeBase
 
     settings = get_settings_instance()
@@ -632,6 +632,44 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0912, PLR0915
                     extra={"knowledge_base_id": knowledge_base_id, "count": queries_count},
                 )
 
+            # --- Phase: chunk_summaries ---
+            kb.update_re_embedding_phase("chunk_summaries")
+            await session.commit()
+
+            chunk_summaries_count = 0
+            chunk_summaries_base = (
+                select(DocumentChunk)
+                .where(
+                    DocumentChunk.knowledge_base_id == knowledge_base_id,
+                    DocumentChunk.summary.is_not(None),  # type: ignore[union-attr]
+                    DocumentChunk.summary != "",  # type: ignore[union-attr]
+                )
+                .order_by(DocumentChunk.id)
+                .limit(settings.embedding_batch_size)
+            )
+
+            offset = 0
+            while True:
+                result = await session.execute(chunk_summaries_base.offset(offset))
+                batch = list(result.scalars().all())
+                if not batch:
+                    break
+
+                chunk_summaries_count += len(batch)
+                texts = [str(c.summary) for c in batch]
+                embeddings = await embedding_service.embed_texts(texts)
+
+                entries = [VectorEntry(id=str(c.id), vector=emb) for c, emb in zip(batch, embeddings, strict=True)]
+                await vector_store.store_embeddings("chunk_summaries", entries, db=session)
+                await session.commit()
+                offset += len(batch)
+
+            if chunk_summaries_count:
+                logger.info(
+                    "Re-embedded chunk summaries",
+                    extra={"knowledge_base_id": knowledge_base_id, "count": chunk_summaries_count},
+                )
+
             # --- Phase: indexes ---
             kb.update_re_embedding_phase("indexes")
             await session.commit()
@@ -639,6 +677,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0912, PLR0915
             await vector_store.ensure_index("chunks", target_dimension, db=session)
             await vector_store.ensure_index("synopses", target_dimension, db=session)
             await vector_store.ensure_index("queries", target_dimension, db=session)
+            await vector_store.ensure_index("chunk_summaries", target_dimension, db=session)
             await session.commit()
 
             # --- Mark complete ---
@@ -652,6 +691,7 @@ async def _handle_re_embed_finalize_job(job) -> None:  # noqa: PLR0912, PLR0915
                     "knowledge_base_id": knowledge_base_id,
                     "synopses_processed": synopses_count,
                     "queries_processed": queries_count,
+                    "chunk_summaries_processed": chunk_summaries_count,
                     "model": target_model,
                     "dimension": target_dimension,
                 },
