@@ -58,6 +58,10 @@ def profiling_service(mock_side_call_service, mock_settings):
 class TestChunkProfiling:
     """Tests for profile_chunks method."""
 
+    def test_chunk_profile_prompt_does_not_force_single_token_keywords(self):
+        """The profiling prompt should not push the model toward collapsed compound keywords."""
+        assert "single tokens only" not in CHUNK_PROFILE_SYSTEM_PROMPT
+
     @pytest.mark.asyncio
     async def test_profile_chunks_success(self, profiling_service, mock_side_call_service):
         """Test successful chunk profiling with summary."""

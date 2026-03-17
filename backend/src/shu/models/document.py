@@ -4,6 +4,7 @@ This module defines the Document and DocumentChunk models which store
 document metadata, content, and vector embeddings.
 """
 
+import re
 import string
 from datetime import UTC, datetime
 from enum import Enum
@@ -457,15 +458,57 @@ class DocumentChunk(BaseModel):
         normalized: list[str] = []
         seen: set[str] = set()
         for kw in keywords:
+            if self._should_skip_keyword_phrase(kw):
+                continue
             for token in kw.split():
                 # Strip trailing punctuation (e.g., "Q3," -> "Q3") but preserve
                 # leading and internal punctuation for identifiers like "$2.5M", "ICBN-123,445"
                 lowered = token.lower().rstrip(string.punctuation)
+                if self._should_skip_keyword_token(lowered):
+                    continue
                 if lowered and lowered not in seen:
                     seen.add(lowered)
                     normalized.append(lowered)
         self.keywords = normalized
         self.topics = topics
+
+    @staticmethod
+    def _should_skip_keyword_phrase(keyword: str) -> bool:
+        """Return True for phrases that are timing noise, not retrieval keywords."""
+        cleaned = keyword.lower().strip()
+        if not cleaned:
+            return True
+
+        # Single alphabetic characters are too low-signal for keyword retrieval.
+        if len(cleaned) == 1 and cleaned.isalpha():
+            return True
+
+        # Timespans like "0.5 h", "12h", "3 days"
+        if re.fullmatch(
+            r"\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|min|mins|minute|minutes|day|days|week|weeks|month|months|year|years)",
+            cleaned,
+        ):
+            return True
+
+        # Numeric sampling schedules like "1 2 4 8 12"
+        if re.fullmatch(r"\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)+", cleaned):
+            return True
+
+        # Timing phrases frequently emitted by the profiler
+        return cleaned in {"post dose", "pre dose", "predose", "postdose", "baseline"}
+
+    @staticmethod
+    def _should_skip_keyword_token(token: str) -> bool:
+        """Return True for low-signal tokens produced after splitting."""
+        if not token:
+            return True
+
+        # Drop raw numbers like "0.5", "1", "12"
+        if re.fullmatch(r"\d+(?:\.\d+)?", token):
+            return True
+
+        # Drop standalone temporal units
+        return token in {"h", "hr", "hrs", "hour", "hours", "min", "mins", "minute", "minutes"}
 
     @property
     def is_profiled(self) -> bool:

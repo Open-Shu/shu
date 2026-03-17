@@ -290,6 +290,29 @@ class TestDocumentChunk:
         assert chunk.topics == ["budget planning", "approvals"]
         assert chunk.is_profiled is True
 
+    def test_set_profile_filters_raw_numbers_and_timespans(self):
+        """Drop timing noise while keeping useful retrieval terms."""
+        chunk = DocumentChunk()
+        chunk.content = "Nasal swab culture CFU count blood PK sampling 0.5 h 1 2 4 8 12 post dose"
+        chunk.char_count = len(chunk.content)
+
+        chunk.set_profile(
+            summary="PK specimen collection schedule",
+            keywords=["nasal swab culture", "cfu count", "blood pk sampling", "k", "0.5 h", "1 2 4 8 12", "post dose"],
+            topics=["pk sampling"],
+        )
+
+        assert chunk.keywords == [
+            "nasal",
+            "swab",
+            "culture",
+            "cfu",
+            "count",
+            "blood",
+            "pk",
+            "sampling",
+        ]
+
     def test_is_profiled_property(self):
         """Test is_profiled property."""
         chunk = DocumentChunk()
