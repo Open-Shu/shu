@@ -1,0 +1,241 @@
+"""Hybrid search mixin for query service.
+
+Combines similarity and keyword search with configurable weights.
+"""
+
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+from ...core.exceptions import ShuException
+from ...schemas.query import SimilaritySearchRequest
+from .base import measure_execution_time
+
+logger = logging.getLogger(__name__)
+
+
+class HybridSearchMixin:
+    """Mixin providing hybrid (similarity + keyword) search."""
+
+    @measure_execution_time
+    async def hybrid_search(  # noqa: PLR0915
+        self,
+        knowledge_base_id: str,
+        query: str,
+        limit: int = 10,
+        threshold: float = 0.0,
+        *,
+        title_weighting_enabled: bool | None = None,
+        title_weight_multiplier: float | None = None,
+    ) -> dict[str, Any]:
+        """Perform hybrid search (combination of similarity and keyword).
+
+        This method combines results from both similarity and keyword search,
+        properly handling stop word filtering by delegating to the existing
+        search methods.
+
+        Args:
+            knowledge_base_id: ID of the knowledge base to search
+            query: Search query
+            limit: Maximum number of results to return
+            threshold: Similarity threshold for filtering results
+
+        Returns:
+            Dictionary with search results
+
+        """
+        try:
+            # Verify knowledge base exists
+            knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
+
+            # Log hybrid search request
+            logger.info(
+                f"Hybrid search: query='{query[:100]}...' kb_id={knowledge_base_id} limit={limit} threshold={threshold}"
+            )
+
+            # Get similarity search results (may fail if KB has stale embeddings)
+            similarity_response = None
+            try:
+                similarity_request = SimilaritySearchRequest(
+                    query=query,
+                    limit=limit,
+                    threshold=threshold,
+                    include_embeddings=False,
+                    document_ids=None,
+                    file_types=None,
+                    created_after=None,
+                    created_before=None,
+                )
+                similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+            except ShuException as e:
+                if e.error_code == "KNOWLEDGE_BASE_STALE_EMBEDDINGS":
+                    logger.warning(
+                        f"Hybrid search falling back to keyword-only: KB {knowledge_base_id} has stale embeddings"
+                    )
+                else:
+                    raise
+
+            # Get keyword search results (this handles stop word filtering correctly)
+            keyword_response = await self.keyword_search(
+                knowledge_base_id,
+                query,
+                limit,
+                title_weighting_enabled=title_weighting_enabled,
+                title_weight_multiplier=title_weight_multiplier,
+            )
+
+            # Log keyword search results for debugging
+            logger.info(
+                f"Hybrid search keyword results: total={keyword_response.get('total_results', 0)}, top_docs={[r.get('document_title', 'unknown')[:50] for r in keyword_response.get('results', [])[:3]]}"
+            )
+
+            # If similarity search was skipped (stale KB), return keyword-only results
+            if similarity_response is None:
+                from ...schemas.query import QueryResponse, QueryType
+
+                response = QueryResponse(
+                    results=keyword_response["results"],
+                    total_results=keyword_response["total_results"],
+                    query=query,
+                    query_type=QueryType.HYBRID,
+                    execution_time=0.0,
+                    similarity_threshold=threshold,
+                    embedding_model=str(knowledge_base.embedding_model),
+                    processed_at=datetime.now(UTC),
+                )
+                return response.model_dump()
+
+            # If keyword search returned empty results due to stop words, return only similarity results
+            if keyword_response["total_results"] == 0:
+                logger.info(
+                    f"Keyword search returned no results for query '{query}', returning only similarity results"
+                )
+                # Create a new response with hybrid query type but similarity results
+                from ...schemas.query import QueryResponse, QueryType
+
+                response = QueryResponse(
+                    results=similarity_response["results"],
+                    total_results=similarity_response["total_results"],
+                    query=query,
+                    query_type=QueryType.HYBRID,
+                    execution_time=0.0,  # Will be set by decorator
+                    similarity_threshold=threshold,
+                    embedding_model=str(knowledge_base.embedding_model),
+                    processed_at=datetime.now(UTC),
+                )
+                return response.model_dump()
+
+            # Combine and rank results from both searches
+            combined_results = {}
+
+            # Add similarity results
+            for chunk in similarity_response["results"]:
+                # Handle both chunk_id and id fields for compatibility
+                chunk_id = chunk.get("chunk_id") or chunk.get("id")
+                combined_results[chunk_id] = {
+                    "chunk": chunk,
+                    "similarity_score": float(chunk.get("similarity_score", 0.0)),
+                    "keyword_score": 0.0,
+                    "combined_score": float(chunk.get("similarity_score", 0.0))
+                    * self.config_manager.get_hybrid_similarity_weight(),
+                }
+
+            # Add keyword results
+            for chunk in keyword_response["results"]:
+                # Handle both chunk_id and id fields for compatibility
+                chunk_id = chunk.get("chunk_id") or chunk.get("id")
+                if chunk_id in combined_results:
+                    # Update existing result with keyword score
+                    keyword_score = float(
+                        chunk.get("similarity_score", 0.8)
+                    )  # Use similarity_score from keyword search
+                    combined_results[chunk_id]["keyword_score"] = keyword_score
+                    combined_results[chunk_id]["combined_score"] = (
+                        combined_results[chunk_id]["similarity_score"]
+                        * self.config_manager.get_hybrid_similarity_weight()
+                        + keyword_score * self.config_manager.get_hybrid_keyword_weight()
+                    )
+                else:
+                    # Create new result from keyword search
+                    keyword_score = float(
+                        chunk.get("similarity_score", 0.8)
+                    )  # Use similarity_score from keyword search
+                    combined_results[chunk_id] = {
+                        "chunk": chunk,
+                        "similarity_score": 0.0,
+                        "keyword_score": keyword_score,
+                        "combined_score": keyword_score * self.config_manager.get_hybrid_keyword_weight(),
+                    }
+
+            # Get RAG configuration for chunk limits
+            rag_config = await self._get_rag_config(knowledge_base_id)
+            max_chunks_per_doc = rag_config.get("max_chunks_per_document", 2)
+
+            # Sort by combined score and apply document de-duplication
+            # Group by document and keep top chunks per document
+            document_results = {}
+            for result in combined_results.values():
+                chunk = result["chunk"]
+                # Handle both object and dictionary chunk formats
+                doc_id = chunk.document_id if hasattr(chunk, "document_id") else chunk["document_id"]
+                if doc_id not in document_results:
+                    document_results[doc_id] = []
+                document_results[doc_id].append(result)
+
+            # Sort chunks within each document by combined score
+            for _, doc_results in document_results.items():
+                doc_results.sort(key=lambda x: x["combined_score"], reverse=True)
+
+            # Flatten results with per-document cap, then re-sort globally
+            sorted_results = []
+            for _, doc_results in document_results.items():
+                sorted_results.extend(doc_results[:max_chunks_per_doc])
+
+            sorted_results.sort(key=lambda x: x["combined_score"], reverse=True)
+            sorted_results = sorted_results[:limit]
+
+            # Convert to QueryResponse format
+            from ...schemas.query import QueryResponse, QueryResult, QueryType
+
+            query_results = []
+            for result in sorted_results:
+                chunk = result["chunk"]
+
+                # Handle both object and dictionary chunk formats
+                def get_attr(obj, attr):
+                    if hasattr(obj, attr):
+                        return getattr(obj, attr)
+                    if attr == "id" and "chunk_id" in obj:
+                        return obj["chunk_id"]  # Handle chunk_id vs id mapping
+                    return obj[attr]
+
+                query_result = QueryResult(
+                    chunk_id=get_attr(chunk, "id"),
+                    document_id=get_attr(chunk, "document_id"),
+                    document_title=get_attr(chunk, "document_title") or "Unknown Document",
+                    content=get_attr(chunk, "content"),
+                    similarity_score=result["combined_score"],
+                    chunk_index=get_attr(chunk, "chunk_index"),
+                    start_char=get_attr(chunk, "start_char"),
+                    end_char=get_attr(chunk, "end_char"),
+                    file_type=get_attr(chunk, "file_type") or "txt",
+                    source_url=get_attr(chunk, "source_url"),
+                    source_id=get_attr(chunk, "source_id"),
+                    created_at=get_attr(chunk, "created_at"),
+                )
+                query_results.append(query_result)
+
+            response = QueryResponse(
+                results=query_results,
+                total_results=len(query_results),
+                query=query,
+                query_type=QueryType.HYBRID,
+                execution_time=0.0,  # Will be set by decorator
+                similarity_threshold=threshold,
+                embedding_model=str(knowledge_base.embedding_model),
+                processed_at=datetime.now(UTC),
+            )
+            return response.model_dump()
+        except Exception as e:
+            logger.error(f"Failed to perform hybrid search: {e}", exc_info=True)
+            raise ShuException(f"Failed to perform hybrid search: {e!s}", "HYBRID_SEARCH_ERROR")

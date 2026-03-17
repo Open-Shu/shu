@@ -366,3 +366,94 @@ class QueryServiceBase:
         except Exception as e:
             logger.error(f"Failed to list documents: {e}", exc_info=True)
             raise ShuException(f"Failed to list documents: {e!s}", "DOCUMENT_LIST_ERROR")
+
+    async def _maybe_escalate_full_documents(
+        self,
+        knowledge_base: KnowledgeBase,
+        rag_config: dict[str, Any],
+        query: str,
+        results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """If configured, escalate top documents to full text with token cap enforcement.
+        Returns an escalation dict suitable to embed in API response.
+        """
+        try:
+            fetch_full = rag_config.get("fetch_full_documents", False)
+            if not fetch_full:
+                return {"enabled": False}
+
+            max_docs = int(rag_config.get("full_doc_max_docs", 1))
+            token_cap = int(rag_config.get("full_doc_token_cap", 8000))
+
+            # Deduplicate in original order by document_id
+            doc_ids: list[str] = []
+            for r in results:
+                doc_id = r.get("document_id")
+                if doc_id and doc_id not in doc_ids:
+                    doc_ids.append(doc_id)
+                if len(doc_ids) >= max_docs:
+                    break
+
+            if not doc_ids:
+                return {"enabled": False}
+
+            # Fetch full documents
+            docs_result = await self.db.execute(
+                select(Document).where(and_(Document.knowledge_base_id == knowledge_base.id, Document.id.in_(doc_ids)))
+            )
+            docs = list(docs_result.scalars().all())
+            doc_map = {d.id: d for d in docs}
+
+            escalated_docs: list[dict[str, Any]] = []
+            total_tokens = 0
+            for did in doc_ids:
+                d = doc_map.get(did)
+                if not d:
+                    continue
+                content = d.content or ""
+                # Estimate tokens using words; we document this limitation
+                est_tokens = d.word_count if d.word_count is not None else len(content.split())
+
+                if est_tokens <= token_cap:
+                    escalated_docs.append(
+                        {
+                            "document_id": d.id,
+                            "title": d.title,
+                            "token_count_estimated": int(est_tokens),
+                            "token_cap": token_cap,
+                            "content": content,
+                            "segments": None,
+                            "token_cap_enforced": False,
+                        }
+                    )
+                    total_tokens += int(est_tokens)
+                else:
+                    # Segment by simple word-slices
+                    words = content.split()
+                    allowed = max(token_cap, 0)
+                    segment_words = words[:allowed]
+                    segment_text = " ".join(segment_words)
+                    escalated_docs.append(
+                        {
+                            "document_id": d.id,
+                            "title": d.title,
+                            "token_count_estimated": int(est_tokens),
+                            "token_cap": token_cap,
+                            "content": None,
+                            "segments": [segment_text],
+                            "token_cap_enforced": True,
+                        }
+                    )
+                    total_tokens += token_cap
+
+            return {
+                "enabled": True,
+                "reason": "kb_config.fetch_full_documents",
+                "max_docs": max_docs,
+                "token_cap": token_cap,
+                "avg_tokens_escalated": (total_tokens / max(len(escalated_docs), 1)),
+                "docs": escalated_docs,
+            }
+        except Exception as e:
+            logger.warning(f"Full-doc escalation failed: {e}")
+            return {"enabled": False, "error": str(e)}

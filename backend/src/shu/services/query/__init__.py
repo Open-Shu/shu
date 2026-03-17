@@ -1,17 +1,14 @@
 """Query service package.
 
-This package provides the QueryService for document queries and search operations.
-For backward compatibility, QueryService is re-exported from the original module.
+This package provides mixin modules that compose the QueryService class:
 
-Future work (SHU-627): Split into separate modules:
-- base.py: Shared utilities and base class
-- similarity.py: Vector similarity search
-- keyword.py: Keyword-based search
-- hybrid.py: Combined similarity + keyword search
-- multi_surface.py: Multi-surface search orchestration
+- base.py: Shared utilities, preprocessing, and base class (QueryServiceBase)
+- similarity.py: Vector similarity search (SimilaritySearchMixin)
+- keyword.py: Keyword-based search with title weighting (KeywordSearchMixin)
+- hybrid.py: Combined similarity + keyword search (HybridSearchMixin)
+- multi_surface.py: Multi-surface search orchestration (MultiSurfaceSearchMixin)
+- constants.py: Stop word sets
+
+QueryService is composed from these mixins in query_service.py (one level up).
+Import it via: ``from shu.services.query_service import QueryService``
 """
-
-# Re-export from original module for backward compatibility
-from ..query_service import QueryService
-
-__all__ = ["QueryService"]

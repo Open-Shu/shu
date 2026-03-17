@@ -12,10 +12,13 @@ stale KB detection and re-embedding progress tracking (SHU-605).
 
 Adds document_chunks.summary_embedding for chunk summary vector retrieval (SHU-632).
 
+Renames knowledge_bases.rag_max_results to rag_max_chunks for clarity (SHU-631).
+
 Columns altered:
 - document_chunks.embedding
 - documents.synopsis_embedding
 - document_queries.query_embedding
+- knowledge_bases.rag_max_results → rag_max_chunks
 
 Columns added:
 - knowledge_bases.embedding_status
@@ -96,6 +99,18 @@ def upgrade() -> None:
         "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS summary_embedding vector"
     )
 
+    # 6. Rename rag_max_results → rag_max_chunks (SHU-631, idempotent)
+    has_old_col = conn.execute(
+        sa.text(
+            "SELECT EXISTS("
+            "  SELECT 1 FROM information_schema.columns"
+            "  WHERE table_name = 'knowledge_bases' AND column_name = 'rag_max_results'"
+            ")"
+        )
+    ).scalar()
+    if has_old_col:
+        op.alter_column("knowledge_bases", "rag_max_results", new_column_name="rag_max_chunks")
+
 
 def downgrade() -> None:
     """Restore Vector(384) columns and IVFFlat indexes."""
@@ -109,25 +124,37 @@ def downgrade() -> None:
     if not pgvector_available:
         return
 
-    # 1. Drop summary_embedding column (SHU-632)
+    # 1. Rename rag_max_chunks back to rag_max_results (SHU-631, idempotent)
+    has_new_col = conn.execute(
+        sa.text(
+            "SELECT EXISTS("
+            "  SELECT 1 FROM information_schema.columns"
+            "  WHERE table_name = 'knowledge_bases' AND column_name = 'rag_max_chunks'"
+            ")"
+        )
+    ).scalar()
+    if has_new_col:
+        op.alter_column("knowledge_bases", "rag_max_chunks", new_column_name="rag_max_results")
+
+    # 2. Drop summary_embedding column (SHU-632)
     op.execute("ALTER TABLE document_chunks DROP COLUMN IF EXISTS summary_embedding")
 
-    # 2. Drop embedding status columns (SHU-605)
+    # 3. Drop embedding status columns (SHU-605)
     op.execute("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS re_embedding_progress")
     op.execute("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS embedding_status")
 
-    # 3. ALTER columns back to vector(384)
+    # 4. ALTER columns back to vector(384)
     for table, column in _VECTOR_COLUMNS:
         op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE vector(384)")
 
-    # 4. Restore original embedding model default
+    # 5. Restore original embedding model default
     op.alter_column(
         "knowledge_bases",
         "embedding_model",
         server_default=sa.text("'sentence-transformers/all-MiniLM-L6-v2'"),
     )
 
-    # 5. Recreate original IVFFlat indexes
+    # 6. Recreate original IVFFlat indexes
     if not index_exists(inspector, "document_chunks", "idx_document_chunks_embedding"):
         op.execute(
             """
