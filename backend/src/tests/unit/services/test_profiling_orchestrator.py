@@ -168,6 +168,7 @@ class TestRunForDocument:
         assert result.document_profile.synopsis == "Incremental synopsis from accumulated summaries"
         assert result.chunk_coverage_percent == 100.0
         assert result.synopsis_embedded is True
+        assert result.chunk_summaries_embedded == 0
         assert result.queries_embedded == 2
         # Verify queries were persisted
         assert mock_db.add.call_count == 2
@@ -577,6 +578,54 @@ class TestEmbedProfileArtifacts:
         mock_embed.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_embeds_chunk_summaries(self, orchestrator, mock_db):
+        """Test that chunk summaries are embedded when chunks have summaries."""
+        doc = create_mock_document()
+        doc.synopsis = None  # No synopsis
+
+        # Create mock chunks with summaries eligible for embedding
+        mock_chunk1 = MagicMock()
+        mock_chunk1.id = "chunk-1"
+        mock_chunk1.summary = "Summary for chunk 1"
+        mock_chunk1.summary_embedding = None
+
+        mock_chunk2 = MagicMock()
+        mock_chunk2.id = "chunk-2"
+        mock_chunk2.summary = "Summary for chunk 2"
+        mock_chunk2.summary_embedding = None
+
+        # First execute: chunk summaries query returns chunks
+        # Second execute: chunk summaries query returns empty (end of batch)
+        # Third execute: queries query returns empty
+        chunks_result = MagicMock()
+        chunks_result.scalars.return_value.all.return_value = [mock_chunk1, mock_chunk2]
+        empty_result = MagicMock()
+        empty_result.scalars.return_value.all.return_value = []
+        mock_db.execute.side_effect = [chunks_result, empty_result]
+
+        fake_embeddings = [[0.1] * 384, [0.2] * 384]
+        mock_vector_store = AsyncMock()
+        mock_vector_store.store_embeddings = AsyncMock(return_value=2)
+        with (
+            patch.object(orchestrator, "_embed_texts", new=AsyncMock(return_value=fake_embeddings)),
+            patch(
+                "shu.core.vector_store.get_vector_store",
+                new=AsyncMock(return_value=mock_vector_store),
+            ),
+        ):
+            synopsis_embedded, chunk_summaries_embedded, queries_embedded = await orchestrator._embed_profile_artifacts(doc)
+
+        assert synopsis_embedded is False
+        assert chunk_summaries_embedded == 2
+        assert queries_embedded == 0
+        # Verify VectorStore was called for chunk_summaries collection
+        mock_vector_store.store_embeddings.assert_called_once()
+        call_args = mock_vector_store.store_embeddings.call_args
+        assert call_args[0][0] == "chunk_summaries"
+        entries = call_args[0][1]
+        assert len(entries) == 2
+
+    @pytest.mark.asyncio
     async def test_embedding_failure_isolated_in_run_for_document(self, orchestrator, mock_db):
         """Test that embedding failure doesn't fail the profiling job."""
         doc = create_mock_document()
@@ -661,4 +710,5 @@ class TestEmbedProfileArtifacts:
 
         assert result.success is True
         assert result.synopsis_embedded is True
+        assert result.chunk_summaries_embedded == 0
         assert result.queries_embedded == 1

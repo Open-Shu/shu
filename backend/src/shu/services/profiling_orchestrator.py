@@ -172,6 +172,7 @@ class ProfilingOrchestrator:
                 duration_ms=duration_ms,
                 chunk_coverage_percent=coverage_percent,
                 synopsis_embedded=synopsis_embedded,
+                chunk_summaries_embedded=chunk_summaries_embedded,
                 queries_embedded=queries_embedded,
             )
 

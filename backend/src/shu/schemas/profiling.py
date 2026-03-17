@@ -137,6 +137,7 @@ class ProfilingResult(BaseModel):
     duration_ms: int = Field(0, description="Total profiling duration in milliseconds")
     chunk_coverage_percent: float = Field(100.0, description="Percentage of chunks successfully profiled")
     synopsis_embedded: bool = Field(False, description="Whether synopsis embedding was generated")
+    chunk_summaries_embedded: int = Field(0, description="Number of chunk summaries embedded")
     queries_embedded: int = Field(0, description="Number of synthesized queries embedded")
 
 
