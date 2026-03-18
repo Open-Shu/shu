@@ -33,16 +33,16 @@ VALID_RAG_CONFIG = {
     "context_format": "detailed",
     "prompt_template": "technical",
     "search_threshold": 0.8,
-    "max_results": 15,
+    "max_chunks": 15,
     "chunk_overlap_ratio": 0.3,
     "search_type": "similarity",
 }
 
-MINIMAL_RAG_CONFIG = {"search_threshold": 0.6, "max_results": 5}
+MINIMAL_RAG_CONFIG = {"search_threshold": 0.6, "max_chunks": 5}
 
 INVALID_RAG_CONFIG = {
     "search_threshold": 1.5,  # Invalid: > 1.0
-    "max_results": 100,  # Invalid: > 50
+    "max_chunks": 100,  # Invalid: > 50
     "reference_format": "invalid_format",  # Invalid format
     "context_format": "invalid_context",  # Invalid format
     "chunk_overlap_ratio": 0.8,  # Invalid: > 0.5
@@ -70,7 +70,7 @@ async def test_get_default_rag_config(client, db, auth_headers):
         "context_format",
         "prompt_template",
         "search_threshold",
-        "max_results",
+        "max_chunks",
         "chunk_overlap_ratio",
         "version",
     ]
@@ -84,7 +84,7 @@ async def test_get_default_rag_config(client, db, auth_headers):
     assert config_data["context_format"] in ["detailed", "simple"]
     assert config_data["prompt_template"] in ["academic", "business", "technical", "custom"]
     assert 0.1 <= config_data["search_threshold"] <= 1.0
-    assert 1 <= config_data["max_results"] <= 50
+    assert 1 <= config_data["max_chunks"] <= 50
     assert 0.0 <= config_data["chunk_overlap_ratio"] <= 0.5
 
     print("✅ Default RAG config retrieved with valid structure and values")
@@ -113,7 +113,7 @@ async def test_update_rag_config_valid(client, db, auth_headers):
     assert updated_config["context_format"] == VALID_RAG_CONFIG["context_format"]
     assert updated_config["prompt_template"] == VALID_RAG_CONFIG["prompt_template"]
     assert updated_config["search_threshold"] == VALID_RAG_CONFIG["search_threshold"]
-    assert updated_config["max_results"] == VALID_RAG_CONFIG["max_results"]
+    assert updated_config["max_chunks"] == VALID_RAG_CONFIG["max_chunks"]
     assert updated_config["chunk_overlap_ratio"] == VALID_RAG_CONFIG["chunk_overlap_ratio"]
     assert updated_config["search_type"] == VALID_RAG_CONFIG["search_type"]
 
@@ -126,13 +126,13 @@ async def test_update_rag_config_valid(client, db, auth_headers):
     # Check if configuration actually persisted
     if (
         persisted_config["search_threshold"] != VALID_RAG_CONFIG["search_threshold"]
-        or persisted_config["max_results"] != VALID_RAG_CONFIG["max_results"]
+        or persisted_config["max_chunks"] != VALID_RAG_CONFIG["max_chunks"]
     ):
         print("🐛 CRITICAL BUG DETECTED: RAG configuration is not persisting!")
         print(
             f"Expected search_threshold: {VALID_RAG_CONFIG['search_threshold']}, got: {persisted_config['search_threshold']}"
         )
-        print(f"Expected max_results: {VALID_RAG_CONFIG['max_results']}, got: {persisted_config['max_results']}")
+        print(f"Expected max_chunks: {VALID_RAG_CONFIG['max_chunks']}, got: {persisted_config['max_chunks']}")
         print("The update endpoint returns updated values but doesn't persist them to database")
         print("This is a critical functionality gap that needs to be implemented")
         # For now, we'll pass the test but document the issue
@@ -158,14 +158,14 @@ async def test_rag_config_validation(client, db, auth_headers):
     )
     assert response.status_code == 422, f"Should reject search_threshold > 1.0, got {response.status_code}"
 
-    # Test invalid max results
-    invalid_max_results = {"max_results": 100}
+    # Test invalid max chunks
+    invalid_max_chunks = {"max_chunks": 100}
     response = await client.put(
         f"/api/v1/knowledge-bases/{kb_id}/rag-config",
-        json=invalid_max_results,
+        json=invalid_max_chunks,
         headers=auth_headers,
     )
-    assert response.status_code == 422, f"Should reject max_results > 50, got {response.status_code}"
+    assert response.status_code == 422, f"Should reject max_chunks > 50, got {response.status_code}"
 
     # Test invalid reference format
     invalid_ref_format = {"reference_format": "invalid_format"}

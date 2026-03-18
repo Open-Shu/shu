@@ -255,8 +255,16 @@ const DocumentResults = function DocumentResults({
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={doc.processing_status}
-                    color={doc.processing_status === 'processed' ? 'success' : 'default'}
+                    label={doc.processing_status?.replace(/_/g, ' ')}
+                    color={
+                      ['content_processed', 'rag_processed', 'profile_processed'].includes(
+                        doc.processing_status?.toLowerCase()
+                      )
+                        ? 'success'
+                        : doc.processing_status?.toLowerCase() === 'error'
+                          ? 'error'
+                          : 'default'
+                    }
                     size="small"
                   />
                 </TableCell>

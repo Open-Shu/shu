@@ -18,7 +18,10 @@ class ProcessingStatus(str, Enum):
     EXTRACTING = "extracting"
     EMBEDDING = "embedding"
     PROFILING = "profiling"
-    PROCESSED = "processed"
+    ARTIFACT_EMBEDDING = "artifact_embedding"
+    CONTENT_PROCESSED = "content_processed"
+    RAG_PROCESSED = "rag_processed"
+    PROFILE_PROCESSED = "profile_processed"
     ERROR = "error"
 
 

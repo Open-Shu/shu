@@ -261,7 +261,7 @@ class MessageContextBuilder:
             return QueryRequest(
                 query=query_text,
                 query_type=query_type,
-                limit=rag_config.get("max_results") or self.config_manager.get_rag_max_results(),
+                limit=rag_config.get("max_chunks") or self.config_manager.get_rag_max_chunks(),
                 similarity_threshold=rag_config.get("search_threshold")
                 or self.config_manager.get_rag_search_threshold(),
                 include_metadata=True,

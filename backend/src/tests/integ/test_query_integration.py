@@ -41,7 +41,7 @@ async def test_query_search_basic(client, db, auth_headers):
     kb_id = extract_data(kb_response)["id"]
 
     # Test search endpoint
-    search_data = {"query": "test search query", "search_type": "semantic", "limit": 5}
+    search_data = {"query": "test search query", "query_type": "similarity", "limit": 5}
 
     response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data, headers=auth_headers)
     # Should succeed even if no documents exist
@@ -109,7 +109,7 @@ async def test_query_hybrid_search(client, db, auth_headers):
     # Test hybrid search
     hybrid_data = {
         "query": "machine learning algorithms",
-        "search_type": "hybrid",
+        "query_type": "hybrid",
         "limit": 8,
         "semantic_weight": 0.7,
         "keyword_weight": 0.3,
@@ -184,7 +184,7 @@ async def test_query_with_filters(client, db, auth_headers):
     # Test search with filters
     filtered_data = {
         "query": "project documentation",
-        "search_type": "semantic",
+        "query_type": "similarity",
         "limit": 5,
         "filters": {"source_type": "filesystem", "file_type": "pdf"},
         "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
@@ -225,7 +225,7 @@ async def test_query_invalid_knowledge_base(client, db, auth_headers):
     """Test query with invalid knowledge base ID."""
     invalid_kb_id = "550e8400-e29b-41d4-a716-446655440000"
 
-    search_data = {"query": "test query", "search_type": "semantic", "limit": 5}
+    search_data = {"query": "test query", "query_type": "similarity", "limit": 5}
 
     response = await client.post(f"/api/v1/query/{invalid_kb_id}/search", json=search_data, headers=auth_headers)
     assert response.status_code == 200
@@ -275,7 +275,7 @@ async def test_query_unauthorized_access(client, db, auth_headers):
     kb_id = extract_data(kb_response)["id"]
 
     # Test without auth headers
-    search_data = {"query": "test", "search_type": "semantic"}
+    search_data = {"query": "test", "query_type": "similarity"}
 
     response = await client.post(f"/api/v1/query/{kb_id}/search", json=search_data)
     assert response.status_code == 401
@@ -305,7 +305,7 @@ async def test_query_performance_limits(client, db, auth_headers):
     # Test with maximum allowed limit
     search_data = {
         "query": "performance test query",
-        "search_type": "semantic",
+        "query_type": "similarity",
         "limit": 100,  # Test maximum limit
     }
 
@@ -328,12 +328,12 @@ async def test_query_different_search_types(client, db, auth_headers):
     kb_id = extract_data(kb_response)["id"]
 
     # Test different search types
-    search_types = ["semantic", "keyword", "hybrid"]
+    search_types = ["similarity", "keyword", "hybrid"]
 
     for search_type in search_types:
         search_data = {
             "query": f"test {search_type} search",
-            "search_type": search_type,
+            "query_type": search_type,
             "limit": 5,
         }
 

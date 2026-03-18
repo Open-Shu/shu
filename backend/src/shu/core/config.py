@@ -431,7 +431,7 @@ class Settings(BaseSettings):
 
     # RAG Configuration Defaults (global fallbacks)
     rag_search_threshold_default: float = Field(0.3, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
-    rag_max_results_default: int = Field(10, alias="SHU_RAG_MAX_RESULTS_DEFAULT")
+    rag_max_chunks_default: int = Field(10, alias="SHU_RAG_MAX_CHUNKS_DEFAULT")
     rag_chunk_overlap_ratio_default: float = Field(0.2, alias="SHU_RAG_CHUNK_OVERLAP_RATIO_DEFAULT")
     rag_search_type_default: str = Field("hybrid", alias="SHU_RAG_SEARCH_TYPE_DEFAULT")
     rag_context_format_default: str = Field("detailed", alias="SHU_RAG_CONTEXT_FORMAT_DEFAULT")
@@ -700,19 +700,19 @@ class ConfigurationManager:
             return float(model_config["search_threshold"])
         return self.settings.rag_search_threshold_default
 
-    def get_rag_max_results(
+    def get_rag_max_chunks(
         self,
         user_prefs: dict[str, Any] | None = None,
         model_config: dict[str, Any] | None = None,
         kb_config: dict[str, Any] | None = None,
     ) -> int:
-        """Get max results with proper priority cascade."""
+        """Get max chunks with proper priority cascade."""
         # Skip user preferences for RAG settings
-        if kb_config and kb_config.get("max_results") is not None:
-            return int(kb_config["max_results"])
-        if model_config and model_config.get("max_results") is not None:
-            return int(model_config["max_results"])
-        return self.settings.rag_max_results_default
+        if kb_config and kb_config.get("max_chunks") is not None:
+            return int(kb_config["max_chunks"])
+        if model_config and model_config.get("max_chunks") is not None:
+            return int(model_config["max_chunks"])
+        return self.settings.rag_max_chunks_default
 
     def get_rag_search_type(
         self,
@@ -989,7 +989,7 @@ class ConfigurationManager:
             "context_format": self.get_rag_context_format(user_prefs, model_config, kb_config),
             "prompt_template": self.settings.rag_prompt_template_default,  # Always use default for now
             "search_threshold": self.get_rag_search_threshold(user_prefs, model_config, kb_config),
-            "max_results": self.get_rag_max_results(user_prefs, model_config, kb_config),
+            "max_chunks": self.get_rag_max_chunks(user_prefs, model_config, kb_config),
             "chunk_overlap_ratio": self.get_rag_chunk_overlap_ratio(user_prefs, model_config, kb_config),
             "search_type": self.get_rag_search_type(user_prefs, model_config, kb_config),
             # Title search

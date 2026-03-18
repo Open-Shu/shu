@@ -135,7 +135,7 @@ class ConfigurationManagerIntegrationTest:
 
         try:
             # Test RAG config dictionary
-            kb_config = {"search_threshold": 0.85, "max_results": 15, "context_format": "simple"}
+            kb_config = {"search_threshold": 0.85, "max_chunks": 15, "context_format": "simple"}
 
             rag_dict = self.config_manager.get_rag_config_dict(kb_config=kb_config)
 
@@ -147,7 +147,7 @@ class ConfigurationManagerIntegrationTest:
                 "context_format",
                 "prompt_template",
                 "search_threshold",
-                "max_results",
+                "max_chunks",
                 "chunk_overlap_ratio",
                 "search_type",
             }
@@ -155,7 +155,7 @@ class ConfigurationManagerIntegrationTest:
 
             # Verify values are resolved correctly
             assert rag_dict["search_threshold"] == 0.85, "Search threshold not resolved"
-            assert rag_dict["max_results"] == 15, "Max results not resolved"
+            assert rag_dict["max_chunks"] == 15, "Max chunks not resolved"
             assert rag_dict["context_format"] == "simple", "Context format not resolved"
 
             # Test LLM config dictionary

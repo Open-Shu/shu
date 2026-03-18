@@ -259,7 +259,7 @@ async def test_kb_include_references_true(client, db, auth_headers):
     # Update KB RAG config to explicitly enable references
     rag_config_response = await client.put(
         f"/api/v1/knowledge-bases/{setup['kb_id']}/rag-config",
-        json={"include_references": True, "search_threshold": 0.7, "max_results": 10},
+        json={"include_references": True, "search_threshold": 0.7, "max_chunks": 10},
         headers=auth_headers,
     )
     assert rag_config_response.status_code == 200
@@ -293,7 +293,7 @@ async def test_kb_include_references_false(client, db, auth_headers):
     # Update KB RAG config to disable references
     rag_config_response = await client.put(
         f"/api/v1/knowledge-bases/{setup['kb_id']}/rag-config",
-        json={"include_references": False, "search_threshold": 0.7, "max_results": 10},
+        json={"include_references": False, "search_threshold": 0.7, "max_chunks": 10},
         headers=auth_headers,
     )
     assert rag_config_response.status_code == 200

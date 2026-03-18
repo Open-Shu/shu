@@ -971,14 +971,6 @@ async def upload_documents(
     successful = sum(1 for r in results if r.get("success"))
     failed = len(results) - successful
 
-    # Adjust KB stats once at the end for all successful uploads
-    # Note: We only adjust doc_delta here because chunks are created asynchronously
-    # by the worker. The chunk count will be updated when:
-    # 1. The worker finishes and updates Document.chunk_count
-    # 2. A feed sync runs recalculate_kb_stats()
-    if successful > 0:
-        await kb_service.adjust_document_stats(kb_id, doc_delta=successful, chunk_delta=0)
-
     return ShuResponse.success(
         {
             "knowledge_base_id": kb_id,

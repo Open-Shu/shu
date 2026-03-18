@@ -43,7 +43,9 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., description="Query text to search for", max_length=settings.max_query_length)
     query_type: str = Field("similarity", description="Query type: similarity, keyword, or hybrid")
-    limit: int = Field(10, ge=1, le=100, description="Maximum number of results to return")
+    limit: int | None = Field(
+        None, ge=1, le=100, description="Maximum number of results to return (None = use config default)"
+    )
     similarity_threshold: float | None = Field(None, ge=0.0, le=1.0, description="Minimum similarity score threshold")
     # Backward compatibility alias for SimilaritySearchRequest
     threshold: float | None = Field(
@@ -199,7 +201,7 @@ class SimilaritySearchRequest(BaseModel):
     """Schema for similarity search requests."""
 
     query: str = Field(..., min_length=1, description="Search query")
-    limit: int = Field(10, ge=1, le=100, description="Number of results to return")
+    limit: int | None = Field(None, ge=1, le=100, description="Number of results to return (None = use config default)")
     threshold: float = Field(0.0, ge=0.0, le=1.0, description="Minimum similarity threshold")
     include_embeddings: bool = Field(False, description="Include embeddings in response")
 

@@ -4,6 +4,7 @@ This module defines the Document and DocumentChunk models which store
 document metadata, content, and vector embeddings.
 """
 
+import re
 import string
 from datetime import UTC, datetime
 from enum import Enum
@@ -60,11 +61,18 @@ class DocumentStatus(str, Enum):
     """Status values for document ingestion pipeline.
 
     Tracks the document's progress through the async ingestion pipeline:
+
+    Pipeline stages (in-progress):
     - PENDING: Document created, awaiting OCR/extraction
     - EXTRACTING: OCR/text extraction in progress
-    - EMBEDDING: Chunking and embedding in progress
+    - EMBEDDING: Chunking and content vector embedding in progress
     - PROFILING: LLM profiling in progress (if enabled)
-    - PROCESSED: Document fully processed and searchable
+    - ARTIFACT_EMBEDDING: Profile artifact vector embedding in progress
+
+    Terminal statuses (searchable):
+    - CONTENT_PROCESSED: Chunks + content vectors embedded (basic similarity search)
+    - RAG_PROCESSED: Profiling complete, text artifacts persisted (similarity + metadata)
+    - PROFILE_PROCESSED: Artifact embeddings complete (full multi-surface search)
     - ERROR: Processing failed (see processing_error for details)
     """
 
@@ -72,8 +80,22 @@ class DocumentStatus(str, Enum):
     EXTRACTING = "extracting"
     EMBEDDING = "embedding"
     PROFILING = "profiling"
-    PROCESSED = "processed"
+    ARTIFACT_EMBEDDING = "artifact_embedding"
+    CONTENT_PROCESSED = "content_processed"
+    RAG_PROCESSED = "rag_processed"
+    PROFILE_PROCESSED = "profile_processed"
     ERROR = "error"
+
+    @classmethod
+    def terminal_success_values(cls) -> frozenset[str]:
+        """Return the set of terminal success status values."""
+        return frozenset(
+            {
+                cls.CONTENT_PROCESSED.value,
+                cls.RAG_PROCESSED.value,
+                cls.PROFILE_PROCESSED.value,
+            }
+        )
 
 
 class Document(BaseModel):
@@ -223,19 +245,18 @@ class Document(BaseModel):
 
     @property
     def is_processed(self) -> bool:
-        """Check if document has been processed successfully."""
-        return self.processing_status == DocumentStatus.PROCESSED.value
+        """Check if document has reached any terminal success state.
+
+        Returns True for CONTENT_PROCESSED, RAG_PROCESSED, or PROFILE_PROCESSED.
+        Use this for skip-on-reingest checks and anywhere that needs to know
+        if the document has completed at least basic processing.
+        """
+        return self.processing_status in DocumentStatus.terminal_success_values()
 
     @property
     def has_error(self) -> bool:
         """Check if document processing had an error."""
         return self.processing_status == DocumentStatus.ERROR.value
-
-    def mark_processed(self) -> None:
-        """Mark document as processed successfully."""
-        self.processing_status = DocumentStatus.PROCESSED.value
-        self.processed_at = datetime.now(UTC)
-        self.processing_error = None
 
     def mark_error(self, error_message: str) -> None:
         """Mark document as having a processing error."""
@@ -252,7 +273,7 @@ class Document(BaseModel):
         """
         self.processing_status = new_status.value
 
-        if new_status == DocumentStatus.PROCESSED:
+        if new_status.value in DocumentStatus.terminal_success_values():
             self.processed_at = datetime.now(UTC)
             self.processing_error = None
         elif new_status == DocumentStatus.ERROR:
@@ -437,15 +458,71 @@ class DocumentChunk(BaseModel):
         normalized: list[str] = []
         seen: set[str] = set()
         for kw in keywords:
+            if self._should_skip_keyword_phrase(kw):
+                continue
             for token in kw.split():
                 # Strip trailing punctuation (e.g., "Q3," -> "Q3") but preserve
                 # leading and internal punctuation for identifiers like "$2.5M", "ICBN-123,445"
                 lowered = token.lower().rstrip(string.punctuation)
+                if self._should_skip_keyword_token(lowered):
+                    continue
                 if lowered and lowered not in seen:
                     seen.add(lowered)
                     normalized.append(lowered)
         self.keywords = normalized
         self.topics = topics
+
+    @staticmethod
+    def _should_skip_keyword_phrase(keyword: str) -> bool:
+        """Return True for phrases that are timing noise, not retrieval keywords."""
+        cleaned = keyword.lower().strip()
+        if not cleaned:
+            return True
+
+        # Single alphabetic characters are too low-signal for keyword retrieval.
+        if len(cleaned) == 1 and cleaned.isalpha():
+            return True
+
+        # Timespans like "0.5 h", "12h", "3 days"
+        if re.fullmatch(
+            r"\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|min|mins|minute|minutes|day|days|week|weeks|month|months|year|years)",
+            cleaned,
+        ):
+            return True
+
+        # Sequences of bare numbers like "1 2 4 8 12"
+        return bool(re.fullmatch(r"\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)+", cleaned))
+
+    @staticmethod
+    def _should_skip_keyword_token(token: str) -> bool:
+        """Return True for low-signal tokens produced after splitting."""
+        if not token:
+            return True
+
+        # Drop raw numbers like "0.5", "1", "12"
+        if re.fullmatch(r"\d+(?:\.\d+)?", token):
+            return True
+
+        # Drop standalone temporal units (same set as the timespan regex in _should_skip_keyword_phrase)
+        return token in {
+            "h",
+            "hr",
+            "hrs",
+            "hour",
+            "hours",
+            "min",
+            "mins",
+            "minute",
+            "minutes",
+            "day",
+            "days",
+            "week",
+            "weeks",
+            "month",
+            "months",
+            "year",
+            "years",
+        }
 
     @property
     def is_profiled(self) -> bool:

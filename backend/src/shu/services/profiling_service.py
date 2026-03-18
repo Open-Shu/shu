@@ -258,9 +258,9 @@ class ProfilingService:
         if self.settings.title_chunk_enabled_default and any(c.chunk_index == 0 for c in chunks):
             user_content += (
                 "\n\nNOTE: Chunk 1 is the document title/subject. Use context from the other chunks "
-                "to infer what acronyms and identifiers in the title mean. Keep keywords as single "
-                "tokens only — extract the abbreviation itself (e.g., 'IACUC'), not its expansion. "
-                "The expanded form belongs in the summary, not keywords."
+                "to infer what acronyms and identifiers in the title mean. Extract the abbreviation "
+                "itself (e.g., 'IACUC') as a keyword. If the expansion is useful, put it in the "
+                "summary rather than forcing it into the keyword list."
             )
 
         # Validate input doesn't exceed max tokens

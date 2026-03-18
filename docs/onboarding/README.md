@@ -213,7 +213,7 @@ async def my_endpoint(
     threshold = rag_config["search_threshold"]
 
     # Or fetch individual values
-    max_results = config_manager.get_rag_max_results(model_config={"max_results": 8})
+    max_chunks = config_manager.get_rag_max_chunks(model_config={"max_chunks": 8})
 ```
 
 ### Environment Setup Steps

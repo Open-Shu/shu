@@ -206,7 +206,7 @@ async def test_query_preprocessing_technical_terms(client, db, auth_headers):
     # Add a test document to enable search
     test_doc = {
         "title": "Test Document for Query Processing",
-        "content": "This document contains Some Very Important Study information and MXB-2024 Protocol details.",
+        "content": "This document contains important project information and ACME-2024 Protocol details.",
         "source_type": "filesystem",
         "file_type": "txt",
     }
@@ -218,7 +218,7 @@ async def test_query_preprocessing_technical_terms(client, db, auth_headers):
     for query, expected_terms in test_cases:
         search_response = await client.post(
             f"/api/v1/query/{kb_id}/search",
-            json={"query": query, "search_type": "keyword", "limit": 5},
+            json={"query": query, "query_type": "keyword", "limit": 5},
             headers=auth_headers,
         )
         # Should not fail due to preprocessing issues
@@ -487,7 +487,7 @@ async def test_rag_config_api_title_weighting(client, db, auth_headers):
         "context_format": current_config["context_format"],
         "prompt_template": current_config["prompt_template"],
         "search_threshold": current_config["search_threshold"],
-        "max_results": current_config["max_results"],
+        "max_chunks": current_config["max_chunks"],
         "chunk_overlap_ratio": current_config["chunk_overlap_ratio"],
         "search_type": current_config["search_type"],
         "title_weighting_enabled": False,
