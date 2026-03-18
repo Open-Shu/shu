@@ -1,9 +1,7 @@
 """Unified Scheduler Service.
 
 Single background scheduler that polls multiple schedulable sources per tick,
-enqueuing jobs to the appropriate queue for worker processing. This replaces
-the separate PluginsSchedulerService and ExperiencesSchedulerService scheduler
-loops with one horizontally-safe implementation.
+enqueuing jobs to the appropriate queue for worker processing.
 
 Sources:
 - PluginFeedSource: queries PluginFeed rows, enqueues INGESTION jobs
@@ -506,8 +504,7 @@ class UnifiedSchedulerService:
 async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     """Start the unified scheduler background task.
 
-    Replaces both start_plugins_scheduler() and start_experiences_scheduler()
-    with a single loop that polls all registered sources.
+    Single loop that polls all registered sources.
     """
     from ..core.queue_backend import get_queue_backend
 
