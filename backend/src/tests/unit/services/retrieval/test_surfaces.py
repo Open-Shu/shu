@@ -505,6 +505,99 @@ class TestKeywordMatchSurface:
         assert abs(result.hits[1].score - 2 / 3) < 1e-9
 
     @pytest.mark.asyncio
+    async def test_search_matches_plural_variant(self):
+        """Singular query term should match plural stored keyword via expansion."""
+        doc_id = uuid4()
+        # Stored keyword is plural, query term is singular
+        mock_rows = [(doc_id, ["containers", "deployments"])]
+        mock_db = self._make_mock_db(mock_rows)
+
+        surface = KeywordMatchSurface()
+        result = await surface.search(
+            query_text="container deployment",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["container", "deployment"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert len(result.hits) == 1
+        assert result.hits[0].score == 1.0
+        assert set(result.hits[0].metadata["matched_terms"]) == {"container", "deployment"}
+
+    @pytest.mark.asyncio
+    async def test_search_matches_singular_variant(self):
+        """Plural query term should match singular stored keyword via expansion."""
+        doc_id = uuid4()
+        # Stored keyword is singular, query term is plural
+        mock_rows = [(doc_id, ["policy", "endpoint"])]
+        mock_db = self._make_mock_db(mock_rows)
+
+        surface = KeywordMatchSurface()
+        result = await surface.search(
+            query_text="policies endpoints",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["policies", "endpoints"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert len(result.hits) == 1
+        assert result.hits[0].score == 1.0
+        assert set(result.hits[0].metadata["matched_terms"]) == {"policies", "endpoints"}
+
+    @pytest.mark.asyncio
+    async def test_search_identity_terms_not_broken_by_expansion(self):
+        """Terms like 'kubernetes' or 'redis' should still match exactly despite mangled variants."""
+        doc_id = uuid4()
+        # inflect mangles these (kubernetes→kubernete, redis→redi) but originals still match
+        mock_rows = [(doc_id, ["kubernetes", "redis", "prometheus"])]
+        mock_db = self._make_mock_db(mock_rows)
+
+        surface = KeywordMatchSurface()
+        result = await surface.search(
+            query_text="kubernetes redis prometheus",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["kubernetes", "redis", "prometheus"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert len(result.hits) == 1
+        assert result.hits[0].score == 1.0
+        assert set(result.hits[0].metadata["matched_terms"]) == {"kubernetes", "redis", "prometheus"}
+
+    @pytest.mark.asyncio
+    async def test_search_expansion_does_not_dilute_score(self):
+        """Score denominator should use original term count, not expanded variants."""
+        doc_id = uuid4()
+        # Only 1 of 2 original terms matches (via plural variant)
+        mock_rows = [(doc_id, ["containers"])]
+        mock_db = self._make_mock_db(mock_rows)
+
+        surface = KeywordMatchSurface()
+        result = await surface.search(
+            query_text="container policy",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["container", "policy"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert len(result.hits) == 1
+        # 1 of 2 original terms matched — score is 0.5, NOT diluted by expanded variants
+        assert result.hits[0].score == 0.5
+        assert result.hits[0].metadata["matched_terms"] == ["container"]
+
+    @pytest.mark.asyncio
     async def test_search_handles_empty_keyword_terms(self):
         """search() should return empty results for empty keyword_terms."""
         mock_db = self._make_mock_db([])

@@ -4,8 +4,9 @@ Queries the keywords JSONB field on document_chunks to find chunks containing
 specific terms extracted from the user's query, then aggregates matched keywords
 at the document level. Score = len(unique_matched_terms_across_doc) / len(query_terms).
 
-This ensures documents containing query keywords spread across multiple chunks
-score proportionally to their total keyword coverage, not just per-chunk overlap.
+Query terms are expanded with plural/singular variants via inflect so that
+"container" matches stored keyword "containers" and vice versa. Scoring uses
+the original query term count as the denominator to avoid dilution.
 """
 
 from __future__ import annotations
@@ -15,7 +16,8 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Text, cast, select
+import inflect
+from sqlalchemy import Text, cast as sa_cast, select
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from ....core.logging import get_logger
@@ -26,6 +28,28 @@ logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+# Module-level inflect engine (stateless after init, safe to share)
+_inflect_engine = inflect.engine()
+
+
+def _expand_term(term: str) -> set[str]:
+    """Return a term plus its plural and singular variants.
+
+    Always includes the original. inflect.singular_noun() returns False
+    when the word is already singular, so we guard against that.
+    """
+    variants = {term}
+    try:
+        plural = _inflect_engine.plural(term)  # type: ignore[arg-type]
+        if plural:
+            variants.add(plural)
+        singular = _inflect_engine.singular_noun(term)  # type: ignore[arg-type]
+        if singular and isinstance(singular, str):
+            variants.add(singular)
+    except Exception:
+        pass
+    return variants
 
 
 class KeywordMatchSurface(RetrievalSurface):
@@ -41,6 +65,10 @@ class KeywordMatchSurface(RetrievalSurface):
     len(unique_matched) / len(query_terms). A document with query keywords
     spread across N chunks scores identically to one with all keywords in a
     single chunk.
+
+    Query terms are expanded with plural/singular variants so that
+    morphological near-misses (e.g., "policy" vs "policies") still match.
+    The scoring denominator is always the original query term count.
     """
 
     name = "keyword_match"
@@ -98,7 +126,13 @@ class KeywordMatchSurface(RetrievalSurface):
         query_terms_lower = [t.lower() for t in keyword_terms]
         query_terms_set = set(query_terms_lower)
 
-        # Query chunks where keywords array has any of the query terms.
+        # Build variant map: original term -> {original, plural, singular}.
+        # The expanded set is used for the SQL ?| match (wider net), but scoring
+        # counts original terms matched (denominator = len(query_terms_set)).
+        term_variants: dict[str, set[str]] = {t: _expand_term(t) for t in query_terms_set}
+        expanded_terms = sorted({v for variants in term_variants.values() for v in variants})
+
+        # Query chunks where keywords array has any of the expanded query terms.
         # Both sides are lowercase so the GIN index is fully utilized.
         # NOTE: No SQL LIMIT here - we fetch all matching chunks and aggregate in Python.
         stmt = select(
@@ -107,7 +141,7 @@ class KeywordMatchSurface(RetrievalSurface):
         ).where(
             DocumentChunk.knowledge_base_id == str(kb_id),
             DocumentChunk.keywords.isnot(None),
-            DocumentChunk.keywords.op("?|")(cast(query_terms_lower, ARRAY(Text))),
+            DocumentChunk.keywords.op("?|")(sa_cast(expanded_terms, ARRAY(Text))),
         )
 
         logger.debug(
@@ -133,25 +167,32 @@ class KeywordMatchSurface(RetrievalSurface):
 
         # Aggregate matched keywords at the document level.
         # Each document gets the union of all matched keywords across its chunks.
-        doc_matches: dict[str | UUID, set[str]] = defaultdict(set)
+        # Only retain keywords that are in the expanded set (variants of query terms).
+        expanded_terms_set = set(expanded_terms)
+        doc_keyword_hits: dict[str | UUID, set[str]] = defaultdict(set)
         for document_id, keywords in rows:
             if not keywords:
                 continue
 
             # keywords are stored lowercase; lower() here is a safety net
             chunk_keywords_lower = {k.lower() for k in keywords if isinstance(k, str)}
-            matched = query_terms_set & chunk_keywords_lower
+            doc_keyword_hits[document_id] |= chunk_keywords_lower & expanded_terms_set
 
-            if matched:
-                doc_matches[document_id] |= matched
-
-        # Score each document by coverage ratio
+        # Score each document: count original query terms where any variant matched.
+        # Denominator is always len(query_terms_set) — no dilution from expansion.
         scored_docs: list[tuple[str | UUID, float, list[str]]] = []
-        for doc_id, matched in doc_matches.items():
-            score = len(matched) / len(query_terms_set)
+        for doc_id, doc_keywords in doc_keyword_hits.items():
+            matched_original_terms = [
+                term for term, variants in term_variants.items() if variants & doc_keywords
+            ]
+
+            if not matched_original_terms:
+                continue
+
+            score = len(matched_original_terms) / len(query_terms_set)
 
             if score >= threshold:
-                scored_docs.append((doc_id, score, sorted(matched)))
+                scored_docs.append((doc_id, score, sorted(matched_original_terms)))
 
         # Sort by score descending and limit
         scored_docs.sort(key=lambda x: x[1], reverse=True)
