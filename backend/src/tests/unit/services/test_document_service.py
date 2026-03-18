@@ -13,14 +13,13 @@ class TestProcessAndUpdateChunks:
     @pytest.mark.asyncio
     async def test_uses_public_raw_kb_fetch(self) -> None:
         db = AsyncMock()
-        db.execute = AsyncMock()
         db.add = MagicMock()
 
         service = DocumentService(db)
-        service.mark_document_processed = AsyncMock()
 
         document = MagicMock()
         document.id = "doc-1"
+        document.update_content_stats = MagicMock()
 
         kb = MagicMock()
         kb.id = "kb-1"
@@ -53,10 +52,5 @@ class TestProcessAndUpdateChunks:
 
         fetch_raw_mock.assert_awaited_once_with("kb-1")
         private_fetch_mock.assert_not_awaited()
-        service.mark_document_processed.assert_awaited_once_with(
-            "doc-1",
-            word_count=2,
-            character_count=11,
-            chunk_count=0,
-        )
+        document.update_content_stats.assert_called_once_with(2, 11, 0)
         assert result == (2, 11, 0)
