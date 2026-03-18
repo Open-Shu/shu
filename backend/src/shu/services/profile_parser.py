@@ -90,7 +90,7 @@ class ProfileParser:
             question_domains=self._coerce_list(manifest_data.get("question_domains")),
         )
 
-    def _parse_chunk_queries(self, chunk_queries: list | None) -> list[str]:
+    def _parse_chunk_queries(self, chunk_queries: list | None) -> list[str]:  # noqa: PLR0912
         """Parse per-chunk queries into a flat list of query strings.
 
         Handles the current chunk_queries structure:

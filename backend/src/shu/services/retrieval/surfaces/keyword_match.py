@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import inflect
-from sqlalchemy import Text, cast as sa_cast, select
+from sqlalchemy import Text, select
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from ....core.logging import get_logger
@@ -182,9 +183,7 @@ class KeywordMatchSurface(RetrievalSurface):
         # Denominator is always len(query_terms_set) — no dilution from expansion.
         scored_docs: list[tuple[str | UUID, float, list[str]]] = []
         for doc_id, doc_keywords in doc_keyword_hits.items():
-            matched_original_terms = [
-                term for term, variants in term_variants.items() if variants & doc_keywords
-            ]
+            matched_original_terms = [term for term, variants in term_variants.items() if variants & doc_keywords]
 
             if not matched_original_terms:
                 continue
