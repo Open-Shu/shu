@@ -17,6 +17,7 @@ from ...core.config import ConfigurationManager
 from ...core.exceptions import ShuException
 from ...models.document import Document
 from ...models.knowledge_base import KnowledgeBase
+from ...utils.text import fold_unicode_to_ascii
 from .constants import COMPREHENSIVE_STOP_WORDS
 
 if TYPE_CHECKING:
@@ -101,6 +102,9 @@ class QueryServiceBase:
             List of meaningful terms with preserved case
 
         """
+        # Fold Unicode lookalikes (non-breaking hyphens, curly quotes, etc.) to ASCII
+        # before tokenization so query terms match the folded form stored in keywords.
+        query = fold_unicode_to_ascii(query)
         # Extract all potential terms with original case
         # Split on word boundaries and clean up punctuation
         # Handle technical identifiers like "ACME-555,222" where comma is part of number notation

@@ -15,6 +15,8 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
 
+from ..utils.text import fold_unicode_to_ascii
+
 try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
@@ -457,7 +459,8 @@ class DocumentChunk(BaseModel):
         # lowercased query terms.
         normalized: list[str] = []
         seen: set[str] = set()
-        for kw in keywords:
+        for raw_kw in keywords:
+            kw = fold_unicode_to_ascii(raw_kw)
             if self._should_skip_keyword_phrase(kw):
                 continue
             for token in kw.split():
