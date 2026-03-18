@@ -1,13 +1,17 @@
-"""KeywordMatchSurface - JSONB matching on profiled chunk keywords.
+"""KeywordMatchSurface - Document-level keyword coverage scoring.
 
-Queries the keywords JSONB field on document_chunks to find chunks
-containing specific terms extracted from the user's query. Uses match
-ratio scoring: score = len(matched_terms) / len(query_terms).
+Queries the keywords JSONB field on document_chunks to find chunks containing
+specific terms extracted from the user's query, then aggregates matched keywords
+at the document level. Score = len(unique_matched_terms_across_doc) / len(query_terms).
+
+This ensures documents containing query keywords spread across multiple chunks
+score proportionally to their total keyword coverage, not just per-chunk overlap.
 """
 
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -25,14 +29,18 @@ if TYPE_CHECKING:
 
 
 class KeywordMatchSurface(RetrievalSurface):
-    """Retrieval surface for JSONB keyword matching on chunks.
+    """Retrieval surface for document-level keyword coverage scoring.
 
     This surface finds chunks whose profiled keywords overlap with keywords
-    extracted from the user query. Particularly effective for factual queries
-    containing named entities, technical terms, or specific identifiers.
+    extracted from the user query, then aggregates matches at the document
+    level. Particularly effective for factual queries containing named entities,
+    technical terms, or specific identifiers.
 
-    Scoring is based on match ratio: if the query has 3 keywords and a chunk
-    matches 2, the score is 0.67. This rewards chunks matching more query terms.
+    Scoring is based on document-level coverage: keywords matched across all
+    chunks of a document are unioned, then scored as
+    len(unique_matched) / len(query_terms). A document with query keywords
+    spread across N chunks scores identically to one with all keywords in a
+    single chunk.
     """
 
     name = "keyword_match"
@@ -55,19 +63,22 @@ class KeywordMatchSurface(RetrievalSurface):
         threshold: float = 0.0,
         db: AsyncSession,
     ) -> SurfaceResult:
-        """Search for chunks with keywords matching query terms.
+        """Search for documents with keywords matching query terms.
+
+        Fetches all chunks with any matching keyword, groups by document,
+        unions matched keywords per document, and scores by coverage ratio.
 
         Args:
             query_text: Original query text (unused by this surface).
             query_vector: Pre-computed embedding vector (unused by this surface).
             keyword_terms: Keywords extracted from query via preprocess_query().
             kb_id: Knowledge base ID to scope the search.
-            limit: Maximum number of chunks to return.
+            limit: Maximum number of documents to return.
             threshold: Minimum match ratio (0.0-1.0).
             db: Async database session.
 
         Returns:
-            SurfaceResult with chunk hits and execution time.
+            SurfaceResult with document-level hits and execution time.
 
         """
         start = time.perf_counter()
@@ -89,10 +100,8 @@ class KeywordMatchSurface(RetrievalSurface):
 
         # Query chunks where keywords array has any of the query terms.
         # Both sides are lowercase so the GIN index is fully utilized.
-        # NOTE: No SQL LIMIT here - we fetch all matching chunks and score/limit in Python.
-        # This ensures we don't arbitrarily exclude better-scoring chunks when many match.
+        # NOTE: No SQL LIMIT here - we fetch all matching chunks and aggregate in Python.
         stmt = select(
-            DocumentChunk.id,
             DocumentChunk.document_id,
             DocumentChunk.keywords,
         ).where(
@@ -122,9 +131,10 @@ class KeywordMatchSurface(RetrievalSurface):
                 execution_time_ms=elapsed_ms,
             )
 
-        # Calculate match ratio for each chunk
-        scored_chunks: list[tuple[UUID, float, list[str]]] = []
-        for chunk_id, _document_id, keywords in rows:
+        # Aggregate matched keywords at the document level.
+        # Each document gets the union of all matched keywords across its chunks.
+        doc_matches: dict[str | UUID, set[str]] = defaultdict(set)
+        for document_id, keywords in rows:
             if not keywords:
                 continue
 
@@ -132,28 +142,30 @@ class KeywordMatchSurface(RetrievalSurface):
             chunk_keywords_lower = {k.lower() for k in keywords if isinstance(k, str)}
             matched = query_terms_set & chunk_keywords_lower
 
-            if not matched:
-                continue
+            if matched:
+                doc_matches[document_id] |= matched
 
-            # Score = proportion of query terms that matched
+        # Score each document by coverage ratio
+        scored_docs: list[tuple[str | UUID, float, list[str]]] = []
+        for doc_id, matched in doc_matches.items():
             score = len(matched) / len(query_terms_set)
 
             if score >= threshold:
-                scored_chunks.append((chunk_id, score, sorted(matched)))
+                scored_docs.append((doc_id, score, sorted(matched)))
 
         # Sort by score descending and limit
-        scored_chunks.sort(key=lambda x: x[1], reverse=True)
-        scored_chunks = scored_chunks[:limit]
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        scored_docs = scored_docs[:limit]
 
         # Build hits (convert string IDs to UUID for consistency with other surfaces)
         hits = [
             SurfaceHit(
-                id=UUID(chunk_id) if isinstance(chunk_id, str) else chunk_id,
-                id_type="chunk",
+                id=UUID(doc_id) if isinstance(doc_id, str) else doc_id,
+                id_type="document",
                 score=score,
                 metadata={"matched_terms": matched_terms},
             )
-            for chunk_id, score, matched_terms in scored_chunks
+            for doc_id, score, matched_terms in scored_docs
         ]
 
         elapsed_ms = (time.perf_counter() - start) * 1000

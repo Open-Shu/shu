@@ -386,12 +386,11 @@ class TestKeywordMatchSurface:
         return mock_db
 
     @pytest.mark.asyncio
-    async def test_search_returns_chunk_hits_with_matched_terms(self):
-        """search() should return chunk hits with matched_terms in metadata."""
-        chunk_id = uuid4()
+    async def test_search_returns_document_hits_with_matched_terms(self):
+        """search() should return document-level hits with matched_terms in metadata."""
         doc_id = uuid4()
-        # Simulate row: (chunk_id, document_id, keywords)
-        mock_rows = [(chunk_id, doc_id, ["python", "fastapi", "database"])]
+        # Simulate row: (document_id, keywords)
+        mock_rows = [(doc_id, ["python", "fastapi", "database"])]
         mock_db = self._make_mock_db(mock_rows)
 
         surface = KeywordMatchSurface()
@@ -407,8 +406,8 @@ class TestKeywordMatchSurface:
 
         assert result.surface_name == "keyword_match"
         assert len(result.hits) == 1
-        assert result.hits[0].id_type == "chunk"
-        assert result.hits[0].id == chunk_id
+        assert result.hits[0].id_type == "document"
+        assert result.hits[0].id == doc_id
         # 1 of 2 query terms matched ("python")
         assert result.hits[0].score == 0.5
         assert result.hits[0].metadata["matched_terms"] == ["python"]
@@ -416,10 +415,9 @@ class TestKeywordMatchSurface:
     @pytest.mark.asyncio
     async def test_search_calculates_match_ratio_correctly(self):
         """search() should calculate score as matched_terms / query_terms."""
-        chunk_id = uuid4()
         doc_id = uuid4()
         # Chunk has all 3 query terms
-        mock_rows = [(chunk_id, doc_id, ["auth", "oauth", "jwt", "security"])]
+        mock_rows = [(doc_id, ["auth", "oauth", "jwt", "security"])]
         mock_db = self._make_mock_db(mock_rows)
 
         surface = KeywordMatchSurface()
@@ -437,6 +435,74 @@ class TestKeywordMatchSurface:
         # 3 of 3 query terms matched
         assert result.hits[0].score == 1.0
         assert set(result.hits[0].metadata["matched_terms"]) == {"auth", "oauth", "jwt"}
+
+    @pytest.mark.asyncio
+    async def test_search_aggregates_keywords_across_chunks(self):
+        """search() should union matched keywords across chunks of the same document."""
+        doc_id = uuid4()
+        # Three chunks from the same document, each with a different query keyword
+        mock_rows = [
+            (doc_id, ["kubernetes", "deployment"]),
+            (doc_id, ["autoscaling", "hpa"]),
+            (doc_id, ["prometheus", "monitoring"]),
+        ]
+        mock_db = self._make_mock_db(mock_rows)
+
+        surface = KeywordMatchSurface()
+        result = await surface.search(
+            query_text="kubernetes autoscaling prometheus",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["kubernetes", "autoscaling", "prometheus"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert len(result.hits) == 1
+        assert result.hits[0].id_type == "document"
+        assert result.hits[0].id == doc_id
+        # All 3 query terms matched across different chunks
+        assert result.hits[0].score == 1.0
+        assert set(result.hits[0].metadata["matched_terms"]) == {
+            "kubernetes",
+            "autoscaling",
+            "prometheus",
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_ranks_documents_by_coverage(self):
+        """Documents with more keyword coverage should rank higher."""
+        doc_a = uuid4()
+        doc_b = uuid4()
+        # Doc A: 2 of 3 keywords across its chunks
+        # Doc B: all 3 keywords across its chunks
+        mock_rows = [
+            (doc_a, ["python"]),
+            (doc_a, ["fastapi"]),
+            (doc_b, ["python"]),
+            (doc_b, ["fastapi"]),
+            (doc_b, ["docker"]),
+        ]
+        mock_db = self._make_mock_db(mock_rows)
+
+        surface = KeywordMatchSurface()
+        result = await surface.search(
+            query_text="python fastapi docker",
+            query_vector=[0.1] * 1024,
+            keyword_terms=["python", "fastapi", "docker"],
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert len(result.hits) == 2
+        # Doc B (3/3 = 1.0) should rank above Doc A (2/3 ≈ 0.67)
+        assert result.hits[0].id == doc_b
+        assert result.hits[0].score == 1.0
+        assert result.hits[1].id == doc_a
+        assert abs(result.hits[1].score - 2 / 3) < 1e-9
 
     @pytest.mark.asyncio
     async def test_search_handles_empty_keyword_terms(self):
@@ -482,10 +548,9 @@ class TestKeywordMatchSurface:
     @pytest.mark.asyncio
     async def test_search_respects_threshold(self):
         """search() should filter results below the threshold."""
-        chunk_id = uuid4()
         doc_id = uuid4()
         # Only 1 of 3 terms matches = score 0.33
-        mock_rows = [(chunk_id, doc_id, ["python"])]
+        mock_rows = [(doc_id, ["python"])]
         mock_db = self._make_mock_db(mock_rows)
 
         surface = KeywordMatchSurface()
