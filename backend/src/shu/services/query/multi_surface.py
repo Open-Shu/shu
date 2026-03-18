@@ -174,10 +174,13 @@ class MultiSurfaceSearchMixin:
                     start_char = top_chunk.start_char
                     end_char = top_chunk.end_char
                 elif result.surface_metadata:
-                    # Document-level hit (e.g., query_match): use best matched query as preview
+                    # Document-level hit: use best available preview from surface metadata
                     for meta in result.surface_metadata.values():
                         if "matched_query" in meta:
                             content = meta["matched_query"]
+                            break
+                        if "matched_terms" in meta:
+                            content = f"Matched keywords: {', '.join(meta['matched_terms'])}"
                             break
 
                 query_result = QueryResult(

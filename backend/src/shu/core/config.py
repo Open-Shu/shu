@@ -265,8 +265,8 @@ class Settings(BaseSettings):
 
     # Shu RAG Query Synthesis (SHU-353)
     # Query synthesis runs automatically as part of document profiling at no additional cost.
-    # Generates per-chunk queries with high and medium specificity for better retrieval coverage.
-    # Number of high-specificity + medium-specificity queries to generate per chunk
+    # Generates per-chunk capability queries for better retrieval coverage.
+    # Number of capability queries to generate per chunk
     query_synthesis_queries_per_chunk: int = Field(2, alias="SHU_QUERY_SYNTHESIS_QUERIES_PER_CHUNK")
     # Maximum total queries per document (cost control for large docs)
     query_synthesis_max_total_queries: int = Field(100, alias="SHU_QUERY_SYNTHESIS_MAX_TOTAL_QUERIES")
