@@ -37,7 +37,7 @@ class SimilaritySearchMixin:
             knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
 
             # Block vector search on stale or re-embedding KBs
-            if knowledge_base.embedding_status not in ("current",):
+            if knowledge_base.embedding_status != "current":
                 from ...core.exceptions import KnowledgeBaseStaleEmbeddingsError
 
                 raise KnowledgeBaseStaleEmbeddingsError(knowledge_base_id, knowledge_base.embedding_status)
@@ -52,7 +52,10 @@ class SimilaritySearchMixin:
 
             # Log the preprocessing results for debugging (only for direct similarity search calls)
             logger.debug(
-                f"Similarity search preprocessing: original='{query[:100]}...' -> processed='{processed['similarity_query'][:100]}...' -> terms={len(processed['keyword_terms'])} terms"
+                "Similarity search preprocessing: query_len=%d -> processed_len=%d -> terms=%d",
+                len(query),
+                len(processed["similarity_query"]),
+                len(processed["keyword_terms"]),
             )
 
             # Generate embedding for the processed query

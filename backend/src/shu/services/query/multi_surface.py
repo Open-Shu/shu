@@ -3,6 +3,7 @@
 Orchestrates multiple retrieval surfaces with score fusion.
 """
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -13,6 +14,12 @@ from ...schemas.query import QueryResponse, QueryResult, QueryType
 from .base import measure_execution_time
 
 logger = logging.getLogger(__name__)
+
+
+def _redact(text: str) -> str:
+    """Return a non-reversible fingerprint for log-safe representation of sensitive text."""
+    h = hashlib.sha256(text.encode()).hexdigest()[:8]
+    return f"[len={len(text)} hash={h}]"
 
 
 class MultiSurfaceSearchMixin:
@@ -57,13 +64,13 @@ class MultiSurfaceSearchMixin:
             knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
 
             # Block vector search on stale or re-embedding KBs (same as similarity_search)
-            if knowledge_base.embedding_status not in ("current",):
+            if knowledge_base.embedding_status != "current":
                 from ...core.exceptions import KnowledgeBaseStaleEmbeddingsError
 
                 raise KnowledgeBaseStaleEmbeddingsError(knowledge_base_id, str(knowledge_base.embedding_status))
 
             logger.info(
-                f"Multi-surface search: query='{query[:100]}...' kb_id={knowledge_base_id} "
+                f"Multi-surface search: query={_redact(query)} kb_id={knowledge_base_id} "
                 f"limit={limit} threshold={threshold}"
             )
 

@@ -3,6 +3,7 @@
 Provides term-based matching with title weighting and document-level scoring.
 """
 
+import hashlib
 import logging
 import re
 from datetime import UTC, datetime
@@ -15,6 +16,12 @@ from .base import measure_execution_time
 from .constants import TITLE_MATCH_STOP_WORDS
 
 logger = logging.getLogger(__name__)
+
+
+def _redact(text_val: str) -> str:
+    """Return a non-reversible fingerprint for log-safe representation of sensitive text."""
+    h = hashlib.sha256(text_val.encode()).hexdigest()[:8]
+    return f"[len={len(text_val)} hash={h}]"
 
 
 class KeywordSearchMixin:
@@ -41,13 +48,15 @@ class KeywordSearchMixin:
 
             # Log the preprocessing results for debugging (only for direct keyword search calls)
             logger.debug(
-                f"Keyword search preprocessing: original='{query[:100]}...' -> processed='{processed['similarity_query'][:100]}...' -> terms={len(processed['keyword_terms'])} terms"
+                f"Keyword search preprocessing: query={_redact(query)} -> "
+                f"keyword_terms={len(processed['keyword_terms'])} "
+                f"filename_terms={len(processed.get('filename_terms', []))}"
             )
 
             # If all terms were filtered out as stop words AND there are no filename-like tokens, return empty results
             if not processed["keyword_terms"] and not processed.get("filename_terms"):
                 logger.info(
-                    f"All terms in query '{query}' were filtered as stop words (and no filename terms found), returning empty results"
+                    f"All terms in query {_redact(query)} were filtered as stop words (and no filename terms found), returning empty results"
                 )
                 from ...schemas.query import QueryResponse, QueryType
 
@@ -118,6 +127,7 @@ class KeywordSearchMixin:
             title_match_sql = " OR ".join(title_match_conditions) if title_match_conditions else "FALSE"
 
             # Check if title weighting is enabled and we have title matches
+            title_boosted_chunks = []
             if effective_title_weighting_enabled:
                 # First, find documents with title matches
                 title_match_query = text(f"""
@@ -135,16 +145,24 @@ class KeywordSearchMixin:
                     ) title_matches
                     WHERE title_score > 0
                     ORDER BY title_score DESC
+                    LIMIT :max_title_matches
                 """)  # nosec # difficult to turn this into sqlalchemy query format, and injection is not possible here  # noqa: S608
 
                 params["exact_pattern"] = f"\\m{re.escape(query)}\\M"
+                params["max_title_matches"] = 10
                 title_result = await self.db.execute(title_match_query, params)
                 title_matches = title_result.fetchall()
 
                 if title_matches:
                     # Use new title-match chunk selection for title-matched documents
-                    all_chunks = []
+                    title_boosted_chunks = []
                     max_chunks_per_doc = 3
+
+                    # Precompute query embedding once for all title-match chunk lookups
+                    from ...core.embedding_service import get_embedding_service
+
+                    embedding_service = await get_embedding_service()
+                    precomputed_query_embedding = await embedding_service.embed_query(query)
 
                     for title_match in title_matches:
                         doc_chunks = await self._get_title_match_chunks(
@@ -152,6 +170,7 @@ class KeywordSearchMixin:
                             query=query,
                             max_chunks=max_chunks_per_doc,
                             knowledge_base_id=knowledge_base_id,
+                            query_embedding=precomputed_query_embedding,
                         )
 
                         # Convert to the expected format and apply title boost
@@ -186,49 +205,40 @@ class KeywordSearchMixin:
                                     "keyword_score": min(10.0, boosted_score),
                                 },
                             )()
-                            all_chunks.append(chunk_obj)
+                            title_boosted_chunks.append(chunk_obj)
 
-                    # Sort by boosted score and limit
-                    all_chunks.sort(key=lambda x: x.keyword_score, reverse=True)
-                    chunks = all_chunks[:limit]
-                else:
-                    # No title matches, fall back to regular content search
-                    chunks = []
-            else:
-                # Title weighting disabled, use regular content search
-                chunks = []
+            # Always run regular content search (title weighting merges, doesn't replace)
+            content_chunks = []
+            # Build parameterized query with safe parameter binding (SECURITY FIX)
+            # Create individual parameters for each term to avoid SQL injection
+            params = {"kb_id": knowledge_base_id, "limit": limit}
+            where_conditions = []
 
-            # If no title matches or title weighting disabled, do regular content search
-            if not chunks:
-                # Build parameterized query with safe parameter binding (SECURITY FIX)
-                # Create individual parameters for each term to avoid SQL injection
-                params = {"kb_id": knowledge_base_id, "limit": limit}
-                where_conditions = []
+            for i, term in enumerate(processed["keyword_terms"]):
+                # Content pattern matching - treat _, ., and - as separators
+                content_param = f"content_pattern_{i}"
+                params[content_param] = f"(^|[^A-Za-z0-9]){re.escape(term)}([^A-Za-z0-9]|$)"
+                where_conditions.append(f"dc.content ~* :{content_param}")
 
-                for i, term in enumerate(processed["keyword_terms"]):
-                    # Content pattern matching - treat _, ., and - as separators
-                    content_param = f"content_pattern_{i}"
-                    params[content_param] = f"(^|[^A-Za-z0-9]){re.escape(term)}([^A-Za-z0-9]|$)"
-                    where_conditions.append(f"dc.content ~* :{content_param}")
+                # Title pattern matching for meaningful terms
+                if len(term) >= 3 and term.lower() not in TITLE_MATCH_STOP_WORDS:
+                    title_param = f"title_pattern_{i}"
+                    title_norm_param = f"title_norm_pattern_{i}"
+                    title_like_param = f"title_like_{i}"
+                    params[title_param] = f"\\m{re.escape(term)}\\M"
+                    params[title_norm_param] = f"\\m{re.escape(term)}\\M"
+                    params[title_like_param] = f"%{term}%"
+                    where_conditions.append(
+                        f"(d.title ~* :{title_param} OR REGEXP_REPLACE(d.title, '[._-]', ' ', 'g') ~* :{title_norm_param} OR d.title ILIKE :{title_like_param})"
+                    )
 
-                    # Title pattern matching for meaningful terms
-                    if len(term) >= 3 and term.lower() not in TITLE_MATCH_STOP_WORDS:
-                        title_param = f"title_pattern_{i}"
-                        title_norm_param = f"title_norm_pattern_{i}"
-                        title_like_param = f"title_like_{i}"
-                        params[title_param] = f"\\m{re.escape(term)}\\M"
-                        params[title_norm_param] = f"\\m{re.escape(term)}\\M"
-                        params[title_like_param] = f"%{term}%"
-                        where_conditions.append(
-                            f"(d.title ~* :{title_param} OR REGEXP_REPLACE(d.title, '[._-]', ' ', 'g') ~* :{title_norm_param} OR d.title ILIKE :{title_like_param})"
-                        )
+            # Include literal filename matches (e.g., ModernChat.js, foo.py)
+            for j, fname in enumerate(processed.get("filename_terms", [])):
+                p = f"file_like_{j}"
+                params[p] = f"%{fname}%"
+                where_conditions.append(f"d.title ILIKE :{p}")
 
-                # Include literal filename matches (e.g., ModernChat.js, foo.py)
-                for j, fname in enumerate(processed.get("filename_terms", [])):
-                    p = f"file_like_{j}"
-                    params[p] = f"%{fname}%"
-                    where_conditions.append(f"d.title ILIKE :{p}")
-
+            if where_conditions:
                 # Build the WHERE clause safely - all parameters are pre-defined
                 where_clause = " OR ".join(where_conditions)
 
@@ -258,7 +268,19 @@ class KeywordSearchMixin:
                 # possible here
 
                 result = await self.db.execute(keyword_query, params)
-                chunks = result.fetchall()
+                content_chunks = result.fetchall()
+
+            # Merge title-boosted chunks with content chunks, dedup by chunk id
+            if effective_title_weighting_enabled and title_boosted_chunks:
+                seen_ids = {c.id for c in title_boosted_chunks}
+                for chunk in content_chunks:
+                    if chunk.id not in seen_ids:
+                        seen_ids.add(chunk.id)
+                        title_boosted_chunks.append(chunk)
+                title_boosted_chunks.sort(key=lambda x: x.keyword_score, reverse=True)
+                chunks = title_boosted_chunks[:limit]
+            else:
+                chunks = content_chunks
 
             if not chunks:
                 # Return empty results if no matches found
@@ -318,6 +340,7 @@ class KeywordSearchMixin:
         query: str,
         max_chunks: int,
         knowledge_base_id: str,
+        query_embedding: list[float] | None = None,
     ) -> list[dict[str, Any]]:
         """For title-matched documents, find the most relevant chunks within that document.
         Uses the original query to find semantically and keyword relevant chunks.
@@ -355,13 +378,14 @@ class KeywordSearchMixin:
             # Score each chunk against the original query using existing logic
             scored_chunks = []
 
-            # Get query embedding for similarity scoring
+            # Get query embedding for similarity scoring (reuse precomputed if available)
             from scipy.spatial.distance import cosine
 
-            from ...core.embedding_service import get_embedding_service
+            if query_embedding is None:
+                from ...core.embedding_service import get_embedding_service
 
-            embedding_service = await get_embedding_service()
-            query_embedding = await embedding_service.embed_query(query)
+                embedding_service = await get_embedding_service()
+                query_embedding = await embedding_service.embed_query(query)
 
             # Preprocess query and get weights once (loop-invariant)
             processed = self.preprocess_query(query)

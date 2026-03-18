@@ -358,6 +358,7 @@ async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple
             chunk_summaries_embedded = len(entries)
         except Exception:
             logger.warning("chunk_summary_embedding_failed", document_id=document.id, exc_info=True)
+            raise
 
     if chunk_summaries_embedded:
         await db.commit()
@@ -380,6 +381,7 @@ async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple
             queries_embedded = len(queries)
         except Exception:
             logger.warning("query_embedding_failed", document_id=document.id, exc_info=True)
+            raise
 
     await db.commit()
 

@@ -257,9 +257,11 @@ const DocumentResults = function DocumentResults({
                   <Chip
                     label={doc.processing_status?.replace(/_/g, ' ')}
                     color={
-                      ['content_processed', 'rag_processed', 'profile_processed'].includes(doc.processing_status)
+                      ['content_processed', 'rag_processed', 'profile_processed'].includes(
+                        doc.processing_status?.toLowerCase()
+                      )
                         ? 'success'
-                        : doc.processing_status === 'error'
+                        : doc.processing_status?.toLowerCase() === 'error'
                           ? 'error'
                           : 'default'
                     }

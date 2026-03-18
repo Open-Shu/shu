@@ -3,6 +3,7 @@
 Combines similarity and keyword search with configurable weights.
 """
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +13,12 @@ from ...schemas.query import SimilaritySearchRequest
 from .base import measure_execution_time
 
 logger = logging.getLogger(__name__)
+
+
+def _redact(text: str) -> str:
+    """Return a non-reversible fingerprint for log-safe representation of sensitive text."""
+    h = hashlib.sha256(text.encode()).hexdigest()[:8]
+    return f"[len={len(text)} hash={h}]"
 
 
 class HybridSearchMixin:
@@ -50,7 +57,7 @@ class HybridSearchMixin:
 
             # Log hybrid search request
             logger.info(
-                f"Hybrid search: query='{query[:100]}...' kb_id={knowledge_base_id} limit={limit} threshold={threshold}"
+                f"Hybrid search: query={_redact(query)} kb_id={knowledge_base_id} limit={limit} threshold={threshold}"
             )
 
             # Get similarity search results (may fail if KB has stale embeddings)
@@ -86,7 +93,8 @@ class HybridSearchMixin:
 
             # Log keyword search results for debugging
             logger.info(
-                f"Hybrid search keyword results: total={keyword_response.get('total_results', 0)}, top_docs={[r.get('document_title', 'unknown')[:50] for r in keyword_response.get('results', [])[:3]]}"
+                f"Hybrid search keyword results: total={keyword_response.get('total_results', 0)}, "
+                f"top_doc_ids={[r.get('document_id', 'unknown') for r in keyword_response.get('results', [])[:3]]}"
             )
 
             # If similarity search was skipped (stale KB), return keyword-only results
@@ -108,7 +116,7 @@ class HybridSearchMixin:
             # If keyword search returned empty results due to stop words, return only similarity results
             if keyword_response["total_results"] == 0:
                 logger.info(
-                    f"Keyword search returned no results for query '{query}', returning only similarity results"
+                    f"Keyword search returned no results for query {_redact(query)}, returning only similarity results"
                 )
                 # Create a new response with hybrid query type but similarity results
                 from ...schemas.query import QueryResponse, QueryType

@@ -376,9 +376,9 @@ class DocumentService:
         chunk_count = len(chunks)
 
         # Update content stats only — status transitions are managed by the
-        # worker job handlers (SHU-637).
+        # caller (SHU-637).  No commit here; callers are responsible for
+        # committing chunks + stats + status atomically.
         document.update_content_stats(word_count, character_count, chunk_count)
-        await self.db.commit()
 
         return word_count, character_count, chunk_count
 

@@ -75,7 +75,7 @@ class QueryService(
             search_type = request.query_type  # Already a string
             limit = request.limit if request.limit is not None else self.config_manager.get_rag_max_chunks()
 
-            logger.info(f"query_documents: search_type={search_type}, query='{(query or '')[:50]}...', limit={limit}")
+            logger.info(f"query_documents: search_type={search_type}, query_len={len(query or '')}, limit={limit}")
 
             # Perform search based on type
             if search_type == "similarity":
@@ -85,10 +85,10 @@ class QueryService(
                     limit=limit,
                     threshold=request.similarity_threshold or 0.0,
                     include_embeddings=getattr(request, "include_embeddings", False),
-                    document_ids=None,
-                    file_types=None,
-                    created_after=None,
-                    created_before=None,
+                    document_ids=getattr(request, "document_ids", None),
+                    file_types=getattr(request, "file_types", None),
+                    created_after=getattr(request, "created_after", None),
+                    created_before=getattr(request, "created_before", None),
                 )
                 similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
 

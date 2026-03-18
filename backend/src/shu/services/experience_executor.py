@@ -756,7 +756,7 @@ class ExperienceExecutor:
             return QueryRequest(
                 query=query,
                 query_type=rag_config.get("search_type", "hybrid"),
-                limit=rag_config.get("max_chunks", 10),
+                limit=rag_config.get("max_chunks", self.config_manager.get_rag_max_chunks()),
                 similarity_threshold=rag_config.get("search_threshold", 0.3),
                 include_metadata=True,
             )

@@ -331,7 +331,11 @@ async def _handle_embed_job(job) -> None:
         await _handle_profile_artifact_embed_job(job)
         return
 
-    await _handle_content_embed_job(job)
+    if action == "embed_document":
+        await _handle_content_embed_job(job)
+        return
+
+    raise ValueError(f"Unknown INGESTION_EMBED action: {action!r}")
 
 
 async def _handle_content_embed_job(job) -> None:

@@ -165,10 +165,15 @@ class QueryServiceBase:
         # Extract any filename-like tokens (e.g., ModernChat.js, foo.py, README.md) preserving case
         # Keep scope tight to the extensions we actively support in KB title matching
         try:
-            filename_terms = re.findall(r"([A-Za-z0-9_][A-Za-z0-9_\-\.]*\.(?:md|py|js))", query)
-            # Deduplicate while preserving order
-            seen = set()
-            filename_terms = [t for t in filename_terms if not (t.lower() in seen or seen.add(t.lower()))]
+            raw_filename_terms = re.findall(r"([A-Za-z0-9_][A-Za-z0-9_\-\.]*\.(?:md|py|js))", query)
+            # Deduplicate while preserving order (case-insensitive)
+            seen: set[str] = set()
+            filename_terms = []
+            for t in raw_filename_terms:
+                key = t.lower()
+                if key not in seen:
+                    seen.add(key)
+                    filename_terms.append(t)
         except Exception:
             filename_terms = []
 
