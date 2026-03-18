@@ -85,7 +85,7 @@ class QueryServiceBase:
                 or re.match(r"^\d+[a-z]+", term)
                 or re.match(r"^[a-z]+-[a-z0-9]+", term)
                 or len(term) > 3
-            ):  # All caps (like "MXB") - check lowercase
+            ):  # All caps (like "ACME") - check lowercase
                 key_terms.append(term)
 
         return key_terms if key_terms else [query]  # Fallback to original query
@@ -103,11 +103,11 @@ class QueryServiceBase:
         """
         # Extract all potential terms with original case
         # Split on word boundaries and clean up punctuation
-        # Handle technical identifiers like "MXB-22,510" where comma is part of number notation
+        # Handle technical identifiers like "ACME-555,222" where comma is part of number notation
         # Pattern explanation:
         # - [A-Za-z0-9]+ : Start with alphanumeric
         # - (?:[-][A-Za-z0-9]+)* : Allow hyphens between alphanumeric parts
-        # - (?:[,][0-9]+)* : Allow commas followed by numbers (for number notation like "22,510")
+        # - (?:[,][0-9]+)* : Allow commas followed by numbers (for number notation like "555,222")
         # - (?:[.][0-9]+)? : Allow decimal points
         raw_terms = re.findall(r"[A-Za-z0-9']+(?:[-][A-Za-z0-9]+)*(?:[,][0-9]+)*(?:[.][0-9]+)?", query)
         all_terms = []

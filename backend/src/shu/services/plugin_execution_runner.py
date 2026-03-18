@@ -287,10 +287,6 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
                 exc_info=True,
             )
 
-    # Step 16: KB stats are now collected when each document reaches its
-    # terminal status (CONTENT_PROCESSED / PROFILE_PROCESSED) inside the
-    # worker embed job handler. See SHU-637.
-
     return PluginExecutionResult(
         status=status,
         result=payload,

@@ -136,10 +136,6 @@ class ProfilingOrchestrator:
                     await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
 
-            # NOTE: Artifact embedding (synopsis, chunk summaries, queries) is now
-            # handled by a separate INGESTION_EMBED job enqueued by the worker after
-            # profiling completes. See SHU-637.
-
             duration_ms = int((time.time() - start_time) * 1000)
 
             logger.info(

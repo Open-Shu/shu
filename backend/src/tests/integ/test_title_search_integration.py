@@ -206,7 +206,7 @@ async def test_query_preprocessing_technical_terms(client, db, auth_headers):
     # Add a test document to enable search
     test_doc = {
         "title": "Test Document for Query Processing",
-        "content": "This document contains Some Very Important Study information and MXB-2024 Protocol details.",
+        "content": "This document contains important project information and ACME-2024 Protocol details.",
         "source_type": "filesystem",
         "file_type": "txt",
     }

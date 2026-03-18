@@ -490,12 +490,8 @@ class DocumentChunk(BaseModel):
         ):
             return True
 
-        # Numeric sampling schedules like "1 2 4 8 12"
-        if re.fullmatch(r"\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)+", cleaned):
-            return True
-
-        # Timing phrases frequently emitted by the profiler
-        return cleaned in {"post dose", "pre dose", "predose", "postdose", "baseline"}
+        # Sequences of bare numbers like "1 2 4 8 12"
+        return bool(re.fullmatch(r"\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)+", cleaned))
 
     @staticmethod
     def _should_skip_keyword_token(token: str) -> bool:
@@ -507,8 +503,26 @@ class DocumentChunk(BaseModel):
         if re.fullmatch(r"\d+(?:\.\d+)?", token):
             return True
 
-        # Drop standalone temporal units
-        return token in {"h", "hr", "hrs", "hour", "hours", "min", "mins", "minute", "minutes"}
+        # Drop standalone temporal units (same set as the timespan regex in _should_skip_keyword_phrase)
+        return token in {
+            "h",
+            "hr",
+            "hrs",
+            "hour",
+            "hours",
+            "min",
+            "mins",
+            "minute",
+            "minutes",
+            "day",
+            "days",
+            "week",
+            "weeks",
+            "month",
+            "months",
+            "year",
+            "years",
+        }
 
     @property
     def is_profiled(self) -> bool:

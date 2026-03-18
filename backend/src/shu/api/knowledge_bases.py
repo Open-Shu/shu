@@ -971,10 +971,6 @@ async def upload_documents(
     successful = sum(1 for r in results if r.get("success"))
     failed = len(results) - successful
 
-    # KB stats (document_count, total_chunks) are now collected when each
-    # document reaches its terminal status inside the worker embed job
-    # handler, where chunk counts are accurate. See SHU-637.
-
     return ShuResponse.success(
         {
             "knowledge_base_id": kb_id,

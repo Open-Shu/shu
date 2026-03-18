@@ -73,7 +73,7 @@ async def test_hybrid_search_mixed_stop_words(client, db, auth_headers):
 
     # Test with mixed queries containing stop words and meaningful terms
     mixed_queries = [
-        "the safety profile of MXB-22",
+        "the safety profile of ACME-500",
         "what is the effectiveness",
         "how does the system work",
         "where are the documents located",
@@ -161,7 +161,7 @@ async def test_hybrid_search_keyword_only_results(client, db, auth_headers):
 
     # Test with very specific technical terms that would only match keywords
     search_data = {
-        "query": "MXB-22 compound synthesis protocol",
+        "query": "ACME-500 compound synthesis protocol",
         "query_type": "hybrid",
         "limit": 5,
     }
