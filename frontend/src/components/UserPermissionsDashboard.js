@@ -53,6 +53,14 @@ const UserPermissionsDashboard = () => {
     );
   }
 
+  if (error) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <Alert severity="error">Failed to load groups: {error}</Alert>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>

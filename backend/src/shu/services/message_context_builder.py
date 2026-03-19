@@ -84,6 +84,7 @@ class MessageContextBuilder:
         conversation_messages: list[Message],
         model_configuration_override: ModelConfiguration | None = None,
         recent_messages_limit: int | None = None,
+        kb_access_verified: bool = False,
     ) -> tuple[ChatContext, list[dict]]:
         """Build message context using model configuration with conditional RAG + attachments."""
         system_sections: list[str] = []
@@ -100,8 +101,9 @@ class MessageContextBuilder:
 
         # Enforce PBAC on the KB regardless of RAG mode — if the user
         # explicitly attached a KB to this conversation they must have read
-        # access even when RAG is disabled.
-        if knowledge_base_id:
+        # access even when RAG is disabled.  Skip when the caller has already
+        # verified access (e.g. ChatService._prepare_turn_context).
+        if knowledge_base_id and not kb_access_verified:
             kb_svc = KnowledgeBaseService(self.db_session)
             await kb_svc.get_knowledge_base(knowledge_base_id, str(current_user.id))
 

@@ -296,15 +296,16 @@ class ModelConfigurationService:
             if relationship_options:
                 query = query.options(*relationship_options)
 
-            # Apply pagination
-            offset = (page - 1) * per_page
-            query = query.order_by(ModelConfiguration.name.asc()).offset(offset).limit(per_page)
-
-            # Execute queries
-            result = await self.db.execute(query)
-            configurations = result.scalars().all()
+            # TODO: This is inefficient, but temporary code. In the future model configs and KB associations are on-the-fly, rather
+            #       than fixed.
+            query = query.order_by(ModelConfiguration.name.asc())
 
             if current_user:
+                # KB access filtering happens in Python, so fetch all matching
+                # configs to get an accurate total, then slice for the page.
+                result = await self.db.execute(query)
+                configurations = list(result.scalars().all())
+
                 all_kbs = []
                 for config in configurations:
                     if hasattr(config, "knowledge_bases") and config.knowledge_bases:
@@ -319,8 +320,17 @@ class ModelConfigurationService:
                         if not any(kb.id not in accessible_ids for kb in (c.knowledge_bases or []))
                     ]
 
-            count_result = await self.db.execute(count_query)
-            total = count_result.scalar()
+                total = len(configurations)
+                offset = (page - 1) * per_page
+                configurations = configurations[offset : offset + per_page]
+            else:
+                offset = (page - 1) * per_page
+                query = query.offset(offset).limit(per_page)
+                result = await self.db.execute(query)
+                configurations = list(result.scalars().all())
+
+                count_result = await self.db.execute(count_query)
+                total = count_result.scalar()
 
             # Calculate pagination info
             pages = (total + per_page - 1) // per_page
