@@ -690,6 +690,35 @@ class ExperienceExecutor:
             return await self._execute_decision_control_step(step, context)
         raise ValueError(f"Unknown step type: {step.step_type}")
 
+    def _build_auth_overlay(self, step: ExperienceStep, context: dict[str, Any]) -> dict | None:
+        """Build an auth overlay dict for domain-wide delegation or other auth overrides.
+
+        Returns None when no auth_override is configured on the step, leaving
+        the default auth behaviour unchanged.
+        """
+        auth_override = step.auth_override
+        if auth_override is None:
+            return None
+
+        provider = auth_override["provider"]
+        mode = auth_override["mode"]
+        subject_source = auth_override["subject_source"]
+
+        if subject_source == "running_user":
+            resolved_subject = context.get("user", {}).get("email")
+            if not resolved_subject:
+                raise ValueError(
+                    f"Step '{step.step_key}' requires auth_override with subject_source='running_user', "
+                    "but the running user has no email address. Update the user profile and retry."
+                )
+        elif subject_source == "explicit":
+            raw_subject = auth_override["subject"]
+            resolved_subject = self._render_template(raw_subject, context) if "{{" in raw_subject else raw_subject
+        else:
+            raise ValueError(f"Step '{step.step_key}' has unsupported auth_override subject_source: '{subject_source}'")
+
+        return {"auth": {provider: {"mode": mode, "subject": resolved_subject}}}
+
     async def _execute_plugin_step(
         self,
         step: ExperienceStep,
@@ -703,6 +732,12 @@ class ExperienceExecutor:
             raise ValueError(f"Step {step.step_key} missing plugin_name")
 
         params = self._render_params(step.params_template, context)
+
+        # Inject auth overlay for domain-wide delegation when configured on the step.
+        auth_overlay = self._build_auth_overlay(step, context)
+        if auth_overlay is not None:
+            host_overlay = params.setdefault("__host", {})
+            host_overlay.update(auth_overlay)
 
         # Inject KB IDs into __host overlay so KbCapability receives them.
         # setdefault at every level: a step template may supply its own

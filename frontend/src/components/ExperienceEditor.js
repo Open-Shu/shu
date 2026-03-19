@@ -246,6 +246,7 @@ export default function ExperienceEditor() {
         knowledge_base_id: step.knowledge_base_id || null,
         kb_query_template: step.kb_query_template || null,
         params_template: step.params_template || null,
+        auth_override: step.auth_override || null,
         condition_template: step.condition_template || null,
       })),
     };

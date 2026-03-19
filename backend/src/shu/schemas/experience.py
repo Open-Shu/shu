@@ -65,6 +65,46 @@ class RunStatus(str, Enum):
 # ============================================================================
 
 
+_VALID_AUTH_MODES = {"user", "domain_delegate"}
+_VALID_SUBJECT_SOURCES = {"running_user", "explicit"}
+
+
+def _validate_auth_override(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validate auth_override structure.
+
+    Returns None when mode is "user" (user mode is the default, no override needed).
+    """
+    if value is None:
+        return None
+
+    provider = value.get("provider")
+    if not provider or not isinstance(provider, str) or not provider.strip():
+        raise ValueError("auth_override.provider is required and must be a non-empty string")
+
+    mode = value.get("mode")
+    if mode not in _VALID_AUTH_MODES:
+        raise ValueError(f"auth_override.mode must be one of {sorted(_VALID_AUTH_MODES)}, got {mode!r}")
+
+    if mode == "user":
+        return None
+
+    subject_source = value.get("subject_source")
+    if subject_source not in _VALID_SUBJECT_SOURCES:
+        raise ValueError(
+            f"auth_override.subject_source is required when mode='domain_delegate' "
+            f"and must be one of {sorted(_VALID_SUBJECT_SOURCES)}, got {subject_source!r}"
+        )
+
+    if subject_source == "explicit":
+        subject = value.get("subject")
+        if not subject or not isinstance(subject, str) or not subject.strip():
+            raise ValueError(
+                "auth_override.subject is required and must be a non-empty string " "when subject_source='explicit'"
+            )
+
+    return value
+
+
 class ExperienceStepBase(BaseModel):
     """Base schema for experience steps."""
 
@@ -93,6 +133,8 @@ class ExperienceStepBase(BaseModel):
     # Conditional execution
     condition_template: str | None = Field(None, description="Jinja2 condition for skipping step")
 
+    auth_override: dict[str, Any] | None = Field(None, description="Auth mode override")
+
     @field_validator("step_key")
     @classmethod
     def validate_step_key(cls, v: str) -> str:
@@ -106,6 +148,12 @@ class ExperienceStepBase(BaseModel):
                 f"Step key '{v}' must be a valid Python/Jinja2 identifier (start with letter/underscore, contain only alphanumerics/underscore)"
             )
         return v
+
+    @field_validator("auth_override", mode="before")
+    @classmethod
+    def validate_auth_override(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Validate auth_override structure."""
+        return _validate_auth_override(value)
 
 
 class ExperienceStepCreate(ExperienceStepBase):
@@ -128,6 +176,13 @@ class ExperienceStepUpdate(BaseModel):
     kb_query_template: str | None = None
     params_template: dict[str, Any] | None = None
     condition_template: str | None = None
+    auth_override: dict[str, Any] | None = Field(None, description="Auth mode override")
+
+    @field_validator("auth_override", mode="before")
+    @classmethod
+    def validate_auth_override(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Validate auth_override structure."""
+        return _validate_auth_override(value)
 
 
 class ExperienceStepResponse(ExperienceStepBase):

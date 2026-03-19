@@ -218,6 +218,10 @@ class ExperienceStep(BaseModel):
     # Required identity scopes (computed from plugin manifest at runtime, cached here)
     required_scopes = Column(JSON, nullable=True)
 
+    # Authentication override for steps requiring delegated or alternate auth flows
+    # Example: {"provider": "google", "mode": "domain_delegate", "subject_source": "running_user"}
+    auth_override = Column(JSON, nullable=True)
+
     # Relationships
     experience = relationship("Experience", back_populates="steps")
     knowledge_base = relationship("KnowledgeBase")

@@ -108,10 +108,9 @@ export default function ProviderAuthPanel({
       if (typeof prov.mode === 'string' && prov.mode) {
         setSelectedMode(prov.mode);
       }
-      if (typeof prov.subject === 'string' && prov.subject) {
+      if (typeof prov.subject === 'string') {
         setProbeSubject(prov.subject);
-      }
-      if (typeof prov.impersonate_email === 'string' && prov.impersonate_email) {
+      } else if (typeof prov.impersonate_email === 'string') {
         setProbeSubject(prov.impersonate_email);
       }
     } catch (_) {
@@ -304,6 +303,14 @@ export default function ProviderAuthPanel({
             <Alert severity="warning" sx={{ mt: 1 }}>
               Service account is not configured on the host. Set GOOGLE_SERVICE_ACCOUNT_JSON or
               GOOGLE_SERVICE_ACCOUNT_FILE.
+            </Alert>
+          )}
+          {effMode === 'domain_delegate' && (
+            <Alert severity="info" sx={{ mt: 1 }}>
+              <strong>User OAuth</strong> requires each user to connect their own account.{' '}
+              <strong>Domain-wide Delegation</strong> uses a service account to act on behalf of users &mdash; leave the
+              email empty to automatically impersonate the running user, or set a specific email to always impersonate
+              that account.
             </Alert>
           )}
         </Box>
