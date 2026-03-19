@@ -519,9 +519,19 @@ class DocumentQuery(BaseModel):
     # Vector embedding for similarity search — dimensionless; dimension derived from embedding model at runtime
     query_embedding = Column(Vector(), nullable=True)
 
+    # Chunk provenance — which chunk inspired this query (SHU-645)
+    # SET NULL on chunk deletion so queries survive re-chunking
+    source_chunk_id = Column(
+        String,
+        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
     document = relationship("Document", back_populates="queries")
     knowledge_base = relationship("KnowledgeBase")
+    source_chunk = relationship("DocumentChunk", foreign_keys=[source_chunk_id])
 
     def __repr__(self) -> str:
         """Represent as string."""
@@ -538,6 +548,7 @@ class DocumentQuery(BaseModel):
             {
                 "query_text": self.query_text,
                 "has_embedding": self.query_embedding is not None,
+                "source_chunk_id": self.source_chunk_id,
             }
         )
         return base_dict
@@ -558,6 +569,7 @@ class DocumentQuery(BaseModel):
         knowledge_base_id: str,
         query_text: str,
         query_embedding: list[float] | None = None,
+        source_chunk_id: str | None = None,
     ) -> "DocumentQuery":
         """Create a synthesized query for a document."""
         return cls(
@@ -565,6 +577,7 @@ class DocumentQuery(BaseModel):
             knowledge_base_id=knowledge_base_id,
             query_text=query_text,
             query_embedding=query_embedding,
+            source_chunk_id=source_chunk_id,
         )
 
 

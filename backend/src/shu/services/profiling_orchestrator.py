@@ -27,6 +27,7 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     ProfilingMode,
     ProfilingResult,
+    SynthesizedQuery,
 )
 from .profiling_service import ProfilingService
 from .side_call_service import SideCallService
@@ -131,7 +132,7 @@ class ProfilingOrchestrator:
             queries_created = 0
             if doc_profile:
                 try:
-                    queries_created = await self._persist_queries(document, synthesized_queries)
+                    queries_created = await self._persist_queries(document, synthesized_queries, chunks)
                 except Exception as e:
                     await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
@@ -174,15 +175,22 @@ class ProfilingOrchestrator:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
 
-    async def _persist_queries(self, document: Document, queries: list[str]) -> int:
+    async def _persist_queries(
+        self,
+        document: Document,
+        queries: list[SynthesizedQuery],
+        chunks: list[DocumentChunk],
+    ) -> int:
         """Persist synthesized queries to the database.
 
         Deletes any existing queries for this document before creating new ones
-        to handle re-profiling scenarios.
+        to handle re-profiling scenarios. Resolves chunk_index from the LLM
+        response to chunk_id for direct FK linkage (SHU-645).
 
         Args:
             document: The document being profiled
-            queries: List of query strings
+            queries: List of SynthesizedQuery with optional chunk_index provenance
+            chunks: Document chunks for chunk_index → chunk_id resolution
 
         Returns:
             Number of queries created
@@ -191,13 +199,18 @@ class ProfilingOrchestrator:
         # Delete existing queries for this document (re-profiling case)
         await self.db.execute(delete(DocumentQuery).where(DocumentQuery.document_id == document.id))
 
+        # Build chunk_index → chunk_id map for provenance resolution
+        chunk_index_to_id: dict[int, str] = {c.chunk_index: c.id for c in chunks}
+
         queries_created = 0
-        for query_text in queries:
-            if query_text.strip():  # Skip empty queries
+        for sq in queries:
+            if sq.query_text.strip():
+                source_chunk_id = chunk_index_to_id.get(sq.chunk_index) if sq.chunk_index is not None else None
                 doc_query = DocumentQuery.create_for_document(
                     document_id=document.id,
                     knowledge_base_id=document.knowledge_base_id,
-                    query_text=query_text.strip(),
+                    query_text=sq.query_text.strip(),
+                    source_chunk_id=source_chunk_id,
                 )
                 self.db.add(doc_query)
                 queries_created += 1

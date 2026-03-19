@@ -137,6 +137,17 @@ class ProfilingResult(BaseModel):
     queries_embedded: int = Field(0, description="Number of synthesized queries embedded")
 
 
+class SynthesizedQuery(BaseModel):
+    """A synthesized query with optional chunk provenance.
+
+    The chunk_index links back to the chunk whose content inspired this query.
+    Resolved to a chunk_id at persist time (SHU-645).
+    """
+
+    query_text: str = Field(..., description="The synthesized query string")
+    chunk_index: int | None = Field(None, description="Index of the source chunk (from LLM response)")
+
+
 class DocumentMetadataResponse(BaseModel):
     """Response from document metadata synthesis.
 
@@ -150,7 +161,7 @@ class DocumentMetadataResponse(BaseModel):
         default_factory=CapabilityManifest,
         description="What questions this document can answer",
     )
-    synthesized_queries: list[str] = Field(
+    synthesized_queries: list[SynthesizedQuery] = Field(
         default_factory=list,
-        description="Hypothetical queries this document can satisfy",
+        description="Hypothetical queries this document can satisfy, with chunk provenance",
     )

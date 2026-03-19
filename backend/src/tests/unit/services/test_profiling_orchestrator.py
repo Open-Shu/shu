@@ -21,6 +21,7 @@ from shu.schemas.profiling import (
     DocumentProfile,
     DocumentType,
     ProfilingMode,
+    SynthesizedQuery,
 )
 from shu.services.profiling_orchestrator import ProfilingOrchestrator
 
@@ -151,7 +152,10 @@ class TestRunForDocument:
             )
             for i in range(20)
         ]
-        synthesized_queries = ["What is this about?", "How does it work?"]
+        synthesized_queries = [
+            SynthesizedQuery(query_text="What is this about?", chunk_index=0),
+            SynthesizedQuery(query_text="How does it work?", chunk_index=1),
+        ]
 
         with patch.object(
             orchestrator.profiling_service,
@@ -332,13 +336,19 @@ class TestPersistQueries:
 
     @pytest.mark.asyncio
     async def test_persist_queries_success(self, orchestrator, mock_db):
-        """Test persisting synthesized queries."""
+        """Test persisting synthesized queries with chunk provenance."""
         doc = create_mock_document()
+        chunks = [create_mock_chunk("c0", 0, "Content 0"), create_mock_chunk("c1", 1, "Content 1")]
         mock_db.execute = AsyncMock()  # Mock the delete execute
 
         queries_created = await orchestrator._persist_queries(
             doc,
-            ["What is X?", "How does Y work?", "Show me Z"],
+            [
+                SynthesizedQuery(query_text="What is X?", chunk_index=0),
+                SynthesizedQuery(query_text="How does Y work?", chunk_index=1),
+                SynthesizedQuery(query_text="Show me Z", chunk_index=None),
+            ],
+            chunks,
         )
 
         assert queries_created == 3
@@ -351,11 +361,18 @@ class TestPersistQueries:
     async def test_persist_queries_skips_empty(self, orchestrator, mock_db):
         """Test that empty queries are skipped."""
         doc = create_mock_document()
+        chunks = [create_mock_chunk("c0", 0, "Content 0")]
         mock_db.execute = AsyncMock()
 
         queries_created = await orchestrator._persist_queries(
             doc,
-            ["Valid query", "", "  ", "Another valid"],
+            [
+                SynthesizedQuery(query_text="Valid query", chunk_index=0),
+                SynthesizedQuery(query_text="", chunk_index=0),
+                SynthesizedQuery(query_text="  ", chunk_index=None),
+                SynthesizedQuery(query_text="Another valid", chunk_index=None),
+            ],
+            chunks,
         )
 
         assert queries_created == 2
@@ -367,7 +384,7 @@ class TestPersistQueries:
         doc = create_mock_document()
         mock_db.execute = AsyncMock()
 
-        queries_created = await orchestrator._persist_queries(doc, [])
+        queries_created = await orchestrator._persist_queries(doc, [], [])
 
         assert queries_created == 0
         # Delete is still called even for empty list (clears old queries)
@@ -380,9 +397,14 @@ class TestPersistQueries:
     async def test_persist_queries_deletes_existing(self, orchestrator, mock_db):
         """Test that existing queries are deleted before creating new ones (re-profiling)."""
         doc = create_mock_document()
+        chunks = [create_mock_chunk("c0", 0, "Content 0")]
         mock_db.execute = AsyncMock()
 
-        await orchestrator._persist_queries(doc, ["New query"])
+        await orchestrator._persist_queries(
+            doc,
+            [SynthesizedQuery(query_text="New query", chunk_index=0)],
+            chunks,
+        )
 
         # Verify delete was called with correct document_id filter
         mock_db.execute.assert_called_once()

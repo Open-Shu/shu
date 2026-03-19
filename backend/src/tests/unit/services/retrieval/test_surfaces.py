@@ -234,13 +234,13 @@ class TestQueryMatchSurface:
     def _make_surface(
         self,
         mock_vector_results: list[VectorSearchResult] | None = None,
-        mock_db_results: list[tuple[str, str, str]] | None = None,
+        mock_db_results: list[tuple[str, str, str, str | None]] | None = None,
     ):
         """Create a QueryMatchSurface with mocked VectorStore and db.
 
         Args:
             mock_vector_results: Results from VectorStore.search
-            mock_db_results: Tuples of (query_id, document_id, query_text) for db query
+            mock_db_results: Tuples of (query_id, document_id, query_text, source_chunk_id)
 
         """
         mock_vector_store = MagicMock()
@@ -262,7 +262,7 @@ class TestQueryMatchSurface:
         query_text = "What is the quarterly budget?"
 
         mock_vector_results = [VectorSearchResult(id=query_id, score=0.85)]
-        mock_db_results = [(query_id, doc_id, query_text)]
+        mock_db_results = [(query_id, doc_id, query_text, None)]
 
         surface, _, mock_db = self._make_surface(mock_vector_results, mock_db_results)
 
@@ -296,8 +296,8 @@ class TestQueryMatchSurface:
             VectorSearchResult(id=query_id_2, score=0.70),
         ]
         mock_db_results = [
-            (query_id_1, doc_id, "High scoring query"),
-            (query_id_2, doc_id, "Lower scoring query"),
+            (query_id_1, doc_id, "High scoring query", None),
+            (query_id_2, doc_id, "Lower scoring query", None),
         ]
 
         surface, _, mock_db = self._make_surface(mock_vector_results, mock_db_results)

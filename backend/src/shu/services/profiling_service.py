@@ -19,6 +19,7 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
     DocumentProfile,
+    SynthesizedQuery,
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
@@ -328,7 +329,7 @@ class ProfilingService:
         accumulated_summaries: list[str],
         document_metadata: dict | None,
         timeout_ms: int,
-    ) -> tuple[DocumentProfile | None, list[str], int]:
+    ) -> tuple[DocumentProfile | None, list[SynthesizedQuery], int]:
         """Generate document-level metadata from accumulated chunk context.
 
         This is a separate, focused LLM call that synthesizes chunk summaries
@@ -512,7 +513,7 @@ class ProfilingService:
         chunks: list[ChunkData],
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
-    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int, float]:
+    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[SynthesizedQuery], int, float]:
         """Profile chunks incrementally, then generate document metadata separately.
 
         This method separates chunk profiling from document metadata generation:

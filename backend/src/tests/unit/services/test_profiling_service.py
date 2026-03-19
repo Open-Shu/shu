@@ -259,7 +259,7 @@ class TestIncrementalProfiling:
         assert doc_profile.document_type == DocumentType.TECHNICAL
 
         assert len(queries) == 2
-        assert "OAuth2 PKCE" in queries[0]
+        assert "OAuth2 PKCE" in queries[0].query_text
 
         assert tokens == 300  # 200 for chunks + 100 for metadata
         assert coverage == 100.0  # All chunks successful

@@ -1,13 +1,16 @@
-"""Migration 008_0004: Add BM25 search_vector to documents, drop keywords from document_chunks
+"""Migration 008_0004: BM25 search_vector + query chunk provenance
 
-Adds a ``search_vector`` tsvector column to the ``documents`` table with a GIN
-index for Postgres full-text search (BM25-family ranking via ``ts_rank``).
-Backfills the column from ``title`` and ``content``.
+1. Adds a ``search_vector`` tsvector column to the ``documents`` table with a
+   GIN index for Postgres full-text search (BM25-family ranking via
+   ``ts_rank``).  Backfills the column from ``title`` and ``content``.
+   Drops the ``keywords`` JSONB column and its GIN index from
+   ``document_chunks``, since keyword extraction is replaced by native
+   full-text search on documents.  (SHU-644)
 
-Drops the ``keywords`` JSONB column and its GIN index from ``document_chunks``,
-since keyword extraction is replaced by native full-text search on documents.
-
-Part of SHU-644: Replace KeywordMatch with BM25 Retrieval Surface.
+2. Adds a nullable ``source_chunk_id`` FK column to ``document_queries``,
+   linking each synthesized query to the chunk that inspired it.  Uses
+   ``ON DELETE SET NULL`` so deleting a chunk doesn't cascade-delete
+   queries.  (SHU-645)
 """
 
 import sqlalchemy as sa
@@ -79,10 +82,35 @@ def upgrade() -> None:
     # 6. Drop keywords column from document_chunks
     drop_column_if_exists(inspector, "document_chunks", "keywords")
 
+    # 7. Add source_chunk_id FK to document_queries (SHU-645)
+    add_column_if_not_exists(
+        inspector,
+        "document_queries",
+        sa.Column(
+            "source_chunk_id",
+            sa.String,
+            sa.ForeignKey("document_chunks.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+
+    # 8. Index on source_chunk_id for reverse lookups
+    if not index_exists(inspector, "document_queries", "ix_document_queries_source_chunk_id"):
+        op.create_index(
+            "ix_document_queries_source_chunk_id",
+            "document_queries",
+            ["source_chunk_id"],
+        )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+
+    # Drop source_chunk_id index and column from document_queries (SHU-645)
+    if index_exists(inspector, "document_queries", "ix_document_queries_source_chunk_id"):
+        op.drop_index("ix_document_queries_source_chunk_id", table_name="document_queries")
+    drop_column_if_exists(inspector, "document_queries", "source_chunk_id")
 
     # Re-add keywords column to document_chunks
     add_column_if_not_exists(
