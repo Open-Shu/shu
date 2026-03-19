@@ -28,6 +28,10 @@ BEIR_DATASETS = {
         "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
         "description": "SciFact: 5,183 docs, 300 queries (scientific claims)",
     },
+    "fiqa": {
+        "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip",
+        "description": "FiQA: 57,638 docs, 648 queries (financial QA)",
+    },
 }
 
 

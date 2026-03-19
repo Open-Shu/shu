@@ -75,10 +75,6 @@ class ChunkProfile(BaseModel):
         description="One-line summary with SPECIFIC content (names, figures, dates). "
         "Used for agent scanning and synopsis accumulation.",
     )
-    keywords: list[str] = Field(
-        default_factory=list,
-        description="Specific extractable terms: names, numbers, dates, technical terms",
-    )
     topics: list[str] = Field(
         default_factory=list,
         description="Conceptual categories the chunk relates to",

@@ -25,8 +25,6 @@ google-auth-oauthlib==1.2.2
 google-auth-httplib2==0.2.0
 google-api-python-client==2.176.0
 
-# NLP utilities
-inflect==7.5.0  # Plural/singular expansion for keyword matching
 
 # Text processing and embeddings
 sentence-transformers==5.0.0
@@ -75,7 +73,6 @@ pytest-cov==6.0.0  # Pytest plugin for coverage
 
 # Benchmark evaluation (IR metrics: precision, recall, MRR, NDCG, MAP + statistical tests)
 ranx>=0.3.20
-rank-bm25>=0.2.2  # BM25 baseline for IR benchmarking
 
 # Plugin SDK
 shu-plugin-sdk @ git+https://github.com/Open-Shu/shu-plugin-sdk@v0.0.1

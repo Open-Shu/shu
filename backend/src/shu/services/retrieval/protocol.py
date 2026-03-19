@@ -120,7 +120,6 @@ class RetrievalSurface(Protocol):
         self,
         query_text: str,
         query_vector: list[float],
-        keyword_terms: list[str],
         *,
         kb_id: UUID,
         limit: int = 50,
@@ -132,7 +131,6 @@ class RetrievalSurface(Protocol):
         Args:
             query_text: The original query text.
             query_vector: Pre-computed embedding vector for the query.
-            keyword_terms: Extracted keyword terms for keyword-based surfaces.
             kb_id: Knowledge base ID to scope the search.
             limit: Maximum number of results to return.
             threshold: Minimum score threshold (0.0-1.0).

@@ -251,7 +251,7 @@ class ReportGenerator:
             w(f"{'>> best_novel (max)' :<25} {ndcg:>10.4f} {p10:>10.4f} {mrr:>10.4f} {delta:>+11.1f}%")
             w("")
             w("best_novel = max(chunk_summary, query_match, synopsis_match) per document")
-            w("(excludes chunk_vector as baseline equivalent, keyword_match as prior art)")
+            w("(excludes chunk_vector as baseline equivalent, bm25 as prior art)")
 
         w("")
 
@@ -538,7 +538,7 @@ class ReportGenerator:
                 "chunk_vector": "Dedicated title chunk as a searchable vector",
                 "synopsis_match": "Document-level synopsis embeddings",
                 "query_match": "Synthesized question embeddings",
-                "keyword_match": "Keyword exact matching",
+                "bm25": "Postgres full-text search (BM25)",
             }
 
             # Sort by NDCG descending, exclude surfaces with 0 scores

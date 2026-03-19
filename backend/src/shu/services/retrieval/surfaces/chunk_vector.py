@@ -40,7 +40,6 @@ class ChunkVectorSurface(RetrievalSurface):
         self,
         query_text: str,
         query_vector: list[float],
-        keyword_terms: list[str],
         *,
         kb_id: UUID,
         limit: int = 50,
@@ -52,7 +51,6 @@ class ChunkVectorSurface(RetrievalSurface):
         Args:
             query_text: Original query text (unused by this surface).
             query_vector: Pre-computed embedding vector.
-            keyword_terms: Keyword terms (unused by this surface).
             kb_id: Knowledge base ID to scope the search.
             limit: Maximum number of chunks to return.
             threshold: Minimum similarity score (0.0-1.0).

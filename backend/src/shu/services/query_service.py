@@ -147,7 +147,7 @@ class QueryService(
                     chunk_vector_weight=request.chunk_vector_weight,
                     query_match_weight=request.query_match_weight,
                     synopsis_match_weight=request.synopsis_match_weight,
-                    keyword_match_weight=request.keyword_match_weight,
+                    bm25_weight=request.bm25_weight,
                     chunk_summary_weight=request.chunk_summary_weight,
                 )
             else:

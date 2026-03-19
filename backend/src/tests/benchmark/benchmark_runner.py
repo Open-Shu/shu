@@ -93,9 +93,8 @@ class BenchmarkResults:
     # Best novel surface (max across query_match, synopsis_match, chunk_summary per doc)
     best_novel_scores: dict[str, float] = field(default_factory=dict)
 
-    # BM25 baseline (universal IR baseline)
+    # BM25 scores (extracted from per-surface evaluation of the bm25 surface)
     bm25_scores: dict[str, float] = field(default_factory=dict)
-    bm25_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
 
     # Raw run data for reproducibility
     baseline_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -209,7 +208,7 @@ class BenchmarkRunner:
             "chunk_summary": "chunk_summary_weight",
             "query_match": "query_match_weight",
             "synopsis_match": "synopsis_match_weight",
-            "keyword_match": "keyword_match_weight",
+            "bm25": "bm25_weight",
         }
         for surface in self.config.exclude_surfaces:
             if surface in surface_weight_params:
@@ -227,10 +226,8 @@ class BenchmarkRunner:
             dataset.queries, id_map, ms_search_cfg,
         )
 
-        # 6. Run BM25 baseline (universal IR baseline, in-memory, no API)
-        logger.info("Running BM25 baseline (%d queries against %d docs)...", dataset.query_count, dataset.corpus_size)
-        bm25_run_dict = self._run_bm25(dataset)
-        bm25_scores = self._evaluate_single_run(dataset.qrels, bm25_run_dict, "bm25")
+        # 6. BM25 scores come from the per-surface evaluation below (no separate run needed —
+        #    the BM25 surface runs as part of multi-surface search via the API)
 
         # 7. Capture model provenance
         embedding_model, profiling_model = await self._get_model_provenance(kb_id)
@@ -240,6 +237,9 @@ class BenchmarkRunner:
         per_surface_scores, best_novel_scores = self._evaluate_per_surface(
             dataset.qrels, ms_surface_scores,
         )
+
+        # Extract BM25 scores from per-surface evaluation (no separate in-memory run needed)
+        bm25_scores = per_surface_scores.get("bm25", {m: 0.0 for m in self.config.metrics})
 
         # 9. Compute aggregate metrics
         logger.info("Computing IR metrics...")
@@ -266,7 +266,6 @@ class BenchmarkRunner:
             per_surface_scores=per_surface_scores,
             best_novel_scores=best_novel_scores,
             bm25_scores=bm25_scores,
-            bm25_run_dict=bm25_run_dict,
             baseline_run_dict=baseline_run_dict,
             multi_surface_run_dict=ms_run_dict,
             multi_surface_surface_scores=ms_surface_scores,
@@ -374,50 +373,6 @@ class BenchmarkRunner:
             progress_callback=_log_processing,
         )
 
-    def _run_bm25(self, dataset: BeirDataset) -> dict[str, dict[str, float]]:
-        """Run BM25 retrieval entirely in-memory against the corpus.
-
-        No API calls, no database — pure text scoring using the BEIR corpus
-        documents directly. This provides the universal IR baseline that every
-        published BEIR result is measured against.
-
-        Returns:
-            ranx run dict: {query_id: {doc_id: score, ...}, ...}
-        """
-        from rank_bm25 import BM25Okapi
-
-        # Build corpus index
-        doc_ids = list(dataset.corpus.keys())
-        doc_texts = []
-        for doc_id in doc_ids:
-            entry = dataset.corpus[doc_id]
-            text = entry.text
-            if entry.title:
-                text = f"{entry.title} {text}"
-            doc_texts.append(text.lower().split())
-
-        bm25 = BM25Okapi(doc_texts)
-
-        # Score each query
-        run_dict: dict[str, dict[str, float]] = {}
-        for query_id, query in dataset.queries.items():
-            tokenized_query = query.text.lower().split()
-            scores = bm25.get_scores(tokenized_query)
-
-            # Build doc_id -> score mapping, keep top results
-            query_scores: dict[str, float] = {}
-            for idx, score in enumerate(scores):
-                if score > 0:
-                    query_scores[doc_ids[idx]] = float(score)
-
-            if query_scores:
-                # Keep top-k by score to match other runs
-                sorted_docs = sorted(query_scores.items(), key=lambda x: x[1], reverse=True)
-                run_dict[query_id] = dict(sorted_docs[:self.config.search_limit])
-
-        logger.info("BM25 run complete: %d queries, %d total results", len(run_dict), sum(len(d) for d in run_dict.values()))
-        return run_dict
-
     def _evaluate_single_run(
         self,
         qrels_dict: dict[str, dict[str, int]],
@@ -444,7 +399,7 @@ class BenchmarkRunner:
         documents by each surface's score alone. No extra API calls needed.
 
         Novel surfaces: chunk_summary, query_match, synopsis_match
-        (excludes chunk_vector as baseline equivalent and keyword_match as prior art)
+        (excludes chunk_vector as baseline equivalent and bm25 as prior art)
 
         Returns:
             Tuple of:
@@ -455,7 +410,7 @@ class BenchmarkRunner:
 
         qrels = Qrels(qrels_dict, name="ground_truth")
 
-        surfaces = ["chunk_vector", "chunk_summary", "query_match", "synopsis_match", "keyword_match"]
+        surfaces = ["chunk_vector", "chunk_summary", "query_match", "synopsis_match", "bm25"]
         novel_surfaces = ["chunk_summary", "query_match", "synopsis_match"]
 
         per_surface_results: dict[str, dict[str, float]] = {}

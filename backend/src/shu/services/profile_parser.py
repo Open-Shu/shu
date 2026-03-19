@@ -26,7 +26,6 @@ class ProfileParser:
 
     # Limits for truncation
     MAX_SUMMARY_LENGTH = 500
-    MAX_KEYWORDS = 15
     MAX_TOPICS = 10
     DEFAULT_MAX_TOTAL_QUERIES = 100
 
@@ -239,11 +238,9 @@ class ProfileParser:
                     profile_data = data[i]
                     # Coerce values to handle LLM returning null instead of missing keys
                     summary = self._coerce_string(profile_data.get("summary"))
-                    keywords = self._coerce_list(profile_data.get("keywords"))
                     topics = self._coerce_list(profile_data.get("topics"))
                     profile = ChunkProfile(
                         summary=summary[: self.MAX_SUMMARY_LENGTH],
-                        keywords=keywords[: self.MAX_KEYWORDS],
                         topics=topics[: self.MAX_TOPICS],
                     )
                     results.append(
@@ -296,7 +293,7 @@ class ProfileParser:
         return ChunkProfileResult(
             chunk_id=chunk.chunk_id,
             chunk_index=chunk.chunk_index,
-            profile=ChunkProfile(summary="", keywords=[], topics=[]),
+            profile=ChunkProfile(summary="", topics=[]),
             success=False,
             error=error,
         )

@@ -5,7 +5,7 @@ It is a pure LLM-facing service with no database access. The profiling
 orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
-- Generate chunk profiles (summary, keywords, topics) for batch processing
+- Generate chunk profiles (summary, topics) for batch processing
 - Generate document metadata in a separate LLM call after all chunks are profiled
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
@@ -35,7 +35,6 @@ PURPOSE: An AI agent scans these profiles to decide which chunks to retrieve. Ge
 For each chunk, generate:
 {
     "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
-    "keywords": ["extract", "every", "proper noun", "technical", "term", "entity"],
     "topics": ["specific categories", "not just 'database' but 'PostgreSQL indexing'"]
 }
 
@@ -43,15 +42,10 @@ Examples:
 BAD summary: "Discusses security configuration"
 GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings"
 
-BAD keywords: ["security", "configuration", "settings"]
-GOOD keywords: ["OAuth2", "admin API", "read:users scope", "JWT expiry"]
-
 Guidelines:
 - summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
-- keywords: Extract EVERY specific identifier, proper noun, and entities that would help guide an LLM agent to the chunk.
-  NO dates. NO timespans (not "0.5h", "1h", "day 4"). NO raw numbers (not "100", "500").
 - topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
-Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
+Limit to 3-5 topics. Prioritize specificity over completeness."""
 
 # Document metadata prompt - focused solely on synthesizing document-level metadata
 # Used AFTER all chunks are profiled, receives accumulated summaries as input
@@ -67,7 +61,7 @@ Generate a JSON response with this exact structure:
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
         "answers_questions_about": [
-            "SPECIFIC topics consolidated from all chunks with keywords, topics, named entities and dates",
+            "SPECIFIC topics consolidated from all chunks with topics, named entities and dates",
             "Example: 'Acme Corp Q3 2024 revenue and profit margins'"
         ],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
@@ -106,14 +100,14 @@ QUERIES_GUIDELINES_TEMPLATE = """
   Every query must be grounded in the document's subject so it is findable in a global search.
 
   Other retrieval surfaces already handle content-level matching: raw chunk embeddings match
-  specific facts, chunk summary embeddings match topical descriptions, and keyword indexes
-  match named entities. Synthesized queries must cover what those surfaces CANNOT:
+  specific facts, chunk summary embeddings match topical descriptions, and BM25 full-text
+  search matches named entities. Synthesized queries must cover what those surfaces CANNOT:
   interpretive, thematic, and capability-oriented questions about the document's subject.
 
   GROUNDING RULE (mandatory):
   Every query MUST name the document's primary subject — the product, company, system,
   study, or topic that distinguishes this document from all others in the knowledge base.
-  Identify the subject from the document metadata and chunk keywords/topics. A query that
+  Identify the subject from the document metadata and chunk topics. A query that
   could apply to any document on a similar topic is ungrounded and useless.
 
   CAPABILITY QUERIES ask what the document can ANSWER, not what it contains.
@@ -155,7 +149,7 @@ QUERIES_GUIDELINES_TEMPLATE = """
 
   Return chunk_queries as an array with one entry per chunk, in chunk_index order.
   Maximum {max_total_queries} queries total — if the document has many chunks, prioritize
-  chunks with the most distinctive keywords/topics."""
+  chunks with the most distinctive topics."""
 
 
 class ProfilingService:
@@ -239,7 +233,6 @@ class ProfilingService:
 
         Processes chunks in batches for efficiency. Each chunk gets:
         - summary: One-line description for agent scanning and retrieval
-        - keywords: Specific extractable terms
         - topics: Conceptual categories
 
         Args:
@@ -289,16 +282,15 @@ class ProfilingService:
             + "\n\n".join(chunks_text)
             + f"\n\nReturn a JSON array with EXACTLY {len(chunks)} objects in order: "
             + f"[profile for chunk 1, profile for chunk 2, ... profile for chunk {len(chunks)}]. "
-            + "Each object must have: summary, keywords, topics."
+            + "Each object must have: summary, topics."
         )
 
         # Add title chunk guidance when chunk 0 is in this batch
         if self.settings.title_chunk_enabled_default and any(c.chunk_index == 0 for c in chunks):
             user_content += (
                 "\n\nNOTE: Chunk 1 is the document title/subject. Use context from the other chunks "
-                "to infer what acronyms and identifiers in the title mean. Extract the abbreviation "
-                "itself (e.g., 'IACUC') as a keyword. If the expansion is useful, put it in the "
-                "summary rather than forcing it into the keyword list."
+                "to infer what acronyms and identifiers in the title mean. Include the abbreviation "
+                "and its expansion in the summary if useful."
             )
 
         # Validate input doesn't exceed max tokens
@@ -339,12 +331,12 @@ class ProfilingService:
     ) -> tuple[DocumentProfile | None, list[str], int]:
         """Generate document-level metadata from accumulated chunk context.
 
-        This is a separate, focused LLM call that synthesizes chunk summaries,
-        keywords, and topics into document-level metadata (synopsis,
+        This is a separate, focused LLM call that synthesizes chunk summaries
+        and topics into document-level metadata (synopsis,
         capability_manifest, queries).
 
         Args:
-            accumulated_summaries: Context from all profiled chunks (summary + keywords + topics)
+            accumulated_summaries: Context from all profiled chunks (summary + topics)
             document_metadata: Optional document metadata (title, source, etc.)
             timeout_ms: Timeout for LLM call
 
@@ -479,7 +471,7 @@ class ProfilingService:
             f"You MUST return exactly {len(failed_chunks)} profiles.\n\n"
             + "\n\n".join(chunks_text)
             + f"\n\nReturn a JSON array with EXACTLY {len(failed_chunks)} objects in order. "
-            + "Each object must have: summary, keywords, topics."
+            + "Each object must have: summary, topics."
         )
 
         # Validate input doesn't exceed max tokens
@@ -613,8 +605,6 @@ class ProfilingService:
             if self._is_chunk_profile_failed(r):
                 continue
             entry = f"Chunk {r.chunk_index}: {r.profile.summary}"
-            if r.profile.keywords:
-                entry += f"\n  Keywords: {', '.join(r.profile.keywords)}"
             if r.profile.topics:
                 entry += f"\n  Topics: {', '.join(r.profile.topics)}"
             accumulated_summaries.append(entry)

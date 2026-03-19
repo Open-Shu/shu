@@ -7,9 +7,9 @@ import pytest
 
 from shu.core.vector_store import VectorSearchResult
 from shu.services.retrieval.surfaces import (
+    BM25Surface,
     ChunkSummaryVectorSurface,
     ChunkVectorSurface,
-    KeywordMatchSurface,
     QueryMatchSurface,
     SynopsisMatchSurface,
     TopicMatchSurface,
@@ -38,7 +38,7 @@ class TestChunkVectorSurface:
         result = await surface.search(
             query_text="test query",
             query_vector=[0.1] * 1024,
-            keyword_terms=["test"],
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.5,
@@ -61,7 +61,7 @@ class TestChunkVectorSurface:
         await surface.search(
             query_text="test query",
             query_vector=[0.5] * 1024,
-            keyword_terms=["test"],
+
             kb_id=kb_id,
             limit=20,
             threshold=0.7,
@@ -84,7 +84,7 @@ class TestChunkVectorSurface:
         result = await surface.search(
             query_text="no matches",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=uuid4(),
             db=mock_db,
         )
@@ -117,7 +117,7 @@ class TestChunkSummaryVectorSurface:
         result = await surface.search(
             query_text="test query",
             query_vector=[0.1] * 1024,
-            keyword_terms=["test"],
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.5,
@@ -138,7 +138,7 @@ class TestChunkSummaryVectorSurface:
         await surface.search(
             query_text="test",
             query_vector=[0.5] * 1024,
-            keyword_terms=[],
+
             kb_id=kb_id,
             limit=20,
             threshold=0.7,
@@ -157,7 +157,7 @@ class TestChunkSummaryVectorSurface:
         result = await surface.search(
             query_text="no matches",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=uuid4(),
             db=AsyncMock(),
         )
@@ -193,7 +193,7 @@ class TestSynopsisMatchSurface:
         result = await surface.search(
             query_text="test query",
             query_vector=[0.1] * 1024,
-            keyword_terms=["test"],
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.5,
@@ -214,7 +214,7 @@ class TestSynopsisMatchSurface:
         await surface.search(
             query_text="test",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=uuid4(),
             db=mock_db,
         )
@@ -269,7 +269,7 @@ class TestQueryMatchSurface:
         result = await surface.search(
             query_text="budget info",
             query_vector=[0.1] * 1024,
-            keyword_terms=["budget"],
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.5,
@@ -305,7 +305,7 @@ class TestQueryMatchSurface:
         result = await surface.search(
             query_text="test",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=uuid4(),
             limit=10,
             db=mock_db,
@@ -324,7 +324,7 @@ class TestQueryMatchSurface:
         result = await surface.search(
             query_text="no matches",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=uuid4(),
             db=mock_db,
         )
@@ -341,7 +341,7 @@ class TestQueryMatchSurface:
         await surface.search(
             query_text="test",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=uuid4(),
             db=mock_db,
         )
@@ -358,7 +358,7 @@ class TestQueryMatchSurface:
         await surface.search(
             query_text="test",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],
+
             kb_id=kb_id,
             limit=10,
             db=mock_db,
@@ -374,8 +374,8 @@ class TestQueryMatchSurface:
         assert surface.name == "query_match"
 
 
-class TestKeywordMatchSurface:
-    """Tests for KeywordMatchSurface."""
+class TestBM25Surface:
+    """Tests for BM25Surface."""
 
     def _make_mock_db(self, rows: list[tuple] | None = None):
         """Create a mock db session that returns the given rows."""
@@ -385,112 +385,53 @@ class TestKeywordMatchSurface:
         mock_db.execute = AsyncMock(return_value=mock_result)
         return mock_db
 
+    def _make_row(self, doc_id, rank):
+        """Create a mock row with id and rank attributes."""
+        row = MagicMock()
+        row.id = str(doc_id)
+        row.rank = rank
+        return row
+
     @pytest.mark.asyncio
-    async def test_search_returns_document_hits_with_matched_terms(self):
-        """search() should return document-level hits with matched_terms in metadata."""
+    async def test_search_returns_document_hits(self):
+        """search() should return document-level hits with saturation-normalized scores."""
         doc_id = uuid4()
-        # Simulate row: (document_id, keywords)
-        mock_rows = [(doc_id, ["python", "fastapi", "database"])]
+        mock_rows = [self._make_row(doc_id, 0.5)]
         mock_db = self._make_mock_db(mock_rows)
 
-        surface = KeywordMatchSurface()
+        surface = BM25Surface()
         result = await surface.search(
             query_text="python api",
             query_vector=[0.1] * 1024,
-            keyword_terms=["python", "api"],
             kb_id=uuid4(),
             limit=10,
             threshold=0.0,
             db=mock_db,
         )
 
-        assert result.surface_name == "keyword_match"
+        assert result.surface_name == "bm25"
         assert len(result.hits) == 1
         assert result.hits[0].id_type == "document"
         assert result.hits[0].id == doc_id
-        # 1 of 2 query terms matched ("python")
-        assert result.hits[0].score == 0.5
-        assert result.hits[0].metadata["matched_terms"] == ["python"]
+        # Saturation: 0.5 / (0.1 + 0.5) ≈ 0.833
+        assert 0.83 < result.hits[0].score < 0.84
+        assert result.hits[0].metadata["raw_ts_rank"] == 0.5
 
     @pytest.mark.asyncio
-    async def test_search_calculates_match_ratio_correctly(self):
-        """search() should calculate score as matched_terms / query_terms."""
-        doc_id = uuid4()
-        # Chunk has all 3 query terms
-        mock_rows = [(doc_id, ["auth", "oauth", "jwt", "security"])]
-        mock_db = self._make_mock_db(mock_rows)
-
-        surface = KeywordMatchSurface()
-        result = await surface.search(
-            query_text="auth oauth jwt",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["auth", "oauth", "jwt"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert len(result.hits) == 1
-        # 3 of 3 query terms matched
-        assert result.hits[0].score == 1.0
-        assert set(result.hits[0].metadata["matched_terms"]) == {"auth", "oauth", "jwt"}
-
-    @pytest.mark.asyncio
-    async def test_search_aggregates_keywords_across_chunks(self):
-        """search() should union matched keywords across chunks of the same document."""
-        doc_id = uuid4()
-        # Three chunks from the same document, each with a different query keyword
-        mock_rows = [
-            (doc_id, ["kubernetes", "deployment"]),
-            (doc_id, ["autoscaling", "hpa"]),
-            (doc_id, ["prometheus", "monitoring"]),
-        ]
-        mock_db = self._make_mock_db(mock_rows)
-
-        surface = KeywordMatchSurface()
-        result = await surface.search(
-            query_text="kubernetes autoscaling prometheus",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["kubernetes", "autoscaling", "prometheus"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert len(result.hits) == 1
-        assert result.hits[0].id_type == "document"
-        assert result.hits[0].id == doc_id
-        # All 3 query terms matched across different chunks
-        assert result.hits[0].score == 1.0
-        assert set(result.hits[0].metadata["matched_terms"]) == {
-            "kubernetes",
-            "autoscaling",
-            "prometheus",
-        }
-
-    @pytest.mark.asyncio
-    async def test_search_ranks_documents_by_coverage(self):
-        """Documents with more keyword coverage should rank higher."""
+    async def test_search_normalizes_scores_with_saturation(self):
+        """search() should use saturation normalization, not max-normalization."""
         doc_a = uuid4()
         doc_b = uuid4()
-        # Doc A: 2 of 3 keywords across its chunks
-        # Doc B: all 3 keywords across its chunks
         mock_rows = [
-            (doc_a, ["python"]),
-            (doc_a, ["fastapi"]),
-            (doc_b, ["python"]),
-            (doc_b, ["fastapi"]),
-            (doc_b, ["docker"]),
+            self._make_row(doc_a, 0.8),
+            self._make_row(doc_b, 0.4),
         ]
         mock_db = self._make_mock_db(mock_rows)
 
-        surface = KeywordMatchSurface()
+        surface = BM25Surface()
         result = await surface.search(
-            query_text="python fastapi docker",
+            query_text="database query",
             query_vector=[0.1] * 1024,
-            keyword_terms=["python", "fastapi", "docker"],
             kb_id=uuid4(),
             limit=10,
             threshold=0.0,
@@ -498,172 +439,78 @@ class TestKeywordMatchSurface:
         )
 
         assert len(result.hits) == 2
-        # Doc B (3/3 = 1.0) should rank above Doc A (2/3 ≈ 0.67)
-        assert result.hits[0].id == doc_b
-        assert result.hits[0].score == 1.0
-        assert result.hits[1].id == doc_a
-        assert abs(result.hits[1].score - 2 / 3) < 1e-9
+        # Saturation: 0.8/(0.1+0.8)≈0.889, 0.4/(0.1+0.4)=0.8
+        assert 0.88 < result.hits[0].score < 0.90
+        assert result.hits[1].score == pytest.approx(0.8, abs=0.01)
 
     @pytest.mark.asyncio
-    async def test_search_matches_plural_variant(self):
-        """Singular query term should match plural stored keyword via expansion."""
-        doc_id = uuid4()
-        # Stored keyword is plural, query term is singular
-        mock_rows = [(doc_id, ["containers", "deployments"])]
-        mock_db = self._make_mock_db(mock_rows)
-
-        surface = KeywordMatchSurface()
-        result = await surface.search(
-            query_text="container deployment",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["container", "deployment"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert len(result.hits) == 1
-        assert result.hits[0].score == 1.0
-        assert set(result.hits[0].metadata["matched_terms"]) == {"container", "deployment"}
-
-    @pytest.mark.asyncio
-    async def test_search_matches_singular_variant(self):
-        """Plural query term should match singular stored keyword via expansion."""
-        doc_id = uuid4()
-        # Stored keyword is singular, query term is plural
-        mock_rows = [(doc_id, ["policy", "endpoint"])]
-        mock_db = self._make_mock_db(mock_rows)
-
-        surface = KeywordMatchSurface()
-        result = await surface.search(
-            query_text="policies endpoints",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["policies", "endpoints"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert len(result.hits) == 1
-        assert result.hits[0].score == 1.0
-        assert set(result.hits[0].metadata["matched_terms"]) == {"policies", "endpoints"}
-
-    @pytest.mark.asyncio
-    async def test_search_identity_terms_not_broken_by_expansion(self):
-        """Terms like 'kubernetes' or 'redis' should still match exactly despite mangled variants."""
-        doc_id = uuid4()
-        # inflect mangles these (kubernetes→kubernete, redis→redi) but originals still match
-        mock_rows = [(doc_id, ["kubernetes", "redis", "prometheus"])]
-        mock_db = self._make_mock_db(mock_rows)
-
-        surface = KeywordMatchSurface()
-        result = await surface.search(
-            query_text="kubernetes redis prometheus",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["kubernetes", "redis", "prometheus"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert len(result.hits) == 1
-        assert result.hits[0].score == 1.0
-        assert set(result.hits[0].metadata["matched_terms"]) == {"kubernetes", "redis", "prometheus"}
-
-    @pytest.mark.asyncio
-    async def test_search_expansion_does_not_dilute_score(self):
-        """Score denominator should use original term count, not expanded variants."""
-        doc_id = uuid4()
-        # Only 1 of 2 original terms matches (via plural variant)
-        mock_rows = [(doc_id, ["containers"])]
-        mock_db = self._make_mock_db(mock_rows)
-
-        surface = KeywordMatchSurface()
-        result = await surface.search(
-            query_text="container policy",
-            query_vector=[0.1] * 1024,
-            keyword_terms=["container", "policy"],
-            kb_id=uuid4(),
-            limit=10,
-            threshold=0.0,
-            db=mock_db,
-        )
-
-        assert len(result.hits) == 1
-        # 1 of 2 original terms matched — score is 0.5, NOT diluted by expanded variants
-        assert result.hits[0].score == 0.5
-        assert result.hits[0].metadata["matched_terms"] == ["container"]
-
-    @pytest.mark.asyncio
-    async def test_search_handles_empty_keyword_terms(self):
-        """search() should return empty results for empty keyword_terms."""
+    async def test_search_handles_empty_query(self):
+        """search() should return empty results for empty query_text."""
         mock_db = self._make_mock_db([])
 
-        surface = KeywordMatchSurface()
+        surface = BM25Surface()
         result = await surface.search(
             query_text="",
             query_vector=[0.1] * 1024,
-            keyword_terms=[],  # Empty keywords
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.0,
             db=mock_db,
         )
 
-        assert result.surface_name == "keyword_match"
+        assert result.surface_name == "bm25"
         assert len(result.hits) == 0
         assert result.execution_time_ms >= 0
-        # Should not call db.execute when no keywords
         mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_handles_no_matches(self):
-        """search() should handle no matching chunks gracefully."""
-        mock_db = self._make_mock_db([])  # No rows returned
+        """search() should handle no matching documents gracefully."""
+        mock_db = self._make_mock_db([])
 
-        surface = KeywordMatchSurface()
+        surface = BM25Surface()
         result = await surface.search(
             query_text="nonexistent",
             query_vector=[0.1] * 1024,
-            keyword_terms=["nonexistent"],
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.0,
             db=mock_db,
         )
 
-        assert result.surface_name == "keyword_match"
+        assert result.surface_name == "bm25"
         assert len(result.hits) == 0
 
     @pytest.mark.asyncio
     async def test_search_respects_threshold(self):
         """search() should filter results below the threshold."""
-        doc_id = uuid4()
-        # Only 1 of 3 terms matches = score 0.33
-        mock_rows = [(doc_id, ["python"])]
+        doc_a = uuid4()
+        doc_b = uuid4()
+        mock_rows = [
+            self._make_row(doc_a, 0.8),   # Saturation: 0.8/(0.1+0.8) ≈ 0.889
+            self._make_row(doc_b, 0.005),  # Saturation: 0.005/(0.1+0.005) ≈ 0.048 — below 0.5
+        ]
         mock_db = self._make_mock_db(mock_rows)
 
-        surface = KeywordMatchSurface()
+        surface = BM25Surface()
         result = await surface.search(
-            query_text="python java rust",
+            query_text="python java",
             query_vector=[0.1] * 1024,
-            keyword_terms=["python", "java", "rust"],
             kb_id=uuid4(),
             limit=10,
-            threshold=0.5,  # Requires 50% match
+            threshold=0.5,
             db=mock_db,
         )
 
-        # Score is 0.33, below threshold of 0.5
-        assert len(result.hits) == 0
+        assert len(result.hits) == 1
+        assert result.hits[0].id == doc_a
 
     def test_surface_has_correct_name(self):
-        """KeywordMatchSurface has the expected name."""
-        surface = KeywordMatchSurface()
-        assert surface.name == "keyword_match"
+        """BM25Surface has the expected name."""
+        surface = BM25Surface()
+        assert surface.name == "bm25"
 
 
 class TestTopicMatchSurface:
@@ -676,7 +523,7 @@ class TestTopicMatchSurface:
         result = await surface.search(
             query_text="anything",
             query_vector=[0.1] * 1024,
-            keyword_terms=["anything"],
+
             kb_id=uuid4(),
             limit=10,
             threshold=0.0,

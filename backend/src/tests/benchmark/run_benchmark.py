@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         dest="exclude_surfaces",
-        help="Exclude a surface from multi-surface search (can repeat, e.g. --exclude-surface keyword_match)",
+        help="Exclude a surface from multi-surface search (can repeat, e.g. --exclude-surface bm25)",
     )
     parser.add_argument(
         "--verbose",

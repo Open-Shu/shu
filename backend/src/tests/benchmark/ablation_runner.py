@@ -17,10 +17,10 @@ from .result_collector import ResultCollector, SearchConfig
 
 logger = logging.getLogger(__name__)
 
-SURFACES = ["chunk_vector", "chunk_summary", "query_match", "synopsis_match", "keyword_match"]
+SURFACES = ["chunk_vector", "chunk_summary", "query_match", "synopsis_match", "bm25"]
 
 # Surfaces representing novel contributions (for patent evidence)
-# keyword_match is excluded — keyword matching is well-established prior art
+# bm25 is excluded — BM25/keyword matching is well-established prior art
 NOVEL_SURFACES = ["chunk_summary", "query_match", "synopsis_match"]
 
 # Weight parameter names in the API
@@ -29,7 +29,7 @@ WEIGHT_PARAMS = {
     "chunk_summary": "chunk_summary_weight",
     "query_match": "query_match_weight",
     "synopsis_match": "synopsis_match_weight",
-    "keyword_match": "keyword_match_weight",
+    "bm25": "bm25_weight",
 }
 
 

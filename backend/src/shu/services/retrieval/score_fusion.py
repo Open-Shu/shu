@@ -29,7 +29,7 @@ DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
     "chunk_summary": 0.25,
     "query_match": 0.20,
     "synopsis_match": 0.15,
-    "keyword_match": 0.15,
+    "bm25": 0.15,
 }
 
 # Maximum snippet length for contributing chunks

@@ -261,7 +261,6 @@ class ProfilingOrchestrator:
             ):
                 chunk.set_profile(
                     summary=result.profile.summary,
-                    keywords=result.profile.keywords,
                     topics=result.profile.topics,
                 )
                 chunks_persisted += 1
