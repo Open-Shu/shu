@@ -25,6 +25,9 @@ google-auth-oauthlib==1.2.2
 google-auth-httplib2==0.2.0
 google-api-python-client==2.176.0
 
+# NLP utilities
+inflect==7.5.0  # Plural/singular expansion for keyword matching
+
 # Text processing and embeddings
 sentence-transformers==5.0.0
 torch==2.7.1

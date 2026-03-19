@@ -87,37 +87,75 @@ Guidelines:
 
 # Query synthesis additions - always injected into document metadata prompts
 QUERIES_JSON_ADDITION = """,
-    "synthesized_queries": [
-        "What was Acme Corp's Q3 2024 revenue?",
-        "Who approved the TechStart acquisition?",
-        "How do I configure OAuth2 scopes for the admin API?"
+    "chunk_queries": [
+        {
+            "chunk_index": 0,
+            "queries": ["How did Acme Corp do in Q3 2024?", "Did Acme Corp acquire TechStart?"]
+        },
+        {
+            "chunk_index": 1,
+            "queries": ["Does auth-service support OAuth2?", "How do I set up auth for the admin API?"]
+        }
     ]"""
 
 QUERIES_GUIDELINES_TEMPLATE = """
-- synthesized_queries: Generate {min_queries}-{max_queries} queries this document can answer.
-  PURPOSE: These queries will be embedded and matched against user searches.
+- chunk_queries: For EACH chunk summary above, generate {queries_per_chunk} capability queries.
 
-  CRITICAL: Include SPECIFIC details from the document:
-  BAD: "What were the results?" (matches any document with results)
-  GOOD: "What were the Q3 2024 sales results for the EMEA region?"
+  PURPOSE: These queries are embedded and matched against user searches at retrieval time.
+  Users are searching ACROSS ALL documents — they have not selected this document yet.
+  Every query must be grounded in the document's subject so it is findable in a global search.
 
-  BAD: "How does authentication work?" (matches any auth doc)
-  GOOD: "How does OAuth2 token refresh work in auth-service?"
+  Other retrieval surfaces already handle content-level matching: raw chunk embeddings match
+  specific facts, chunk summary embeddings match topical descriptions, and keyword indexes
+  match named entities. Synthesized queries must cover what those surfaces CANNOT:
+  interpretive, thematic, and capability-oriented questions about the document's subject.
 
-  Include in your queries:
-  - Named entities (people, companies, projects, products)
-  - Dates and time periods
-  - Keywords and topics from the document
-  - Version numbers, amounts, metrics
-  - Specific technical terms unique to this document
+  GROUNDING RULE (mandatory):
+  Every query MUST name the document's primary subject — the product, company, system,
+  study, or topic that distinguishes this document from all others in the knowledge base.
+  Identify the subject from the document metadata and chunk keywords/topics. A query that
+  could apply to any document on a similar topic is ungrounded and useless.
 
-  Query types to include:
-  - Factual: "What is X's Y?" "How much did Z cost?"
-  - Procedural: "How do I configure X?" "What are the steps for Y?"
-  - Comparative: "What changed between v1 and v2?"
-  - Entity-focused: "What did [Person] say about [Topic]?"
+  CAPABILITY QUERIES ask what the document can ANSWER, not what it contains.
+  - Ask about conclusions, implications, safety, efficacy, comparisons, decisions —
+    things a user WANTS TO KNOW, not data points they could grep for
+  - Phrase as a real person would ask — short, direct, natural language
+  - Think: "What question does this chunk ANSWER?" not "What does this chunk SAY?"
 
-  Scale: {min_queries} for simple docs, {max_queries} for complex multi-topic docs."""
+  GOOD vs BAD examples:
+
+  Document subject: Compound X-47 (preclinical drug candidate)
+  Chunk summary: "Lists hematology and clinical chemistry panels used to assess Compound X-47 toxicity"
+    BAD (restates content — redundant with chunk and summary embeddings):
+    - "What hematology and clinical chemistry parameters were measured for Compound X-47?"
+    BAD (ungrounded — could match any preclinical study):
+    - "Did any extended chemistry panels reveal adverse effects?"
+    - "What additional coagulation and biochemistry tests were performed?"
+    GOOD (grounded + capability-level):
+    - "Is Compound X-47 toxic?"
+    - "What safety tests were run on Compound X-47?"
+
+  Document subject: Acme Corp (quarterly earnings)
+  Chunk summary: "Details Acme Corp EMEA revenue figures and profit margins for Q3 2024"
+    BAD: "What was Acme Corp's EMEA revenue in Q3 2024?"
+    BAD (ungrounded): "What were the quarterly profit margins?"
+    GOOD: "How did Acme Corp do in Q3 2024?"
+    GOOD: "Is Acme Corp profitable in EMEA?"
+
+  Document subject: auth-service (internal platform)
+  Chunk summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings"
+    BAD: "How do I configure OAuth2 scopes for admin API endpoints with JWT expiry?"
+    BAD (ungrounded): "What authentication scopes are available?"
+    GOOD: "How do I set up auth for the admin API?"
+    GOOD: "Does auth-service support OAuth2?"
+
+  Heuristic: if the query would match well against the chunk's raw text via embedding
+  similarity, it is too specific and redundant. Step up one level of abstraction.
+  If the query could appear in a search against ANY similar document, it is ungrounded.
+
+  Return chunk_queries as an array with one entry per chunk, in chunk_index order.
+  Maximum {max_total_queries} queries total — if the document has many chunks, prioritize
+  chunks with the most distinctive keywords/topics."""
 
 
 class ProfilingService:
@@ -130,7 +168,7 @@ class ProfilingService:
     ) -> None:
         self.side_call = side_call_service
         self.settings = settings
-        self.parser = ProfileParser(max_queries=settings.query_synthesis_max_queries)
+        self.parser = ProfileParser(max_total_queries=settings.query_synthesis_max_total_queries)
 
     def _resolve_timeout_ms(self, timeout_ms: int | None, *, for_metadata: bool = False) -> int:
         """Resolve timeout, using settings default if not provided.
@@ -154,8 +192,8 @@ class ProfilingService:
         in the same profiling LLM call at no additional cost.
         """
         queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
-            min_queries=self.settings.query_synthesis_min_queries,
-            max_queries=self.settings.query_synthesis_max_queries,
+            queries_per_chunk=self.settings.query_synthesis_queries_per_chunk,
+            max_total_queries=self.settings.query_synthesis_max_total_queries,
         )
         return DOCUMENT_METADATA_PROMPT_TEMPLATE.format(
             queries_json=QUERIES_JSON_ADDITION,
@@ -322,15 +360,15 @@ class ProfilingService:
         user_content = "Synthesize document-level metadata from these chunk profiles:\n\n"
         user_content += "\n".join(accumulated_summaries)
 
-        # Build response instructions — always include query synthesis
-        min_q = self.settings.query_synthesis_min_queries
-        max_q = self.settings.query_synthesis_max_queries
+        # Build response instructions — always include per-chunk query synthesis
+        queries_per_chunk = self.settings.query_synthesis_queries_per_chunk
         user_content += (
             "\n\nRespond with a JSON object containing:\n"
             "1. 'synopsis': 2-4 sentence summary of the ENTIRE document\n"
             "2. 'document_type': narrative, transactional, technical, or conversational\n"
             "3. 'capability_manifest': what questions this document can answer\n"
-            f"4. 'synthesized_queries': {min_q}-{max_q} queries this document can answer"
+            f"4. 'chunk_queries': for each chunk, generate {queries_per_chunk} capability "
+            "queries (see system prompt for format)"
         )
 
         if document_metadata:

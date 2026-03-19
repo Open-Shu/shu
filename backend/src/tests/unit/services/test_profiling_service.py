@@ -30,8 +30,8 @@ def mock_settings():
     settings.profiling_metadata_timeout_seconds = 240
     settings.chunk_profiling_batch_size = 5
     settings.profiling_max_input_tokens = 8000
-    settings.query_synthesis_min_queries = 3
-    settings.query_synthesis_max_queries = 20
+    settings.query_synthesis_queries_per_chunk = 2
+    settings.query_synthesis_max_total_queries = 100
     settings.profiling_max_retries = 0  # Disable retries by default for simpler tests
     settings.title_chunk_enabled_default = False  # Disable title chunk enhancement by default
     return settings
@@ -555,7 +555,7 @@ class TestDocumentMetadataPrompt:
             "synopsis": "Test",
             "document_type": "narrative",
             "capability_manifest": {},
-            "synthesized_queries": [],
+            "chunk_queries": [],
         })
 
         mock_side_call_service.call_for_profiling.side_effect = [
@@ -568,8 +568,8 @@ class TestDocumentMetadataPrompt:
 
         # Check the second call (metadata generation)
         metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
-        # Verify prompt uses configured query limits (min=3, max=20 from mock_settings)
-        assert "3-20 queries" in metadata_call_kwargs["system_prompt"]
+        # Verify prompt uses configured per-chunk query count (queries_per_chunk=2 from mock_settings)
+        assert "2 capability queries" in metadata_call_kwargs["system_prompt"]
         # Should be focused on synthesis, not FINAL batch
         assert "synthesizing" in metadata_call_kwargs["system_prompt"].lower()
 
@@ -644,11 +644,11 @@ class TestQuerySynthesisInPrompt:
         system_prompt = metadata_call_kwargs["system_prompt"]
         user_content = metadata_call_kwargs["message_sequence"][0]["content"]
 
-        # System prompt should mention queries
-        assert "synthesized_queries" in system_prompt
-        assert "3-20 queries" in system_prompt
-        # User content should ask for queries
-        assert "synthesized_queries" in user_content
+        # System prompt should mention chunk queries
+        assert "chunk_queries" in system_prompt
+        assert "capability queries" in system_prompt
+        # User content should ask for chunk queries
+        assert "chunk_queries" in user_content
 
 
 class TestMetadataContextEnrichment:
