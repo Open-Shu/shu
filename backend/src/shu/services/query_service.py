@@ -6,7 +6,6 @@ providing a distinct search type. This module owns the dispatcher method
 (query_documents) that routes to the appropriate search implementation.
 """
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import ConfigurationManager
 from ..core.exceptions import ShuException
+from ..core.logging import get_logger
 from ..schemas.query import QueryRequest, QueryResponse, QueryResult, QueryType, SimilaritySearchRequest
 from .query.base import QueryServiceBase
 from .query.hybrid import HybridSearchMixin
@@ -24,7 +24,7 @@ from .query.similarity import SimilaritySearchMixin
 # Re-export for backward compatibility (used by rag_query_processing.py, rag_query_rewrite.py)
 from .query_constants import COMPREHENSIVE_STOP_WORDS, TITLE_MATCH_STOP_WORDS  # noqa: F401
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class QueryService(

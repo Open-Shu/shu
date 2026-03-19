@@ -10,7 +10,6 @@ from .config import router as config_router
 from .groups import router as groups_router
 from .health import router as health_router
 from .knowledge_bases import router as knowledge_bases_router
-from .permissions import router as permissions_router
 from .prompts import router as prompts_router
 from .query import router as query_router
 from .system import router as system_router
@@ -24,7 +23,6 @@ __all__ = [
     "groups_router",
     "health_router",
     "knowledge_bases_router",
-    "permissions_router",
     "prompts_router",
     "query_router",
     "system_router",

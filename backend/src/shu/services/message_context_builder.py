@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +7,8 @@ from shu.services.prompt_service import PromptService
 from shu.services.query_service import QueryService
 
 from ..auth.models import User
-from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager
+from ..core.logging import get_logger
 from ..models.llm_provider import Conversation, LLMModel, Message
 from ..models.model_configuration import ModelConfiguration
 from ..models.prompt import EntityType
@@ -17,12 +16,13 @@ from ..schemas.query import QueryRequest, RagRewriteMode
 from .chat_types import ChatContext, ChatMessage
 from .context_preferences_resolver import ContextPreferencesResolver
 from .context_window_manager import ContextWindowManager
+from .knowledge_base_service import KnowledgeBaseService
 from .message_utils import collapse_assistant_variants
 from .providers.adapter_base import get_adapter_from_provider
 from .rag_query_processing import execute_rag_queries
 from .side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MessageContextBuilder:
@@ -84,6 +84,7 @@ class MessageContextBuilder:
         conversation_messages: list[Message],
         model_configuration_override: ModelConfiguration | None = None,
         recent_messages_limit: int | None = None,
+        kb_access_verified: bool = False,
     ) -> tuple[ChatContext, list[dict]]:
         """Build message context using model configuration with conditional RAG + attachments."""
         system_sections: list[str] = []
@@ -97,6 +98,14 @@ class MessageContextBuilder:
 
         # Check if vision is enabled (Adapter Capability AND Model Config Override)
         vision_enabled = await self._is_vision_enabled(model, active_model_config)
+
+        # Enforce PBAC on the KB regardless of RAG mode — if the user
+        # explicitly attached a KB to this conversation they must have read
+        # access even when RAG is disabled.  Skip when the caller has already
+        # verified access (e.g. ChatService._prepare_turn_context).
+        if knowledge_base_id and not kb_access_verified:
+            kb_svc = KnowledgeBaseService(self.db_session)
+            await kb_svc.get_knowledge_base(knowledge_base_id, str(current_user.id))
 
         recent_chat_messages = await self._hydrate_chat_messages(
             conversation, recent_messages, vision_enabled=vision_enabled
@@ -230,17 +239,13 @@ class MessageContextBuilder:
             conversation, "model_configuration", None
         )
         if knowledge_base_id:
+            # PBAC already enforced in build_message_context above.
             kb_ids = [knowledge_base_id]
         elif kb_source_config and getattr(kb_source_config, "knowledge_bases", None):
             try:
-                accessible: list[str] = []
-                for kb in kb_source_config.knowledge_bases:
-                    if not kb.is_active:
-                        continue
-                    has_access = await rbac.can_access_knowledge_base(current_user, kb.id, self.db_session)
-                    if has_access:
-                        accessible.append(kb.id)
-                kb_ids = accessible
+                active_kbs = [kb for kb in kb_source_config.knowledge_bases if kb.is_active]
+                kb_svc = KnowledgeBaseService(self.db_session)
+                kb_ids = await kb_svc.filter_accessible_kb_ids(str(current_user.id), active_kbs)
             except Exception as e:
                 logger.warning(f"Error accessing model configuration knowledge bases: {e}")
 

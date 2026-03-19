@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from ..auth.models import User
-from ..auth.rbac import rbac
 from ..core.config import ConfigurationManager, get_settings_instance
 from ..core.exceptions import (
     ConversationNotFoundError,
@@ -40,6 +39,7 @@ from ..services.prompt_service import PromptService
 from ..services.query_service import QueryService
 from ..services.side_call_service import SideCallService
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
+from .knowledge_base_service import KnowledgeBaseService
 
 logger = logging.getLogger(__name__)
 settings = get_settings_instance()
@@ -111,10 +111,15 @@ class ChatService:
         self,
         conversation: Conversation,
         user_message: str,
+        current_user: User,
         knowledge_base_id: str | None,
         attachment_ids: list[str] | None = None,
     ) -> PreparedTurnContext:
-        """Insert the user message and assemble shared context for an ensemble turn."""
+        """Validate explicit KB access, then insert the user message and assemble shared context."""
+        if knowledge_base_id:
+            kb_service = KnowledgeBaseService(self.db_session)
+            await kb_service.get_knowledge_base(knowledge_base_id, str(current_user.id))
+
         user_msg = await self.add_message(
             conversation_id=conversation.id,
             role="user",
@@ -222,6 +227,7 @@ class ChatService:
             conversation_messages=turn_context.conversation_messages,
             model_configuration_override=model_configuration,
             recent_messages_limit=recent_messages_limit,
+            kb_access_verified=turn_context.knowledge_base_id is not None,
         )
 
         return ModelExecutionInputs(
@@ -990,18 +996,10 @@ class ChatService:
         result = await self.db_session.execute(stmt)
         conversation = result.scalar_one()
 
-        should_use_rag = rag_rewrite_mode != RagRewriteMode.NO_RAG
-        if knowledge_base_id and should_use_rag:
-            has_access = await rbac.can_access_knowledge_base(current_user, knowledge_base_id, self.db_session)
-            if not has_access:
-                raise ShuException(
-                    f"Access denied to knowledge base '{knowledge_base_id}'",
-                    "KNOWLEDGE_BASE_ACCESS_DENIED",
-                )
-
         turn_context = await self._prepare_turn_context(
             conversation=conversation,
             user_message=user_message,
+            current_user=current_user,
             knowledge_base_id=knowledge_base_id,
             attachment_ids=attachment_ids,
         )

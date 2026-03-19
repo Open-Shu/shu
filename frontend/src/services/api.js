@@ -309,14 +309,6 @@ export const knowledgeBaseAPI = {
   getRAGConfig: (id) => api.get(`/knowledge-bases/${id}/rag-config`),
   updateRAGConfig: (id, config) => api.put(`/knowledge-bases/${id}/rag-config`, config),
   getRAGTemplates: () => api.get('/knowledge-bases/rag-config/templates'),
-  // Permission management endpoints
-  getPermissions: (id) => api.get(`/knowledge-bases/${id}/permissions`),
-  grantPermission: (id, data) => api.post(`/knowledge-bases/${id}/permissions`, data),
-  revokePermission: (id, permissionId) => api.delete(`/knowledge-bases/${id}/permissions/${permissionId}`),
-  getEffectivePermissions: (id, userId = null) =>
-    api.get(`/knowledge-bases/${id}/effective-permissions`, {
-      params: userId ? { user_id: userId } : {},
-    }),
   // Re-embedding endpoints
   triggerReEmbed: (id) => api.post(`/knowledge-bases/${id}/re-embed`),
 };
@@ -439,9 +431,7 @@ export const groupsAPI = {
 
 // User Permissions API endpoints
 export const userPermissionsAPI = {
-  getCurrentUserKBPermissions: () => api.get('/users/me/permissions/knowledge-bases'),
   getCurrentUserGroups: () => api.get('/users/me/groups'),
-  getUserKBPermissions: (userId) => api.get(`/users/${userId}/permissions/knowledge-bases`),
   getUserGroups: (userId) => api.get(`/users/${userId}/groups`),
 };
 

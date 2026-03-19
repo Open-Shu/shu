@@ -11,14 +11,14 @@ with Hypothesis.
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import composite
 
-from shu.core.exceptions import ConversationNotFoundError
+from shu.core.exceptions import ConversationNotFoundError, NotFoundError
 from shu.models.llm_provider import Conversation
 from shu.services.chat_service import ChatService
 
@@ -1364,3 +1364,45 @@ class TestChatServiceExperienceIntegration:
         assert exc_info.value.status_code == 400
         assert "not found" in exc_info.value.detail.lower()
         assert model_config_id in exc_info.value.detail
+
+
+class TestChatServiceExplicitKnowledgeBaseAccess:
+    """Regression tests for explicit knowledge base access checks."""
+
+    @pytest.mark.asyncio
+    async def test_send_message_denied_kb_does_not_persist_user_turn(self) -> None:
+        """Explicit KB access is checked before the user message is inserted."""
+        mock_db = AsyncMock()
+        mock_config_manager = MagicMock()
+        chat_service = ChatService(mock_db, mock_config_manager)
+
+        conversation = MagicMock(spec=Conversation)
+        conversation.id = str(uuid.uuid4())
+        conversation.user_id = str(uuid.uuid4())
+
+        current_user = MagicMock()
+        current_user.id = conversation.user_id
+
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = conversation
+        mock_db.execute.return_value = mock_result
+
+        chat_service.get_conversation_by_id = AsyncMock(return_value=conversation)
+        chat_service.add_message = AsyncMock()
+
+        with patch("shu.services.chat_service.KnowledgeBaseService") as mock_kb_service_class:
+            mock_kb_service = MagicMock()
+            mock_kb_service.get_knowledge_base = AsyncMock(
+                side_effect=NotFoundError("Knowledge base 'kb-404' not found")
+            )
+            mock_kb_service_class.return_value = mock_kb_service
+
+            with pytest.raises(NotFoundError, match="kb-404"):
+                await chat_service.send_message(
+                    conversation_id=conversation.id,
+                    user_message="hello",
+                    current_user=current_user,
+                    knowledge_base_id="kb-404",
+                )
+
+        chat_service.add_message.assert_not_called()

@@ -11,21 +11,10 @@ identifiers use human-readable, wildcard-friendly names instead of UUIDs.
 Part of SHU-613: Policy-Based Access Control Engine.
 """
 
-import re
-import unicodedata
-
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.helpers import add_column_if_not_exists, column_exists, drop_column_if_exists, drop_table_if_exists, index_exists, table_exists
-
-
-def _slugify(value: str) -> str:
-    """Inline slugify for migration (mirrors shu.core.text.slugify)."""
-    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
-    value = value.lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    return value.strip("-")
+from migrations.helpers import add_column_if_not_exists, column_exists, drop_column_if_exists, drop_table_if_exists, index_exists, slugify, table_exists
 
 # revision identifiers, used by Alembic.
 revision = "008_0002"
@@ -163,7 +152,7 @@ def upgrade() -> None:
         rows = conn.execute(sa.select(experiences_table.c.id, experiences_table.c.name)).fetchall()
         seen_slugs: set[str] = set()
         for row in rows:
-            slug = _slugify(row.name)
+            slug = slugify(row.name)
             if not slug or slug in seen_slugs:
                 conn.execute(experiences_table.delete().where(experiences_table.c.id == row.id))
                 continue

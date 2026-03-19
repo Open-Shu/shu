@@ -8,16 +8,13 @@ import mimetypes
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import (
     get_current_user,
     require_admin,
-    require_kb_delete_default,
-    require_kb_manage_default,
-    require_kb_query_default,
     require_power_user,
 )
 from ..core.config import get_settings_instance
@@ -46,7 +43,7 @@ async def list_knowledge_bases(
     limit: int = Query(50, ge=1, le=100, description="Number of knowledge bases to return"),
     offset: int = Query(0, ge=0, description="Number of knowledge bases to skip"),
     search: str | None = Query(None, description="Search term for knowledge base names"),
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List knowledge bases with optional filtering and pagination.
@@ -68,7 +65,12 @@ async def list_knowledge_bases(
 
     try:
         kb_service = KnowledgeBaseService(db)
-        knowledge_bases, total_count = await kb_service.list_knowledge_bases(limit=limit, offset=offset, search=search)
+        knowledge_bases, total_count = await kb_service.list_knowledge_bases(
+            user_id=str(current_user.id),
+            limit=limit,
+            offset=offset,
+            search=search,
+        )
 
         # Format response using denormalized stats (no per-KB COUNT queries)
         kb_items = []
@@ -76,6 +78,7 @@ async def list_knowledge_bases(
             kb_items.append(
                 {
                     "id": kb.id,
+                    "slug": kb.slug,
                     "name": kb.name,
                     "description": kb.description,
                     "sync_enabled": kb.sync_enabled,
@@ -146,11 +149,9 @@ async def get_knowledge_base_stats(current_user: User = Depends(require_admin), 
 
 
 @router.get("/{kb_id}")
-# RBAC: require_kb_query_default expects path param 'kb_id'
 async def get_knowledge_base(
     kb_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific knowledge base by ID.
@@ -162,14 +163,7 @@ async def get_knowledge_base(
 
     try:
         service = KnowledgeBaseService(db)
-        result = await service.get_knowledge_base(kb_id)
-
-        if not result:
-            return ShuResponse.error(
-                message=f"Knowledge base '{kb_id}' not found",
-                code="KNOWLEDGE_BASE_NOT_FOUND",
-                status_code=404,
-            )
+        result = await service.get_knowledge_base(kb_id, str(current_user.id))
 
         # Get actual statistics
         stats = await service.get_knowledge_base_stats(kb_id)
@@ -177,6 +171,7 @@ async def get_knowledge_base(
         # Convert SQLAlchemy model to dictionary
         response_data = {
             "id": result.id,
+            "slug": result.slug,
             "name": result.name,
             "description": result.description,
             "sync_enabled": result.sync_enabled,
@@ -225,6 +220,7 @@ async def create_knowledge_base(
         # Convert SQLAlchemy model to dictionary
         response_data = {
             "id": result.id,
+            "slug": result.slug,
             "name": result.name,
             "description": result.description,
             "sync_enabled": result.sync_enabled,
@@ -252,12 +248,10 @@ async def create_knowledge_base(
 
 
 @router.put("/{kb_id}")
-# RBAC: require_kb_manage_default expects path param 'kb_id'
 async def update_knowledge_base(
     kb_id: str,
     update_data: KnowledgeBaseUpdate,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing knowledge base.
@@ -278,6 +272,7 @@ async def update_knowledge_base(
         # Convert SQLAlchemy model to dictionary
         response_data = {
             "id": result.id,
+            "slug": result.slug,
             "name": result.name,
             "description": result.description,
             "sync_enabled": result.sync_enabled,
@@ -305,11 +300,9 @@ async def update_knowledge_base(
 
 
 @router.delete("/{kb_id}")
-# RBAC: require_kb_delete_default expects path param 'kb_id'
 async def delete_knowledge_base(
     kb_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_delete_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a knowledge base.
@@ -336,10 +329,9 @@ async def delete_knowledge_base(
 
 
 @router.get("/{kb_id}/summary")
-# RBAC: require_kb_query_default expects path param 'kb_id'
 async def get_knowledge_base_summary(
     kb_id: str,
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get summary information for a knowledge base.
@@ -351,7 +343,7 @@ async def get_knowledge_base_summary(
 
     try:
         service = KnowledgeBaseService(db)
-        result = await service.get_knowledge_base_summary(kb_id)
+        result = await service.get_knowledge_base_summary(kb_id, user_id=str(current_user.id))
 
         logger.info("API: Retrieved knowledge base summary", extra={"kb_id": kb_id})
 
@@ -369,7 +361,7 @@ async def get_knowledge_base_summary(
 async def set_knowledge_base_status(
     kb_id: str,
     new_status: dict[str, Any],
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Set the status of a knowledge base.
@@ -397,8 +389,7 @@ async def set_knowledge_base_status(
 @router.get("/{kb_id}/validate")
 async def validate_knowledge_base_config(
     kb_id: str,
-    role_guard: User = Depends(require_power_user),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Validate knowledge base configuration.
@@ -438,7 +429,7 @@ async def validate_knowledge_base_config(
 )
 async def get_rag_config(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get RAG configuration for a knowledge base.
@@ -458,6 +449,7 @@ async def get_rag_config(
 
     try:
         kb_service = KnowledgeBaseService(db)
+        await kb_service.get_knowledge_base(kb_id, str(current_user.id))
         rag_config = await kb_service.get_rag_config(kb_id)
 
         return ShuResponse.success(rag_config)
@@ -509,7 +501,7 @@ async def get_rag_templates(current_user: User = Depends(get_current_user), db: 
 async def update_rag_config(
     rag_config: RAGConfig,
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update RAG configuration for a knowledge base.
@@ -550,21 +542,13 @@ async def get_document_preview(
     kb_id: str,
     document_id: str,
     max_chars: int = Query(1000, description="Maximum characters to preview"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a preview of document content with extraction metadata."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-        # Get document with metadata
-        document = await kb_service.get_document(kb_id, document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
+        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
 
         # Create preview with metadata
         # Normalize content_text for length calculation
@@ -603,30 +587,24 @@ async def get_document_preview(
                 },
             }
         )
+    except ShuException as e:
+        return ShuResponse.error(message=str(e), code="DOCUMENT_PREVIEW_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error(f"Error getting document preview: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 @router.get("/{kb_id}/documents/{document_id}/extraction-details")
 async def get_document_extraction_details(
     kb_id: str,
     document_id: str,
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed extraction information for a document."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-        # Get document with full metadata
-        document = await kb_service.get_document(kb_id, document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
+        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
 
         return ShuResponse.success(
             {
@@ -649,9 +627,11 @@ async def get_document_extraction_details(
                 },
             }
         )
+    except ShuException as e:
+        return ShuResponse.error(message=str(e), code="EXTRACTION_DETAILS_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error(f"Error getting extraction details: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 @router.get("/{kb_id}/documents")
@@ -661,29 +641,30 @@ async def list_documents(
     offset: int = Query(0, description="Number of documents to skip"),
     search_query: str | None = Query(None, description="Document title to search by"),
     filter_by: str = Query("all", description="Document filter to apply to search"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get list of documents for a knowledge base."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-        # Get documents for this knowledge base
         documents, total = await kb_service.get_documents(
-            kb_id, limit=limit, offset=offset, search_query=search_query, filter_by=filter_by
+            kb_id,
+            limit=limit,
+            offset=offset,
+            search_query=search_query,
+            filter_by=filter_by,
+            user_id=str(current_user.id),
         )
 
         # Use lightweight serialization to exclude heavy fields (content, embeddings, etc.)
         items = [doc.to_list_dict() for doc in documents]
 
         return ShuResponse.success({"items": items, "total": total, "limit": limit, "offset": offset})
+    except ShuException as e:
+        return ShuResponse.error(message=str(e), code="DOCUMENT_LIST_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 @router.delete(
@@ -702,19 +683,11 @@ async def delete_document(
     Only manually uploaded documents (source_type='plugin:manual_upload') can be deleted.
     Feed-sourced documents must be managed through their respective feeds.
 
-    Requires power_user or admin role. These roles have automatic access to all KBs.
+    Requires power_user or admin role. Access to the specific KB is still enforced via PBAC.
     """
     try:
         kb_service = KnowledgeBaseService(db)
-
-        # Get the document - also validates it belongs to this KB
-        document = await kb_service.get_document(kb_id, document_id)
-        if not document:
-            return ShuResponse.error(
-                message="Document not found in this knowledge base",
-                code="DOCUMENT_NOT_FOUND",
-                status_code=404,
-            )
+        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
 
         # Only allow deletion of manually uploaded documents
         if document.source_type != "plugin:manual_upload":
@@ -741,6 +714,8 @@ async def delete_document(
 
         return ShuResponse.no_content()
 
+    except ShuException as e:
+        return ShuResponse.error(message=str(e), code="DOCUMENT_DELETE_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error(f"Error deleting document: {e}", exc_info=True)
         return ShuResponse.error(message="Failed to delete document", code="DOCUMENT_DELETE_ERROR", status_code=500)
@@ -749,19 +724,13 @@ async def delete_document(
 @router.get("/{kb_id}/documents/extraction-summary")
 async def get_extraction_summary(
     kb_id: str,
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get summary of extraction methods and accuracy across all documents."""
     try:
-        # Verify user has access to this knowledge base
         kb_service = KnowledgeBaseService(db)
-        kb = await kb_service.get_knowledge_base(kb_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-        # Get all documents for this knowledge base
-        documents, _ = await kb_service.get_documents(kb_id)
+        documents, _ = await kb_service.get_documents(kb_id, user_id=str(current_user.id))
 
         # Analyze extraction methods
         extraction_stats = {}
@@ -802,9 +771,11 @@ async def get_extraction_summary(
                 "extraction_summary": extraction_stats,
             }
         )
+    except ShuException as e:
+        return ShuResponse.error(message=str(e), code="EXTRACTION_SUMMARY_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error(f"Error getting extraction summary: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
@@ -848,138 +819,151 @@ async def upload_documents(
 
     Returns results for each file indicating success or failure.
 
-    Requires power_user or admin role. These roles have automatic access to all KBs.
+    Requires power_user or admin role. Access to the specific KB is still enforced via PBAC.
     """
-    # Verify KB exists (require_kb_modify_default already validates access)
-    kb_service = KnowledgeBaseService(db)
-    kb = await kb_service.get_knowledge_base(kb_id)
-    if not kb:
-        return ShuResponse.error(message="Knowledge base not found", code="KNOWLEDGE_BASE_NOT_FOUND", status_code=404)
+    try:
+        kb_service = KnowledgeBaseService(db)
+        await kb_service.get_knowledge_base(kb_id, str(current_user.id))
 
-    # Get upload restrictions from KB-specific settings
-    allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]
-    max_size = settings.kb_upload_max_size
+        # Get upload restrictions from KB-specific settings
+        allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]
+        max_size = settings.kb_upload_max_size
 
-    results = []
+        results = []
 
-    for file in files:
-        filename = file.filename or "upload"
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        for file in files:
+            filename = file.filename or "upload"
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
-        # Validate file type
-        if ext not in allowed_types:
-            results.append(
-                {
-                    "filename": filename,
-                    "success": False,
-                    "error": f"Unsupported file type: .{ext}. Allowed: {', '.join('.' + t for t in allowed_types)}",
-                }
-            )
-            continue
+            # Validate file type
+            if ext not in allowed_types:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": False,
+                        "error": f"Unsupported file type: .{ext}. Allowed: {', '.join('.' + t for t in allowed_types)}",
+                    }
+                )
+                continue
 
-        # Read file bytes
-        try:
-            file_bytes = await file.read()
-        except Exception as e:
-            results.append(
-                {
-                    "filename": filename,
-                    "success": False,
-                    "error": f"Failed to read file: {e!s}",
-                }
-            )
-            continue
+            # Read file bytes
+            try:
+                file_bytes = await file.read()
+            except Exception as e:
+                logger.error(f"Failed to read file '{filename}': {e}", exc_info=True)
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": False,
+                        "error": "Failed to read file",
+                    }
+                )
+                continue
 
-        # Validate file is not empty
-        if len(file_bytes) == 0:
-            results.append(
-                {
-                    "filename": filename,
-                    "success": False,
-                    "error": "File is empty (0 bytes)",
-                }
-            )
-            continue
+            # Validate file is not empty
+            if len(file_bytes) == 0:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": False,
+                        "error": "File is empty (0 bytes)",
+                    }
+                )
+                continue
 
-        # Validate file size
-        if len(file_bytes) > max_size:
-            results.append(
-                {
-                    "filename": filename,
-                    "success": False,
-                    "error": f"File too large: {len(file_bytes)} bytes. Maximum: {max_size} bytes",
-                }
-            )
-            continue
+            # Validate file size
+            if len(file_bytes) > max_size:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": False,
+                        "error": f"File too large: {len(file_bytes)} bytes. Maximum: {max_size} bytes",
+                    }
+                )
+                continue
 
-        # Validate file content matches declared extension (magic bytes check).
-        # Catches files renamed to bypass extension validation (e.g. a ZIP named .pdf).
-        content_mismatch = _check_content_type_mismatch(ext, file_bytes)
-        if content_mismatch:
-            results.append(
-                {
-                    "filename": filename,
-                    "success": False,
-                    "error": content_mismatch,
-                }
-            )
-            continue
+            # Validate file content matches declared extension (magic bytes check).
+            # Catches files renamed to bypass extension validation (e.g. a ZIP named .pdf).
+            content_mismatch = _check_content_type_mismatch(ext, file_bytes)
+            if content_mismatch:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": False,
+                        "error": content_mismatch,
+                    }
+                )
+                continue
 
-        # Determine MIME type from filename (extension-based)
-        mime_type, _ = mimetypes.guess_type(filename)
-        mime_type = mime_type or "application/octet-stream"
+            # Determine MIME type from filename (extension-based)
+            mime_type, _ = mimetypes.guess_type(filename)
+            mime_type = mime_type or "application/octet-stream"
 
-        # Generate unique source_id for manual uploads
-        source_id = f"manual-upload-{uuid.uuid4().hex[:12]}"
+            # Generate unique source_id for manual uploads
+            source_id = f"manual-upload-{uuid.uuid4().hex[:12]}"
 
-        try:
-            result = await ingest_document_service(
-                db,
-                kb_id,
-                plugin_name="manual_upload",
-                user_id=current_user.id,
-                file_bytes=file_bytes,
-                filename=filename,
-                mime_type=mime_type,
-                source_id=source_id,
-                source_url=None,
-                attributes={"uploaded_by": current_user.email or current_user.id},
-            )
+            try:
+                result = await ingest_document_service(
+                    db,
+                    kb_id,
+                    plugin_name="manual_upload",
+                    user_id=current_user.id,
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    mime_type=mime_type,
+                    source_id=source_id,
+                    source_url=None,
+                    attributes={"uploaded_by": current_user.email or current_user.id},
+                )
 
-            results.append(
-                {
-                    "filename": filename,
-                    "success": True,
-                    "document_id": result.get("document_id"),
-                    "word_count": result.get("word_count", 0),
-                    "character_count": result.get("character_count", 0),
-                    "chunk_count": result.get("chunk_count", 0),
-                    "extraction_method": result.get("extraction", {}).get("method"),
-                }
-            )
-        except Exception as e:
-            logger.error(f"Failed to ingest document {filename}: {e}", exc_info=True)
-            results.append(
-                {
-                    "filename": filename,
-                    "success": False,
-                    "error": str(e),
-                }
-            )
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": True,
+                        "document_id": result.get("document_id"),
+                        "word_count": result.get("word_count", 0),
+                        "character_count": result.get("character_count", 0),
+                        "chunk_count": result.get("chunk_count", 0),
+                        "extraction_method": result.get("extraction", {}).get("method"),
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to ingest document '{filename}': {e}", exc_info=True)
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": False,
+                        "error": "Failed to process file",
+                    }
+                )
 
-    # Summary
-    successful = sum(1 for r in results if r.get("success"))
-    failed = len(results) - successful
+        # Summary
+        successful = sum(1 for r in results if r.get("success"))
+        failed = len(results) - successful
 
-    return ShuResponse.success(
-        {
-            "knowledge_base_id": kb_id,
-            "total_files": len(files),
-            "successful": successful,
-            "failed": failed,
-            "results": results,
-        }
-    )
+        # Adjust KB stats once at the end for all successful uploads
+        # Note: We only adjust doc_delta here because chunks are created asynchronously
+        # by the worker. The chunk count will be updated when:
+        # 1. The worker finishes and updates Document.chunk_count
+        # 2. A feed sync runs recalculate_kb_stats()
+        if successful > 0:
+            await kb_service.adjust_document_stats(kb_id, doc_delta=successful, chunk_delta=0)
+
+        return ShuResponse.success(
+            {
+                "knowledge_base_id": kb_id,
+                "total_files": len(files),
+                "successful": successful,
+                "failed": failed,
+                "results": results,
+            }
+        )
+    except ShuException as e:
+        logger.error("Failed to upload documents", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message=str(e), code="DOCUMENT_UPLOAD_ERROR", status_code=e.status_code)
+    except Exception as e:
+        logger.error("Unexpected error uploading documents", extra={"kb_id": kb_id, "error": str(e)}, exc_info=True)
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 @router.post(
@@ -989,7 +973,7 @@ async def upload_documents(
 )
 async def trigger_re_embedding(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_manage_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger re-embedding of all vectors in a knowledge base.
@@ -1027,18 +1011,13 @@ async def trigger_re_embedding(
 )
 async def get_re_embedding_status(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    current_user: User = Depends(require_kb_query_default),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the embedding status and re-embedding progress for a knowledge base."""
-    from ..models.knowledge_base import KnowledgeBase
-
     try:
-        kb = await db.get(KnowledgeBase, kb_id)
-        if kb is None:
-            from ..core.exceptions import KnowledgeBaseNotFoundError
-
-            raise KnowledgeBaseNotFoundError(kb_id)
+        kb_service = KnowledgeBaseService(db)
+        kb = await kb_service.get_knowledge_base(kb_id, str(current_user.id))
 
         return ShuResponse.success(
             {

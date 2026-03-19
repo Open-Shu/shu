@@ -4,8 +4,6 @@ Comprehensive RBAC Integration Tests for Shu
 These tests verify the complete Role-Based Access Control system:
 - User groups CRUD operations
 - Group membership management
-- Knowledge base permissions
-- Permission inheritance and expiration
 - RBAC enforcement (endpoint dependencies)
 - Permission level hierarchy
 """
@@ -105,34 +103,6 @@ async def test_group_membership_lifecycle(client, db, auth_headers):
         await client.delete(f"/api/v1/groups/{group_id}", headers=auth_headers)
 
 
-async def test_kb_permissions_management(client, db, auth_headers):
-    """Test knowledge base permissions management."""
-    logger.info("Testing KB permissions management")
-
-    # First, list existing KBs to test with
-    response = await client.get("/api/v1/knowledge-bases", headers=auth_headers)
-    assert response.status_code == 200, f"Failed to list KBs: {response.text}"
-
-    kbs_data = response.json()["data"]
-    if "items" in kbs_data and len(kbs_data["items"]) > 0:
-        # Use existing KB for permissions testing
-        kb_id = kbs_data["items"][0]["id"]
-
-        # Test getting permissions for existing KB
-        response = await client.get(f"/api/v1/knowledge-bases/{kb_id}/permissions", headers=auth_headers)
-        assert response.status_code == 200, f"Failed to list KB permissions: {response.text}"
-
-        permissions_data = response.json()["data"]
-        # Check if response has permissions list (could be 'permissions' or 'items')
-        permissions_list = permissions_data.get("permissions", permissions_data.get("items", []))
-        # Should have at least owner permission
-        assert len(permissions_list) >= 0, f"Expected permissions list, got: {permissions_data}"
-    else:
-        # No existing KBs to test with, skip this test
-        logger.info("No existing KBs found, skipping permissions test")
-        pass
-
-
 async def test_permission_level_enforcement(client, db, auth_headers):
     """Test that permission levels are properly enforced."""
     logger.info("Testing permission level enforcement")
@@ -201,7 +171,6 @@ class ComprehensiveRBACTestSuite(BaseIntegrationTestSuite):
         return [
             test_user_groups_full_crud,
             test_group_membership_lifecycle,
-            test_kb_permissions_management,
             test_permission_level_enforcement,
             test_rbac_enforcement_comprehensive,
             test_protected_endpoints_require_auth,

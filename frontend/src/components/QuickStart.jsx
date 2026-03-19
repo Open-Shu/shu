@@ -21,7 +21,6 @@ import {
   Settings as LLMProvidersIcon,
   People as UsersIcon,
   Groups as GroupsIcon,
-  Security as SecurityIcon,
   Palette as BrandingIcon,
   Search as QueryIcon,
   Psychology as LLMTesterIcon,
@@ -255,12 +254,6 @@ const QuickStart = () => {
       description: 'Organize users into groups for easier permission management and access control.',
       icon: <GroupsIcon />,
       path: '/admin/user-groups',
-    },
-    {
-      title: 'KB Permissions',
-      description: 'Control access to knowledge bases. Define which users or groups can view or edit each KB.',
-      icon: <SecurityIcon />,
-      path: '/admin/kb-permissions',
     },
   ];
 

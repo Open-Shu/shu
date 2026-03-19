@@ -27,6 +27,7 @@ class KnowledgeBase(BaseModel):
 
     # Basic information
     name = Column(String(255), nullable=False, index=True)
+    slug = Column(String(100), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
 
     # Sync configuration
@@ -95,7 +96,6 @@ class KnowledgeBase(BaseModel):
 
     # RBAC relationships
     owner = relationship("User", foreign_keys=[owner_id], back_populates="owned_knowledge_bases")
-    permissions = relationship("KnowledgeBasePermission", back_populates="knowledge_base", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         """Represent as string."""

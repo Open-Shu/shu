@@ -1,7 +1,7 @@
 """RBAC (Role-Based Access Control) Models.
 
-This module contains the database models for granular knowledge base
-access control, including user groups and permissions.
+This module contains the database models for group-based access control,
+including user groups and memberships.
 """
 
 from datetime import UTC, datetime
@@ -9,7 +9,6 @@ from enum import Enum
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -35,15 +34,6 @@ class RBACBaseModel(Base, UUIDMixin):
     def __repr__(self) -> str:
         """Return string representation of the model."""
         return f"<{self.__class__.__name__}(id={self.id})>"
-
-
-class PermissionLevel(str, Enum):
-    """Permission levels for knowledge base access."""
-
-    OWNER = "owner"  # Full control, can delete KB, manage permissions
-    ADMIN = "admin"  # Can modify KB, add/remove documents, manage members
-    MEMBER = "member"  # Can query KB, view documents, add documents
-    READ_ONLY = "read_only"  # Can only query KB, no modifications
 
 
 class GroupRole(str, Enum):
@@ -72,7 +62,6 @@ class UserGroup(BaseModel):
     # Relationships
     creator = relationship("User", foreign_keys=[created_by], back_populates="created_groups")
     memberships = relationship("UserGroupMembership", back_populates="group", cascade="all, delete-orphan")
-    permissions = relationship("KnowledgeBasePermission", back_populates="group", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         """Represent as string."""
@@ -108,70 +97,3 @@ class UserGroupMembership(RBACBaseModel):
     def __repr__(self) -> str:
         """Represent as string."""
         return f"<UserGroupMembership(user_id='{self.user_id}', group_id='{self.group_id}', role='{self.role}')>"
-
-
-class KnowledgeBasePermission(RBACBaseModel):
-    """Granular permissions for knowledge base access.
-
-    This table defines who (users or groups) can access which knowledge bases
-    and at what permission level. Each permission can be granted to either
-    a specific user OR a group, but not both.
-    """
-
-    __tablename__ = "knowledge_base_permissions"
-
-    knowledge_base_id = Column(
-        String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-
-    # Either user_id OR group_id must be set, but not both
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
-    group_id = Column(String(36), ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=True, index=True)
-
-    permission_level = Column(String(50), nullable=False, index=True)
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
-
-    # Optional expiration for temporary access
-    expires_at = Column(DateTime(timezone=True), nullable=True)
-
-    # Audit fields
-    granted_by = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
-
-    # Relationships
-    knowledge_base = relationship("KnowledgeBase", back_populates="permissions")
-    user = relationship("User", foreign_keys=[user_id], back_populates="kb_permissions")
-    group = relationship("UserGroup", back_populates="permissions")
-    granter = relationship("User", foreign_keys=[granted_by])
-
-    # Constraints
-    __table_args__ = (
-        # Ensure either user_id OR group_id is set, but not both
-        CheckConstraint(
-            "(user_id IS NOT NULL AND group_id IS NULL) OR (user_id IS NULL AND group_id IS NOT NULL)",
-            name="chk_permission_target",
-        ),
-        # Prevent duplicate permissions
-        UniqueConstraint("knowledge_base_id", "user_id", "group_id", name="uq_kb_permission"),
-    )
-
-    @property
-    def target_type(self) -> str:
-        """Return whether this permission is for a user or group."""
-        return "user" if self.user_id else "group"
-
-    @property
-    def target_id(self) -> str:
-        """Return the ID of the permission target (user or group)."""
-        return self.user_id or self.group_id
-
-    def is_expired(self) -> bool:
-        """Check if this permission has expired."""
-        if not self.expires_at:
-            return False
-        return datetime.now(UTC) > self.expires_at
-
-    def __repr__(self) -> str:
-        """Represent as string."""
-        target = f"user:{self.user_id}" if self.user_id else f"group:{self.group_id}"
-        return f"<KnowledgeBasePermission(kb='{self.knowledge_base_id}', target='{target}', level='{self.permission_level}')>"

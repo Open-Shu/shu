@@ -78,7 +78,7 @@ services:
 
   # Shu Postgres
   shu-postgres:
-    image: ankane/pgvector
+    image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: shu
       POSTGRES_PASSWORD: password  # pragma: allowlist secret

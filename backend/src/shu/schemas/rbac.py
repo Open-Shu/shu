@@ -1,14 +1,14 @@
 """RBAC (Role-Based Access Control) Schemas.
 
 This module contains Pydantic schemas for RBAC operations including
-user groups, permissions, and access control management.
+user groups, memberships, and access control management.
 """
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
-from ..models.rbac import GroupRole, PermissionLevel
+from ..models.rbac import GroupRole
 
 
 # User Group Schemas
@@ -90,77 +90,6 @@ class UserGroupMembershipResponse(UserGroupMembershipBase):
         from_attributes = True
 
 
-# Knowledge Base Permission Schemas
-class KnowledgeBasePermissionBase(BaseModel):
-    """Base schema for KB permissions."""
-
-    permission_level: PermissionLevel = Field(..., description="Permission level")
-    expires_at: datetime | None = Field(None, description="Optional expiration time")
-
-
-class KnowledgeBasePermissionCreate(KnowledgeBasePermissionBase):
-    """Schema for creating a KB permission."""
-
-    user_id: str | None = Field(None, description="User ID (for user permissions)")
-    group_id: str | None = Field(None, description="Group ID (for group permissions)")
-
-    @model_validator(mode="after")
-    def validate_target(self):
-        """Ensure either user_id OR group_id is provided, but not both."""
-        user_id = self.user_id
-        group_id = self.group_id
-
-        if not user_id and not group_id:
-            raise ValueError("Either user_id or group_id must be provided")
-        if user_id and group_id:
-            raise ValueError("Cannot specify both user_id and group_id")
-        return self
-
-
-class KnowledgeBasePermissionUpdate(BaseModel):
-    """Schema for updating a KB permission."""
-
-    permission_level: PermissionLevel | None = Field(None, description="Permission level")
-    is_active: bool | None = Field(None, description="Whether the permission is active")
-    expires_at: datetime | None = Field(None, description="Optional expiration time")
-
-
-class KnowledgeBasePermissionResponse(KnowledgeBasePermissionBase):
-    """Schema for KB permission responses."""
-
-    id: str = Field(..., description="Permission ID")
-    knowledge_base_id: str = Field(..., description="Knowledge base ID")
-    user_id: str | None = Field(None, description="User ID (for user permissions)")
-    group_id: str | None = Field(None, description="Group ID (for group permissions)")
-    is_active: bool = Field(..., description="Whether the permission is active")
-    granted_by: str = Field(..., description="ID of user who granted permission")
-    granted_at: datetime = Field(..., description="When permission was granted")
-
-    # Optional details for convenience
-    user_email: str | None = Field(None, description="User email (for user permissions)")
-    group_name: str | None = Field(None, description="Group name (for group permissions)")
-    kb_name: str | None = Field(None, description="Knowledge base name")
-    granter_name: str | None = Field(None, description="Name of user who granted permission")
-
-    class Config:
-        """Configure Pydantic to work with ORM objects."""
-
-        from_attributes = True
-
-
-# Effective Permission Schemas
-class EffectivePermissionResponse(BaseModel):
-    """Schema for effective permission responses."""
-
-    user_id: str = Field(..., description="User ID")
-    knowledge_base_id: str = Field(..., description="Knowledge base ID")
-    effective_level: PermissionLevel = Field(..., description="Highest effective permission level")
-    source: str = Field(..., description="Source of permission (owner/direct/group)")
-    source_id: str | None = Field(None, description="ID of permission source")
-    expires_at: datetime | None = Field(None, description="Earliest expiration time")
-
-
-# List Response Schemas
 class UserGroupListResponse(BaseModel):
     """Schema for paginated user group list responses."""
 
@@ -175,27 +104,3 @@ class UserGroupMembershipListResponse(BaseModel):
 
     memberships: list[UserGroupMembershipResponse] = Field(..., description="List of memberships")
     total_count: int = Field(..., description="Total number of memberships")
-
-
-class KnowledgeBasePermissionListResponse(BaseModel):
-    """Schema for KB permission list responses."""
-
-    permissions: list[KnowledgeBasePermissionResponse] = Field(..., description="List of permissions")
-    total_count: int = Field(..., description="Total number of permissions")
-
-
-# Bulk Operation Schemas
-class BulkPermissionCreate(BaseModel):
-    """Schema for bulk permission creation."""
-
-    permissions: list[KnowledgeBasePermissionCreate] = Field(..., description="List of permissions to create")
-
-
-class BulkPermissionResponse(BaseModel):
-    """Schema for bulk operation responses."""
-
-    created: list[KnowledgeBasePermissionResponse] = Field(..., description="Successfully created permissions")
-    failed: list[dict] = Field(..., description="Failed permission creations with error details")
-    total_requested: int = Field(..., description="Total number of permissions requested")
-    total_created: int = Field(..., description="Total number of permissions created")
-    total_failed: int = Field(..., description="Total number of failed creations")

@@ -10,11 +10,9 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, select
 
 from ...core.config import ConfigurationManager
-from ...core.exceptions import ShuException
 from ...models.document import Document
 from ...models.knowledge_base import KnowledgeBase
 from ...utils.text import fold_unicode_to_ascii
@@ -232,149 +230,6 @@ class QueryServiceBase:
             default_config = self.config_manager.get_rag_config_dict()
             default_config["version"] = "1.0"  # Add version for compatibility
             return default_config
-
-    @measure_execution_time
-    async def get_document_details(
-        self, knowledge_base_id: str, document_id: str, include_chunks: bool = False
-    ) -> Document | None:
-        """Get detailed information about a specific document.
-
-        Args:
-            knowledge_base_id: ID of the knowledge base
-            document_id: ID of the document to retrieve
-            include_chunks: Whether to include document chunks
-
-        Returns:
-            Document object with optional chunks
-
-        """
-        try:
-            # Verify knowledge base exists
-            await self._verify_knowledge_base(knowledge_base_id)
-
-            logger.info(
-                "Getting document details",
-                extra={
-                    "kb_id": knowledge_base_id,
-                    "document_id": document_id,
-                    "include_chunks": include_chunks,
-                },
-            )
-
-            # Build query to get document
-            query = select(Document).where(
-                and_(Document.id == document_id, Document.knowledge_base_id == knowledge_base_id)
-            )
-
-            # Include chunks if requested
-            if include_chunks:
-                query = query.options(selectinload(Document.chunks))
-
-            result = await self.db.execute(query)
-            document = result.scalar_one_or_none()
-
-            if not document:
-                logger.warning(
-                    "Document not found",
-                    extra={"kb_id": knowledge_base_id, "document_id": document_id},
-                )
-                return None
-
-            logger.info(
-                "Retrieved document details",
-                extra={
-                    "kb_id": knowledge_base_id,
-                    "document_id": document_id,
-                    "title": document.title,
-                    "chunks_included": include_chunks,
-                    "chunk_count": len(document.chunks) if include_chunks and document.chunks else 0,
-                },
-            )
-
-            return document
-
-        except Exception as e:
-            logger.error(
-                "Failed to get document details",
-                extra={"kb_id": knowledge_base_id, "document_id": document_id, "error": str(e)},
-            )
-            raise
-
-    @measure_execution_time
-    async def list_documents(
-        self,
-        knowledge_base_id: str,
-        limit: int = 50,
-        offset: int = 0,
-        source_type: str | None = None,
-        file_type: str | None = None,
-    ) -> dict[str, Any]:
-        """List documents in a knowledge base with optional filtering.
-
-        Args:
-            knowledge_base_id: ID of the knowledge base
-            limit: Maximum number of documents to return
-            offset: Number of documents to skip for pagination
-            source_type: Optional filter by source type
-            file_type: Optional filter by file type
-
-        Returns:
-            Dictionary with documents and metadata
-
-        Raises:
-            KnowledgeBaseNotFoundError: If knowledge base doesn't exist
-
-        """
-        try:
-            # Verify knowledge base exists
-            await self._verify_knowledge_base(knowledge_base_id)
-
-            # Build query
-            query = select(Document).where(Document.knowledge_base_id == knowledge_base_id)
-
-            # Apply filters
-            if source_type:
-                query = query.where(Document.source_type == source_type)
-
-            if file_type:
-                query = query.where(Document.file_type == file_type)
-
-            # Get total count
-            count_result = await self.db.execute(select(func.count()).select_from(query.subquery()))
-            total_count = count_result.scalar()
-
-            # Apply pagination and get documents
-            query = query.offset(offset).limit(limit)
-            result = await self.db.execute(query)
-            documents = result.scalars().all()
-
-            logger.info(
-                "Listed documents",
-                extra={
-                    "kb_id": knowledge_base_id,
-                    "total": total_count,
-                    "returned": len(documents),
-                    "limit": limit,
-                    "offset": offset,
-                },
-            )
-
-            # Return structured response with execution time (added by decorator)
-            return {
-                "documents": documents,
-                "total_count": total_count,
-                "limit": limit,
-                "offset": offset,
-                "source_type": source_type,
-                "file_type": file_type,
-            }
-
-        except ShuException:
-            # Re-raise ShuException without modification
-            raise
-        except Exception as e:
-            logger.error(f"Failed to list documents: {e}", exc_info=True)
-            raise ShuException(f"Failed to list documents: {e!s}", "DOCUMENT_LIST_ERROR")
 
     async def _maybe_escalate_full_documents(
         self,

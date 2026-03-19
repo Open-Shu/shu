@@ -5,7 +5,6 @@ that combines base models + prompts + optional knowledge bases into user-facing
 configurations that users select for chat and other interactions.
 """
 
-import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import and_, func, or_, select
@@ -20,6 +19,7 @@ from shu.services.providers.parameter_definitions import serialize_parameter_map
 
 from ..auth.models import User
 from ..core.exceptions import ShuException, ValidationError
+from ..core.logging import get_logger
 from ..llm.param_mapping import build_provider_params
 from ..models.knowledge_base import KnowledgeBase
 from ..models.llm_provider import LLMModel, LLMProvider
@@ -32,8 +32,9 @@ from ..schemas.model_configuration import (
     ModelConfigurationResponse,
     ModelConfigurationUpdate,
 )
+from .knowledge_base_service import KnowledgeBaseService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ModelConfigurationService:
@@ -214,20 +215,14 @@ class ModelConfigurationService:
             result = await self.db.execute(query)
             config = result.scalar_one_or_none()
 
-            # Check permissions if current_user is provided and config exists
-            if config and current_user:
-                from ..auth.rbac import rbac
-
-                # Check if user has access to all knowledge bases in this configuration
-                if hasattr(config, "knowledge_bases") and config.knowledge_bases:
-                    for kb in config.knowledge_bases:
-                        if not await rbac.can_access_knowledge_base(current_user, kb.id, self.db):
-                            logger.warning(
-                                f"User {current_user.email} denied access to KB {kb.id} in config {config.id}"
-                            )
-                            return None  # Return None to indicate access denied
-
-                logger.debug(f"User {current_user.email} has access to config {config.id}")
+            if config and current_user and hasattr(config, "knowledge_bases") and config.knowledge_bases:
+                kb_svc = KnowledgeBaseService(self.db)
+                accessible = await kb_svc.filter_accessible_kb_ids(str(current_user.id), config.knowledge_bases)
+                if len(accessible) < len(config.knowledge_bases):
+                    logger.warning(
+                        f"User {current_user.id} denied access to config {config.id} (inaccessible KBs detected)"
+                    )
+                    return None
 
             return config
 
@@ -301,42 +296,41 @@ class ModelConfigurationService:
             if relationship_options:
                 query = query.options(*relationship_options)
 
-            # Apply pagination
-            offset = (page - 1) * per_page
-            query = query.order_by(ModelConfiguration.name.asc()).offset(offset).limit(per_page)
+            # TODO: This is inefficient, but temporary code. In the future model configs and KB associations are on-the-fly, rather
+            #       than fixed.
+            query = query.order_by(ModelConfiguration.name.asc())
 
-            # Execute queries
-            result = await self.db.execute(query)
-            configurations = result.scalars().all()
-
-            # Filter by user permissions if current_user is provided
             if current_user:
-                from ..auth.rbac import rbac
+                # KB access filtering happens in Python, so fetch all matching
+                # configs to get an accurate total, then slice for the page.
+                result = await self.db.execute(query)
+                configurations = list(result.scalars().all())
 
-                accessible_configurations = []
-
+                all_kbs = []
                 for config in configurations:
-                    # Check if user has access to all knowledge bases in this configuration
-                    has_access = True
                     if hasattr(config, "knowledge_bases") and config.knowledge_bases:
-                        for kb in config.knowledge_bases:
-                            if not await rbac.can_access_knowledge_base(current_user, kb.id, self.db):
-                                has_access = False
-                                logger.debug(
-                                    f"User {current_user.email} denied access to KB {kb.id} in config {config.id}"
-                                )
-                                break
+                        all_kbs.extend(config.knowledge_bases)
 
-                    if has_access:
-                        accessible_configurations.append(config)
-                        logger.debug(f"User {current_user.email} has access to config {config.id}")
-                    else:
-                        logger.debug(f"User {current_user.email} denied access to config {config.id}")
+                if all_kbs:
+                    kb_svc = KnowledgeBaseService(self.db)
+                    accessible_ids = set(await kb_svc.filter_accessible_kb_ids(str(current_user.id), all_kbs))
+                    configurations = [
+                        c
+                        for c in configurations
+                        if not any(kb.id not in accessible_ids for kb in (c.knowledge_bases or []))
+                    ]
 
-                configurations = accessible_configurations
+                total = len(configurations)
+                offset = (page - 1) * per_page
+                configurations = configurations[offset : offset + per_page]
+            else:
+                offset = (page - 1) * per_page
+                query = query.offset(offset).limit(per_page)
+                result = await self.db.execute(query)
+                configurations = list(result.scalars().all())
 
-            count_result = await self.db.execute(count_query)
-            total = count_result.scalar()
+                count_result = await self.db.execute(count_query)
+                total = count_result.scalar()
 
             # Calculate pagination info
             pages = (total + per_page - 1) // per_page

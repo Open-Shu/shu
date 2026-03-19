@@ -25,7 +25,6 @@ import {
   Tune as ModelConfigIcon,
   People as UsersIcon,
   Groups as PeopleIcon,
-  Security as SecurityIcon,
   Policy as PolicyIcon,
   AdminPanelSettings as AdminIcon,
   Extension as ExtensionIcon,
@@ -99,11 +98,6 @@ const AdminLayout = ({ children }) => {
   const rbacMenuItems = [
     { text: 'User Management', icon: <UsersIcon />, path: '/admin/users' },
     { text: 'User Groups', icon: <PeopleIcon />, path: '/admin/user-groups' },
-    {
-      text: 'KB Permissions',
-      icon: <SecurityIcon />,
-      path: '/admin/kb-permissions',
-    },
     {
       text: 'Access Policies',
       icon: <PolicyIcon />,

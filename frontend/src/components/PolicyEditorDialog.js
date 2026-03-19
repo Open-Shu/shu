@@ -29,6 +29,7 @@ import {
   groupsAPI,
   policyAPI,
   experiencesAPI,
+  knowledgeBaseAPI,
   extractDataFromResponse,
   extractItemsFromResponse,
 } from '../services/api';
@@ -168,6 +169,7 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
   const { data: actionsResponse } = useQuery('policyActions', policyAPI.actions, { enabled: open });
   const { data: experiencesResponse } = useQuery('experiences', () => experiencesAPI.list(), { enabled: open });
   const { data: pluginsResponse } = useQuery(['plugins', 'list'], pluginsAPI.list, { enabled: open });
+  const { data: kbsResponse } = useQuery(['kbs', 'list'], () => knowledgeBaseAPI.list(), { enabled: open });
 
   const userOptions = useMemo(() => {
     const users = extractDataFromResponse(usersResponse) || [];
@@ -190,8 +192,13 @@ const PolicyEditorDialog = ({ open, onClose, policy, onSave, isSaving, saveError
   const resourceOptions = useMemo(() => {
     const experiences = extractItemsFromResponse(experiencesResponse) || [];
     const plugins = extractDataFromResponse(pluginsResponse) || [];
-    return [...experiences.map((e) => `experience:${e.slug || e.id}`), ...plugins.map((p) => `plugin:${p.name}`)];
-  }, [experiencesResponse, pluginsResponse]);
+    const kbs = extractItemsFromResponse(kbsResponse) || [];
+    return [
+      ...experiences.filter((e) => e.slug).map((e) => `experience:${e.slug}`),
+      ...plugins.filter((p) => p.name).map((p) => `plugin:${p.name}`),
+      ...kbs.filter((kb) => kb.slug).map((kb) => `kb:${kb.slug}`),
+    ];
+  }, [experiencesResponse, pluginsResponse, kbsResponse]);
 
   useEffect(() => {
     if (!open) {

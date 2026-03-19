@@ -71,7 +71,6 @@ try:
         DocumentProject,
         DocumentQuery,
         KnowledgeBase,
-        KnowledgeBasePermission,
         LLMModel,
         LLMProvider,
         LLMUsage,

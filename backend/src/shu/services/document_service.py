@@ -354,7 +354,7 @@ class DocumentService:
         from .rag_processing_service import RAGProcessingService
 
         kb_service = KnowledgeBaseService(self.db)
-        kb = await kb_service.get_knowledge_base(knowledge_base_id)
+        kb = await kb_service.fetch_raw_knowledge_base(knowledge_base_id)
         if not kb:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
 

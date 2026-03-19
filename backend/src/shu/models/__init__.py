@@ -46,8 +46,6 @@ from .provider_credential import ProviderCredential
 from .provider_identity import ProviderIdentity
 from .rbac import (
     GroupRole,
-    KnowledgeBasePermission,
-    PermissionLevel,
     UserGroup,
     UserGroupMembership,
 )
@@ -83,7 +81,6 @@ __all__ = [
     "ExperienceStep",
     "GroupRole",
     "KnowledgeBase",
-    "KnowledgeBasePermission",
     "LLMModel",
     "LLMProvider",
     "LLMUsage",
@@ -92,7 +89,6 @@ __all__ = [
     "ModelConfigurationKBPrompt",
     "ParticipantEntityType",
     "ParticipantRole",
-    "PermissionLevel",
     "PluginDefinition",
     "PluginStorage",
     "Prompt",

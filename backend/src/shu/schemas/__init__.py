@@ -44,13 +44,6 @@ from .query import (
     QueryResult,
 )
 from .rbac import (
-    BulkPermissionCreate,
-    BulkPermissionResponse,
-    EffectivePermissionResponse,
-    KnowledgeBasePermissionCreate,
-    KnowledgeBasePermissionListResponse,
-    KnowledgeBasePermissionResponse,
-    KnowledgeBasePermissionUpdate,
     UserGroupCreate,
     UserGroupListResponse,
     UserGroupMembershipCreate,
@@ -70,15 +63,12 @@ from .side_call import (
 )
 
 __all__ = [
-    "BulkPermissionCreate",
-    "BulkPermissionResponse",
     "ConversationAutomationRequest",
     "ConversationRenamePayload",
     "ConversationSummaryPayload",
     "DocumentChunkResponse",
     "DocumentList",
     "DocumentResponse",
-    "EffectivePermissionResponse",
     "ErrorResponse",
     "ExperienceCreate",
     "ExperienceList",
@@ -94,10 +84,6 @@ __all__ = [
     "ExperienceVisibility",
     "KnowledgeBaseCreate",
     "KnowledgeBaseList",
-    "KnowledgeBasePermissionCreate",
-    "KnowledgeBasePermissionListResponse",
-    "KnowledgeBasePermissionResponse",
-    "KnowledgeBasePermissionUpdate",
     "KnowledgeBaseResponse",
     "KnowledgeBaseUpdate",
     "QueryRequest",
