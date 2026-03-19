@@ -89,7 +89,7 @@ function useAuthOverrideBridge(step, onUpdate) {
       return;
     }
 
-    onUpdateRef.current({ auth_override: newOverride });
+    onUpdateRef.current({ auth_override: newOverride }, { fromAuthBridge: true });
   }, []);
 
   const initialOverlay = useMemo(() => {
@@ -423,10 +423,10 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
     onChange([...steps, newStep]);
   };
 
-  const handleUpdateStep = (index) => (updates) => {
+  const handleUpdateStep = (index) => (updates, meta) => {
     const newSteps = [...steps];
     newSteps[index] = { ...newSteps[index], ...updates };
-    onChange(newSteps);
+    onChange(newSteps, meta);
   };
 
   const handleRemoveStep = (index) => () => {

@@ -59,17 +59,9 @@ export default function ExperienceEditor() {
     }
   );
 
-  // After hydration, child components (ProviderAuthPanel) emit overlay
-  // changes on mount and when async state (googleStatus) arrives. These
-  // propagate through the auth bridge and call markDirty even though the
-  // user hasn't touched anything. We keep a settling window during which
-  // any isDirty=true is automatically reset back to false.
-  const settlingRef = useRef(false);
-
   // Initialize form from existing experience
   useEffect(() => {
     if (experienceQuery.data) {
-      settlingRef.current = true;
       const exp = experienceQuery.data;
       setName(exp.name || '');
       setDescription(exp.description || '');
@@ -84,10 +76,6 @@ export default function ExperienceEditor() {
       setMaxRunSeconds(exp.max_run_seconds || 120);
       setIncludePreviousRun(exp.include_previous_run || false);
       setIsDirty(false);
-      const timer = setTimeout(() => {
-        settlingRef.current = false;
-      }, 2000);
-      return () => clearTimeout(timer);
     }
   }, [experienceQuery.data]);
 
@@ -156,9 +144,9 @@ export default function ExperienceEditor() {
     return handleFieldChange(setter, fieldName);
   };
 
-  const handleStepsChange = (newSteps) => {
+  const handleStepsChange = (newSteps, meta) => {
     setSteps(newSteps);
-    if (!settlingRef.current) {
+    if (!meta?.fromAuthBridge) {
       markDirty();
     }
   };

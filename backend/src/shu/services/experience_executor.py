@@ -702,6 +702,11 @@ class ExperienceExecutor:
 
         provider = auth_override["provider"]
         mode = auth_override["mode"]
+
+        if mode == "service_account":
+            logger.debug("Running plugin as service account | provider=%s", provider)
+            return {"auth": {provider: {"mode": mode}}}
+
         subject_source = auth_override["subject_source"]
 
         if subject_source == "running_user":

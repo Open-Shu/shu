@@ -65,7 +65,7 @@ class RunStatus(str, Enum):
 # ============================================================================
 
 
-_VALID_AUTH_MODES = {"user", "domain_delegate"}
+_VALID_AUTH_MODES = {"user", "domain_delegate", "service_account"}
 _VALID_SUBJECT_SOURCES = {"running_user", "explicit"}
 
 
@@ -87,6 +87,9 @@ def _validate_auth_override(value: dict[str, Any] | None) -> dict[str, Any] | No
 
     if mode == "user":
         return None
+
+    if mode == "service_account":
+        return value
 
     subject_source = value.get("subject_source")
     if subject_source not in _VALID_SUBJECT_SOURCES:
