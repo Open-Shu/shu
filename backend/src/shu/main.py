@@ -227,6 +227,17 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
 
     # Source types are initialized via database migrations
 
+    # Sync model pricing from reference data into llm_models
+    try:
+        from .core.database import get_async_session_local
+        from .core.model_pricing import sync_pricing_to_db
+
+        session_maker = get_async_session_local()
+        async with session_maker() as session:
+            await sync_pricing_to_db(session)
+    except Exception as e:
+        logger.warning(f"Model pricing sync failed: {e}")
+
     # Preload the default embedding model to avoid lazy loading
     try:
         from .core.embedding_service import initialize_embedding_service
