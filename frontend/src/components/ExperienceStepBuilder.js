@@ -63,42 +63,47 @@ function useAuthOverrideBridge(step, onUpdate) {
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
 
+  const currentOverrideRef = useRef(step.auth_override ?? null);
+  currentOverrideRef.current = step.auth_override ?? null;
+
   const handleAuthOverlayChange = useCallback((overlay) => {
     const authEntries = overlay?.auth ? Object.entries(overlay.auth) : [];
-    if (authEntries.length === 0) {
-      onUpdateRef.current({ auth_override: null });
+    let newOverride = null;
+
+    if (authEntries.length > 0) {
+      const [provider, config] = authEntries[0];
+      const mode = config?.mode;
+
+      if (mode && mode !== 'user') {
+        const subject = (config?.subject || config?.impersonate_email || '').trim() || null;
+        newOverride = {
+          provider,
+          mode,
+          subject_source: subject ? 'explicit' : 'running_user',
+          subject,
+        };
+      }
+    }
+
+    if (JSON.stringify(newOverride) === JSON.stringify(currentOverrideRef.current)) {
       return;
     }
-    const [provider, config] = authEntries[0];
-    const mode = config?.mode;
 
-    if (!mode || mode === 'user') {
-      onUpdateRef.current({ auth_override: null });
-      return;
-    }
-
-    const subject = (config?.subject || config?.impersonate_email || '').trim() || null;
-    onUpdateRef.current({
-      auth_override: {
-        provider,
-        mode,
-        subject_source: subject ? 'explicit' : 'running_user',
-        subject,
-      },
-    });
+    onUpdateRef.current({ auth_override: newOverride });
   }, []);
 
   const initialOverlay = useMemo(() => {
     const override = step.auth_override;
-    if (!override || override.mode !== 'domain_delegate') {
+    if (!override || !override.provider || override.mode === 'user') {
       return null;
+    }
+    const payload = { mode: override.mode };
+    if (override.subject) {
+      payload.subject = override.subject;
     }
     return {
       auth: {
-        [override.provider]: {
-          mode: 'domain_delegate',
-          subject: override.subject || '',
-        },
+        [override.provider]: payload,
       },
     };
   }, [step.auth_override]);
@@ -233,6 +238,9 @@ const StepCard = ({
     }
     if (field === 'plugin_name') {
       updates.plugin_op = null;
+      updates.auth_override = null;
+    }
+    if (field === 'plugin_op') {
       updates.auth_override = null;
     }
 

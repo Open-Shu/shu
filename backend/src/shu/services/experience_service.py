@@ -731,6 +731,7 @@ class ExperienceService:
 
         """
         step_keys = set()
+        plugin_records = self._get_plugin_loader().discover()
 
         for i, step in enumerate(steps):
             # Check for duplicate step keys
@@ -744,6 +745,12 @@ class ExperienceService:
                     raise ValidationError(f"Step '{step.step_key}' requires plugin_name for plugin type")
                 if not step.plugin_op:
                     raise ValidationError(f"Step '{step.step_key}' requires plugin_op for plugin type")
+
+                if step.auth_override:
+                    self._validate_auth_override_against_manifest(
+                        step,
+                        plugin_records,
+                    )
             elif step.step_type == StepType.KNOWLEDGE_BASE:
                 if not step.knowledge_base_id:
                     raise ValidationError(f"Step '{step.step_key}' requires knowledge_base_id for knowledge_base type")
@@ -766,6 +773,24 @@ class ExperienceService:
             # Validate KB query template
             if step.kb_query_template:
                 self._validate_template_syntax(step.kb_query_template, f"step '{step.step_key}' kb_query_template")
+
+    def _validate_auth_override_against_manifest(
+        self,
+        step: ExperienceStepCreate,
+        plugin_records: dict,
+    ) -> None:
+        """Validate that a step's auth_override mode is allowed by the plugin manifest."""
+        override_mode = step.auth_override.get("mode", "")
+        record = plugin_records.get(step.plugin_name)
+        if not record or not record.op_auth:
+            return
+        op_spec = record.op_auth.get(step.plugin_op.lower(), {})
+        allowed = op_spec.get("allowed_modes", [])
+        if allowed and override_mode not in allowed:
+            raise ValidationError(
+                f"Step '{step.step_key}': auth mode '{override_mode}' is not allowed "
+                f"for {step.plugin_name}.{step.plugin_op} (allowed: {allowed})"
+            )
 
     async def _create_step(self, experience_id: str, step_data: ExperienceStepCreate) -> ExperienceStep:
         """Create an ExperienceStep from step data.

@@ -717,6 +717,7 @@ class ExperienceExecutor:
         else:
             raise ValueError(f"Step '{step.step_key}' has unsupported auth_override subject_source: '{subject_source}'")
 
+        logger.debug("Running plugin as delegated subject | provider=%s", provider)
         return {"auth": {provider: {"mode": mode, "subject": resolved_subject}}}
 
     async def _execute_plugin_step(

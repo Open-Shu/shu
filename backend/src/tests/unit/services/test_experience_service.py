@@ -443,6 +443,79 @@ class TestStepValidation:
         # Should not raise
         await service._validate_steps(steps)
 
+    @pytest.mark.asyncio
+    async def test_validate_steps_auth_override_disallowed_mode(self, service):
+        """auth_override with a mode not in allowed_modes should raise."""
+        from shu.plugins.loader import PluginRecord
+
+        record = PluginRecord(
+            name="shu_gmail", version="1.0", entry="pkg:Cls",
+            op_auth={
+                "digest": {
+                    "provider": "google",
+                    "mode": "user",
+                    "allowed_modes": ["user"],
+                    "scopes": [],
+                },
+            },
+        )
+        service._plugin_loader = MagicMock()
+        service._plugin_loader.discover.return_value = {"shu_gmail": record}
+
+        steps = [
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="shu_gmail",
+                plugin_op="digest",
+                auth_override={
+                    "provider": "google",
+                    "mode": "domain_delegate",
+                    "subject_source": "running_user",
+                },
+            ),
+        ]
+        with pytest.raises(ValidationError) as exc_info:
+            await service._validate_steps(steps)
+        assert "not allowed" in str(exc_info.value.message)
+
+    @pytest.mark.asyncio
+    async def test_validate_steps_auth_override_allowed_mode(self, service):
+        """auth_override with a mode in allowed_modes should pass."""
+        from shu.plugins.loader import PluginRecord
+
+        record = PluginRecord(
+            name="shu_gmail", version="1.0", entry="pkg:Cls",
+            op_auth={
+                "digest": {
+                    "provider": "google",
+                    "mode": "user",
+                    "allowed_modes": ["user", "domain_delegate"],
+                    "scopes": [],
+                },
+            },
+        )
+        service._plugin_loader = MagicMock()
+        service._plugin_loader.discover.return_value = {"shu_gmail": record}
+
+        steps = [
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="shu_gmail",
+                plugin_op="digest",
+                auth_override={
+                    "provider": "google",
+                    "mode": "domain_delegate",
+                    "subject_source": "running_user",
+                },
+            ),
+        ]
+        # Should not raise
+        await service._validate_steps(steps)
+
 
 class TestCreateExperience:
     """Happy path tests for create_experience."""
