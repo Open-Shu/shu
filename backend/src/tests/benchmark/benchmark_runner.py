@@ -93,7 +93,7 @@ class BenchmarkResults:
     # Best novel surface (max across query_match, synopsis_match, chunk_summary per doc)
     best_novel_scores: dict[str, float] = field(default_factory=dict)
 
-    # BM25 scores (extracted from per-surface evaluation of the bm25 surface)
+    # BM25 scores (from ParadeDB BM25 surface, extracted from per-surface evaluation)
     bm25_scores: dict[str, float] = field(default_factory=dict)
 
     # Raw run data for reproducibility
@@ -226,19 +226,17 @@ class BenchmarkRunner:
             dataset.queries, id_map, ms_search_cfg,
         )
 
-        # 6. BM25 scores come from the per-surface evaluation below (no separate run needed —
-        #    the BM25 surface runs as part of multi-surface search via the API)
-
-        # 7. Capture model provenance
+        # 6. Capture model provenance
         embedding_model, profiling_model = await self._get_model_provenance(kb_id)
 
-        # 8. Evaluate per-surface rankings from surface_scores (no extra API calls)
+        # 7. Evaluate per-surface rankings from surface_scores (no extra API calls)
+        #    BM25 baseline comes from the ParadeDB BM25 surface in the multi-surface run.
         logger.info("Evaluating per-surface rankings...")
         per_surface_scores, best_novel_scores = self._evaluate_per_surface(
             dataset.qrels, ms_surface_scores,
         )
 
-        # Extract BM25 scores from per-surface evaluation (no separate in-memory run needed)
+        # Extract BM25 baseline from per-surface evaluation (ParadeDB BM25, not a separate run)
         bm25_scores = per_surface_scores.get("bm25", {m: 0.0 for m in self.config.metrics})
 
         # 9. Compute aggregate metrics

@@ -4,6 +4,7 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_search;  -- ParadeDB BM25 full-text search
 
 -- Optional extension: pg_stat_statements is not available on all Postgres
 -- deployments (especially some managed services). Treat it as best-effort so

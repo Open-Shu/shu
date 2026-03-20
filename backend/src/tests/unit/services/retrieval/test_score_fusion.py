@@ -93,8 +93,8 @@ class TestScoreFusionService:
 
         assert len(result) == 1
         assert result[0].document_id == doc_id
-        # Weighted score: (0.9 * 0.6 + 0.8 * 0.4) / (0.6 + 0.4) = 0.86
-        assert abs(result[0].final_score - 0.86) < 0.01
+        # Max fusion: max(0.9, 0.8) = 0.9
+        assert abs(result[0].final_score - 0.9) < 0.01
 
     @pytest.mark.asyncio
     async def test_fuse_respects_threshold(self):

@@ -385,18 +385,18 @@ class TestBM25Surface:
         mock_db.execute = AsyncMock(return_value=mock_result)
         return mock_db
 
-    def _make_row(self, doc_id, rank):
-        """Create a mock row with id and rank attributes."""
+    def _make_row(self, doc_id, bm25_score):
+        """Create a mock row with id and bm25_score attributes."""
         row = MagicMock()
         row.id = str(doc_id)
-        row.rank = rank
+        row.bm25_score = bm25_score
         return row
 
     @pytest.mark.asyncio
     async def test_search_returns_document_hits(self):
-        """search() should return document-level hits with saturation-normalized scores."""
+        """search() should return document-level hits with saturation-normalized BM25 scores."""
         doc_id = uuid4()
-        mock_rows = [self._make_row(doc_id, 0.5)]
+        mock_rows = [self._make_row(doc_id, 8.5)]
         mock_db = self._make_mock_db(mock_rows)
 
         surface = BM25Surface()
@@ -413,18 +413,18 @@ class TestBM25Surface:
         assert len(result.hits) == 1
         assert result.hits[0].id_type == "document"
         assert result.hits[0].id == doc_id
-        # Saturation: 0.5 / (0.1 + 0.5) ≈ 0.833
-        assert 0.83 < result.hits[0].score < 0.84
-        assert result.hits[0].metadata["raw_ts_rank"] == 0.5
+        # Saturation: 8.5 / (10 + 8.5) ≈ 0.459
+        assert 0.45 < result.hits[0].score < 0.47
+        assert result.hits[0].metadata["raw_bm25"] == 8.5
 
     @pytest.mark.asyncio
     async def test_search_normalizes_scores_with_saturation(self):
-        """search() should use saturation normalization, not max-normalization."""
+        """search() should use saturation normalization with K=10 for BM25 score range."""
         doc_a = uuid4()
         doc_b = uuid4()
         mock_rows = [
-            self._make_row(doc_a, 0.8),
-            self._make_row(doc_b, 0.4),
+            self._make_row(doc_a, 15.0),
+            self._make_row(doc_b, 5.0),
         ]
         mock_db = self._make_mock_db(mock_rows)
 
@@ -439,9 +439,9 @@ class TestBM25Surface:
         )
 
         assert len(result.hits) == 2
-        # Saturation: 0.8/(0.1+0.8)≈0.889, 0.4/(0.1+0.4)=0.8
-        assert 0.88 < result.hits[0].score < 0.90
-        assert result.hits[1].score == pytest.approx(0.8, abs=0.01)
+        # Saturation: 15/(10+15)=0.6, 5/(10+5)≈0.333
+        assert result.hits[0].score == pytest.approx(0.6, abs=0.01)
+        assert result.hits[1].score == pytest.approx(0.333, abs=0.01)
 
     @pytest.mark.asyncio
     async def test_search_handles_empty_query(self):
@@ -489,8 +489,8 @@ class TestBM25Surface:
         doc_a = uuid4()
         doc_b = uuid4()
         mock_rows = [
-            self._make_row(doc_a, 0.8),   # Saturation: 0.8/(0.1+0.8) ≈ 0.889
-            self._make_row(doc_b, 0.005),  # Saturation: 0.005/(0.1+0.005) ≈ 0.048 — below 0.5
+            self._make_row(doc_a, 15.0),  # Saturation: 15/(10+15) = 0.6
+            self._make_row(doc_b, 0.5),   # Saturation: 0.5/(10+0.5) ≈ 0.048 — below 0.5
         ]
         mock_db = self._make_mock_db(mock_rows)
 

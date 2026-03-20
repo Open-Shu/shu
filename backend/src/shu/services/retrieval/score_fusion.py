@@ -162,8 +162,8 @@ class ScoreFusionService:
                 if surface_name not in surface_scores:
                     surface_scores[surface_name] = 0.0
 
-            # Normalize by total weight used
-            final_score = weighted_sum / total_weight
+            # Use the highest individual surface score for this document
+            final_score = max(surface_scores.values())
             doc_scores[doc_id] = (final_score, surface_scores, surface_metadata)
 
         # Step 5: Filter by threshold and sort

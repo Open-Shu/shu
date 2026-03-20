@@ -1,13 +1,14 @@
-"""Migration 008_0004: BM25 search_vector + query chunk provenance
+"""Migration 008_0004: ParadeDB BM25 index + query chunk provenance
 
-1. Adds a ``search_vector`` tsvector column to the ``documents`` table with a
-   GIN index for Postgres full-text search (BM25-family ranking via
-   ``ts_rank``).  Backfills the column from ``title`` and ``content``.
-   Drops the ``keywords`` JSONB column and its GIN index from
-   ``document_chunks``, since keyword extraction is replaced by native
+1. Drops the ``keywords`` JSONB column and its GIN index from
+   ``document_chunks``, since keyword extraction is replaced by BM25
    full-text search on documents.  (SHU-644)
 
-2. Adds a nullable ``source_chunk_id`` FK column to ``document_queries``,
+2. Creates a ParadeDB BM25 index on the ``documents`` table for true
+   Okapi BM25 scoring via ``pdb.score()`` and the ``|||`` operator.
+   Requires the ``pg_search`` extension.  (SHU-644)
+
+3. Adds a nullable ``source_chunk_id`` FK column to ``document_queries``,
    linking each synthesized query to the chunk that inspired it.  Uses
    ``ON DELETE SET NULL`` so deleting a chunk doesn't cascade-delete
    queries.  (SHU-645)
@@ -29,60 +30,31 @@ def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
-    # 1. Add search_vector tsvector column to documents
-    add_column_if_not_exists(
-        inspector,
-        "documents",
-        sa.Column("search_vector", sa.dialects.postgresql.TSVECTOR, nullable=True),
-    )
-
-    # 2. Create GIN index on search_vector
-    if not index_exists(inspector, "documents", "ix_documents_search_vector"):
-        op.create_index(
-            "ix_documents_search_vector",
-            "documents",
-            ["search_vector"],
-            postgresql_using="gin",
-        )
-
-    # 3. Backfill search_vector from title + content for existing documents
-    op.execute(
-        sa.text(
-            "UPDATE documents SET search_vector = to_tsvector('english', "
-            "coalesce(title, '') || ' ' || coalesce(content, '')) "
-            "WHERE search_vector IS NULL"
-        )
-    )
-
-    # 4. Create trigger to auto-populate search_vector on INSERT/UPDATE
-    op.execute(
-        sa.text("""
-            CREATE OR REPLACE FUNCTION documents_search_vector_update() RETURNS trigger AS $$
-            BEGIN
-                NEW.search_vector := to_tsvector('english', coalesce(NEW.title, '') || ' ' || coalesce(NEW.content, ''));
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
-    )
-    op.execute(
-        sa.text("""
-            DROP TRIGGER IF EXISTS trig_documents_search_vector ON documents;
-            CREATE TRIGGER trig_documents_search_vector
-                BEFORE INSERT OR UPDATE OF title, content ON documents
-                FOR EACH ROW
-                EXECUTE FUNCTION documents_search_vector_update();
-        """)
-    )
-
-    # 5. Drop keywords GIN index from document_chunks (if it exists)
+    # 1. Drop keywords GIN index from document_chunks (if it exists)
     if index_exists(inspector, "document_chunks", "ix_document_chunks_keywords"):
         op.drop_index("ix_document_chunks_keywords", table_name="document_chunks")
 
-    # 6. Drop keywords column from document_chunks
+    # 2. Drop keywords column from document_chunks
     drop_column_if_exists(inspector, "document_chunks", "keywords")
 
-    # 7. Add source_chunk_id FK to document_queries (SHU-645)
+    # 3. Create ParadeDB BM25 index on documents (requires pg_search extension)
+    #    Uses English stemming and stopword removal on title and content.
+    #    The ||| operator provides disjunctive (OR) matching; pdb.score(id)
+    #    returns true Okapi BM25 scores.
+    if not index_exists(inspector, "documents", "ix_documents_bm25"):
+        op.execute(
+            sa.text("""
+                CREATE INDEX ix_documents_bm25 ON documents
+                USING bm25 (
+                    id,
+                    (title::pdb.simple('stemmer=english', 'stopwords_language=english')),
+                    (content::pdb.simple('stemmer=english', 'stopwords_language=english'))
+                )
+                WITH (key_field='id')
+            """)
+        )
+
+    # 4. Add source_chunk_id FK to document_queries (SHU-645)
     add_column_if_not_exists(
         inspector,
         "document_queries",
@@ -94,7 +66,7 @@ def upgrade() -> None:
         ),
     )
 
-    # 8. Index on source_chunk_id for reverse lookups
+    # 5. Index on source_chunk_id for reverse lookups
     if not index_exists(inspector, "document_queries", "ix_document_queries_source_chunk_id"):
         op.create_index(
             "ix_document_queries_source_chunk_id",
@@ -112,6 +84,10 @@ def downgrade() -> None:
         op.drop_index("ix_document_queries_source_chunk_id", table_name="document_queries")
     drop_column_if_exists(inspector, "document_queries", "source_chunk_id")
 
+    # Drop ParadeDB BM25 index
+    if index_exists(inspector, "documents", "ix_documents_bm25"):
+        op.drop_index("ix_documents_bm25", table_name="documents")
+
     # Re-add keywords column to document_chunks
     add_column_if_not_exists(
         inspector,
@@ -127,13 +103,3 @@ def downgrade() -> None:
             ["keywords"],
             postgresql_using="gin",
         )
-
-    # Drop trigger and function
-    op.execute(sa.text("DROP TRIGGER IF EXISTS trig_documents_search_vector ON documents;"))
-    op.execute(sa.text("DROP FUNCTION IF EXISTS documents_search_vector_update();"))
-
-    # Drop search_vector index and column
-    if index_exists(inspector, "documents", "ix_documents_search_vector"):
-        op.drop_index("ix_documents_search_vector", table_name="documents")
-
-    drop_column_if_exists(inspector, "documents", "search_vector")

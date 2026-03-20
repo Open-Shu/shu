@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, ClassVar
 
 from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
 
@@ -171,10 +171,6 @@ class Document(BaseModel):
     # Shu RAG Relational Context (SHU-355)
     # Denormalized summary of participants and projects for query-time access
     relational_context = Column(JSONB, nullable=True)
-
-    # BM25 full-text search vector (SHU-644)
-    # Populated automatically by Postgres trigger from title + content
-    search_vector = Column(TSVECTOR, nullable=True)
 
     # Relationships
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
