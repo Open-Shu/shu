@@ -104,6 +104,12 @@ def _validate_auth_override(value: dict[str, Any] | None) -> dict[str, Any] | No
             raise ValueError(
                 "auth_override.subject is required and must be a non-empty string " "when subject_source='explicit'"
             )
+        if "{{" in subject and "input." in subject:
+            raise ValueError(
+                "auth_override.subject must not reference runtime input ({{ input.* }}). "
+                "Use subject_source='running_user' to impersonate the caller, "
+                "or use a fixed email address for explicit delegation."
+            )
 
     return value
 

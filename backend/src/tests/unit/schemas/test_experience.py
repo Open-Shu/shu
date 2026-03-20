@@ -65,7 +65,7 @@ class TestAuthOverrideOnExperienceStepBase:
         """An unrecognized mode value is rejected with a validation error."""
         auth = {
             "provider": "google",
-            "mode": "service_account",
+            "mode": "bogus_mode",
         }
         with pytest.raises(ValidationError, match="auth_override.mode must be one of"):
             ExperienceStepBase(**_make_step_base(auth_override=auth))
