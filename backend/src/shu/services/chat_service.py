@@ -237,7 +237,7 @@ class ChatService:
             conversation_messages=turn_context.conversation_messages,
             model_configuration_override=model_configuration,
             recent_messages_limit=recent_messages_limit,
-            kb_access_verified=turn_context.knowledge_base_ids is not None,
+            kb_access_verified=bool(turn_context.knowledge_base_ids),
         )
 
         return ModelExecutionInputs(

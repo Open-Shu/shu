@@ -1024,11 +1024,20 @@ class KnowledgeBaseService:
     async def check_kb_read_access(self, user_id: str, kb_ids: list[str]) -> str | None:
         """Check PBAC kb.read for a list of KB IDs.
 
-        Returns None if all accessible, or the first denied KB ID.
+        Unknown IDs are treated identically to denied IDs so callers
+        cannot distinguish "missing" from "forbidden" (non-enumeration).
+
+        Returns None if all accessible, or the first denied/missing KB ID.
         """
         if not kb_ids:
             return None
         kbs = (await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)))).scalars().all()
+
+        found_ids = {kb.id for kb in kbs}
+        for kb_id in kb_ids:
+            if kb_id not in found_ids:
+                return kb_id
+
         denied = await self._get_denied_kb_slugs(user_id, [kb.slug for kb in kbs])
         for kb in kbs:
             if kb.slug in denied:

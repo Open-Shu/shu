@@ -28,7 +28,7 @@ export default function KBPickerDialog({ open, onClose, onSave, selectedKBs }) {
 
   const { data, isLoading, isFetching, error } = useQuery(
     ['knowledge-bases-for-chat'],
-    () => knowledgeBaseAPI.list().then(extractItemsFromResponse),
+    () => knowledgeBaseAPI.list({ limit: 100 }).then(extractItemsFromResponse),
     { enabled: open, staleTime: 10000 }
   );
 

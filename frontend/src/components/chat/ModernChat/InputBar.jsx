@@ -71,7 +71,7 @@ const InputBar = React.memo(function InputBar({
               key={kb.id}
               label={kb.name}
               color="secondary"
-              onDelete={() => onRemoveKB(kb.id)}
+              onDelete={onRemoveKB ? () => onRemoveKB(kb.id) : undefined}
               variant="outlined"
               icon={<LibraryBooksIcon />}
             />

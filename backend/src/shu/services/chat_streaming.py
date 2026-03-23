@@ -381,7 +381,9 @@ class EnsembleStreamingHelper:
                 inputs (ModelExecutionInputs): Execution inputs and configuration for this variant, including provider/model identifiers, context messages, and rate-limit settings.
 
             """
-            kb_ids = getattr(inputs.model_configuration, "knowledge_base_ids", None) or None
+            kb_ids = (
+                inputs.knowledge_base_ids or getattr(inputs.model_configuration, "knowledge_base_ids", None) or None
+            )
             client = await service.llm_service.get_client(
                 inputs.provider_id, conversation_owner_id, knowledge_base_ids=kb_ids
             )

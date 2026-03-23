@@ -521,7 +521,7 @@ class MessageContextBuilder:
         self,
         response_content: str,
         source_metadata: list[dict],
-        knowledge_base_id: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
         force_references: bool = False,
     ) -> tuple[str, list[dict]]:
         """Post-process LLM response to intelligently add system references.
@@ -532,7 +532,7 @@ class MessageContextBuilder:
         Args:
             response_content: The LLM response content
             source_metadata: Available source metadata from RAG
-            knowledge_base_id: KB ID to get include_references setting
+            knowledge_base_ids: KB IDs to get include_references setting
             force_references: If True, override KB setting and force references
 
         Returns:
@@ -544,18 +544,18 @@ class MessageContextBuilder:
 
         # Get KB configuration for include_references setting
         kb_include_references = True  # Default
-        if knowledge_base_id:
-            # Single KB specified
+        if knowledge_base_ids and len(knowledge_base_ids) == 1:
+            # Single KB specified — check its config
             try:
                 from .knowledge_base_service import KnowledgeBaseService
 
                 kb_service = KnowledgeBaseService(self.db_session)
-                rag_config_response = await kb_service.get_rag_config(knowledge_base_id)
+                rag_config_response = await kb_service.get_rag_config(knowledge_base_ids[0])
                 rag_config = rag_config_response.model_dump()
                 kb_include_references = rag_config.get("include_references", True)
             except Exception as e:
                 # If we can't get the config, default to True
-                logger.warning(f"Failed to get KB config for {knowledge_base_id}: {e}")
+                logger.warning(f"Failed to get KB config for {knowledge_base_ids[0]}: {e}")
         elif source_metadata:
             # Multiple KBs from model config - check if any sources have KB info
             try:
