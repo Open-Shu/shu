@@ -318,9 +318,9 @@ class KnowledgeBaseService:
     ) -> tuple[list[KnowledgeBase], int]:
         """List knowledge bases with optional filtering, pagination, and PBAC.
 
-        Results are filtered by ``kb.read`` PBAC for the given user.
-        Denied slugs are pushed into the SQL WHERE clause so pagination
-        happens in the database rather than in Python.
+        Results are filtered by ``kb.read`` PBAC; denied slugs are pushed
+        into the SQL WHERE clause so pagination happens in the database
+        rather than in Python.
 
         Args:
             user_id: User ID for PBAC ``kb.read`` enforcement.
@@ -333,7 +333,6 @@ class KnowledgeBaseService:
 
         """
         try:
-            # Collect all slugs (lightweight) for PBAC, then push denied set into SQL.
             slug_result = await self.db.execute(select(KnowledgeBase.slug))
             all_slugs = [row[0] for row in slug_result.fetchall()]
             denied = await self._get_denied_kb_slugs(user_id, all_slugs)

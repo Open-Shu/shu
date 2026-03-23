@@ -180,9 +180,9 @@ class SendMessageRequest(BaseModel):
     """Schema for sending messages with LLM response."""
 
     message: str = Field(..., description="User message content")
-    knowledge_base_id: str | None = Field(
+    knowledge_base_ids: list[str] | None = Field(
         None,
-        description="Optional specific knowledge base for RAG (overrides model config's attached KBs)",
+        description="Optional list of knowledge base IDs for RAG (overrides model config's attached KBs)",
     )
     rag_rewrite_mode: RagRewriteMode = Field(
         RagRewriteMode.RAW_QUERY,
@@ -848,7 +848,7 @@ async def send_message(
     Parameters
     ----------
         conversation_id (str): ID of the conversation to send the message to.
-        request_data (SendMessageRequest): Payload containing the user message and optional parameters (knowledge_base_id, rag_rewrite_mode, client_temp_id, ensemble_model_configuration_ids, attachment_ids).
+        request_data (SendMessageRequest): Payload containing the user message and optional parameters (knowledge_base_ids, rag_rewrite_mode, client_temp_id, ensemble_model_configuration_ids, attachment_ids).
 
     Returns
     -------
@@ -884,7 +884,7 @@ async def send_message(
                 conversation_id=conversation_id,
                 user_message=request_data.message,
                 current_user=current_user,
-                knowledge_base_id=request_data.knowledge_base_id,
+                knowledge_base_ids=request_data.knowledge_base_ids,
                 rag_rewrite_mode=request_data.rag_rewrite_mode,
                 client_temp_id=getattr(request_data, "client_temp_id", None),
                 ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,

@@ -474,7 +474,7 @@ class EnsembleStreamingHelper:
                 full_content, final_source_metadata = await self.message_context_builder._post_process_references(
                     final_message_event.content,
                     inputs.source_metadata or [],
-                    inputs.knowledge_base_id,
+                    inputs.knowledge_base_ids,
                 )
 
                 if full_content != final_message_event.content and len(full_content) > len(final_message_event.content):

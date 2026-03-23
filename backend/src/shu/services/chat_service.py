@@ -52,7 +52,7 @@ class PreparedTurnContext:
     conversation: Conversation
     user_message: Message
     conversation_messages: list[Message]
-    knowledge_base_id: str | None
+    knowledge_base_ids: list[str] | None
 
 
 @dataclass
@@ -64,7 +64,7 @@ class ModelExecutionInputs:
     model: LLMModel
     context_messages: ChatContext
     source_metadata: list[dict]
-    knowledge_base_id: str | None
+    knowledge_base_ids: list[str] | None
     # Per-provider rate limits
     rate_limit_rpm: int = 60
     rate_limit_tpm: int = 60000
@@ -112,13 +112,12 @@ class ChatService:
         conversation: Conversation,
         user_message: str,
         current_user: User,
-        knowledge_base_id: str | None,
+        knowledge_base_ids: list[str] | None,
         attachment_ids: list[str] | None = None,
     ) -> PreparedTurnContext:
         """Validate explicit KB access, then insert the user message and assemble shared context."""
-        if knowledge_base_id:
-            kb_service = KnowledgeBaseService(self.db_session)
-            await kb_service.get_knowledge_base(knowledge_base_id, str(current_user.id))
+        if knowledge_base_ids:
+            await self._verify_knowledge_base_access(knowledge_base_ids, str(current_user.id))
 
         user_msg = await self.add_message(
             conversation_id=conversation.id,
@@ -138,8 +137,19 @@ class ChatService:
             conversation=conversation,
             user_message=user_msg,
             conversation_messages=conversation_messages,
-            knowledge_base_id=knowledge_base_id,
+            knowledge_base_ids=knowledge_base_ids,
         )
+
+    async def _verify_knowledge_base_access(self, knowledge_base_ids: list[str], user_id: str) -> None:
+        """RBAC-check each KB ID; raise on first denial."""
+        kb_svc = KnowledgeBaseService(self.db_session)
+        denied_id = await kb_svc.check_kb_read_access(user_id, knowledge_base_ids)
+        if denied_id:
+            raise ShuException(
+                f"Access denied to knowledge base '{denied_id}'",
+                "KNOWLEDGE_BASE_ACCESS_DENIED",
+                status_code=403,
+            )
 
     async def _resolve_ensemble_configurations(
         self,
@@ -194,7 +204,7 @@ class ChatService:
 
         Returns
         -------
-            ModelExecutionInputs: Resolved inputs for executing the model, including provider_id, model, context_messages, source_metadata, knowledge_base_id, and per-provider rate limits (`rate_limit_rpm`, `rate_limit_tpm`). Rate limits are taken from the provider when available and default to 60 RPM and 60000 TPM.
+            ModelExecutionInputs: Resolved inputs for executing the model, including provider_id, model, context_messages, source_metadata, knowledge_base_ids, and per-provider rate limits (`rate_limit_rpm`, `rate_limit_tpm`). Rate limits are taken from the provider when available and default to 60 RPM and 60000 TPM.
 
         Raises
         ------
@@ -222,12 +232,12 @@ class ChatService:
             user_message=turn_context.user_message.content,
             current_user=current_user,
             model=model,
-            knowledge_base_id=turn_context.knowledge_base_id,
+            knowledge_base_ids=turn_context.knowledge_base_ids,
             rag_rewrite_mode=rag_rewrite_mode,
             conversation_messages=turn_context.conversation_messages,
             model_configuration_override=model_configuration,
             recent_messages_limit=recent_messages_limit,
-            kb_access_verified=turn_context.knowledge_base_id is not None,
+            kb_access_verified=turn_context.knowledge_base_ids is not None,
         )
 
         return ModelExecutionInputs(
@@ -236,7 +246,7 @@ class ChatService:
             model=model,
             context_messages=chat_context,
             source_metadata=source_metadata,
-            knowledge_base_id=turn_context.knowledge_base_id,
+            knowledge_base_ids=turn_context.knowledge_base_ids,
             rate_limit_rpm=provider.rate_limit_rpm or 60,
             rate_limit_tpm=provider.rate_limit_tpm or 60000,
         )
@@ -932,7 +942,7 @@ class ChatService:
         conversation_id: str,
         user_message: str,
         current_user,  # User object for access control
-        knowledge_base_id: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
         client_temp_id: str | None = None,
         ensemble_model_configuration_ids: list[str] | None = None,
@@ -944,7 +954,7 @@ class ChatService:
         Args:
             conversation_id: ID of the conversation
             user_message: User's message content
-            knowledge_base_id: Optional specific knowledge base for RAG (overrides model config KBs)
+            knowledge_base_ids: Optional list of knowledge base IDs for RAG (overrides model config KBs)
             rag_rewrite_mode: Strategy for preparing retrieval queries / disabling RAG
             ensemble_model_configuration_ids: Optional additional model configuration IDs to execute
             force_no_streaming: If True, force non-streaming mode regardless of config settings
@@ -1000,7 +1010,7 @@ class ChatService:
             conversation=conversation,
             user_message=user_message,
             current_user=current_user,
-            knowledge_base_id=knowledge_base_id,
+            knowledge_base_ids=knowledge_base_ids,
             attachment_ids=attachment_ids,
         )
 
@@ -1167,7 +1177,7 @@ class ChatService:
             user_message=preceding_user_content,
             current_user=current_user,
             model=model,
-            knowledge_base_id=None,
+            knowledge_base_ids=None,
             rag_rewrite_mode=rag_rewrite_mode,
             conversation_messages=history_messages,
         )
@@ -1185,7 +1195,7 @@ class ChatService:
                 model=model,
                 context_messages=chat_context,
                 source_metadata=source_metadata,
-                knowledge_base_id=None,
+                knowledge_base_ids=None,
             )
         ]
 
