@@ -9,6 +9,7 @@ const useMessageRegeneration = ({
   queryClient,
   conversationRef,
   ragRewriteMode,
+  selectedKBIds = [],
   startRegeneration,
   completeRegeneration,
   setVariantSelection,
@@ -184,11 +185,13 @@ const useMessageRegeneration = ({
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
+        const sanitizedKBIds = Array.isArray(selectedKBIds) ? selectedKBIds.filter(Boolean) : [];
         const response = await chatRegenerateAPI.streamRegenerate(
           messageId,
           {
             parent_message_id: parentId,
             rag_rewrite_mode: ragRewriteMode,
+            ...(sanitizedKBIds.length > 0 && { knowledge_base_ids: sanitizedKBIds }),
           },
           { signal: abortController.signal }
         );
@@ -376,6 +379,7 @@ const useMessageRegeneration = ({
       completeRegeneration,
       queryClient,
       ragRewriteMode,
+      selectedKBIds,
       setError,
       setVariantSelection,
       startRegeneration,

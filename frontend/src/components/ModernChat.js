@@ -657,6 +657,7 @@ const ModernChat = () => {
     shouldAutoFollowRef: isPinnedToBottomRef,
     focusMessageById,
     replaceSideBySideParent,
+    selectedKBIds,
   });
 
   const {

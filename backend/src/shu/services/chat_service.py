@@ -1100,8 +1100,12 @@ class ChatService:
         current_user,
         parent_message_id: str | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
+        knowledge_base_ids: list[str] | None = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """Regenerate an assistant message by rebuilding context up to the preceding user turn."""
+        if knowledge_base_ids:
+            await self._verify_knowledge_base_access(knowledge_base_ids, str(current_user.id))
+
         # Load target message
         target = await self.get_message_by_id(message_id)
         if not target:
@@ -1177,9 +1181,10 @@ class ChatService:
             user_message=preceding_user_content,
             current_user=current_user,
             model=model,
-            knowledge_base_ids=None,
+            knowledge_base_ids=knowledge_base_ids,
             rag_rewrite_mode=rag_rewrite_mode,
             conversation_messages=history_messages,
+            kb_access_verified=bool(knowledge_base_ids),
         )
 
         # Use the explicit parent_message_id from the frontend, or fall back to target.id
@@ -1195,7 +1200,7 @@ class ChatService:
                 model=model,
                 context_messages=chat_context,
                 source_metadata=source_metadata,
-                knowledge_base_ids=None,
+                knowledge_base_ids=knowledge_base_ids,
             )
         ]
 

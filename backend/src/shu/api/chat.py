@@ -1030,6 +1030,10 @@ class RegenerateMessageRequest(BaseModel):
     rag_rewrite_mode: RagRewriteMode = Field(
         RagRewriteMode.RAW_QUERY, description="How to prepare the query for RAG during regeneration"
     )
+    knowledge_base_ids: list[str] | None = Field(
+        None,
+        description="Optional list of knowledge base IDs for RAG (overrides model config's attached KBs)",
+    )
 
 
 @router.post(
@@ -1068,6 +1072,7 @@ async def regenerate_message(
                 current_user=current_user,
                 parent_message_id=request.parent_message_id,
                 rag_rewrite_mode=request.rag_rewrite_mode,
+                knowledge_base_ids=request.knowledge_base_ids,
             )
             async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
                 yield data
