@@ -34,8 +34,11 @@ import {
   RssFeed as FeedsIcon,
   Storage as KBIcon,
   Refresh as RefreshIcon,
+  Upload as UploadIcon,
 } from '@mui/icons-material';
 import PageHelpHeader from './PageHelpHeader';
+import ExportKBButton from './ExportKBButton';
+import ImportKBWizard from './ImportKBWizard';
 
 import { knowledgeBaseAPI, formatError, extractItemsFromResponse } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -73,6 +76,7 @@ function KnowledgeBases() {
   const queryClient = useQueryClient();
 
   const [reEmbedTarget, setReEmbedTarget] = useState(null);
+  const [isImportWizardOpen, setIsImportWizardOpen] = useState(false);
 
   const {
     data: knowledgeBasesResponse,
@@ -82,7 +86,7 @@ function KnowledgeBases() {
   } = useQuery('knowledgeBases', knowledgeBaseAPI.list, {
     refetchInterval: (data) => {
       const items = extractItemsFromResponse(data);
-      return items?.some((kb) => kb.embedding_status === 're_embedding') ? 5000 : false;
+      return items?.some((kb) => kb.embedding_status === 're_embedding' || kb.status === 'importing') ? 5000 : false;
     },
   });
 
@@ -205,6 +209,14 @@ function KnowledgeBases() {
           <Button variant="outlined" onClick={() => refetch()} sx={{ mr: 2 }}>
             Refresh
           </Button>
+          <Button
+            variant="outlined"
+            startIcon={<UploadIcon />}
+            onClick={() => setIsImportWizardOpen(true)}
+            sx={{ mr: 1 }}
+          >
+            Import
+          </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setIsCreateDialogOpen(true)}>
             Create Knowledge Base
           </Button>
@@ -257,7 +269,34 @@ function KnowledgeBases() {
                     </Box>
                   </TableCell>
                   <TableCell>
-                    <Chip label={kb.status} color={kb.status === 'active' ? 'success' : 'default'} size="small" />
+                    {kb.status === 'importing' ? (
+                      <Box>
+                        <Chip label="Importing" color="info" size="small" />
+                        {kb.import_progress && kb.import_progress.phase !== 'queued' && (
+                          <Tooltip
+                            title={`Phase: ${kb.import_progress.phase || '...'} — docs: ${kb.import_progress.documents_done || 0}/${kb.import_progress.documents_total || '?'}, chunks: ${kb.import_progress.chunks_done || 0}/${kb.import_progress.chunks_total || '?'}`}
+                          >
+                            <LinearProgress
+                              variant="determinate"
+                              value={
+                                kb.import_progress.documents_total
+                                  ? (((kb.import_progress.documents_done || 0) +
+                                      (kb.import_progress.chunks_done || 0) +
+                                      (kb.import_progress.queries_done || 0)) /
+                                      ((kb.import_progress.documents_total || 1) +
+                                        (kb.import_progress.chunks_total || 0) +
+                                        (kb.import_progress.queries_total || 0))) *
+                                    100
+                                  : 0
+                              }
+                              sx={{ mt: 0.5, borderRadius: 1 }}
+                            />
+                          </Tooltip>
+                        )}
+                      </Box>
+                    ) : (
+                      <Chip label={kb.status} color={kb.status === 'active' ? 'success' : 'default'} size="small" />
+                    )}
                   </TableCell>
                   <TableCell>
                     {kb.embedding_status === 're_embedding' ? (
@@ -359,6 +398,7 @@ function KnowledgeBases() {
                       >
                         <ConfigIcon />
                       </IconButton>
+                      <ExportKBButton kbId={kb.id} kbName={kb.name} />
                       {(kb.embedding_status === 'stale' || kb.embedding_status === 'error') && (
                         <IconButton
                           size="small"
@@ -504,6 +544,15 @@ function KnowledgeBases() {
         onConfirm={() => reEmbedMutation.mutate(reEmbedTarget.id)}
         isLoading={reEmbedMutation.isLoading}
         error={reEmbedMutation.isError ? reEmbedMutation.error : null}
+      />
+
+      <ImportKBWizard
+        open={isImportWizardOpen}
+        onClose={() => setIsImportWizardOpen(false)}
+        onSuccess={() => {
+          queryClient.invalidateQueries('knowledgeBases');
+          setIsImportWizardOpen(false);
+        }}
       />
     </Box>
   );
