@@ -21,7 +21,7 @@ async def handle_kb_import_job(job) -> None:
 
     """
     from ..core.database import get_async_session_local
-    from ..services.kb_import_export import KBImportExportService
+    from ..services.kb_import_export_service import KBImportExportService
     from ..services.knowledge_base_service import KnowledgeBaseService
 
     knowledge_base_id = job.payload.get("knowledge_base_id")

@@ -17,6 +17,7 @@ class KnowledgeBaseStatus(str, Enum):
 
     ACTIVE = "active"
     INACTIVE = "inactive"
+    IMPORTING = "importing"
     ERROR = "error"
 
 
@@ -212,6 +213,7 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
     status: KnowledgeBaseStatus = Field(..., description="Knowledge base status")
     embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
     re_embedding_progress: dict | None = Field(None, description="Re-embedding progress when status is re_embedding")
+    import_progress: dict | None = Field(None, description="Import progress when status is importing")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")

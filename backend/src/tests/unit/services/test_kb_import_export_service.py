@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.core.exceptions import ValidationError
-from shu.services.kb_import_export import KBImportExportService
+from shu.models.document import Document, DocumentChunk, DocumentQuery
+from shu.services.kb_import_export_service import KBImportExportService
+from shu.utils.embedding_codec import decode_embedding, encode_embedding
 
 
 class TestEncodeDecodeEmbedding:
@@ -19,31 +21,31 @@ class TestEncodeDecodeEmbedding:
 
     def test_round_trip_preserves_values(self) -> None:
         vec = [0.1, 0.2, -0.3, 1.5, 0.0]
-        encoded = KBImportExportService._encode_embedding(vec)
-        decoded = KBImportExportService._decode_embedding(encoded)
+        encoded = encode_embedding(vec)
+        decoded = decode_embedding(encoded)
         assert len(decoded) == len(vec)
         for a, b in zip(vec, decoded):
             assert math.isclose(a, b, rel_tol=1e-6)
 
     def test_encode_none_returns_none(self) -> None:
-        assert KBImportExportService._encode_embedding(None) is None
+        assert encode_embedding(None) is None
 
     def test_decode_none_returns_none(self) -> None:
-        assert KBImportExportService._decode_embedding(None) is None
+        assert decode_embedding(None) is None
 
     def test_encode_returns_string(self) -> None:
-        result = KBImportExportService._encode_embedding([1.0, 2.0])
+        result = encode_embedding([1.0, 2.0])
         assert isinstance(result, str)
 
     def test_empty_list_round_trip(self) -> None:
-        encoded = KBImportExportService._encode_embedding([])
-        decoded = KBImportExportService._decode_embedding(encoded)
+        encoded = encode_embedding([])
+        decoded = decode_embedding(encoded)
         assert decoded == []
 
     def test_large_vector_round_trip(self) -> None:
         vec = [float(i) / 1000 for i in range(1024)]
-        encoded = KBImportExportService._encode_embedding(vec)
-        decoded = KBImportExportService._decode_embedding(encoded)
+        encoded = encode_embedding(vec)
+        decoded = decode_embedding(encoded)
         assert len(decoded) == 1024
         for a, b in zip(vec, decoded):
             assert math.isclose(a, b, rel_tol=1e-6)
@@ -80,6 +82,7 @@ def _mock_document(export_index: int = 0) -> MagicMock:
     doc.source_modified_at = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
     doc.file_size = 102400
     doc.mime_type = "application/pdf"
+    doc.serialize_for_export = lambda ei, no_embeddings: Document.serialize_for_export(doc, ei, no_embeddings)
     return doc
 
 
@@ -100,6 +103,7 @@ def _mock_chunk() -> MagicMock:
     chunk.embedding_model = "all-MiniLM-L6-v2"
     chunk.token_count = 25
     chunk.chunk_metadata = None
+    chunk.serialize_for_export = lambda ei, no_embeddings: DocumentChunk.serialize_for_export(chunk, ei, no_embeddings)
     return chunk
 
 
@@ -108,15 +112,16 @@ def _mock_query() -> MagicMock:
     query = MagicMock()
     query.query_text = "What is the Q3 revenue?"
     query.query_embedding = [1.0, 1.1, 1.2]
+    query.serialize_for_export = lambda ei, no_embeddings: DocumentQuery.serialize_for_export(query, ei, no_embeddings)
     return query
 
 
 class TestSerializeDocument:
-    """Tests for _serialize_document."""
+    """Tests for Document.serialize_for_export."""
 
     def test_serializes_all_fields(self) -> None:
         doc = _mock_document()
-        result = KBImportExportService._serialize_document(doc, 5, no_embeddings=False)
+        result = Document.serialize_for_export(doc, 5, no_embeddings=False)
         assert result["export_index"] == 5
         assert result["title"] == "Test Doc"
         assert result["source_type"] == "plugin:google_drive"
@@ -127,23 +132,23 @@ class TestSerializeDocument:
 
     def test_no_embeddings_omits_synopsis_embedding(self) -> None:
         doc = _mock_document()
-        result = KBImportExportService._serialize_document(doc, 0, no_embeddings=True)
+        result = Document.serialize_for_export(doc, 0, no_embeddings=True)
         assert result["synopsis_embedding"] is None
         assert result["synopsis"] == "A summary"
 
     def test_none_source_modified_at(self) -> None:
         doc = _mock_document()
         doc.source_modified_at = None
-        result = KBImportExportService._serialize_document(doc, 0, no_embeddings=False)
+        result = Document.serialize_for_export(doc, 0, no_embeddings=False)
         assert result["source_modified_at"] is None
 
 
 class TestSerializeChunk:
-    """Tests for _serialize_chunk."""
+    """Tests for DocumentChunk.serialize_for_export."""
 
     def test_serializes_all_fields(self) -> None:
         chunk = _mock_chunk()
-        result = KBImportExportService._serialize_chunk(chunk, 3, no_embeddings=False)
+        result = DocumentChunk.serialize_for_export(chunk, 3, no_embeddings=False)
         assert result["export_index"] == 3
         assert result["chunk_index"] == 0
         assert result["content"] == "Chunk text"
@@ -153,7 +158,7 @@ class TestSerializeChunk:
 
     def test_no_embeddings_omits_vectors(self) -> None:
         chunk = _mock_chunk()
-        result = KBImportExportService._serialize_chunk(chunk, 0, no_embeddings=True)
+        result = DocumentChunk.serialize_for_export(chunk, 0, no_embeddings=True)
         assert result["embedding"] is None
         assert result["summary_embedding"] is None
         assert result["summary"] == "Chunk summary"
@@ -161,18 +166,18 @@ class TestSerializeChunk:
 
 
 class TestSerializeQuery:
-    """Tests for _serialize_query."""
+    """Tests for DocumentQuery.serialize_for_export."""
 
     def test_serializes_all_fields(self) -> None:
         query = _mock_query()
-        result = KBImportExportService._serialize_query(query, 7, no_embeddings=False)
+        result = DocumentQuery.serialize_for_export(query, 7, no_embeddings=False)
         assert result["export_index"] == 7
         assert result["query_text"] == "What is the Q3 revenue?"
         assert result["query_embedding"] is not None
 
     def test_no_embeddings_omits_vector(self) -> None:
         query = _mock_query()
-        result = KBImportExportService._serialize_query(query, 0, no_embeddings=True)
+        result = DocumentQuery.serialize_for_export(query, 0, no_embeddings=True)
         assert result["query_embedding"] is None
         assert result["query_text"] == "What is the Q3 revenue?"
 
@@ -187,9 +192,24 @@ def _make_zip_bytes(manifest: dict | None = None, include_manifest: bool = True)
 
 
 def _make_upload_file(content: bytes) -> AsyncMock:
-    """Create a mock UploadFile that returns the given bytes on read()."""
+    """Create a mock UploadFile.
+
+    - ``.file`` is a seekable BytesIO (used by validate_import).
+    - ``.read(size)`` yields chunks then b"" (used by start_import's
+      streaming save).
+    - ``.read()`` with no args returns all bytes (legacy compat).
+    """
     file = AsyncMock()
-    file.read = AsyncMock(return_value=content)
+    file.file = io.BytesIO(content)
+    buf = io.BytesIO(content)
+
+    async def _chunked_read(size=None):
+        if size is None:
+            return content
+        chunk = buf.read(size)
+        return chunk if chunk else b""
+
+    file.read = AsyncMock(side_effect=_chunked_read)
     return file
 
 
@@ -219,7 +239,7 @@ class TestValidateImport:
         kb_service = MagicMock()
         service = KBImportExportService(db, kb_service)
 
-        with patch("shu.services.kb_import_export.get_settings_instance") as mock_settings:
+        with patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings:
             mock_settings.return_value.default_embedding_model = "test-model"
             result = await service.validate_import(file)
 
@@ -243,7 +263,7 @@ class TestValidateImport:
         kb_service = MagicMock()
         service = KBImportExportService(db, kb_service)
 
-        with patch("shu.services.kb_import_export.get_settings_instance") as mock_settings:
+        with patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings:
             mock_settings.return_value.default_embedding_model = "same-model"
             result = await service.validate_import(file)
 
@@ -260,7 +280,7 @@ class TestValidateImport:
         kb_service = MagicMock()
         service = KBImportExportService(db, kb_service)
 
-        with patch("shu.services.kb_import_export.get_settings_instance") as mock_settings:
+        with patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings:
             mock_settings.return_value.default_embedding_model = "instance-model"
             result = await service.validate_import(file)
 
@@ -328,6 +348,21 @@ def _mock_scalars_result(docs: list) -> MagicMock:
     return result
 
 
+def _export_side_effects(docs, chunks, queries):
+    """Build db.execute side_effect list for the three-pass export.
+
+    Each pass does batch+empty, so 6 results total.
+    """
+    return [
+        _mock_scalars_result(docs),
+        _mock_scalars_result([]),
+        _mock_scalars_result(chunks),
+        _mock_scalars_result([]),
+        _mock_scalars_result(queries),
+        _mock_scalars_result([]),
+    ]
+
+
 class TestExportKB:
     """Tests for export_kb."""
 
@@ -336,19 +371,18 @@ class TestExportKB:
         import os
 
         doc = _mock_document()
-        doc.chunks = [_mock_chunk()]
-        doc.queries = [_mock_query()]
+        doc.id = "doc-1"
+        chunk = _mock_chunk()
+        chunk.document_id = "doc-1"
+        query = _mock_query()
+        query.document_id = "doc-1"
 
         kb = _mock_kb()
         kb_service = AsyncMock()
         kb_service.get_knowledge_base = AsyncMock(return_value=kb)
 
         db = AsyncMock()
-        # First call returns docs, second returns empty to stop iteration
-        db.execute = AsyncMock(side_effect=[
-            _mock_scalars_result([doc]),
-            _mock_scalars_result([]),
-        ])
+        db.execute = AsyncMock(side_effect=_export_side_effects([doc], [chunk], [query]))
 
         service = KBImportExportService(db, kb_service)
         temp_path, filename = await service.export_kb("kb-1", "user-1")
@@ -372,22 +406,32 @@ class TestExportKB:
         import os
 
         doc1 = _mock_document()
-        doc1.chunks = [_mock_chunk(), _mock_chunk()]
-        doc1.queries = [_mock_query()]
-
+        doc1.id = "doc-1"
         doc2 = _mock_document()
-        doc2.chunks = [_mock_chunk()]
-        doc2.queries = [_mock_query(), _mock_query()]
+        doc2.id = "doc-2"
+
+        c1 = _mock_chunk()
+        c1.document_id = "doc-1"
+        c2 = _mock_chunk()
+        c2.document_id = "doc-1"
+        c3 = _mock_chunk()
+        c3.document_id = "doc-2"
+
+        q1 = _mock_query()
+        q1.document_id = "doc-1"
+        q2 = _mock_query()
+        q2.document_id = "doc-2"
+        q3 = _mock_query()
+        q3.document_id = "doc-2"
 
         kb = _mock_kb()
         kb_service = AsyncMock()
         kb_service.get_knowledge_base = AsyncMock(return_value=kb)
 
         db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[
-            _mock_scalars_result([doc1, doc2]),
-            _mock_scalars_result([]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=_export_side_effects([doc1, doc2], [c1, c2, c3], [q1, q2, q3])
+        )
 
         service = KBImportExportService(db, kb_service)
         temp_path, _ = await service.export_kb("kb-1", "user-1")
@@ -409,22 +453,21 @@ class TestExportKB:
         import os
 
         doc1 = _mock_document()
-        doc1.chunks = [_mock_chunk()]
-        doc1.queries = []
-
+        doc1.id = "doc-1"
         doc2 = _mock_document()
-        doc2.chunks = [_mock_chunk()]
-        doc2.queries = []
+        doc2.id = "doc-2"
+
+        c1 = _mock_chunk()
+        c1.document_id = "doc-1"
+        c2 = _mock_chunk()
+        c2.document_id = "doc-2"
 
         kb = _mock_kb()
         kb_service = AsyncMock()
         kb_service.get_knowledge_base = AsyncMock(return_value=kb)
 
         db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[
-            _mock_scalars_result([doc1, doc2]),
-            _mock_scalars_result([]),
-        ])
+        db.execute = AsyncMock(side_effect=_export_side_effects([doc1, doc2], [c1, c2], []))
 
         service = KBImportExportService(db, kb_service)
         temp_path, _ = await service.export_kb("kb-1", "user-1")
@@ -448,18 +491,18 @@ class TestExportKB:
         import os
 
         doc = _mock_document()
-        doc.chunks = [_mock_chunk()]
-        doc.queries = [_mock_query()]
+        doc.id = "doc-1"
+        chunk = _mock_chunk()
+        chunk.document_id = "doc-1"
+        query = _mock_query()
+        query.document_id = "doc-1"
 
         kb = _mock_kb()
         kb_service = AsyncMock()
         kb_service.get_knowledge_base = AsyncMock(return_value=kb)
 
         db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[
-            _mock_scalars_result([doc]),
-            _mock_scalars_result([]),
-        ])
+        db.execute = AsyncMock(side_effect=_export_side_effects([doc], [chunk], [query]))
 
         service = KBImportExportService(db, kb_service)
         temp_path, _ = await service.export_kb("kb-1", "user-1", no_embeddings=True)
@@ -529,7 +572,7 @@ class TestResolveSlug:
     async def test_no_conflict_returns_base(self) -> None:
         db = AsyncMock()
         kb_service = MagicMock()
-        kb_service._get_kb_by_slug = AsyncMock(return_value=None)
+        kb_service.slug_exists = AsyncMock(return_value=False)
         service = KBImportExportService(db, kb_service)
         result = await service._resolve_slug("my-kb")
         assert result == "my-kb"
@@ -538,7 +581,7 @@ class TestResolveSlug:
     async def test_appends_hash_on_conflict(self) -> None:
         db = AsyncMock()
         kb_service = MagicMock()
-        kb_service._get_kb_by_slug = AsyncMock(return_value=MagicMock())
+        kb_service.slug_exists = AsyncMock(return_value=True)
         service = KBImportExportService(db, kb_service)
         result = await service._resolve_slug("my-kb")
         assert result.startswith("my-kb-")
@@ -576,12 +619,16 @@ class TestStartImport:
 
         db = _make_mock_db_for_import()
         kb_service = MagicMock()
-        kb_service._get_kb_by_slug = AsyncMock(return_value=None)
+        kb_service.slug_exists = AsyncMock(return_value=False)
         queue = AsyncMock()
 
         service = KBImportExportService(db, kb_service, queue=queue)
 
-        with patch("shu.services.kb_import_export.enqueue_job", new_callable=AsyncMock):
+        with (
+            patch("shu.services.kb_import_export_service.enqueue_job", new_callable=AsyncMock),
+            patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings,
+        ):
+            mock_settings.return_value.default_embedding_model = "test-model"
             result = await service.start_import(file, skip_embeddings=False, owner_id="user-1")
 
         assert result.name == "Test KB"
@@ -598,26 +645,26 @@ class TestStartImport:
 
         db = _make_mock_db_for_import()
         kb_service = MagicMock()
-        kb_service._get_kb_by_slug = AsyncMock(return_value=MagicMock())  # slug always taken
+        kb_service.slug_exists = AsyncMock(return_value=True)  # slug always taken
         queue = AsyncMock()
 
         service = KBImportExportService(db, kb_service, queue=queue)
 
-        with patch("shu.services.kb_import_export.enqueue_job", new_callable=AsyncMock):
+        with (
+            patch("shu.services.kb_import_export_service.enqueue_job", new_callable=AsyncMock),
+            patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings,
+        ):
+            mock_settings.return_value.default_embedding_model = "test-model"
             result = await service.start_import(file, skip_embeddings=False, owner_id="user-1")
 
         assert result.slug.startswith("test-kb-")
         assert len(result.slug) > len("test-kb")
 
 
-class TestBuildDocumentRecord:
-    """Tests for _build_document_record."""
+class TestBuildImportRecord:
+    """Tests for Document.build_import_record."""
 
     def test_preserves_profiling_artifacts(self) -> None:
-        db = AsyncMock()
-        kb_service = MagicMock()
-        service = KBImportExportService(db, kb_service)
-
         row = {
             "synopsis": "A summary",
             "document_type": "technical",
@@ -626,7 +673,7 @@ class TestBuildDocumentRecord:
             "profiling_status": "complete",
             "profiling_coverage_percent": 95.0,
         }
-        record = service._build_document_record(row, "new-id", "kb-1", skip_embeddings=False)
+        record = Document.build_import_record(row, "new-id", "kb-1", skip_embeddings=False)
 
         assert record["synopsis"] == "A summary"
         assert record["document_type"] == "technical"
@@ -635,25 +682,17 @@ class TestBuildDocumentRecord:
         assert record["profiling_coverage_percent"] == 95.0
 
     def test_skip_embeddings_nulls_embedding_and_sets_pending(self) -> None:
-        db = AsyncMock()
-        kb_service = MagicMock()
-        service = KBImportExportService(db, kb_service)
-
-        encoded = KBImportExportService._encode_embedding([0.1, 0.2])
+        encoded = encode_embedding([0.1, 0.2])
         row = {"synopsis_embedding": encoded, "processing_status": "processed"}
-        record = service._build_document_record(row, "new-id", "kb-1", skip_embeddings=True)
+        record = Document.build_import_record(row, "new-id", "kb-1", skip_embeddings=True)
 
         assert record["synopsis_embedding"] is None
         assert record["processing_status"] == "pending"
 
     def test_without_skip_decodes_embedding(self) -> None:
-        db = AsyncMock()
-        kb_service = MagicMock()
-        service = KBImportExportService(db, kb_service)
-
-        encoded = KBImportExportService._encode_embedding([0.1, 0.2])
+        encoded = encode_embedding([0.1, 0.2])
         row = {"synopsis_embedding": encoded, "processing_status": "processed"}
-        record = service._build_document_record(row, "new-id", "kb-1", skip_embeddings=False)
+        record = Document.build_import_record(row, "new-id", "kb-1", skip_embeddings=False)
 
         assert record["synopsis_embedding"] is not None
         assert len(record["synopsis_embedding"]) == 2

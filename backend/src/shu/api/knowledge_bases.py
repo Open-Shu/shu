@@ -5,10 +5,11 @@ including CRUD operations, statistics, and multi-source support.
 """
 
 import mimetypes
+import os
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,11 +22,13 @@ from ..auth.rbac import (
 from ..core.config import get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
+from ..core.queue_backend import get_queue_backend
 from ..core.response import ShuResponse
 from ..ingestion.filetypes import MAGIC_BYTES
 from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, RAGConfig
 from ..services.document_service import DocumentService
 from ..services.ingestion_service import ingest_document as ingest_document_service
+from ..services.kb_import_export_service import KBImportExportService
 from ..services.knowledge_base_service import KnowledgeBaseService
 from .dependencies import get_db
 
@@ -89,6 +92,7 @@ async def list_knowledge_bases(
                     "status": kb.status or "active",
                     "embedding_status": kb.embedding_status or "current",
                     "re_embedding_progress": kb.re_embedding_progress,
+                    "import_progress": kb.import_progress,
                     "document_count": kb.document_count,
                     "total_chunks": kb.total_chunks,
                     "last_sync_at": kb.last_sync_at.isoformat() if kb.last_sync_at is not None else None,
@@ -983,7 +987,6 @@ async def trigger_re_embedding(
     synopses, and queries using the currently configured embedding model.
     """
     from ..core.embedding_service import get_embedding_service
-    from ..core.queue_backend import get_queue_backend
 
     try:
         embedding_service = await get_embedding_service()
@@ -1041,29 +1044,22 @@ async def export_knowledge_base(
     kb_id: str,
     no_embeddings: bool = Query(False, description="Omit embedding vectors from the archive"),
     current_user: User = Depends(require_power_user),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
 ):
     """Export a knowledge base as a zip archive download."""
-    import os
-
-    from ..services.kb_import_export import KBImportExportService
-
     try:
         kb_service = KnowledgeBaseService(db)
         service = KBImportExportService(db, kb_service)
         temp_path, filename = await service.export_kb(kb_id, str(current_user.id), no_embeddings)
 
-        def cleanup() -> None:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-
-        background_tasks.add_task(cleanup)
-
         def file_iterator():
-            with open(temp_path, "rb") as f:
-                while chunk := f.read(65536):
-                    yield chunk
+            try:
+                with open(temp_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        yield chunk
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
         return StreamingResponse(
             file_iterator(),
@@ -1085,8 +1081,6 @@ async def validate_import_archive(
     db: AsyncSession = Depends(get_db),
 ):
     """Validate an import archive and return manifest data."""
-    from ..services.kb_import_export import KBImportExportService
-
     try:
         kb_service = KnowledgeBaseService(db)
         service = KBImportExportService(db, kb_service)
@@ -1108,9 +1102,6 @@ async def import_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     """Import a knowledge base from a zip archive."""
-    from ..core.queue_backend import get_queue_backend
-    from ..services.kb_import_export import KBImportExportService
-
     try:
         queue = await get_queue_backend()
         kb_service = KnowledgeBaseService(db)
