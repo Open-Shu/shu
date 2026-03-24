@@ -145,7 +145,7 @@ Authorization: ApiKey <key> | Bearer <jwt>
 {
   "message": "What is the capital of France?",
   "rag_rewrite_mode": "no_rag",
-  "knowledge_base_id": null,
+  "knowledge_base_ids": null,
   "attachment_ids": []
 }
 ```
@@ -156,7 +156,7 @@ Authorization: ApiKey <key> | Bearer <jwt>
 |-------|------|----------|-------------|
 | `message` | string | Yes | User message content |
 | `rag_rewrite_mode` | string | No | RAG query strategy (see below) |
-| `knowledge_base_id` | string | No | Specific KB for RAG (overrides model config) |
+| `knowledge_base_ids` | list[string] | No | Knowledge base IDs for RAG (overrides model config) |
 | `attachment_ids` | array | No | Attachment UUIDs to include as context |
 | `client_temp_id` | string | No | Client-generated ID for optimistic UI |
 | `ensemble_model_configuration_ids` | array | No | Additional models to execute in parallel |

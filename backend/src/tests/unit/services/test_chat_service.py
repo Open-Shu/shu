@@ -18,7 +18,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import composite
 
-from shu.core.exceptions import ConversationNotFoundError, NotFoundError
+from shu.core.exceptions import ConversationNotFoundError, NotFoundError, ShuException
 from shu.models.llm_provider import Conversation
 from shu.services.chat_service import ChatService
 
@@ -1392,17 +1392,114 @@ class TestChatServiceExplicitKnowledgeBaseAccess:
 
         with patch("shu.services.chat_service.KnowledgeBaseService") as mock_kb_service_class:
             mock_kb_service = MagicMock()
-            mock_kb_service.get_knowledge_base = AsyncMock(
-                side_effect=NotFoundError("Knowledge base 'kb-404' not found")
-            )
+            mock_kb_service.check_kb_read_access = AsyncMock(return_value="kb-404")
             mock_kb_service_class.return_value = mock_kb_service
 
-            with pytest.raises(NotFoundError, match="kb-404"):
+            with pytest.raises(ShuException, match="kb-404"):
                 await chat_service.send_message(
                     conversation_id=conversation.id,
                     user_message="hello",
                     current_user=current_user,
-                    knowledge_base_id="kb-404",
+                    knowledge_base_ids=["kb-404"],
                 )
 
         chat_service.add_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_multiple_kbs_all_allowed(self) -> None:
+        """All KB IDs are RBAC-checked; when all pass, prepare_turn_context proceeds."""
+        mock_db = AsyncMock()
+        mock_config_manager = MagicMock()
+        chat_service = ChatService(mock_db, mock_config_manager)
+
+        conversation = MagicMock(spec=Conversation)
+        conversation.id = str(uuid.uuid4())
+        conversation.user_id = str(uuid.uuid4())
+
+        current_user = MagicMock()
+        current_user.id = conversation.user_id
+
+        chat_service.get_conversation_by_id = AsyncMock(return_value=conversation)
+        chat_service.add_message = AsyncMock(return_value=MagicMock())
+        chat_service.get_conversation_messages = AsyncMock(return_value=[])
+
+        with patch("shu.services.chat_service.KnowledgeBaseService") as mock_kb_service_class:
+            mock_kb_service = MagicMock()
+            mock_kb_service.check_kb_read_access = AsyncMock(return_value=None)
+            mock_kb_service_class.return_value = mock_kb_service
+
+            ctx = await chat_service._prepare_turn_context(
+                conversation=conversation,
+                user_message="hello",
+                current_user=current_user,
+                knowledge_base_ids=["kb-1", "kb-2"],
+            )
+
+            mock_kb_service.check_kb_read_access.assert_awaited_once_with(
+                str(current_user.id), ["kb-1", "kb-2"],
+            )
+            assert ctx.knowledge_base_ids == ["kb-1", "kb-2"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_none_kb_ids_skips_rbac_check(self) -> None:
+        """When knowledge_base_ids is None, no RBAC check is performed."""
+        mock_db = AsyncMock()
+        mock_config_manager = MagicMock()
+        chat_service = ChatService(mock_db, mock_config_manager)
+
+        conversation = MagicMock(spec=Conversation)
+        conversation.id = str(uuid.uuid4())
+        conversation.user_id = str(uuid.uuid4())
+
+        current_user = MagicMock()
+        current_user.id = conversation.user_id
+
+        chat_service.get_conversation_by_id = AsyncMock(return_value=conversation)
+        chat_service.add_message = AsyncMock(return_value=MagicMock())
+        chat_service.get_conversation_messages = AsyncMock(return_value=[])
+
+        with patch("shu.services.chat_service.KnowledgeBaseService") as mock_kb_service_class:
+            mock_kb_service = MagicMock()
+            mock_kb_service_class.return_value = mock_kb_service
+
+            ctx = await chat_service._prepare_turn_context(
+                conversation=conversation,
+                user_message="hello",
+                current_user=current_user,
+                knowledge_base_ids=None,
+            )
+
+            mock_kb_service.check_kb_read_access.assert_not_called()
+            assert ctx.knowledge_base_ids is None
+
+    @pytest.mark.asyncio
+    async def test_send_message_empty_kb_ids_skips_rbac_check(self) -> None:
+        """An empty list is falsy and skips the RBAC check, same as None."""
+        mock_db = AsyncMock()
+        mock_config_manager = MagicMock()
+        chat_service = ChatService(mock_db, mock_config_manager)
+
+        conversation = MagicMock(spec=Conversation)
+        conversation.id = str(uuid.uuid4())
+        conversation.user_id = str(uuid.uuid4())
+
+        current_user = MagicMock()
+        current_user.id = conversation.user_id
+
+        chat_service.get_conversation_by_id = AsyncMock(return_value=conversation)
+        chat_service.add_message = AsyncMock(return_value=MagicMock())
+        chat_service.get_conversation_messages = AsyncMock(return_value=[])
+
+        with patch("shu.services.chat_service.KnowledgeBaseService") as mock_kb_service_class:
+            mock_kb_service = MagicMock()
+            mock_kb_service_class.return_value = mock_kb_service
+
+            ctx = await chat_service._prepare_turn_context(
+                conversation=conversation,
+                user_message="hello",
+                current_user=current_user,
+                knowledge_base_ids=[],
+            )
+
+            mock_kb_service.check_kb_read_access.assert_not_called()
+            assert ctx.knowledge_base_ids == []

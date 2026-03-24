@@ -2,6 +2,7 @@ from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.exceptions import ShuException
 from shu.llm.service import LLMService
 from shu.services.prompt_service import PromptService
 from shu.services.query_service import QueryService
@@ -79,7 +80,7 @@ class MessageContextBuilder:
         user_message: str,
         current_user: User,
         model: LLMModel,
-        knowledge_base_id: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
         conversation_messages: list[Message],
         model_configuration_override: ModelConfiguration | None = None,
@@ -103,9 +104,14 @@ class MessageContextBuilder:
         # explicitly attached a KB to this conversation they must have read
         # access even when RAG is disabled.  Skip when the caller has already
         # verified access (e.g. ChatService._prepare_turn_context).
-        if knowledge_base_id and not kb_access_verified:
+        if knowledge_base_ids and not kb_access_verified:
             kb_svc = KnowledgeBaseService(self.db_session)
-            await kb_svc.get_knowledge_base(knowledge_base_id, str(current_user.id))
+            denied_id = await kb_svc.check_kb_read_access(str(current_user.id), knowledge_base_ids)
+            if denied_id:
+                raise ShuException(
+                    f"Access denied to knowledge base '{denied_id}'",
+                    "KNOWLEDGE_BASE_ACCESS_DENIED",
+                )
 
         recent_chat_messages = await self._hydrate_chat_messages(
             conversation, recent_messages, vision_enabled=vision_enabled
@@ -115,7 +121,7 @@ class MessageContextBuilder:
             conversation=conversation,
             user_message=user_message,
             current_user=current_user,
-            knowledge_base_id=knowledge_base_id,
+            knowledge_base_ids=knowledge_base_ids,
             rag_rewrite_mode=rag_rewrite_mode,
             model=model,
             conversation_messages=recent_messages,
@@ -220,7 +226,7 @@ class MessageContextBuilder:
         conversation: Conversation,
         user_message: str,
         current_user: User,
-        knowledge_base_id: str | None,
+        knowledge_base_ids: list[str] | None,
         rag_rewrite_mode: RagRewriteMode,
         model: LLMModel,
         conversation_messages: list[Message],
@@ -238,9 +244,9 @@ class MessageContextBuilder:
         kb_source_config: ModelConfiguration | None = model_configuration_override or getattr(
             conversation, "model_configuration", None
         )
-        if knowledge_base_id:
+        if knowledge_base_ids:
             # PBAC already enforced in build_message_context above.
-            kb_ids = [knowledge_base_id]
+            kb_ids = list(knowledge_base_ids)
         elif kb_source_config and getattr(kb_source_config, "knowledge_bases", None):
             try:
                 active_kbs = [kb for kb in kb_source_config.knowledge_bases if kb.is_active]
@@ -515,7 +521,7 @@ class MessageContextBuilder:
         self,
         response_content: str,
         source_metadata: list[dict],
-        knowledge_base_id: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
         force_references: bool = False,
     ) -> tuple[str, list[dict]]:
         """Post-process LLM response to intelligently add system references.
@@ -526,7 +532,7 @@ class MessageContextBuilder:
         Args:
             response_content: The LLM response content
             source_metadata: Available source metadata from RAG
-            knowledge_base_id: KB ID to get include_references setting
+            knowledge_base_ids: KB IDs to get include_references setting
             force_references: If True, override KB setting and force references
 
         Returns:
@@ -538,18 +544,18 @@ class MessageContextBuilder:
 
         # Get KB configuration for include_references setting
         kb_include_references = True  # Default
-        if knowledge_base_id:
-            # Single KB specified
+        if knowledge_base_ids and len(knowledge_base_ids) == 1:
+            # Single KB specified — check its config
             try:
                 from .knowledge_base_service import KnowledgeBaseService
 
                 kb_service = KnowledgeBaseService(self.db_session)
-                rag_config_response = await kb_service.get_rag_config(knowledge_base_id)
+                rag_config_response = await kb_service.get_rag_config(knowledge_base_ids[0])
                 rag_config = rag_config_response.model_dump()
                 kb_include_references = rag_config.get("include_references", True)
             except Exception as e:
                 # If we can't get the config, default to True
-                logger.warning(f"Failed to get KB config for {knowledge_base_id}: {e}")
+                logger.warning(f"Failed to get KB config for {knowledge_base_ids[0]}: {e}")
         elif source_metadata:
             # Multiple KBs from model config - check if any sources have KB info
             try:

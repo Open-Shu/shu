@@ -562,7 +562,7 @@ try {
 ### D) Streaming chat in the frontend (SSE)
 - Endpoint: POST /api/v1/chat/conversations/{id}/send (streams SSE by default)
 - Client sends `Accept: text/event-stream` and reads SSE `data:` lines
-- Request body uses `message` (not `content`) and optional fields like `rag_rewrite_mode`, `knowledge_base_id`, `attachment_ids`
+- Request body uses `message` (not `content`) and optional fields like `rag_rewrite_mode`, `knowledge_base_ids`, `attachment_ids`
 - End-of-stream marker: `data: [DONE]`
 
 Minimal usage (see chatAPI.streamMessage):
@@ -1035,7 +1035,7 @@ curl -sS -N -X POST http://localhost:8000/api/v1/chat/conversations/<conversatio
  -H "Authorization: $AUTH" \
  -H "Accept: text/event-stream" \
  -H "Content-Type: application/json" \
- -d '{"message":"What are the main features of Shu?","rag_rewrite_mode":"raw_query","knowledge_base_id":"<knowledge_base_id_if_needed>"}'
+ -d '{"message":"What are the main features of Shu?","rag_rewrite_mode":"raw_query","knowledge_base_ids":["<knowledge_base_id_if_needed>"]}'
 ```
 
 If you have knowledge bases configured, the AI will search them and provide more detailed, accurate answers based on your documents.

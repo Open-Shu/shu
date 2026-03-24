@@ -318,9 +318,9 @@ class KnowledgeBaseService:
     ) -> tuple[list[KnowledgeBase], int]:
         """List knowledge bases with optional filtering, pagination, and PBAC.
 
-        Results are filtered by ``kb.read`` PBAC for the given user.
-        Denied slugs are pushed into the SQL WHERE clause so pagination
-        happens in the database rather than in Python.
+        Results are filtered by ``kb.read`` PBAC; denied slugs are pushed
+        into the SQL WHERE clause so pagination happens in the database
+        rather than in Python.
 
         Args:
             user_id: User ID for PBAC ``kb.read`` enforcement.
@@ -333,7 +333,6 @@ class KnowledgeBaseService:
 
         """
         try:
-            # Collect all slugs (lightweight) for PBAC, then push denied set into SQL.
             slug_result = await self.db.execute(select(KnowledgeBase.slug))
             all_slugs = [row[0] for row in slug_result.fetchall()]
             denied = await self._get_denied_kb_slugs(user_id, all_slugs)
@@ -1025,11 +1024,20 @@ class KnowledgeBaseService:
     async def check_kb_read_access(self, user_id: str, kb_ids: list[str]) -> str | None:
         """Check PBAC kb.read for a list of KB IDs.
 
-        Returns None if all accessible, or the first denied KB ID.
+        Unknown IDs are treated identically to denied IDs so callers
+        cannot distinguish "missing" from "forbidden" (non-enumeration).
+
+        Returns None if all accessible, or the first denied/missing KB ID.
         """
         if not kb_ids:
             return None
         kbs = (await self.db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)))).scalars().all()
+
+        found_ids = {kb.id for kb in kbs}
+        for kb_id in kb_ids:
+            if kb_id not in found_ids:
+                return kb_id
+
         denied = await self._get_denied_kb_slugs(user_id, [kb.slug for kb in kbs])
         for kb in kbs:
             if kb.slug in denied:

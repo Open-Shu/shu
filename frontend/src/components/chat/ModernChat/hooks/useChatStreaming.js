@@ -28,6 +28,7 @@ const useChatStreaming = ({
   shouldAutoFollowRef,
   focusMessageById,
   replaceSideBySideParent,
+  selectedKBIds,
 }) => {
   const conversationRef = useRef(selectedConversation);
   const isMountedRef = useRef(true);
@@ -101,6 +102,7 @@ const useChatStreaming = ({
     queryClient,
     conversationRef,
     ragRewriteMode,
+    selectedKBIds,
     startRegeneration,
     completeRegeneration,
     setVariantSelection,

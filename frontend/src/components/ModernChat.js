@@ -37,6 +37,7 @@ import useChatUiState from './chat/ModernChat/hooks/useChatUiState';
 import usePluginFlow from './chat/ModernChat/hooks/usePluginFlow';
 import ModernChatView from './chat/ModernChat/ModernChatView';
 import useEnsembleMode from './chat/ModernChat/hooks/useEnsembleMode';
+import useKBPicker from './chat/ModernChat/hooks/useKBPicker';
 
 import {
   CHAT_WINDOW_SIZE,
@@ -180,6 +181,15 @@ const ModernChat = () => {
     clearEnsembleSelection,
     canConfigureEnsemble,
   } = useEnsembleMode(availableModelConfigs);
+  const {
+    selectedKBs,
+    selectedKBIds,
+    kbPickerDialogOpen,
+    openKBPickerDialog,
+    closeKBPickerDialog,
+    applyKBSelection,
+    removeKB,
+  } = useKBPicker();
   useEffect(() => {
     clearEnsembleModeRef.current = clearEnsembleSelection;
   }, [clearEnsembleSelection]);
@@ -647,6 +657,7 @@ const ModernChat = () => {
     shouldAutoFollowRef: isPinnedToBottomRef,
     focusMessageById,
     replaceSideBySideParent,
+    selectedKBIds,
   });
 
   const {
@@ -683,6 +694,7 @@ const ModernChat = () => {
     ragRewriteMode,
     ensembleModelConfigIds: ensembleModeConfigIds,
     onEnsembleRunComplete: clearEnsembleSelection,
+    selectedKBIds,
   });
 
   const isStreamingForSelectedConversation = streamingConversationId === selectedConversation?.id;
@@ -1300,6 +1312,9 @@ const ModernChat = () => {
     ensembleModeLabel,
     onClearEnsembleMode: isEnsembleModeActive ? clearEnsembleSelection : undefined,
     ensembleMenuDisabled: !canConfigureEnsemble,
+    onOpenKBPicker: openKBPickerDialog,
+    selectedKBs,
+    onRemoveKB: removeKB,
   };
 
   const pluginPickerDialogProps = {
@@ -1328,6 +1343,13 @@ const ModernChat = () => {
     availableModelConfigs,
     selectedIds: ensembleModeConfigIds,
     currentModelConfigId: selectedConversation?.model_configuration_id,
+  };
+
+  const kbPickerDialogProps = {
+    open: kbPickerDialogOpen,
+    onClose: closeKBPickerDialog,
+    onSave: applyKBSelection,
+    selectedKBs,
   };
 
   const renameDialogProps = {
@@ -1395,6 +1417,7 @@ const ModernChat = () => {
       pluginPickerDialogProps={pluginPickerDialogProps}
       pluginExecutionModalProps={pluginExecutionModalProps}
       ensembleDialogProps={ensembleDialogProps}
+      kbPickerDialogProps={kbPickerDialogProps}
       renameDialogProps={renameDialogProps}
       deleteDialogProps={deleteDialogProps}
       settingsDialogProps={settingsDialogProps}
