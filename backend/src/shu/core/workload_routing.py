@@ -88,6 +88,7 @@ class WorkloadType(Enum):
     MAINTENANCE = "maintenance"
     PROFILING = "profiling"
     RE_EMBEDDING = "re_embedding"
+    KB_IMPORT = "kb_import"
 
     @property
     def queue_name(self) -> str:
