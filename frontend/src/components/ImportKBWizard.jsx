@@ -75,7 +75,7 @@ const ImportKBWizard = ({ open, onClose, onSuccess }) => {
       case 0:
         return selectedFile !== null && manifestData !== null;
       case 1:
-        return true;
+        return manifestData?.embedding_model_match || skipEmbeddings;
       case 2:
         return false;
       default:
@@ -88,7 +88,11 @@ const ImportKBWizard = ({ open, onClose, onSuccess }) => {
       case 0:
         return (
           <FileUploadStep
-            onFileSelected={setSelectedFile}
+            onFileSelected={(file) => {
+              setSelectedFile(file);
+              setManifestData(null);
+              setSkipEmbeddings(false);
+            }}
             onManifestLoaded={(manifest) => {
               setManifestData(manifest);
               if (manifest.embedding_model_match) {
@@ -114,7 +118,6 @@ const ImportKBWizard = ({ open, onClose, onSuccess }) => {
               if (onSuccess) {
                 onSuccess(result);
               }
-              handleClose();
             }}
             onRetry={() => setCurrentStep(1)}
           />
@@ -169,18 +172,20 @@ const ImportKBWizard = ({ open, onClose, onSuccess }) => {
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 3 }}>
-        <Button onClick={handleClose}>Cancel</Button>
-
-        {currentStep < STEPS.length - 1 && (
+        {currentStep < STEPS.length - 1 ? (
           <>
+            <Button onClick={handleClose}>Cancel</Button>
             <Button onClick={handleBack} disabled={currentStep === 0}>
               Back
             </Button>
-
             <Button onClick={handleNext} variant="contained" disabled={!canProceed()}>
               {currentStep === 1 ? 'Start Import' : 'Next'}
             </Button>
           </>
+        ) : (
+          <Button onClick={handleClose} variant="contained">
+            Done
+          </Button>
         )}
       </DialogActions>
     </Dialog>

@@ -551,7 +551,6 @@ function KnowledgeBases() {
         onClose={() => setIsImportWizardOpen(false)}
         onSuccess={() => {
           queryClient.invalidateQueries('knowledgeBases');
-          setIsImportWizardOpen(false);
         }}
       />
     </Box>

@@ -54,6 +54,10 @@ const FileUploadStep = ({ onManifestLoaded, onFileSelected }) => {
         Select a knowledge base archive (.zip) exported from Shu.
       </Typography>
 
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        Only import archives from sources you trust. Malicious archives could contain harmful data.
+      </Alert>
+
       <FileDropzone
         allowedTypes={['zip']}
         multiple={false}

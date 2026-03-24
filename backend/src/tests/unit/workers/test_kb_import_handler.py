@@ -28,7 +28,7 @@ class TestHandleKBImportJob:
 
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
-            patch("shu.services.kb_import_export.KBImportExportService", return_value=mock_service),
+            patch("shu.services.kb_import_export_service.KBImportExportService", return_value=mock_service),
             patch("shu.services.knowledge_base_service.KnowledgeBaseService"),
         ):
             from shu.workers.kb_import_handler import handle_kb_import_job
@@ -67,7 +67,7 @@ class TestHandleKBImportJob:
 
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_factory),
-            patch("shu.services.kb_import_export.KBImportExportService", return_value=mock_service),
+            patch("shu.services.kb_import_export_service.KBImportExportService", return_value=mock_service),
             patch("shu.services.knowledge_base_service.KnowledgeBaseService"),
         ):
             from shu.workers.kb_import_handler import handle_kb_import_job
