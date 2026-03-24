@@ -254,6 +254,32 @@ class KnowledgeBaseSummary(BaseModel):
         from_attributes = True
 
 
+class ImportManifestValidation(BaseModel):
+    """Schema for validated import manifest data returned by the validate endpoint."""
+
+    name: str = Field(..., description="Knowledge base name from the archive")
+    description: str | None = Field(None, description="Knowledge base description from the archive")
+    embedding_model: str = Field(..., description="Embedding model used in the archive")
+    chunk_size: int = Field(..., description="Chunk size used in the archive")
+    chunk_overlap: int = Field(..., description="Chunk overlap used in the archive")
+    schema_version: str = Field(..., description="Archive schema version")
+    export_timestamp: str = Field(..., description="ISO timestamp when the archive was created")
+    document_count: int = Field(..., description="Number of documents in the archive")
+    chunk_count: int = Field(..., description="Number of chunks in the archive")
+    query_count: int = Field(..., description="Number of queries in the archive")
+    embedding_model_match: bool = Field(..., description="Whether the archive embedding model matches this instance")
+    instance_embedding_model: str = Field(..., description="This instance's current embedding model")
+
+
+class ImportStartResult(BaseModel):
+    """Schema for the response after starting a KB import."""
+
+    knowledge_base_id: str = Field(..., description="ID of the newly created knowledge base")
+    name: str = Field(..., description="Knowledge base name")
+    slug: str = Field(..., description="URL-friendly slug")
+    status: str = Field(..., description="Knowledge base status (importing)")
+
+
 class KnowledgeBaseStats(BaseModel):
     """Schema for knowledge base statistics."""
 

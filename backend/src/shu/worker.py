@@ -1036,7 +1036,14 @@ async def _handle_re_embedding_job(job) -> None:
     await handle_re_embedding_job(job)
 
 
-async def process_job(job):
+async def _handle_kb_import_job(job) -> None:
+    """Route KB_IMPORT jobs to the handler module."""
+    from .workers.kb_import_handler import handle_kb_import_job
+
+    await handle_kb_import_job(job)
+
+
+async def process_job(job):  # noqa: PLR0912 - this logic in inherently branchy, as it decides what worker to execute
     """Process a job based on its workload type and payload.
 
     Routes jobs to appropriate handlers based on the queue name (workload type).
@@ -1073,6 +1080,9 @@ async def process_job(job):
 
     elif workload_type == WorkloadType.RE_EMBEDDING:
         await _handle_re_embedding_job(job)
+
+    elif workload_type == WorkloadType.KB_IMPORT:
+        await _handle_kb_import_job(job)
 
     elif workload_type == WorkloadType.MAINTENANCE:
         # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)

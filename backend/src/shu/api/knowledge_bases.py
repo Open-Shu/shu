@@ -8,7 +8,8 @@ import mimetypes
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
@@ -1105,4 +1106,93 @@ async def get_re_embedding_status(
         return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
     except Exception as e:
         logger.error("API: Failed to get re-embedding status", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.get("/{kb_id}/export")
+async def export_knowledge_base(
+    kb_id: str,
+    no_embeddings: bool = Query(False, description="Omit embedding vectors from the archive"),
+    current_user: User = Depends(require_power_user),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export a knowledge base as a zip archive download."""
+    import os
+
+    from ..services.kb_import_export import KBImportExportService
+
+    try:
+        kb_service = KnowledgeBaseService(db)
+        service = KBImportExportService(db, kb_service)
+        temp_path, filename = await service.export_kb(kb_id, str(current_user.id), no_embeddings)
+
+        def cleanup() -> None:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        background_tasks.add_task(cleanup)
+
+        def file_iterator():
+            with open(temp_path, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        return StreamingResponse(
+            file_iterator(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except ShuException as e:
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to export KB", extra={"kb_id": kb_id, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.post("/import/validate")
+async def validate_import_archive(
+    file: UploadFile = File(..., description="Zip archive to validate"),
+    current_user: User = Depends(require_power_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate an import archive and return manifest data."""
+    from ..services.kb_import_export import KBImportExportService
+
+    try:
+        kb_service = KnowledgeBaseService(db)
+        service = KBImportExportService(db, kb_service)
+        result = await service.validate_import(file)
+        return ShuResponse.success(result.model_dump())
+
+    except ShuException as e:
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to validate import archive", extra={"error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.post("/import")
+async def import_knowledge_base(
+    file: UploadFile = File(..., description="Zip archive to import"),
+    skip_embeddings: bool = Form(False, description="Discard embeddings during import"),
+    current_user: User = Depends(require_power_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import a knowledge base from a zip archive."""
+    from ..core.queue_backend import get_queue_backend
+    from ..services.kb_import_export import KBImportExportService
+
+    try:
+        queue = await get_queue_backend()
+        kb_service = KnowledgeBaseService(db)
+        service = KBImportExportService(db, kb_service, queue=queue)
+        result = await service.start_import(file, skip_embeddings, str(current_user.id))
+        return ShuResponse.created(result.model_dump())
+
+    except ShuException as e:
+        return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error("API: Failed to import KB", extra={"error": str(e)}, exc_info=True)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
