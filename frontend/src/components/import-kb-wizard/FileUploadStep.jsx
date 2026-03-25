@@ -62,6 +62,7 @@ const FileUploadStep = ({ onManifestLoaded, onFileSelected }) => {
         allowedTypes={['zip']}
         multiple={false}
         disabled={validating}
+        maxSizeBytes={500 * 1024 * 1024}
         onFilesSelected={handleFilesSelected}
       />
 

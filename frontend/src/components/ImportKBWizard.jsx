@@ -144,7 +144,7 @@ const ImportKBWizard = ({ open, onClose, onSuccess }) => {
       <DialogTitle>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h6">Import Knowledge Base</Typography>
-          <Button onClick={handleClose} size="small" sx={{ minWidth: 'auto', p: 1 }}>
+          <Button onClick={handleClose} size="small" aria-label="Close dialog" sx={{ minWidth: 'auto', p: 1 }}>
             <CloseIcon />
           </Button>
         </Box>

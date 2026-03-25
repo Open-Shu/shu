@@ -379,6 +379,8 @@ class KBImportExportService:
         """Inner import logic, called by execute_import with error wrapping."""
         with zipfile.ZipFile(archive_path, "r") as zf:
             manifest = json.loads(zf.read("manifest.json"))
+            embeddings_included = manifest.get("embeddings_included", True)
+            effectively_skip = skip_embeddings or not embeddings_included
             counts = manifest.get("counts", {})
             total_docs = counts.get("documents", 0)
             total_chunks = counts.get("chunks", 0)
@@ -414,7 +416,7 @@ class KBImportExportService:
 
                 new_id = str(uuid.uuid4())
                 export_index_to_doc_id[row["export_index"]] = new_id
-                doc_batch.append(Document.build_import_record(row, new_id, kb_id, skip_embeddings))
+                doc_batch.append(Document.build_import_record(row, new_id, kb_id, effectively_skip))
 
                 if len(doc_batch) >= EXPORT_BATCH_SIZE:
                     await self.db.execute(pg_insert(Document).values(doc_batch))
@@ -436,7 +438,7 @@ class KBImportExportService:
                 zf,
                 "chunks.jsonl",
                 kb_id,
-                skip_embeddings,
+                effectively_skip,
                 export_index_to_doc_id,
                 model=DocumentChunk,
                 required_field="chunk_index",
@@ -449,7 +451,7 @@ class KBImportExportService:
                 zf,
                 "queries.jsonl",
                 kb_id,
-                skip_embeddings,
+                effectively_skip,
                 export_index_to_doc_id,
                 model=DocumentQuery,
                 required_field="query_text",
@@ -458,7 +460,7 @@ class KBImportExportService:
             await self._update_import_progress(kb_id, phase="queries", queries_done=queries_done)
 
             # Phase 4: Finalization
-            await self._finalize_import(kb_id, docs_done, chunks_done, skip_embeddings, archive_path)
+            await self._finalize_import(kb_id, docs_done, chunks_done, effectively_skip, archive_path)
 
     async def _import_related_entities(
         self,
@@ -553,6 +555,13 @@ class KBImportExportService:
             result = await self.db.execute(stmt)
             kb = result.scalar_one()
 
+            if kb.status != "importing":
+                logger.warning(
+                    "Skipping import finalization — status changed",
+                    extra={"kb_id": kb_id, "status": kb.status},
+                )
+                return
+
             kb.document_count = doc_count
             kb.total_chunks = chunk_count
             kb.embedding_status = "stale" if skip_embeddings else "current"
@@ -608,6 +617,7 @@ class KBImportExportService:
                 "kb_name": kb.name,
                 "kb_description": kb.description,
                 "embedding_model": kb.embedding_model,
+                "embeddings_included": not no_embeddings,
                 "chunk_size": kb.chunk_size,
                 "chunk_overlap": kb.chunk_overlap,
                 "rag_config": kb.get_rag_config(),
