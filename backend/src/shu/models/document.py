@@ -301,15 +301,16 @@ class Document(BaseModel):
             "profiling_coverage_percent": row.get("profiling_coverage_percent"),
             "created_at": now,
             "updated_at": now,
-            "processed_at": now,
         }
 
         if skip_embeddings:
             record["synopsis_embedding"] = None
             record["processing_status"] = "pending"
+            record["processed_at"] = None
         else:
             record["synopsis_embedding"] = decode_embedding(row.get("synopsis_embedding"))
             record["processing_status"] = row.get("processing_status", "processed")
+            record["processed_at"] = now
 
         return record
 

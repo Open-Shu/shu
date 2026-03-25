@@ -1070,7 +1070,7 @@ async def export_knowledge_base(
     except ShuException as e:
         return ShuResponse.error(message=e.message, code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error("API: Failed to export KB", extra={"kb_id": kb_id, "error": str(e)})
+        logger.error("API: Failed to export KB", extra={"kb_id": kb_id, "error": str(e)}, exc_info=True)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
