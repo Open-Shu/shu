@@ -25,16 +25,14 @@ from shu.core.logging import get_logger
 from shu.core.queue_backend import QueueBackend
 from shu.core.text import slugify
 from shu.core.workload_routing import WorkloadType, enqueue_job
-from shu.models.document import Document, DocumentChunk, DocumentQuery
+from shu.models.document import Document, DocumentChunk, DocumentQuery, DocumentStatus
 from shu.models.knowledge_base import KnowledgeBase
 from shu.schemas.knowledge_base import ImportManifestValidation, ImportStartResult
 from shu.services.knowledge_base_service import KnowledgeBaseService
 
 logger = get_logger(__name__)
 
-EXPORT_BATCH_SIZE = 500
 SCHEMA_VERSION = "1"
-MAX_IMPORT_ARCHIVE_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
 class KBImportExportService:
@@ -57,6 +55,7 @@ class KBImportExportService:
         self.db = db
         self.kb_service = kb_service
         self.queue = queue
+        self._settings = get_settings_instance()
 
     @staticmethod
     def _read_manifest(source: Any) -> dict[str, Any]:
@@ -80,25 +79,25 @@ class KBImportExportService:
         except zipfile.BadZipFile:
             raise ValidationError("Uploaded file is not a valid zip archive", "INVALID_ARCHIVE")
 
-        if "manifest.json" not in zf.namelist():
-            raise ValidationError("Archive missing manifest.json", "MISSING_MANIFEST")
+        with zf:
+            if "manifest.json" not in zf.namelist():
+                raise ValidationError("Archive missing manifest.json", "MISSING_MANIFEST")
 
-        try:
-            manifest = json.loads(zf.read("manifest.json"))
-        except (json.JSONDecodeError, KeyError) as e:
-            raise ValidationError(f"Invalid manifest.json: {e}", "INVALID_MANIFEST")
+            try:
+                manifest = json.loads(zf.read("manifest.json"))
+            except (json.JSONDecodeError, KeyError) as e:
+                raise ValidationError(f"Invalid manifest.json: {e}", "INVALID_MANIFEST")
 
-        schema_version = manifest.get("schema_version")
-        if schema_version != SCHEMA_VERSION:
-            raise ValidationError(
-                f"Unsupported schema version: {schema_version}. This instance supports version {SCHEMA_VERSION}.",
-                "UNSUPPORTED_SCHEMA_VERSION",
-            )
+            schema_version = manifest.get("schema_version")
+            if schema_version != SCHEMA_VERSION:
+                raise ValidationError(
+                    f"Unsupported schema version: {schema_version}. This instance supports version {SCHEMA_VERSION}.",
+                    "UNSUPPORTED_SCHEMA_VERSION",
+                )
 
-        return manifest
+            return manifest
 
-    @staticmethod
-    def _iter_jsonl(zf: zipfile.ZipFile, name: str) -> Iterator[str]:
+    def _iter_jsonl(self, zf: zipfile.ZipFile, name: str) -> Iterator[str]:
         """Yield non-empty lines from a JSONL file inside a zip archive.
 
         Reads line-by-line via a TextIOWrapper so the entire file is never
@@ -114,14 +113,21 @@ class KBImportExportService:
         """
         if name not in zf.namelist():
             return
+        max_decompressed = self._settings.kb_import_max_decompressed_size
+        total_bytes = 0
         with zf.open(name) as raw:
             for raw_line in io.TextIOWrapper(raw, encoding="utf-8"):
+                total_bytes += len(raw_line)
+                if total_bytes > max_decompressed:
+                    raise ValidationError(
+                        f"Decompressed size of {name} exceeds " f"{max_decompressed // (1024 ** 3)} GB limit",
+                        "ARCHIVE_TOO_LARGE",
+                    )
                 line = raw_line.strip()
                 if line:
                     yield line
 
-    @staticmethod
-    async def _save_upload_to_temp(file: UploadFile) -> str:
+    async def _save_upload_to_temp(self, file: UploadFile) -> str:
         """Stream an uploaded file to a temp file with a size limit.
 
         Reads in 64 KB chunks so the full archive is never in memory.
@@ -130,18 +136,19 @@ class KBImportExportService:
             Path to the temp file on disk.
 
         Raises:
-            ValidationError: If the file exceeds MAX_IMPORT_ARCHIVE_SIZE.
+            ValidationError: If the file exceeds the configured max archive size.
 
         """
+        max_archive = self._settings.kb_import_max_archive_size
         archive_path = f"{tempfile.gettempdir()}/shu-import-{uuid.uuid4()}.zip"
         total = 0
         try:
             with open(archive_path, "wb") as out:
                 while chunk := await file.read(65536):
                     total += len(chunk)
-                    if total > MAX_IMPORT_ARCHIVE_SIZE:
+                    if total > max_archive:
                         raise ValidationError(
-                            f"Archive exceeds maximum size of {MAX_IMPORT_ARCHIVE_SIZE // (1024 * 1024)} MB",
+                            f"Archive exceeds maximum size of {max_archive // (1024 * 1024)} MB",
                             "ARCHIVE_TOO_LARGE",
                         )
                     out.write(chunk)
@@ -167,8 +174,7 @@ class KBImportExportService:
         """
         manifest = self._read_manifest(file.file)
 
-        settings = get_settings_instance()
-        instance_model = settings.default_embedding_model
+        instance_model = self._settings.default_embedding_model
         archive_model = manifest.get("embedding_model", "")
         counts = manifest.get("counts", {})
 
@@ -233,14 +239,13 @@ class KBImportExportService:
             raise
 
         # Enforce embedding model compatibility
-        settings = get_settings_instance()
         archive_model = manifest.get("embedding_model", "")
-        if archive_model != settings.default_embedding_model and not skip_embeddings:
+        if archive_model != self._settings.default_embedding_model and not skip_embeddings:
             if os.path.exists(archive_path):
                 os.remove(archive_path)
             raise ValidationError(
                 f"Embedding model mismatch: archive uses '{archive_model}', "
-                f"this instance uses '{settings.default_embedding_model}'. "
+                f"this instance uses '{self._settings.default_embedding_model}'. "
                 "Set skip_embeddings=true to import without embeddings.",
                 "EMBEDDING_MODEL_MISMATCH",
             )
@@ -252,11 +257,15 @@ class KBImportExportService:
             base_slug = "imported-kb"
         slug = await self._resolve_slug(base_slug)
 
+        effective_model = (
+            self._settings.default_embedding_model if skip_embeddings else manifest.get("embedding_model", "")
+        )
+
         kb = KnowledgeBase(
             name=kb_name,
             slug=slug,
             description=manifest.get("kb_description"),
-            embedding_model=manifest.get("embedding_model", ""),
+            embedding_model=effective_model,
             chunk_size=manifest.get("chunk_size", 1000),
             chunk_overlap=manifest.get("chunk_overlap", 200),
             status="importing",
@@ -414,11 +423,21 @@ class KBImportExportService:
                     logger.warning("Skipping document line missing export_index", extra={"kb_id": kb_id})
                     continue
 
+                raw_status = row.get("processing_status", "")
+                try:
+                    DocumentStatus(raw_status)
+                except ValueError:
+                    logger.warning(
+                        "Skipping document with invalid processing_status",
+                        extra={"kb_id": kb_id, "processing_status": raw_status},
+                    )
+                    continue
+
                 new_id = str(uuid.uuid4())
                 export_index_to_doc_id[row["export_index"]] = new_id
                 doc_batch.append(Document.build_import_record(row, new_id, kb_id, effectively_skip))
 
-                if len(doc_batch) >= EXPORT_BATCH_SIZE:
+                if len(doc_batch) >= self._settings.kb_export_batch_size:
                     await self.db.execute(pg_insert(Document).values(doc_batch))
                     await self.db.commit()
                     docs_done += len(doc_batch)
@@ -517,7 +536,7 @@ class KBImportExportService:
 
             batch.append(model.build_import_record(row, doc_id, kb_id, skip_embeddings))
 
-            if len(batch) >= EXPORT_BATCH_SIZE:
+            if len(batch) >= self._settings.kb_export_batch_size:
                 await self.db.execute(pg_insert(model).values(batch))
                 await self.db.commit()
                 total += len(batch)
@@ -674,7 +693,6 @@ class KBImportExportService:
             no_embeddings,
             doc_id_to_index,
             model=DocumentChunk,
-            order_by=[DocumentChunk.document_id, DocumentChunk.chunk_index],
         )
         query_count = await self._write_related_entities(
             zf,
@@ -683,7 +701,6 @@ class KBImportExportService:
             no_embeddings,
             doc_id_to_index,
             model=DocumentQuery,
-            order_by=[DocumentQuery.document_id, DocumentQuery.id],
         )
 
         return doc_count, chunk_count, query_count
@@ -697,16 +714,15 @@ class KBImportExportService:
     ) -> int:
         """Write documents.jsonl and populate the doc_id → export_index map."""
         count = 0
-        offset = 0
+        last_id = ""
 
         with zf.open("documents.jsonl", "w") as f:
             while True:
                 stmt = (
                     select(Document)
-                    .where(Document.knowledge_base_id == kb_id)
+                    .where(Document.knowledge_base_id == kb_id, Document.id > last_id)
                     .order_by(Document.id)
-                    .offset(offset)
-                    .limit(EXPORT_BATCH_SIZE)
+                    .limit(self._settings.kb_export_batch_size)
                 )
                 result = await self.db.execute(stmt)
                 docs = list(result.scalars().all())
@@ -724,7 +740,7 @@ class KBImportExportService:
                     f.write((line + "\n").encode("utf-8"))
                     count += 1
 
-                offset += EXPORT_BATCH_SIZE
+                last_id = docs[-1].id
 
         return count
 
@@ -736,7 +752,6 @@ class KBImportExportService:
         no_embeddings: bool,
         doc_id_to_index: dict[str, int],
         model: type,
-        order_by: list,
     ) -> int:
         """Write a JSONL file for entities that reference documents by export_index.
 
@@ -748,24 +763,22 @@ class KBImportExportService:
             kb_id: Knowledge base ID.
             no_embeddings: Whether to omit embeddings.
             doc_id_to_index: Mapping from document ID to export_index.
-            model: SQLAlchemy model class (must have knowledge_base_id, document_id).
-            order_by: Columns to order by.
+            model: SQLAlchemy model class (must have knowledge_base_id, document_id, id).
 
         Returns:
             Number of entities written.
 
         """
         count = 0
-        offset = 0
+        last_id = ""
 
         with zf.open(filename, "w") as f:
             while True:
                 stmt = (
                     select(model)
-                    .where(model.knowledge_base_id == kb_id)
-                    .order_by(*order_by)
-                    .offset(offset)
-                    .limit(EXPORT_BATCH_SIZE)
+                    .where(model.knowledge_base_id == kb_id, model.id > last_id)
+                    .order_by(model.id)
+                    .limit(self._settings.kb_export_batch_size)
                 )
                 result = await self.db.execute(stmt)
                 rows = list(result.scalars().all())
@@ -784,6 +797,6 @@ class KBImportExportService:
                     f.write((line + "\n").encode("utf-8"))
                     count += 1
 
-                offset += EXPORT_BATCH_SIZE
+                last_id = rows[-1].id
 
         return count

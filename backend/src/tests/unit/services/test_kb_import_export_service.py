@@ -237,10 +237,10 @@ class TestValidateImport:
 
         db = AsyncMock()
         kb_service = MagicMock()
-        service = KBImportExportService(db, kb_service)
 
         with patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings:
             mock_settings.return_value.default_embedding_model = "test-model"
+            service = KBImportExportService(db, kb_service)
             result = await service.validate_import(file)
 
         assert result.name == "Test KB"
@@ -261,10 +261,10 @@ class TestValidateImport:
 
         db = AsyncMock()
         kb_service = MagicMock()
-        service = KBImportExportService(db, kb_service)
 
         with patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings:
             mock_settings.return_value.default_embedding_model = "same-model"
+            service = KBImportExportService(db, kb_service)
             result = await service.validate_import(file)
 
         assert result.embedding_model_match is True
@@ -278,10 +278,10 @@ class TestValidateImport:
 
         db = AsyncMock()
         kb_service = MagicMock()
-        service = KBImportExportService(db, kb_service)
 
         with patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings:
             mock_settings.return_value.default_embedding_model = "instance-model"
+            service = KBImportExportService(db, kb_service)
             result = await service.validate_import(file)
 
         assert result.embedding_model_match is False
@@ -622,13 +622,13 @@ class TestStartImport:
         kb_service.slug_exists = AsyncMock(return_value=False)
         queue = AsyncMock()
 
-        service = KBImportExportService(db, kb_service, queue=queue)
-
         with (
             patch("shu.services.kb_import_export_service.enqueue_job", new_callable=AsyncMock),
             patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings,
         ):
             mock_settings.return_value.default_embedding_model = "test-model"
+            mock_settings.return_value.kb_import_max_archive_size = 500 * 1024 * 1024
+            service = KBImportExportService(db, kb_service, queue=queue)
             result = await service.start_import(file, skip_embeddings=False, owner_id="user-1")
 
         assert result.name == "Test KB"
@@ -648,13 +648,13 @@ class TestStartImport:
         kb_service.slug_exists = AsyncMock(return_value=True)  # slug always taken
         queue = AsyncMock()
 
-        service = KBImportExportService(db, kb_service, queue=queue)
-
         with (
             patch("shu.services.kb_import_export_service.enqueue_job", new_callable=AsyncMock),
             patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings,
         ):
             mock_settings.return_value.default_embedding_model = "test-model"
+            mock_settings.return_value.kb_import_max_archive_size = 500 * 1024 * 1024
+            service = KBImportExportService(db, kb_service, queue=queue)
             result = await service.start_import(file, skip_embeddings=False, owner_id="user-1")
 
         assert result.slug.startswith("test-kb-")
@@ -705,6 +705,7 @@ class TestFinalizeImport:
     @pytest.mark.asyncio
     async def test_sets_active_status_and_counts(self) -> None:
         kb = MagicMock()
+        kb.status = "importing"
         kb.import_progress = {"phase": "queries"}
 
         scalar_result = MagicMock()
@@ -729,6 +730,7 @@ class TestFinalizeImport:
     @pytest.mark.asyncio
     async def test_stale_embedding_status_when_skipped(self) -> None:
         kb = MagicMock()
+        kb.status = "importing"
         kb.import_progress = {}
 
         scalar_result = MagicMock()
