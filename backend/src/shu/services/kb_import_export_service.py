@@ -152,7 +152,7 @@ class KBImportExportService:
                             "ARCHIVE_TOO_LARGE",
                         )
                     out.write(chunk)
-        except ValidationError:
+        except Exception:
             if os.path.exists(archive_path):
                 os.remove(archive_path)
             raise
