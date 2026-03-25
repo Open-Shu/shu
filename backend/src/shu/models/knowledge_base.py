@@ -77,6 +77,7 @@ class KnowledgeBase(BaseModel):
         String(20), default="current", nullable=False
     )  # 'current', 'stale', 're_embedding', 'error'
     re_embedding_progress = Column(JSON, nullable=True)
+    import_progress = Column(JSON, nullable=True)
     document_count = Column(Integer, default=0, nullable=False)
     total_chunks = Column(Integer, default=0, nullable=False)
 

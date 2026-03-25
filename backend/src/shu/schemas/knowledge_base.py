@@ -17,6 +17,7 @@ class KnowledgeBaseStatus(str, Enum):
 
     ACTIVE = "active"
     INACTIVE = "inactive"
+    IMPORTING = "importing"
     ERROR = "error"
 
 
@@ -212,6 +213,7 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
     status: KnowledgeBaseStatus = Field(..., description="Knowledge base status")
     embedding_status: EmbeddingStatus = Field(EmbeddingStatus.CURRENT, description="Embedding status")
     re_embedding_progress: dict | None = Field(None, description="Re-embedding progress when status is re_embedding")
+    import_progress: dict | None = Field(None, description="Import progress when status is importing")
     document_count: int = Field(0, description="Number of documents")
     total_chunks: int = Field(0, description="Total number of chunks")
     last_sync_at: datetime | None = Field(None, description="Last sync timestamp")
@@ -252,6 +254,32 @@ class KnowledgeBaseSummary(BaseModel):
         """Configure Pydantic to work with ORM objects."""
 
         from_attributes = True
+
+
+class ImportManifestValidation(BaseModel):
+    """Schema for validated import manifest data returned by the validate endpoint."""
+
+    name: str = Field(..., description="Knowledge base name from the archive")
+    description: str | None = Field(None, description="Knowledge base description from the archive")
+    embedding_model: str = Field(..., description="Embedding model used in the archive")
+    chunk_size: int = Field(..., description="Chunk size used in the archive")
+    chunk_overlap: int = Field(..., description="Chunk overlap used in the archive")
+    schema_version: str = Field(..., description="Archive schema version")
+    export_timestamp: str = Field(..., description="ISO timestamp when the archive was created")
+    document_count: int = Field(..., description="Number of documents in the archive")
+    chunk_count: int = Field(..., description="Number of chunks in the archive")
+    query_count: int = Field(..., description="Number of queries in the archive")
+    embedding_model_match: bool = Field(..., description="Whether the archive embedding model matches this instance")
+    instance_embedding_model: str = Field(..., description="This instance's current embedding model")
+
+
+class ImportStartResult(BaseModel):
+    """Schema for the response after starting a KB import."""
+
+    knowledge_base_id: str = Field(..., description="ID of the newly created knowledge base")
+    name: str = Field(..., description="Knowledge base name")
+    slug: str = Field(..., description="URL-friendly slug")
+    status: str = Field(..., description="Knowledge base status (importing)")
 
 
 class KnowledgeBaseStats(BaseModel):

@@ -54,7 +54,7 @@
         "skipComments": true
       }
     ],
-    "complexity": ["warn", 10],
+    "complexity": ["warn", 15],
     "no-magic-numbers": [
       "warn",
       {

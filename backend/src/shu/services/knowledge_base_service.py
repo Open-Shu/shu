@@ -418,6 +418,18 @@ class KnowledgeBaseService:
         )
         return kb
 
+    async def slug_exists(self, slug: str) -> bool:
+        """Check whether a knowledge base with the given slug already exists.
+
+        Args:
+            slug: The slug to check.
+
+        Returns:
+            True if a KB with this slug exists, False otherwise.
+
+        """
+        return await self._get_kb_by_slug(slug) is not None
+
     async def _get_kb_by_slug(self, slug: str, exclude_id: str | None = None) -> KnowledgeBase | None:
         """Get a knowledge base by slug, optionally excluding a specific KB.
 
