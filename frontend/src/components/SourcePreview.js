@@ -352,10 +352,16 @@ export default function SourcePreview({
         return; // No KB ID means no modal functionality
       }
 
+      const documentId = docOrResult.document_id || docOrResult.id;
+      const chunkId = chunk.chunk_id || chunk.id;
+      if (!documentId || !chunkId) {
+        return; // Can't open modal without real identifiers
+      }
+
       // Normalize chunk data for the modal
       const normalizedChunk = {
-        chunk_id: chunk.chunk_id || chunk.id,
-        chunk_index: chunk.chunk_index ?? chunk.index ?? 0,
+        chunk_id: chunkId,
+        chunk_index: chunk.chunk_index ?? chunk.index,
         surface: chunk.surface || null,
         score: chunk.score ?? chunk.similarity_score ?? null,
         snippet: chunk.snippet || chunk.content_snippet || chunk.content_preview || chunk.content || '',
@@ -366,7 +372,7 @@ export default function SourcePreview({
       // fetches from the API; don't seed it from contributing_chunks.length
       // which only reflects search-result hits, not the document's real count.
       const docInfo = {
-        document_id: docOrResult.document_id,
+        document_id: documentId,
         document_title: docOrResult.document_title || docOrResult.title || 'Unknown Document',
       };
 
