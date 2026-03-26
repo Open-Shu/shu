@@ -507,6 +507,26 @@ class TestBM25Surface:
         assert len(result.hits) == 1
         assert result.hits[0].id == doc_a
 
+    @pytest.mark.asyncio
+    async def test_search_degrades_gracefully_on_db_error(self):
+        """search() should return empty results when the DB query fails (e.g., pg_search not installed)."""
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(side_effect=Exception("operator does not exist: |||"))
+
+        surface = BM25Surface()
+        result = await surface.search(
+            query_text="some query",
+            query_vector=[0.1] * 1024,
+            kb_id=uuid4(),
+            limit=10,
+            threshold=0.0,
+            db=mock_db,
+        )
+
+        assert result.surface_name == "bm25"
+        assert len(result.hits) == 0
+        assert result.execution_time_ms >= 0
+
     def test_surface_has_correct_name(self):
         """BM25Surface has the expected name."""
         surface = BM25Surface()

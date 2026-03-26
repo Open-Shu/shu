@@ -368,25 +368,28 @@ class ProfilingService:
         target_queries = min(num_chunks * queries_per_chunk, max_queries)
 
         # Build distribution instruction based on ratio
-        if target_queries >= num_chunks * queries_per_chunk:
-            # Under cap: every chunk gets full allocation
-            distribution = f"{queries_per_chunk} queries per chunk"
-        elif target_queries >= num_chunks:
-            # Roughly 1 per chunk
-            distribution = "approximately 1 query per chunk"
+        if target_queries == 0:
+            user_content += "\n\nDo not generate any capability queries. Return an empty chunk_queries array."
         else:
-            # Fewer queries than chunks: group chunks
-            chunks_per_query = num_chunks / target_queries
-            distribution = f"approximately 1 query per {chunks_per_query:.0f} chunks"
+            if target_queries >= num_chunks * queries_per_chunk:
+                # Under cap: every chunk gets full allocation
+                distribution = f"{queries_per_chunk} queries per chunk"
+            elif target_queries >= num_chunks:
+                # Roughly 1 per chunk
+                distribution = "approximately 1 query per chunk"
+            else:
+                # Fewer queries than chunks: group chunks
+                chunks_per_query = num_chunks / target_queries
+                distribution = f"approximately 1 query per {chunks_per_query:.0f} chunks"
 
-        user_content += (
-            f"\n\nGenerate exactly {target_queries} capability queries"
-            f" distributed evenly across all {num_chunks} chunks"
-            f" ({distribution})."
-            f" Cover the entire document from beginning to end —"
-            f" do not cluster queries in early sections."
-            f" Link each query to its source chunk_index."
-        )
+            user_content += (
+                f"\n\nGenerate exactly {target_queries} capability queries"
+                f" distributed evenly across all {num_chunks} chunks"
+                f" ({distribution})."
+                f" Cover the entire document from beginning to end —"
+                f" do not cluster queries in early sections."
+                f" Link each query to its source chunk_index."
+            )
 
         # Validate input doesn't exceed max tokens
         error_result = self._validate_input_tokens(

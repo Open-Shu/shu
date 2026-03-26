@@ -77,9 +77,12 @@ export default function ChunkDetailModal({ open, onClose, knowledgeBaseId, docum
   // Get current chunk from fetched data, or fall back to initial chunk data
   const currentChunk = chunks.find((c) => c.chunk_index === currentIndex) || null;
 
-  // Use fetched content if available, otherwise show initial snippet
-  const content = currentChunk?.content || initialChunk?.snippet || '';
-  const summary = currentChunk?.summary || initialChunk?.summary || null;
+  // Use fetched content if available. Only fall back to initialChunk when
+  // viewing the originally clicked chunk — otherwise we'd show stale content
+  // from a different chunk during window shifts (keepPreviousData is true).
+  const isInitialIndex = currentIndex === (initialChunk?.chunk_index ?? -1);
+  const content = currentChunk?.content || (isInitialIndex ? initialChunk?.snippet : '') || '';
+  const summary = currentChunk?.summary || (isInitialIndex ? initialChunk?.summary : null) || null;
 
   const canGoPrev = currentIndex > 0;
   const canGoNext = total !== null && currentIndex < total - 1;

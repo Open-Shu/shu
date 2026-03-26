@@ -93,7 +93,7 @@ class TestScoreFusionService:
 
         assert len(result) == 1
         assert result[0].document_id == doc_id
-        # max * sqrt(mean/max): max=0.9, mean=0.85, agreement=0.944, score=0.874
+        # max * sqrt(mean/max): max=0.9, mean=0.85, mean/max=0.944, sqrt=0.972, score=0.9*0.972≈0.874
         assert abs(result[0].final_score - 0.874) < 0.01
 
     @pytest.mark.asyncio

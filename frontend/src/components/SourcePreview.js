@@ -119,6 +119,14 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                   <Box
                     key={chunk.chunk_id || `chunk-${chunk.chunk_index ?? index}`}
                     onClick={() => onChunkClick && onChunkClick(chunk, result)}
+                    onKeyDown={(e) => {
+                      if (onChunkClick && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        onChunkClick(chunk, result);
+                      }
+                    }}
+                    role={onChunkClick ? 'button' : undefined}
+                    tabIndex={onChunkClick ? 0 : undefined}
                     sx={{
                       bgcolor: 'grey.100',
                       p: 1,
@@ -235,6 +243,14 @@ function GroupedDocumentItem({ group, rank, onChunkClick }) {
                 <Box
                   key={chunk.id || idx}
                   onClick={() => onChunkClick && onChunkClick(chunk, group)}
+                  onKeyDown={(e) => {
+                    if (onChunkClick && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      onChunkClick(chunk, group);
+                    }
+                  }}
+                  role={onChunkClick ? 'button' : undefined}
+                  tabIndex={onChunkClick ? 0 : undefined}
                   sx={{
                     bgcolor: 'grey.100',
                     p: 1,
