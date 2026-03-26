@@ -108,12 +108,16 @@ ps:
 
 # Enable BM25 full-text search (requires ParadeDB pg_search extension installed in PostgreSQL)
 # Run this after installing pg_search to create the BM25 index if the migration ran without it.
+# Derives the psql connection URL from SHU_DATABASE_URL in .env (strips the +asyncpg driver).
 enable-bm25:
+	$(eval DB_URL := $(shell grep -m1 '^SHU_DATABASE_URL' .env 2>/dev/null | cut -d= -f2- | tr -d '"' | sed 's|+asyncpg||'))
+	@if [ -z "$(DB_URL)" ]; then echo "ERROR: SHU_DATABASE_URL not found in .env"; exit 1; fi
+	@echo "Connecting to database from SHU_DATABASE_URL..."
 	@echo "Checking for pg_search extension..."
-	@psql -d shu -tAc "SELECT 1 FROM pg_extension WHERE extname = 'pg_search'" | grep -q 1 || \
+	@psql "$(DB_URL)" -tAc "SELECT 1 FROM pg_extension WHERE extname = 'pg_search'" | grep -q 1 || \
 		{ echo "ERROR: pg_search extension not installed. Install ParadeDB first."; exit 1; }
 	@echo "pg_search found. Creating BM25 index (if not exists)..."
-	@psql -d shu -c " \
+	@psql "$(DB_URL)" -c " \
 		DO \$$\$$ \
 		BEGIN \
 			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'ix_documents_bm25') THEN \
