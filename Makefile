@@ -58,7 +58,7 @@ compose-build-dev:
 # - make up-worker:    Dedicated worker (production)
 # - make up-worker-dev: Dedicated worker with hot-reload
 
-.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps
+.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps enable-bm25
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -105,6 +105,31 @@ logs-worker:
 
 ps:
 	docker compose -f $(COMPOSE_FILE) --profile worker --profile worker-dev --profile workers ps
+
+# Enable BM25 full-text search (requires ParadeDB pg_search extension installed in PostgreSQL)
+# Run this after installing pg_search to create the BM25 index if the migration ran without it.
+enable-bm25:
+	@echo "Checking for pg_search extension..."
+	@psql -d shu -tAc "SELECT 1 FROM pg_extension WHERE extname = 'pg_search'" | grep -q 1 || \
+		{ echo "ERROR: pg_search extension not installed. Install ParadeDB first."; exit 1; }
+	@echo "pg_search found. Creating BM25 index (if not exists)..."
+	@psql -d shu -c " \
+		DO \$$\$$ \
+		BEGIN \
+			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'ix_documents_bm25') THEN \
+				EXECUTE 'CREATE INDEX ix_documents_bm25 ON documents \
+					USING bm25 ( \
+						id, \
+						(title::pdb.simple(''stemmer=english'', ''stopwords_language=english'')), \
+						(content::pdb.simple(''stemmer=english'', ''stopwords_language=english'')) \
+					) \
+					WITH (key_field=''id'')'; \
+				RAISE NOTICE 'BM25 index created successfully.'; \
+			ELSE \
+				RAISE NOTICE 'BM25 index already exists — nothing to do.'; \
+			END IF; \
+		END \$$\$$;"
+	@echo "Done. Set SHU_MULTI_SURFACE_BM25_WEIGHT to a value > 0 (e.g. 0.15) to enable BM25 in search."
 
 # Linting and formatting targets
 .PHONY: lint lint-python lint-frontend format format-python format-frontend lint-fix lint-changed lint-staged lint-uncommitted lint-pr

@@ -205,7 +205,7 @@ class ScoreFusionService:
             total_weight = 0.0
 
             for surface_name, hits in surface_hits.items():
-                weight = self._weights.get(surface_name, 0.1)
+                weight = self._weights.get(surface_name, 0)
 
                 # Use max score from this surface for this document
                 best_hit = max(hits, key=lambda h: h.score)

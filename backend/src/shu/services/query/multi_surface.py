@@ -22,6 +22,37 @@ def _redact(text: str) -> str:
     return f"[len={len(text)} hash={h}]"
 
 
+def _build_surfaces(vector_store, weights: dict[str, float], execute_zero_weight: bool) -> list:
+    """Construct retrieval surfaces, optionally skipping those with zero weight.
+
+    In production (execute_zero_weight=False), surfaces whose configured weight
+    is 0 are omitted to save DB round-trips.  Set SHU_EXECUTE_ZERO_WEIGHT_SURFACES=true
+    to run all surfaces so their scores are available for benchmarking analysis.
+    """
+    from ..retrieval.surfaces import (
+        BM25Surface,
+        ChunkSummaryVectorSurface,
+        ChunkVectorSurface,
+        QueryMatchSurface,
+        SynopsisMatchSurface,
+    )
+
+    all_surfaces = [
+        ChunkVectorSurface(vector_store),
+        ChunkSummaryVectorSurface(vector_store),
+        QueryMatchSurface(vector_store),
+        SynopsisMatchSurface(vector_store),
+        BM25Surface(),
+    ]
+    if execute_zero_weight:
+        return all_surfaces
+    surfaces = [s for s in all_surfaces if weights.get(s.name, 0) > 0]
+    skipped = [s.name for s in all_surfaces if s not in surfaces]
+    if skipped:
+        logger.info(f"Skipping zero-weight surfaces: {skipped}")
+    return surfaces
+
+
 class MultiSurfaceSearchMixin:
     """Mixin providing multi-surface search orchestration."""
 
@@ -107,23 +138,9 @@ class MultiSurfaceSearchMixin:
             }
             logger.info(f"Multi-surface weights: {weights}")
 
-            # Create surfaces (5 active)
             from ..retrieval import MultiSurfaceSearchService, ScoreFusionService
-            from ..retrieval.surfaces import (
-                BM25Surface,
-                ChunkSummaryVectorSurface,
-                ChunkVectorSurface,
-                QueryMatchSurface,
-                SynopsisMatchSurface,
-            )
 
-            surfaces = [
-                ChunkVectorSurface(vector_store),
-                ChunkSummaryVectorSurface(vector_store),
-                QueryMatchSurface(vector_store),
-                SynopsisMatchSurface(vector_store),
-                BM25Surface(),
-            ]
+            surfaces = _build_surfaces(vector_store, weights, settings.execute_zero_weight_surfaces)
 
             # Create fusion service with configured weights
             fusion_service = ScoreFusionService(weights=weights)

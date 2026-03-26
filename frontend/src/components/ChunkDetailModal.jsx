@@ -176,7 +176,7 @@ export default function ChunkDetailModal({
                   size="small"
                   variant="outlined"
                 />
-                {currentChunk.start_char !== null && currentChunk.end_char !== null && (
+                {typeof currentChunk.start_char === 'number' && typeof currentChunk.end_char === 'number' && (
                   <Chip
                     label={`Pos: ${currentChunk.start_char.toLocaleString()}-${currentChunk.end_char.toLocaleString()}`}
                     size="small"
@@ -251,13 +251,13 @@ export default function ChunkDetailModal({
       <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
         {/* Navigation */}
         <Box display="flex" alignItems="center" gap={1}>
-          <IconButton onClick={handlePrev} disabled={!canGoPrev || isLoading} size="small">
+          <IconButton onClick={handlePrev} disabled={!canGoPrev || isLoading} size="small" aria-label="Previous chunk">
             <NavigateBeforeIcon />
           </IconButton>
           <Typography variant="body2" color="text.secondary">
             {currentIndex + 1} of {total}
           </Typography>
-          <IconButton onClick={handleNext} disabled={!canGoNext || isLoading} size="small">
+          <IconButton onClick={handleNext} disabled={!canGoNext || isLoading} size="small" aria-label="Next chunk">
             <NavigateNextIcon />
           </IconButton>
         </Box>

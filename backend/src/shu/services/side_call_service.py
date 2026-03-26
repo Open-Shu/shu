@@ -138,7 +138,8 @@ class SideCallService:
             usage = event_metadata.get("usage", {}) or {}
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
-            tokens_used = usage.get("total_tokens", 0) or (input_tokens + output_tokens)
+            total = usage.get("total_tokens")
+            tokens_used = total if total is not None else (input_tokens + output_tokens)
 
             # Record usage
             await self._record_usage(
@@ -618,7 +619,8 @@ class SideCallService:
             usage = event_metadata.get("usage", {}) or {}
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
-            tokens_used = usage.get("total_tokens", 0) or (input_tokens + output_tokens)
+            total = usage.get("total_tokens")
+            tokens_used = total if total is not None else (input_tokens + output_tokens)
 
             # Record usage (no user_id for profiling - it's a system operation)
             await self._record_usage(

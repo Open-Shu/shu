@@ -43,11 +43,20 @@ def upgrade() -> None:
     # 2. Drop keywords column from document_chunks
     drop_column_if_exists(inspector, "document_chunks", "keywords")
 
-    # 3. Create ParadeDB BM25 index on documents (requires pg_search extension)
+    # 3. Create ParadeDB BM25 index on documents (if pg_search extension is available)
     #    Uses English stemming and stopword removal on title and content.
     #    The ||| operator provides disjunctive (OR) matching; pdb.score(id)
     #    returns true Okapi BM25 scores.
-    if not index_exists(inspector, "documents", "ix_documents_bm25"):
+    #    When pg_search is not installed the index is skipped and BM25Surface
+    #    degrades gracefully at query time (returns empty results).
+    has_pg_search = conn.execute(
+        sa.text("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'")
+    ).scalar()
+
+    if not has_pg_search:
+        print("NOTE: pg_search extension not available — skipping BM25 index creation. "
+              "BM25 retrieval surface will be inactive.")
+    elif not index_exists(inspector, "documents", "ix_documents_bm25"):
         op.execute(
             sa.text("""
                 CREATE INDEX ix_documents_bm25 ON documents
@@ -115,7 +124,7 @@ def downgrade() -> None:
         server_default=sa.text("3"),
     )
 
-    # Drop ParadeDB BM25 index
+    # Drop ParadeDB BM25 index (may not exist if pg_search was unavailable)
     if index_exists(inspector, "documents", "ix_documents_bm25"):
         op.drop_index("ix_documents_bm25", table_name="documents")
 

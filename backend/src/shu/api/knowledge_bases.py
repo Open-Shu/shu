@@ -665,12 +665,20 @@ async def get_document_chunks(
 
     """
     try:
-        # Verify KB access
+        # Verify KB access and document ownership
         kb_service = KnowledgeBaseService(db)
         await kb_service.get_knowledge_base(kb_id, str(current_user.id))
 
-        # Get chunks
         doc_service = DocumentService(db)
+        document = await doc_service.get_document(document_id)
+        if str(document.knowledge_base_id) != str(kb_id):
+            return ShuResponse.error(
+                message="Document does not belong to this knowledge base",
+                code="DOCUMENT_KB_MISMATCH",
+                status_code=404,
+            )
+
+        # Get chunks
         all_chunks = await doc_service.get_document_chunks(document_id)
 
         # Apply pagination

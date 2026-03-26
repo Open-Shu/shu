@@ -108,11 +108,25 @@ class BM25Surface(RetrievalSurface):
             extra={"kb_id": str(kb_id), "query_text_len": len(query_text)},
         )
 
-        result = await db.execute(
-            stmt,
-            {"query": query_text, "kb_id": str(kb_id), "limit": limit},
-        )
-        rows = result.fetchall()
+        try:
+            result = await db.execute(
+                stmt,
+                {"query": query_text, "kb_id": str(kb_id), "limit": limit},
+            )
+            rows = result.fetchall()
+        except Exception as exc:
+            # pg_search extension not installed or BM25 index missing —
+            # degrade gracefully so multi-surface search continues without BM25.
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.warning(
+                "BM25Surface: query failed (pg_search extension may not be installed)",
+                extra={"error": str(exc), "elapsed_ms": round(elapsed_ms, 2)},
+            )
+            return SurfaceResult(
+                surface_name=self.name,
+                hits=[],
+                execution_time_ms=elapsed_ms,
+            )
 
         # Normalize via saturation: score / (K + score). BM25 scores are
         # unbounded (grow with more matching terms). K=10 maps strong

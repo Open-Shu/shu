@@ -4,7 +4,19 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS pg_search;  -- ParadeDB BM25 full-text search
+-- Optional extension: pg_search provides ParadeDB BM25 full-text search.
+-- Not available on all Postgres deployments. When absent, the BM25 retrieval
+-- surface degrades gracefully (returns empty results).
+DO $$
+BEGIN
+    BEGIN
+        CREATE EXTENSION IF NOT EXISTS pg_search;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE NOTICE 'pg_search extension not available — BM25 retrieval surface will be inactive';
+    END;
+END;
+$$;
 
 -- Optional extension: pg_stat_statements is not available on all Postgres
 -- deployments (especially some managed services). Treat it as best-effort so
